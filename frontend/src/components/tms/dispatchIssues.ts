@@ -154,18 +154,60 @@ export const rowVehiclesTicked = (current: string[] | null, config: string[], mo
 
 // ══ XE CÙNG TUYẾN (15/10, user: "khung chờ đánh dấu + lọc được đơn đang có route của nó đi mà chưa lên được xe — vd đơn dư của xe 17
 // pallet, đơn tuyến Bắc Ninh mà xe đã quá tải; bên bàn có ký hiệu tiếp nhận"). Chốt: cùng tuyến = CÙNG VÙNG (tỉnh) · "nhận được" = ĐỦ luật
-// ghép xe (server `fit-check`, cùng hàm cửa kéo thả) · bảng xe giữ mọi xe, gắn nhãn. ══
+// ghép xe (server `fit-check`, cùng hàm cửa kéo thả) · bảng xe giữ mọi xe, gắn nhãn. 15/10 tối (user: "nhận diện cũng phải theo rule — xe
+// pallet 1 khách thì đơn khách khác liên quan gì; phải đi theo config"): xe chỉ là "của đơn" khi CẤU HÌNH cho đơn lên xe (`routeOff`). ══
 export type RouteLevel = 'customer' | 'ward' | 'region'
 export const ROUTE_LEVEL_VI: Record<RouteLevel, string> = { customer: 'cùng khách', ward: 'cùng phường', region: 'cùng vùng' }
 export interface RouteMatch { trip_id: string; seq: number; level: RouteLevel }
 type RouteRow = Pick<DispatchTripOd, 'id' | 'ship_to_code' | 'ward_code' | 'region_code'>
 type RouteTrip = Pick<DispatchTrip, 'id' | 'seq' | 'load_pct'> & { ods: Pick<DispatchTripOd, 'ship_to_code' | 'ward_code' | 'region_code'>[] }
+/** Cấu hình luật ghép xe đọc khi nhận diện (15/10 tối): dòng xe ĐANG DÙNG của kho (điểm giao tối đa + điều kiện bảo quản chở được — giá trị
+ *  hiệu lực tại kho, `useVehicleModels` theo kho) + tham số kế hoạch (trộn kênh · trộn Loại kho · Loại kho đi kèm đơn). */
+export interface RouteRuleCtx {
+  models: Map<string, { id: string; max_drops: number | null; storage_conditions: string[] }>
+  mixChannels: boolean; mixCategories: boolean | null | undefined; follow: string[]
+}
+type RuleOd = Pick<DispatchTripOd, 'od_number' | 'ship_to_code' | 'separate' | 'channel' | 'allowed_models' | 'conditions' | 'cat_load' | 'max_customers'>
+type RuleTrip = Pick<DispatchTrip, 'vehicle_model_id' | 'extra_vehicle_model_ids' | 'allow_mix_categories'> & { ods: RuleOd[] }
+const mainCatKey = (load: RuleOd['cat_load'], follow: string[]) => [...new Set(Object.keys(load ?? {}).filter(c => !!c && !follow.includes(c)))].sort().join('+')
+/** Đơn khung chờ `r` KHÔNG thuộc xe `t` THEO CẤU HÌNH, bỏ qua sức chứa — MIRROR các luật "cấu hình" của `manualRuleBlocks` qua `routeKind`
+ *  (BE, 'off'; `backend/tests/mirror/dispatchRouteOff.mirror.test.ts`): xe / khách chỉ MỘT khách (dòng xe "Điểm giao tối đa" 1 — xe pallet,
+ *  container — hoặc "Số khách tối đa cùng xe" 1 của khách / kênh) mà đơn là khách khác · đi xe riêng · trộn kênh khi kho không cho · trộn
+ *  Loại kho khi switch xe tắt · dòng xe không chở được điều kiện bảo quản · khách không được vào dòng xe. Tải quá trần, hay đã đủ số khách
+ *  khi cấu hình cho từ 2 khách, KHÔNG ở đây — đó là xe ĐẦY (server `fit-check` trả 'full'). */
+export function routeOff(r: RuleOd, t: RuleTrip, c: RouteRuleCtx): boolean {
+  const all = [...t.ods, r]
+  const key = (o: RuleOd) => o.ship_to_code ?? o.od_number
+  const before = new Set(t.ods.map(key)).size, after = new Set(all.map(key)).size
+  const main = t.vehicle_model_id ? c.models.get(t.vehicle_model_id) ?? null : null
+  const fleet = main ? [...new Map([main, ...(t.extra_vehicle_model_ids ?? []).map(id => c.models.get(id))].filter((m): m is NonNullable<typeof m> => !!m).map(m => [m.id, m])).values()] : []
+  if ((t.allow_mix_categories ?? c.mixCategories) === false && new Set(all.map(o => mainCatKey(o.cat_load, c.follow)).filter(Boolean)).size > 1) return true
+  if (after > before) {
+    const cap = Math.min(...all.map(o => (typeof o.max_customers === 'number' && o.max_customers >= 1 ? o.max_customers : 1)), main ? main.max_drops ?? 1 : Infinity)
+    if (after > cap && cap < 2) return true
+    if (after > 1 && all.some(o => o.separate === true)) return true
+  }
+  if (!c.mixChannels) {
+    const chs = (os: RuleOd[]) => new Set(os.map(o => o.channel).filter((x): x is string => !!x))
+    const ca = chs(all)
+    if (ca.size > 1 && ca.size > chs(t.ods).size) return true
+  }
+  const conds = [...new Set((r.conditions ?? []).filter(Boolean))]
+  const posmOnly = c.mixCategories === false && Object.keys(r.cat_load ?? {}).length > 0 && !mainCatKey(r.cat_load, c.follow)
+  for (const m of fleet) {
+    const sv = (m.storage_conditions ?? []).filter(Boolean)
+    if (conds.length && sv.length && !conds.every(x => sv.includes(x))) return true
+    if (Array.isArray(r.allowed_models) && r.allowed_models.length > 0 && !r.allowed_models.includes(m.id) && !posmOnly) return true
+  }
+  return false
+}
 /** Xe cùng tuyến của từng đơn khung chờ: xe có đơn cùng KHÁCH › cùng PHƯỜNG › cùng VÙNG (vùng của xe = vùng của MỌI đơn trên xe ⇒ xe tuyến
- *  liên tỉnh đi qua tỉnh đó cũng tính). Xe trống không tính (không có đơn để biết tuyến). Mỗi đơn: mức gần trước, rồi xe tải thấp (còn chỗ)
- *  trước, rồi số xe. Đơn không có xe nào cùng tuyến thì không có trong map. */
-export function routeMatches(pool: RouteRow[], trips: RouteTrip[]): Map<string, RouteMatch[]> {
+ *  liên tỉnh đi qua tỉnh đó cũng tính). Xe trống không tính (không có đơn để biết tuyến); `keep` = cặp (đơn, xe) được tính — bàn truyền
+ *  "cấu hình cho đơn lên xe" (`routeOff`). Mỗi đơn: mức gần trước, rồi xe tải thấp (còn chỗ) trước, rồi số xe. Đơn không có xe nào cùng tuyến
+ *  thì không có trong map. */
+export function routeMatches<R extends RouteRow, T extends RouteTrip>(pool: R[], trips: T[], keep: (r: R, t: T) => boolean = () => true): Map<string, RouteMatch[]> {
   const byKey = (pick: (o: RouteTrip['ods'][number]) => string | null | undefined) => {
-    const m = new Map<string, RouteTrip[]>()
+    const m = new Map<string, T[]>()
     for (const t of trips) for (const o of t.ods) {
       const v = pick(o)
       if (!v) continue
@@ -179,9 +221,13 @@ export function routeMatches(pool: RouteRow[], trips: RouteTrip[]): Map<string, 
   const rank: Record<RouteLevel, number> = { customer: 0, ward: 1, region: 2 }
   const out = new Map<string, RouteMatch[]>()
   for (const r of pool) {
-    const seen = new Map<string, RouteMatch & { load: number }>()
-    const add = (l: RouteTrip[] | undefined, level: RouteLevel) => {
-      for (const t of l ?? []) if (!seen.has(t.id)) seen.set(t.id, { trip_id: t.id, seq: t.seq, level, load: t.load_pct == null ? 1e9 : Number(t.load_pct) })
+    const seen = new Map<string, RouteMatch & { load: number }>(), no = new Set<string>()
+    const add = (l: T[] | undefined, level: RouteLevel) => {
+      for (const t of l ?? []) {
+        if (seen.has(t.id) || no.has(t.id)) continue
+        if (keep(r, t)) seen.set(t.id, { trip_id: t.id, seq: t.seq, level, load: t.load_pct == null ? 1e9 : Number(t.load_pct) })
+        else no.add(t.id)
+      }
     }
     if (r.ship_to_code) add(cust.get(r.ship_to_code), 'customer')
     if (r.ward_code) add(ward.get(r.ward_code), 'ward')
@@ -198,15 +244,20 @@ export function fitPairs(matches: Map<string, RouteMatch[]>, rowIds: string[], p
   return out
 }
 export type FitResult = DispatchFitResult
-/** Đơn khung chờ: xe cùng tuyến + kết quả hỏi luật. `fit` = có xe NHẬN được (true) · mọi xe đã hỏi đều không nhận (false) · chưa hỏi (null). */
+/** Đơn khung chờ: xe cùng tuyến + kết quả hỏi luật. `fit` = có xe NHẬN được (true) · mọi xe đã hỏi đều ĐẦY (false) · chưa hỏi (null). */
 export interface PoolRoute { matches: RouteMatch[]; fit: boolean | null; results: Map<string, FitResult> }
 /** Xe trên bàn khi đang lọc: các đơn (đang lọc) xe NHẬN được; không nhận đơn nào thì `full` = lý do đầu tiên. */
 export interface TripRouteTag { fit: string[]; full: string | null }
+/** Kết quả server `kind` 'off' (cấu hình không cho — trình duyệt đã lọc bằng `routeOff`, đây là lưới khi hai bên lệch / xe vừa đổi trạng
+ *  thái) ⇒ bỏ xe đó khỏi ký hiệu; đơn không còn xe nào thì không còn là "có xe cùng tuyến". */
 export function routeTags(matches: Map<string, RouteMatch[]>, results: FitResult[] | undefined, shownRowIds: string[]): { rows: Map<string, PoolRoute>; trips: Map<string, TripRouteTag> } {
   const byRow = new Map<string, Map<string, FitResult>>()
-  for (const r of results ?? []) { const m = byRow.get(r.row_id) ?? new Map<string, FitResult>(); m.set(r.trip_id, r); byRow.set(r.row_id, m) }
+  for (const r of results ?? []) { if (r.kind === 'off') continue; const m = byRow.get(r.row_id) ?? new Map<string, FitResult>(); m.set(r.trip_id, r); byRow.set(r.row_id, m) }
+  const off = new Set((results ?? []).filter(r => r.kind === 'off').map(r => `${r.row_id}|${r.trip_id}`))
   const rows = new Map<string, PoolRoute>()
-  for (const [id, ms] of matches) {
+  for (const [id, all] of matches) {
+    const ms = off.size ? all.filter(m => !off.has(`${id}|${m.trip_id}`)) : all
+    if (!ms.length) continue
     const res = byRow.get(id) ?? new Map<string, FitResult>()
     const asked = [...res.values()]
     rows.set(id, { matches: ms, results: res, fit: !results || !asked.length ? null : asked.some(x => x.fits) })

@@ -6089,6 +6089,7 @@ export interface DispatchTripOd {
   allowed_models?: string[] | null      // dòng xe khách được vào (chụp lúc lập / lúc sửa trên bàn) — [] = khách + kênh chưa khai (28/09: máy không chọn xe) · null = dòng chụp trước 28/09
   note?: string | null                  // ghi chú giao hàng SAP (27/09) — người review đọc, máy không đọc
   separate?: boolean | null             // khách "Đi xe riêng" (chụp lúc lập)
+  max_customers?: number | null         // số khách tối đa cùng xe của khách / kênh (chụp lúc lập) — null = chưa khai = 1
   channel?: string | null               // kênh khách (chụp lúc lập, 15/10) — luật không trộn kênh đọc bản chụp này, đổi kênh thì "Tối ưu lại"
   // 07/10: RANH GIỚI kế hoạch — dòng khung chờ chưa có mốc = CHỜ ĐIỀU (tab Bán hàng / Trung chuyển của Xem đơn); có mốc = thuộc kế hoạch
   // (khung chờ của bàn ghép xe). Dòng trên xe luôn thuộc kế hoạch. Dùng `inPlanRow` (dispatchIssues), đừng tự đọc cột này rải rác.
@@ -6290,8 +6291,9 @@ export interface DispatchMovePreview { trip_id: string; pallets: number | null; 
 export const previewDispatchMove = (plan_id: string, ids: string[], to_trip_id: string) =>
   apiClient.post(`/tms/dispatch/plans/${plan_id}/preview-move`, { ids, to_trip_id }).then(r => r.data.data as DispatchMovePreview)
 /** XE CÒN NHẬN ĐƯỢC ĐƠN KHÔNG (15/10) — mỗi cặp (dòng khung chờ, xe cùng tuyến) hỏi ĐÚNG luật ghép xe của cửa kéo thả. Chỉ gọi khi bật lọc
- *  "Có xe cùng tuyến"; khoá theo dấu kế hoạch ⇒ thả / kéo xong (dấu đổi) thì hỏi lại, không thì giữ kết quả. */
-export interface DispatchFitResult { row_id: string; trip_id: string; fits: boolean; reason: string | null }
+ *  "Có xe cùng tuyến"; khoá theo dấu kế hoạch ⇒ thả / kéo xong (dấu đổi) thì hỏi lại, không thì giữ kết quả. `kind` (15/10 tối): fit · full =
+ *  chỉ vướng sức chứa · off = cấu hình không cho đơn lên xe đó (bàn bỏ xe khỏi ký hiệu) — BE `routeKind`. */
+export interface DispatchFitResult { row_id: string; trip_id: string; fits: boolean; kind: 'fit' | 'full' | 'off'; reason: string | null }
 export function useDispatchFitCheck(planId: string, pairs: { row_id: string; trip_id: string }[], enabled: boolean, stamp: string) {
   return useQuery({
     queryKey: ['dispatch-fit-check', planId, stamp, pairs.length], enabled: enabled && pairs.length > 0, staleTime: Infinity,

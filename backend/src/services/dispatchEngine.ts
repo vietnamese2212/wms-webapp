@@ -455,6 +455,22 @@ export function manualRuleBlocks(fleet: EngineModel[], staying: RuleRow[], movin
   }
   return out
 }
+/** XE CÙNG TUYẾN — cặp (đơn khung chờ, xe) đọc theo luật ghép xe (15/10 tối, user: "nhận diện cũng phải theo rule — xe pallet 1 khách thì
+ *  đơn khách khác liên quan gì; phải đi theo config"): 'fit' = xe nhận được · 'full' = chỉ vướng SỨC CHỨA (tải quá trần dải; đã đủ số khách
+ *  khi cấu hình cho từ 2 khách — kéo bớt là nhận) · 'off' = CẤU HÌNH không cho đơn lên xe này (dòng xe được vào · điều kiện bảo quản · đi xe
+ *  riêng · kênh · Loại kho · xe / khách chỉ MỘT khách) — không phải xe của đơn, bàn không đánh dấu. Mã luật MỚI phải xếp loại ở `ROUTE_CODE`
+ *  (thiếu = lỗi biên dịch). Bản trình duyệt `routeOff` (dispatchIssues) — `backend/tests/mirror/dispatchRouteOff.mirror.test.ts` gác. */
+export type RouteKind = 'fit' | 'full' | 'off'
+const ROUTE_CODE: Record<RuleBlockCode, 'full' | 'off' | 'drops'> = {
+  MULTI_VEHICLE_BLOCKED: 'off', CATEGORY_MIX_BLOCKED: 'off', SEPARATE_CUSTOMER: 'off', CHANNEL_MIX_BLOCKED: 'off',
+  CONDITION_MISMATCH: 'off', VEHICLE_NOT_ALLOWED: 'off', DROPS_EXCEEDED: 'drops', LOAD_EXCEEDED: 'full',
+}
+/** `main` = dòng xe chính của xe (trần điểm giao `max_drops`, như `dropsBlockReason`); `blocks` = `manualRuleBlocks` của đúng cặp đó. */
+export function routeKind(main: Pick<EngineModel, 'max_drops'> | null, staying: RuleRow[], moving: RuleRow[], blocks: RuleBlock[]): RouteKind {
+  if (!blocks.length) return 'fit'
+  const cap = Math.min(odStopsCap([...staying, ...moving]), main ? modelDrops(main) : Infinity)
+  return blocks.every(b => ROUTE_CODE[b.code] === 'full' || (ROUTE_CODE[b.code] === 'drops' && cap >= 2)) ? 'full' : 'off'
+}
 /** ĐK bảo quản của MỘT dòng hàng (26/09): hàng nằm ở ô KHAI RIÊNG ĐK thì mang ĐK của ô đó; ô không khai (null) và mã không
  *  có tồn ở ô khai riêng ⇒ theo Loại kho. `stock` = các ĐK của những ô đang chứa mã này (null = ô theo loại kho). */
 export function lineConditions(catCond: string | null, stock: (string | null)[] | undefined, follow = false): string[] {

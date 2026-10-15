@@ -37,7 +37,7 @@ import {
   runDispatch, buildCtx, priceFor, tripLoad, codePrefixOf, isTransferOd, sharePct, pickBookingCategory, sumLines, servesConditions, catLoadOf, bookingFromCatLoads, suggestVehicle,
   type EngineInput, type EngineOd, type EngineLine, type EngineModel, type EngineCarrier, type EngineTariff, type EngineSurcharge,
   type EngineAllocation, type EngineShareTarget, type ShareActual, type DispatchTrip, type TripFreight, type CarrierShare, type ShareBasis, type TripOd,
-  odStopsCap, modelDrops, condsOf, mainCatsOf, lineConditions, resolveAllowedModels, resolveMaxCustomers, type MaxCustomersCfg, mixBlockReason, manualRuleBlocks, type RuleBlock, priceCombo, comboModel, splitLoad, basisOf,
+  odStopsCap, modelDrops, condsOf, mainCatsOf, lineConditions, resolveAllowedModels, resolveMaxCustomers, type MaxCustomersCfg, mixBlockReason, manualRuleBlocks, type RuleBlock, routeKind, type RouteKind, priceCombo, comboModel, splitLoad, basisOf,
   type TripVehicle, withLoadBands, type LoadBand, type EngineGeo, type UnderMin, type TooBig, routeOf,
 } from '../../services/dispatchEngine'
 import { splitPool, redoDispatchedOf, type ExcludedOd, type ExcludedDetail, type ExcludeKind, type PoolCandidateRow, type OtherDraft } from '../../services/dispatchPool'
@@ -1641,6 +1641,8 @@ export async function previewMove(req: Request, res: Response) {
 // chưa lên được; bên bàn có ký hiệu tiếp nhận"; chốt "nhận được" = ĐỦ luật ghép xe). Mỗi cặp (dòng OD, xe) hỏi ĐÚNG hàm của cửa kéo thả
 // (`ruleBlocksFor`) ⇒ nhãn xanh trên bàn thì thả chắc chắn qua. Bàn tự chọn cặp (xe cùng tuyến của đơn khung chờ — `routeMatches` ở
 // dispatchIssues); cửa này KHÔNG có khái niệm tuyến và KHÔNG ghi gì. Một lời gọi cho cả khung chờ (thân POST, không dính trần URL).
+// `kind` (15/10 tối, user: "nhận diện phải theo config"): fit · full (chỉ vướng sức chứa) · off (cấu hình không cho / xe không sửa được ở bàn —
+// bàn bỏ xe đó khỏi ký hiệu) — `routeKind`.
 export const zFitCheck = z.object({ pairs: z.array(z.object({ row_id: zId, trip_id: zId })).min(1).max(5000) })
 export async function fitCheck(req: Request, res: Response) {
   try {
@@ -1656,15 +1658,16 @@ export async function fitCheck(req: Request, res: Response) {
     ])
     const rowBy = new Map(rows.map(r => [r.id, r])), tripBy = new Map(trips.map(t => [t.id, t]))
     const open = OPEN_PLAN.includes(plan.status)
-    const results: { row_id: string; trip_id: string; fits: boolean; reason: string | null }[] = []
+    const results: { row_id: string; trip_id: string; fits: boolean; kind: RouteKind; reason: string | null }[] = []
     for (const p of b.pairs) {
       const r = rowBy.get(p.row_id), t = tripBy.get(p.trip_id)
-      if (!r || !t) { results.push({ ...p, fits: false, reason: 'Đơn / xe không còn trên kế hoạch — bàn vừa đổi, tải lại' }); continue }
+      if (!r || !t) { results.push({ ...p, fits: false, kind: 'off', reason: 'Đơn / xe không còn trên kế hoạch — bàn vừa đổi, tải lại' }); continue }
       const st = statusOf(t)
-      if (!open || !EDITABLE_TRIP.includes(st)) { results.push({ ...p, fits: false, reason: `Xe #${t.seq} ${TRIP_STATUS_VI[st]} — không nhận thêm đơn ở bàn` }); continue }
-      if (r.trip_id === t.id) { results.push({ ...p, fits: true, reason: null }); continue }
+      if (!open || !EDITABLE_TRIP.includes(st)) { results.push({ ...p, fits: false, kind: 'off', reason: `Xe #${t.seq} ${TRIP_STATUS_VI[st]} — không nhận thêm đơn ở bàn` }); continue }
+      if (r.trip_id === t.id) { results.push({ ...p, fits: true, kind: 'fit', reason: null }); continue }
       const blocks = await ruleBlocksFor(plan, t, t.ods, [r], { models, condLabels })
-      results.push({ ...p, fits: !blocks.length, reason: blocks.length ? blocks.map(x => x.message).join(' · ') : null })
+      const main = t.vehicle_model_id ? models.find(m => m.id === t.vehicle_model_id) ?? null : null
+      results.push({ ...p, fits: !blocks.length, kind: routeKind(main, t.ods, [r], blocks), reason: blocks.length ? blocks.map(x => x.message).join(' · ') : null })
     }
     return ok(res, { results })
   } catch (e) { return failAny(res, e) }

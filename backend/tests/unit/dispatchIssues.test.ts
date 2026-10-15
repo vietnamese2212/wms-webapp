@@ -4,7 +4,7 @@
 // Xác nhận; cửa Xác nhận và bảng Xem đơn đã đọc đúng) mà bộ đếm này vẫn tính là "OD đổi ở SAP" ⇒ Bàu Bàng 06/10: 695/709 xe "cần xử lý",
 // bảng mới tô đỏ gần hết xe. Hai cửa cùng một sổ mà khác luật (C19) — khoá ở đây.
 import { describe, it, expect } from 'vitest'
-import { issuesOf, needsWork, selectionAfterMove, inPlanRow, boardPlanOf, planHoldsOrders, outOfScopeCats, poolLotGroups, rowVehiclesTicked, undoSteps, liveTripId, routeMatches, fitPairs, routeTags } from '../../../frontend/src/components/tms/dispatchIssues'
+import { issuesOf, needsWork, selectionAfterMove, inPlanRow, boardPlanOf, planHoldsOrders, outOfScopeCats, poolLotGroups, rowVehiclesTicked, undoSteps, liveTripId, routeMatches, routeOff, fitPairs, routeTags } from '../../../frontend/src/components/tms/dispatchIssues'
 import type { DispatchTrip, DispatchOdFlag, DispatchPlan, DispatchTripOd } from '../../../frontend/src/api/hooks'
 
 const trip = (ods: string[]): DispatchTrip => ({
@@ -107,12 +107,12 @@ describe('routeMatches / fitPairs / routeTags — xe cùng tuyến của đơn k
     expect(fitPairs(m, ['a', 'b', 'd'], 2)).toEqual([{ row_id: 'a', trip_id: 'T1' }, { row_id: 'a', trip_id: 'T2' }, { row_id: 'b', trip_id: 'T2' }, { row_id: 'b', trip_id: 'T3' }])
     expect(fitPairs(m, ['a', 'b'], 40, 3)).toHaveLength(3)
   })
-  it('kết quả luật: đơn "nhận được" khi CÓ xe nhận, "đầy" khi mọi xe đã hỏi đều không, chưa hỏi = null; nhãn xe chỉ tính đơn đang lọc', () => {
+  it('kết quả luật: đơn "nhận được" khi CÓ xe nhận, "đầy" khi mọi xe đã hỏi đều đầy, chưa hỏi = null; nhãn xe chỉ tính đơn đang lọc', () => {
     const m = routeMatches(pool, trips)
     expect(routeTags(m, undefined, ['a']).rows.get('a')?.fit).toBeNull()
     const res = [
-      { row_id: 'a', trip_id: 'T1', fits: false, reason: 'Xe sẽ vượt trần tải' }, { row_id: 'a', trip_id: 'T2', fits: true, reason: null },
-      { row_id: 'b', trip_id: 'T2', fits: false, reason: 'Khách K9 đi xe riêng' }, { row_id: 'b', trip_id: 'T3', fits: false, reason: 'Xe sẽ vượt trần tải' },
+      { row_id: 'a', trip_id: 'T1', fits: false, kind: 'full' as const, reason: 'Xe sẽ vượt trần tải' }, { row_id: 'a', trip_id: 'T2', fits: true, kind: 'fit' as const, reason: null },
+      { row_id: 'b', trip_id: 'T2', fits: false, kind: 'full' as const, reason: 'Xe sẽ chở 6 khách' }, { row_id: 'b', trip_id: 'T3', fits: false, kind: 'full' as const, reason: 'Xe sẽ vượt trần tải' },
     ]
     const g = routeTags(m, res, ['a', 'b'])
     expect(g.rows.get('a')?.fit).toBe(true)
@@ -121,7 +121,66 @@ describe('routeMatches / fitPairs / routeTags — xe cùng tuyến của đơn k
     expect(g.trips.get('T2')).toEqual({ fit: ['a'], full: null })
     expect(g.trips.get('T1')).toEqual({ fit: [], full: 'Xe sẽ vượt trần tải' })
     expect(g.trips.get('T3')).toEqual({ fit: [], full: 'Xe sẽ vượt trần tải' })
-    expect(routeTags(m, res, ['b']).trips.get('T2')).toEqual({ fit: [], full: 'Khách K9 đi xe riêng' })   // chỉ đơn đang lọc
+    expect(routeTags(m, res, ['b']).trips.get('T2')).toEqual({ fit: [], full: 'Xe sẽ chở 6 khách' })   // chỉ đơn đang lọc
+  })
+  it('server xếp "off" (cấu hình không cho) ⇒ xe rời ký hiệu + không mang nhãn; đơn hết xe thì không còn "có xe cùng tuyến"', () => {
+    const m = routeMatches(pool, trips)
+    const res = [
+      { row_id: 'a', trip_id: 'T1', fits: false, kind: 'full' as const, reason: 'Xe sẽ vượt trần tải' }, { row_id: 'a', trip_id: 'T2', fits: false, kind: 'off' as const, reason: 'Khách K9 đi xe riêng' },
+      { row_id: 'a', trip_id: 'T3', fits: false, kind: 'off' as const, reason: 'Dòng xe 17 Pallet chỉ nhận 1 khách' },
+      { row_id: 'c', trip_id: 'T4', fits: false, kind: 'off' as const, reason: 'Khách K3 không được vào dòng xe' },
+    ]
+    const g = routeTags(m, res, ['a', 'c'])
+    expect(g.rows.get('a')?.matches.map(x => x.trip_id)).toEqual(['T1'])
+    expect(g.rows.get('a')?.fit).toBe(false)
+    expect(g.rows.has('c')).toBe(false)
+    expect([...g.trips.keys()]).toEqual(['T1'])
+  })
+})
+
+// 15/10 tối (user: "nhận diện cũng phải theo rule — đơn của xe pallet chỉ tính với xe pallet; setting 2 khách / xe mới hiện, 1 khách / xe thì
+// liên quan gì — phải đi theo config"): xe chỉ là "của đơn" khi cấu hình cho đơn lên xe; vướng sức chứa (tải, đã đủ số khách khi cho ≥ 2)
+// vẫn là xe của đơn — chỉ là ĐẦY. Đối chiếu đủ luật với BE: backend/tests/mirror/dispatchRouteOff.mirror.test.ts
+describe('routeOff — xe cùng tuyến theo cấu hình luật ghép xe', () => {
+  const models = new Map([
+    ['P17', { id: 'P17', max_drops: 1, storage_conditions: ['NORMAL'] }],             // xe pallet: điểm giao tối đa 1
+    ['SCA', { id: 'SCA', max_drops: 4, storage_conditions: ['COLD'] }],
+    ['XA5', { id: 'XA5', max_drops: 4, storage_conditions: ['NORMAL'] }],
+  ])
+  const c = { models, mixChannels: false, mixCategories: undefined, follow: ['POSM'] }
+  const od = (n: string, ship: string, x: Partial<{ max: number | null; sep: boolean; ch: string; allowed: string[] | null; conds: string[]; cats: string[] }> = {}) => ({
+    od_number: n, ship_to_code: ship, separate: x.sep ?? false, channel: x.ch ?? 'GT', max_customers: x.max === undefined ? 4 : x.max,
+    allowed_models: x.allowed === undefined ? null : x.allowed, conditions: x.conds ?? ['NORMAL'], cat_load: Object.fromEntries((x.cats ?? ['FG01']).map(k => [k, 1])),
+  })
+  const trip = (model: string, ods: ReturnType<typeof od>[], mix: boolean | null = null) => ({ vehicle_model_id: model, extra_vehicle_model_ids: [], allow_mix_categories: mix, ods })
+  it('xe pallet (1 khách / xe): đơn dư CÙNG khách là của xe, đơn khách khác cùng phường thì không', () => {
+    const t = trip('P17', [od('1', 'A')])
+    expect(routeOff(od('2', 'A'), t, c)).toBe(false)
+    expect(routeOff(od('3', 'B'), t, c)).toBe(true)
+  })
+  it('xe nhiều điểm: khách khác vào được khi số khách cho phép; khách / kênh khai 1 khách / xe (chưa khai = 1) thì không; đã đủ khách ⇒ vẫn là xe của đơn (đầy)', () => {
+    const t = trip('XA5', [od('1', 'A')])
+    expect(routeOff(od('2', 'B'), t, c)).toBe(false)
+    expect(routeOff(od('3', 'B', { max: 1 }), t, c)).toBe(true)
+    expect(routeOff(od('4', 'B', { max: null }), t, c)).toBe(true)
+    expect(routeOff(od('5', 'E'), trip('XA5', [od('1', 'A'), od('2', 'B'), od('3', 'C'), od('4', 'D')]), c)).toBe(false)
+  })
+  it('dòng xe được vào · điều kiện bảo quản · đi xe riêng · trộn kênh · trộn Loại kho khi switch xe tắt', () => {
+    const t = trip('XA5', [od('1', 'A')])
+    expect(routeOff(od('2', 'B', { allowed: ['P17'] }), t, c)).toBe(true)
+    expect(routeOff(od('2', 'B', { allowed: ['XA5', 'P17'] }), t, c)).toBe(false)
+    expect(routeOff(od('3', 'B', { conds: ['COLD'] }), t, c)).toBe(true)
+    expect(routeOff(od('4', 'B', { sep: true }), t, c)).toBe(true)
+    expect(routeOff(od('5', 'B', { ch: 'MT' }), t, c)).toBe(true)
+    expect(routeOff(od('5', 'B', { ch: 'MT' }), t, { ...c, mixChannels: true })).toBe(false)
+    expect(routeOff(od('6', 'B', { cats: ['FG02'] }), t, c)).toBe(false)
+    expect(routeOff(od('6', 'B', { cats: ['FG02'] }), trip('XA5', [od('1', 'A')], false), c)).toBe(true)
+  })
+  it('routeMatches chỉ giữ cặp được `keep` cho', () => {
+    const pool = [{ id: 'p', ward_code: 'W', region_code: 'R', ...od('9', 'B') }]
+    const ts = [{ id: 'T1', seq: 1, load_pct: 100, ...trip('P17', [{ ...od('1', 'A'), ward_code: 'W', region_code: 'R' }]) },
+      { id: 'T2', seq: 2, load_pct: 90, ...trip('XA5', [{ ...od('2', 'C'), ward_code: 'W2', region_code: 'R' }]) }]
+    expect(routeMatches(pool, ts, (r, t) => !routeOff(r, t, c)).get('p')).toEqual([{ trip_id: 'T2', seq: 2, level: 'region' }])
   })
 })
 

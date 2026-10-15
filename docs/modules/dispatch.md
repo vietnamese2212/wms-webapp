@@ -527,6 +527,18 @@ phương án "Lô là một cách gom" (phương án kia: khối vàng thu / m�
     Hỏi lại khi dấu kế hoạch đổi (thả / kéo xong); tắt lọc thì không gọi server.
   - Nháp Ba Vì 02/10: 24/33 đơn khung chờ có xe cùng tuyến (9 cùng phường). Gói 61 [10f2]: kết luận fit-check TRÙNG `preview-move.blocked`
     trên cùng cặp, OD3 → xe 10/9 pallet không nhận (vượt trần), xe lạ không nhận, thân rỗng 400, kế hoạch không đổi.
+  - **15/10 tối — nhận diện THEO CẤU HÌNH** (user: "nhận diện cũng phải theo rule — đơn của xe pallet chỉ tính với xe pallet; setting 2 khách
+    / xe mới hiện, 1 khách / xe thì liên quan gì — phải đi theo config"): xe chỉ là xe cùng tuyến của đơn khi CẤU HÌNH cho đơn lên xe — dòng
+    xe được vào · điều kiện bảo quản · đi xe riêng · kênh (kho không cho trộn) · Loại kho (switch xe tắt) · xe / khách chỉ MỘT khách (dòng xe
+    "Điểm giao tối đa" 1 — xe pallet, container — hoặc "Số khách tối đa cùng xe" 1 / chưa khai của khách / kênh) thì chỉ tính đơn CÙNG khách;
+    chỉ xe còn sửa được (nháp / ĐVVT từ chối). "Đầy" chỉ còn nghĩa SỨC CHỨA: tải quá trần dải · đã đủ số khách khi cấu hình cho từ 2 khách.
+    BE `routeKind` xếp từng mã luật của `manualRuleBlocks` thành fit / full / off (`Record<RuleBlockCode, …>` — mã luật mới chưa xếp = lỗi biên
+    dịch); fit-check trả `kind`; trình duyệt lọc trước bằng `routeOff` (mirror phần cấu hình, `dispatchRouteOff.mirror.test.ts`), 'off' của
+    server là lưới khi hai bên lệch. Gói 61 [10f2] kind full / off · [21b2] đi xe riêng / trộn kênh ⇒ 'off'. Lớp C85.
+- **KHOÁ XE hỏi trước + xe khoá tô TÍM cả khối** (user 15/10 tối: "khoá xe để lần sau tối ưu — phải confirm trước khi khoá, và xe đã khoá
+  tốt nhất cả xe nên có màu khác để nổi bật lên"): bấm ổ khoá ⇒ hộp thoại "Khoá xe #n?" (dòng xe · số OD · pallet · lần Tối ưu lại sau giữ
+  nguyên xe, tay vẫn sửa được); mở khoá bấm là mở. Dạng Bảng: dòng xe `violet-100` + nhãn "Khoá", dòng đơn `violet-50`, khung tím, vạch trái
+  vẫn theo việc cần làm. Dạng Thẻ: nền `violet-50`, thanh tiêu đề `violet-100`, viền tím (viền đỏ / hổ phách của việc cần làm ưu tiên hơn).
 - **Còn mở (C77):** `POST /dispatch/segment/take` ("lấy đơn sang mảng mình") xoá dòng / xe trống ở kế hoạch mảng kia + chèn dòng vào kế
   hoạch đích mà KHÔNG thuê các kế hoạch đó — đua được với Xác nhận của mảng kia. Chưa vá (ngoài phạm vi lượt này) — đề xuất thuê mọi kế
   hoạch đụng tới (thứ tự id) + phép kiểm tĩnh "mọi route ghi `/dispatch` đi qua `withPlanLease` / `withTripPlanLease` trừ danh sách có lý do".

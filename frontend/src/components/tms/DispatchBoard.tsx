@@ -48,7 +48,7 @@ import { DispatchLoadBandDialog, DispatchLoadBandChip, useLoadBandParents, fullB
 import { NewOdChip } from './DispatchReviewTable'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
-import { EDITABLE, tripStatus, issuesOf, needsWork, ISSUE_ORDER, ISSUE_SHORT, TODO_KEYS, RED_ISSUES, FLAG_VI, selectionAfterMove, poolLotGroups, lotTip, liveTripId, undoSteps, routeMatches, fitPairs, routeTags, type IssueKey, type IssueCtx } from './dispatchIssues'
+import { EDITABLE, tripStatus, issuesOf, needsWork, ISSUE_ORDER, ISSUE_SHORT, TODO_KEYS, RED_ISSUES, FLAG_VI, selectionAfterMove, poolLotGroups, lotTip, liveTripId, undoSteps, routeMatches, routeOff, fitPairs, routeTags, type IssueKey, type IssueCtx, type RouteMatch, type RouteRuleCtx } from './dispatchIssues'
 import { useScopeCatSet } from '@/hooks/useUserScope'
 
 const nf = (n: number | string | null | undefined, d = 0) => (n == null ? '—' : Number(n).toLocaleString('vi-VN', { maximumFractionDigits: d }))
@@ -305,12 +305,17 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
   // giống nhau — gom lại dạng table") LÔ là một cách GOM của chính bảng khung chờ: dòng lô = % xe máy định + "Xe mới", số lô in trên nút "Lô"
   const lotCount = useMemo(() => poolLotGroups(pool, underMin, tooBig).filter(g => g.lot).length, [pool, underMin, tooBig])
   // XE CÙNG TUYẾN (15/10, user: "đánh dấu + lọc đơn đang có route của nó đi mà chưa lên được xe; bên bàn có ký hiệu tiếp nhận") — ký hiệu
-  // ⇢#xe luôn có (tính tại trình duyệt); bật lọc mới hỏi server ĐỦ luật ghép xe "xe nào còn nhận" (một lời gọi, hỏi lại khi dấu kế hoạch đổi)
-  const rMatch = useMemo(() => routeMatches(pool, plan.trips.filter(t => tripStatus(t) !== 'DISCARDED')), [pool, plan.trips])
-  const routeIds = useMemo(() => pool.filter(o => rMatch.has(o.id)).map(o => o.id), [pool, rMatch])
-  const pairs = useMemo(() => fitPairs(rMatch, routeIds), [rMatch, routeIds])
+  // ⇢#xe luôn có (tính tại trình duyệt); bật lọc mới hỏi server ĐỦ luật ghép xe "xe nào còn nhận" (một lời gọi, hỏi lại khi dấu kế hoạch đổi).
+  // 15/10 tối (user: "nhận diện phải theo config — xe 1 khách thì đơn khách khác liên quan gì"): chỉ xe CÒN SỬA ĐƯỢC mà cấu hình cho đơn lên
+  // (`routeOff`: dòng xe được vào · số khách / xe · đi xe riêng · kênh · Loại kho · điều kiện bảo quản); chưa tải xong dòng xe thì chưa đánh dấu
+  const { data: modelsRes } = useVehicleModels({ is_active: true, warehouse_id: plan.warehouse_id })
+  const rctx = useMemo<RouteRuleCtx | null>(() => modelsRes ? { models: new Map(modelsRes.items.map(m => [m.id, m])), mixChannels: plan.params.allow_mix_channels ?? false,
+    mixCategories: plan.params.allow_mix_categories, follow: plan.params.follow_categories ?? [] } : null, [modelsRes, plan.params])
+  const rMatch = useMemo(() => rctx ? routeMatches(pool, plan.trips.filter(t => EDITABLE.includes(tripStatus(t))), (r, t) => !routeOff(r, t, rctx)) : new Map<string, RouteMatch[]>(), [pool, plan.trips, rctx])
+  const pairs = useMemo(() => fitPairs(rMatch, pool.filter(o => rMatch.has(o.id)).map(o => o.id)), [rMatch, pool])
   const fit = useDispatchFitCheck(plan.id, pairs, routeOnly, `${plan.updated_at}|${plan.stamp ?? ''}`)
   const routeRows = useMemo(() => routeTags(rMatch, routeOnly ? fit.data : undefined, []).rows, [rMatch, routeOnly, fit.data])
+  const routeIds = useMemo(() => pool.filter(o => routeRows.has(o.id)).map(o => o.id), [pool, routeRows])
   const routeFit = [...routeRows.values()].filter(r => r.fit === true).length
   const routeFull = [...routeRows.values()].filter(r => r.fit === false).length
   const poolShown = useMemo(() => pool.filter(o => {
@@ -400,7 +405,6 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
   // CHỌN NHIỀU XE (06/10 — tab "Danh sách xe" gộp vào đây): tick ô dòng xe = chọn trọn xe ⇒ Gán ĐVVT / Đổi dòng xe cho mọi xe được
   // chọn TRỌN (12/61 xe cùng thiếu ĐVVT thì mở 12 panel là 36 thao tác cho một quyết định duy nhất — lý do có thao tác này từ 24/09)
   const fullTrips = trips.filter(t => editableTrip(t) && t.ods.length > 0 && t.ods.every(o => sel.has(o.id)))
-  const { data: modelsRes } = useVehicleModels({ is_active: true, warehouse_id: plan.warehouse_id })
   const { data: companies = [] } = useTransportCompanies(true, 'ĐVVT')
   const [bulk, setBulk] = useState<null | 'carrier' | 'model'>(null)
   const [bulkVal, setBulkVal] = useState('')
@@ -626,19 +630,29 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
     )
   }
 
+  // KHOÁ XE (15/10 tối, user: "khoá xe để lần sau tối ưu — phải confirm trước khi khoá; xe đã khoá cả xe nên có màu khác để nổi bật"): hỏi
+  // trước khi khoá — bấm nhầm ổ khoá là "Tối ưu lại" lặng lẽ bỏ qua xe; mở khoá bấm là mở. Xe khoá tô TÍM cả khối ở hai dạng bàn.
+  const toggleLock = async (t: DispatchTrip) => {
+    if (!t.locked && await ask({ title: `Khoá xe #${t.seq}?`, confirmLabel: 'Khoá xe',
+      body: `${t.detail.vehicle_model?.name ?? 'Chưa chọn dòng xe'} · ${new Set(t.ods.map(o => o.od_number)).size} OD · ${nf(t.pallets, 1)} pallet.\nLần "Tối ưu lại" sau, máy GIỮ NGUYÊN xe này — đơn trên xe, dòng xe, ĐVVT. Kéo thả, đổi dòng xe / ĐVVT bằng tay vẫn làm được.\nXe khoá tô màu tím trên bàn; mở khoá: bấm lại ổ khoá.` }) === null) return
+    patchTrip.mutateAsync({ id: t.id, locked: !t.locked }).catch(e => err(e, 'Không đổi được khoá'))
+  }
+
   const tripCard = (t: DispatchTrip) => {
     const st = tripStatus(t)
     const ed = editableTrip(t)
     const iss = ISSUE_ORDER.filter(k => issuesOf(t, ctx).includes(k))
     const isHover = hover?.target === t.id
-    const border = !ed ? 'border-slate-200 opacity-80' : t.oversize ? 'border-red-400' : iss.some(k => TODO_KEYS.has(k)) ? 'border-amber-300' : 'border-slate-200'
+    const lk = t.locked === true
+    // viền theo việc cần làm (đỏ / hổ phách) trước; xe khoá còn lại viền tím — nền tím cả thẻ luôn có
+    const border = !ed ? 'border-slate-200 opacity-80' : t.oversize ? 'border-red-400' : iss.some(k => TODO_KEYS.has(k)) ? 'border-amber-300' : lk ? 'border-violet-400' : 'border-slate-200'
     // 02/10: không còn trần điểm giao của KHO — trần thật (dòng xe · kênh / khách) xe báo qua cảnh báo "Vượt số khách cùng xe"
     const lim: number | null = null
     return (
       <div key={t.id} data-trip-card={t.id} {...(ed ? dropProps('trip', t.id, t.id) : {})}
-        className={`relative rounded-lg border bg-white shadow-sm flex flex-col transition-shadow ${border} ${isHover ? 'ring-2 ring-sky-400' : justHit === t.id ? 'ring-2 ring-green-400' : ''} ${t.locked ? 'bg-slate-50' : ''}`}>
+        className={`relative rounded-lg border shadow-sm flex flex-col transition-shadow ${lk ? 'bg-violet-50' : 'bg-white'} ${border} ${isHover ? 'ring-2 ring-sky-400' : justHit === t.id ? 'ring-2 ring-green-400' : ''}`}>
         {/* TIÊU ĐỀ THẺ = thanh khung màu trung tính (user 30/09): "#số · dòng xe" + cảnh báo cần xử lý ngay trong thanh; nút xe bên phải */}
-        <div className="flex items-start gap-1.5 rounded-t-lg border-b border-slate-200 bg-slate-100 px-2 py-1">
+        <div className={`flex items-start gap-1.5 rounded-t-lg border-b px-2 py-1 ${lk ? 'border-violet-200 bg-violet-100' : 'border-slate-200 bg-slate-100'}`}>
           {/* 15/10: TICK CẢ XE (như ô dòng xe của dạng Bảng) thay nút ⊘ "Không điều cả xe" — thanh nổi có Không điều · Chuyển · Gán ĐVVT · Đổi dòng xe */}
           {ed && t.ods.length > 0 && (() => { const n = t.ods.filter(o => sel.has(o.id)).length; return (
             <input type="checkbox" className="mt-0.5 h-3.5 w-3.5 shrink-0 accent-sky-600" checked={n === t.ods.length} ref={el => { if (el) el.indeterminate = n > 0 && n < t.ods.length }}
@@ -664,12 +678,13 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
             {tripTags?.has(t.id) && <TripRouteBadge tag={tripTags.get(t.id)!} odLabel={odLabel} />}
             {st !== 'DRAFT' && <StatusBadge tone={st === 'CONFIRMED' ? 'green' : st === 'DECLINED' ? 'red' : 'blue'}>{st === 'CONFIRMED' ? 'Đã vào KH' : st === 'DECLINED' ? 'Từ chối' : st === 'TENDERED' ? 'Chờ ĐVVT' : st}</StatusBadge>}
             {ed && (
-              <button type="button" className={`rounded p-1 ${t.locked ? 'text-slate-800' : 'text-slate-400 hover:bg-white hover:text-slate-700'}`} disabled={patchTrip.isPending}
-                title={t.locked ? 'Đang khoá — "Tối ưu lại" không đụng vào xe này. Bấm để mở khoá' : 'Khoá xe để "Tối ưu lại" giữ nguyên'}
-                onClick={() => patchTrip.mutateAsync({ id: t.id, locked: !t.locked }).catch(e => err(e, 'Không đổi được khoá'))}>
-                {t.locked ? <Lock className="h-3.5 w-3.5" /> : <Unlock className="h-3.5 w-3.5" />}
+              <button type="button" className={`rounded p-1 ${lk ? 'bg-violet-600 text-white hover:bg-violet-700' : 'text-slate-400 hover:bg-white hover:text-slate-700'}`} disabled={patchTrip.isPending}
+                title={lk ? 'Đang khoá — "Tối ưu lại" không đụng vào xe này. Bấm để mở khoá' : 'Khoá xe để "Tối ưu lại" giữ nguyên (hỏi lại trước khi khoá)'}
+                onClick={() => void toggleLock(t)}>
+                {lk ? <Lock className="h-3.5 w-3.5" /> : <Unlock className="h-3.5 w-3.5" />}
               </button>
             )}
+            {!ed && lk && <Lock className="h-3.5 w-3.5 text-violet-700" aria-label="Xe đã khoá" />}
             {ed && !t.ods.length && (
               <button type="button" className="rounded p-1 text-slate-400 hover:text-red-600" title="Bỏ xe trống" disabled={delTrip.isPending}
                 onClick={() => delTrip.mutateAsync(t.id).catch(e => err(e, 'Không bỏ được xe'))}><X className="h-3.5 w-3.5" /></button>
@@ -772,14 +787,14 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
               {routeIds.length > 0 && (
                 <button type="button" onClick={() => { setRouteOnly(v => !v); setRouteSub('') }} aria-pressed={routeOnly}
                   className={`inline-flex items-center gap-1 whitespace-nowrap rounded px-1.5 py-0.5 ${routeOnly ? 'bg-sky-700 text-white' : 'bg-sky-50 text-sky-900 hover:bg-sky-100'}`}
-                  title={'Đơn ở khung chờ mà ĐÃ CÓ xe đi cùng tuyến (cùng khách › cùng phường › cùng vùng) — vd đơn dư của xe 17 pallet, đơn tuyến Bắc Ninh khi xe đã đầy.\nBật: khung chờ chỉ còn các đơn này; máy hỏi luật ghép xe (như khi kéo thả) xem xe cùng tuyến nào CÒN NHẬN — nhãn xanh "＋ nhận" trên bàn; xe không nhận được ghi "đầy".'}>
+                  title={'Đơn ở khung chờ mà ĐÃ CÓ xe đi cùng tuyến (cùng khách › cùng phường › cùng vùng) và CẤU HÌNH cho đơn lên xe đó (dòng xe được vào · số khách / xe · đi xe riêng · kênh · Loại kho · điều kiện bảo quản). Xe chỉ nhận 1 khách (vd xe pallet, container) chỉ tính đơn CÙNG khách — vd đơn dư của xe 17 pallet; xe nhiều điểm (SCA, xá) tính cả đơn khách khác cùng phường / vùng.\nBật: khung chờ chỉ còn các đơn này; máy hỏi luật ghép xe (như khi kéo thả) xem xe nào CÒN NHẬN — nhãn xanh "＋ nhận" trên bàn; xe hết chỗ ghi "đầy".'}>
                   <Route className="h-3 w-3" /> {routeOnly ? 'Đang xem' : 'Có xe cùng tuyến ·'} {routeIds.length} OD{routeOnly ? ' có xe cùng tuyến' : ''}
                 </button>
               )}
               {routeOnly && fit.isFetching && <span className="whitespace-nowrap text-slate-500">Đang hỏi luật ghép xe…</span>}
               {routeOnly && fit.isError && <span className="text-red-600">Không hỏi được xe còn nhận — {apiMsg(fit.error)}</span>}
               {routeOnly && fit.data && !fit.isFetching && (([['fit', `✓ Xe còn nhận · ${routeFit}`, 'Có ít nhất một xe cùng tuyến NHẬN được đơn (đủ luật ghép xe) — kéo lên xe có nhãn xanh', 'bg-green-600 text-white', 'bg-green-50 text-green-800 hover:bg-green-100'],
-                ['full', `⚠ Xe cùng tuyến đã đầy · ${routeFull}`, 'Mọi xe cùng tuyến đều KHÔNG nhận được (đầy / sai luật) — rê chuột ký hiệu ⇢ trên đơn để xem lý do từng xe', 'bg-amber-600 text-white', 'bg-amber-50 text-amber-900 hover:bg-amber-100']] as const)
+                ['full', `⚠ Xe cùng tuyến đã đầy · ${routeFull}`, 'Mọi xe cùng tuyến đều ĐẦY (tải quá trần / đã đủ số khách xe nhận) — rê chuột ký hiệu ⇢ trên đơn để xem từng xe', 'bg-amber-600 text-white', 'bg-amber-50 text-amber-900 hover:bg-amber-100']] as const)
                 .map(([k, l, tip, on, off]) => (
                   <button key={k} type="button" aria-pressed={routeSub === k} onClick={() => setRouteSub(s => s === k ? '' : k)} title={tip}
                     className={`whitespace-nowrap rounded px-1.5 py-0.5 ${routeSub === k ? on : off}`}>{l}</button>
@@ -901,7 +916,7 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
     openRowVehicles: setVehRow, canCustVeh,
     routeOf: id => routeRows.get(id) ?? null, tripRoute: id => tripTags?.get(id) ?? null, tripLabel, odLabel,
     resync: od => { void doResync(od) }, replace: od => { void doReplace(od) }, sapBusy: resync.isPending || replace.isPending,
-    toggleLock: t => { void patchTrip.mutateAsync({ id: t.id, locked: !t.locked }).catch(e => err(e, 'Không đổi được khoá')) },
+    toggleLock: t => { void toggleLock(t) },
     removeTrip: t => { void delTrip.mutateAsync(t.id).catch(e => err(e, 'Không bỏ được xe')) },
     mixOn, setMix: (t, v) => { void patchTrip.mutateAsync({ id: t.id, allow_mix_categories: v }).then(() => setJustHit(t.id)).catch(e => err(e, 'Không đổi được switch ghép loại')) },
     setCarrier: (t, id) => { void patchTrip.mutateAsync({ id: t.id, transport_company_id: id }).then(() => setJustHit(t.id)).catch(e => err(e, 'Không đổi được ĐVVT')) },

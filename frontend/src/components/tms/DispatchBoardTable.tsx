@@ -206,15 +206,16 @@ function TreeBranch({ rail, last }: { rail: string; last: boolean }) {
   )
 }
 
-/** XE CÙNG TUYẾN của một đơn khung chờ (15/10) — "⇢#13 +2": xe gần nhất (cùng khách › phường › vùng); bật lọc thì xanh = có xe NHẬN được
- *  (số in là xe nhận được đầu tiên), hổ phách = xe cùng tuyến đều không nhận; rê chuột: từng xe + lý do của luật ghép xe. Bảng + Thẻ dùng chung. */
+/** XE CÙNG TUYẾN của một đơn khung chờ (15/10) — "⇢#13 +2": xe gần nhất (cùng khách › phường › vùng) mà CẤU HÌNH cho đơn lên (15/10 tối —
+ *  `routeOff`); bật lọc thì xanh = có xe NHẬN được (số in là xe nhận được đầu tiên), hổ phách = xe cùng tuyến đều ĐẦY; rê chuột: từng xe + lý
+ *  do của luật ghép xe. Bảng + Thẻ dùng chung. */
 export function RouteChip({ info, label }: { info: PoolRoute; label: (tripId: string) => string }) {
   const m = info.matches
   const best = m.find(x => info.results.get(x.trip_id)?.fits) ?? m[0]
   const tone = info.fit === true ? 'bg-green-100 text-green-800' : info.fit === false ? 'bg-amber-100 text-amber-900' : 'bg-sky-50 text-sky-800 ring-1 ring-inset ring-sky-200'
   const head = info.fit === true ? 'Có xe cùng tuyến CÒN NHẬN được đơn này — kéo lên xe có nhãn "＋ nhận" trên bàn'
-    : info.fit === false ? 'Xe cùng tuyến đều KHÔNG nhận được đơn này (đầy / sai luật ghép xe) — cần xe mới, đổi xe lớn hơn hoặc dời bớt đơn'
-    : 'Có xe đang đi cùng tuyến — bật lọc "Có xe cùng tuyến" ở đầu khung chờ để hỏi xe nào còn nhận'
+    : info.fit === false ? 'Xe cùng tuyến đều ĐẦY (tải quá trần / đã đủ số khách xe nhận) — cần xe mới, đổi xe lớn hơn hoặc dời bớt đơn'
+    : 'Có xe đang đi cùng tuyến mà cấu hình cho đơn này lên (dòng xe được vào · số khách / xe · đi xe riêng · kênh · Loại kho · điều kiện bảo quản) — bật lọc "Có xe cùng tuyến" ở đầu khung chờ để hỏi xe nào còn chỗ'
   const lines = m.slice(0, 8).map(x => {
     const r = info.results.get(x.trip_id)
     return `#${x.seq} ${label(x.trip_id)} — ${ROUTE_LEVEL_VI[x.level]}${r ? (r.fits ? ' · NHẬN được' : ` · không nhận: ${r.reason ?? ''}`) : ''}`
@@ -227,7 +228,7 @@ export function RouteChip({ info, label }: { info: PoolRoute; label: (tripId: st
   )
 }
 /** Nhãn TIẾP NHẬN của xe khi bật lọc "Có xe cùng tuyến" (15/10): xanh "＋ nhận n đơn" = xe nhận được n đơn đang lọc (đủ luật ghép xe) ·
- *  xám "đầy" = xe cùng tuyến không nhận đơn nào đang lọc (rê chuột: lý do). */
+ *  xám "đầy" = xe cùng tuyến hết chỗ cho các đơn đang lọc (rê chuột: lý do). Xe mà cấu hình không cho đơn lên thì không mang nhãn. */
 export function TripRouteBadge({ tag, odLabel }: { tag: TripRouteTag; odLabel: (rowId: string) => string }) {
   if (tag.fit.length) return (
     <span className="shrink-0 rounded bg-green-600 px-1 text-[9px] font-bold text-white"
@@ -235,7 +236,7 @@ export function TripRouteBadge({ tag, odLabel }: { tag: TripRouteTag; odLabel: (
       ＋ nhận {tag.fit.length} đơn
     </span>
   )
-  return <span className="shrink-0 rounded bg-slate-200 px-1 text-[9px] font-medium text-slate-600" title={`Xe cùng tuyến KHÔNG nhận thêm đơn đang lọc — ${tag.full ?? 'sai luật ghép xe'}`}>đầy</span>
+  return <span className="shrink-0 rounded bg-slate-200 px-1 text-[9px] font-medium text-slate-600" title={`Xe cùng tuyến ĐẦY với các đơn đang lọc — ${tag.full ?? ''}`}>đầy</span>
 }
 
 /** Ô của một dòng ĐƠN — dùng chung cho khung chờ và đơn dưới xe (`tree` = đơn dưới xe: vạch khối + nhánh cây) */
@@ -368,7 +369,7 @@ function tripCells(ops: BoardOps, t: DispatchTrip, hv: BoardHover, open: boolean
                 : t.detail.vehicle_model?.name ?? <span className="text-red-600">Chưa chọn dòng xe</span>}
             </span>
             {st !== 'DRAFT' && <StatusBadge tone={st === 'CONFIRMED' ? 'green' : st === 'DECLINED' ? 'red' : 'blue'}>{st === 'CONFIRMED' ? 'Đã vào KH' : st === 'DECLINED' ? 'Từ chối' : st === 'TENDERED' ? 'Chờ ĐVVT' : st}</StatusBadge>}
-            {t.locked && <span title="Đang khoá — Tối ưu lại không đụng vào xe này"><Lock className="h-3 w-3 shrink-0 text-slate-500" /></span>}
+            {t.locked && <span className="inline-flex shrink-0 items-center gap-0.5 rounded bg-violet-600 px-1 text-[9px] font-bold text-white" title="Đã khoá — lần Tối ưu lại sau giữ nguyên xe này (đơn, dòng xe, ĐVVT)"><Lock className="h-2.5 w-2.5" />Khoá</span>}
             {/* nhãn tiếp nhận khi khung chờ bật lọc "Có xe cùng tuyến" (15/10) */}
             {rtag && <TripRouteBadge tag={rtag} odLabel={ops.odLabel} />}
           </div>
@@ -445,8 +446,8 @@ function tripCells(ops: BoardOps, t: DispatchTrip, hv: BoardHover, open: boolean
       node: (
         <span className="inline-flex items-center gap-0.5">
           {/* ⊘ "Không điều cả xe" (30/09) BỎ 15/10 (user: "tick ô thì đã ra đủ action") — tick ô dòng xe ⇒ thanh nổi "Không điều ngày này" / "Không điều" */}
-          {ed && <IconBtn title={t.locked ? 'Đang khoá — "Tối ưu lại" không đụng vào xe này. Bấm để mở khoá' : 'Khoá xe để "Tối ưu lại" giữ nguyên'} disabled={ops.tripBusy} onClick={() => ops.toggleLock(t)}>
-            {t.locked ? <Lock className="h-3.5 w-3.5 text-slate-700" /> : <Unlock className="h-3.5 w-3.5" />}</IconBtn>}
+          {ed && <IconBtn title={t.locked ? 'Đang khoá — "Tối ưu lại" không đụng vào xe này. Bấm để mở khoá' : 'Khoá xe để "Tối ưu lại" giữ nguyên (hỏi lại trước khi khoá)'} disabled={ops.tripBusy} onClick={() => ops.toggleLock(t)}>
+            {t.locked ? <Lock className="h-3.5 w-3.5 text-violet-700" /> : <Unlock className="h-3.5 w-3.5" />}</IconBtn>}
           {ed && !t.ods.length && <IconBtn danger title="Bỏ xe trống" disabled={ops.tripBusy} onClick={() => ops.removeTrip(t)}><X className="h-3.5 w-3.5" /></IconBtn>}
         </span>
       ),
@@ -471,31 +472,34 @@ const TripRows = memo(function TripRows({ ops, live, t, open, onToggle, cols, hv
   // KHỐI XE = THẺ TRẮNG trên RÃNH XÁM (15/10, user: "không rõ được đâu là bắt đầu của 1 xe, phân biệt với xe khác"): dòng xe nền gần
   // trắng + các dòng đơn trắng, viền trên / dưới slate-300, vạch trái; khoảng trống sau khối + dải tên vùng = slate-100 (màu nền app).
   // Bản cũ tô xám DÒNG XE còn đơn + khoảng trống trắng ⇒ đơn của xe trước liền vào khoảng trống, không thấy chỗ hết một xe (đo bằng ảnh
-  // trên nháp Ba Vì 02/10: tô nhạt cả cụm kiểu slate-50 gần như không khác bản cũ). Khoá xe nhận biết bằng ổ khoá trên dòng.
-  const bg = hv ? 'bg-sky-100' : hit ? 'bg-green-50' : 'bg-slate-50'
+  // trên nháp Ba Vì 02/10: tô nhạt cả cụm kiểu slate-50 gần như không khác bản cũ).
+  // XE KHOÁ (15/10 tối, user: "xe đã khoá cả xe nên có màu khác để nổi bật lên"): CẢ KHỐI tím — dòng xe violet-100, dòng đơn violet-50, khung
+  // tím; vạch trái vẫn theo việc cần làm (đỏ / hổ phách) nên xe khoá mà sai luật vẫn thấy đỏ.
+  const lk = t.locked === true
+  const bg = hv ? 'bg-sky-100' : hit ? 'bg-green-50' : lk ? 'bg-violet-100' : 'bg-slate-50'
   const rail = tripRail(t, ops.ctx)
   const shown = open ? t.ods : []
   // KHUNG THẺ XE (15/10 chiều, user: "vẫn chưa đủ phân biệt xe trước xe sau — thêm border"): viền ĐẦU xe 2 px đậm · viền CUỐI xe (dòng
   // đơn cuối, hoặc chính dòng xe khi thu) + mép phải slate-400 · vạch trái `tripRail` — thấy cả chỗ bắt đầu lẫn chỗ hết một xe
-  const edgeR = '[&_td:last-child]:border-r [&_td:last-child]:!border-r-slate-400'
-  const endB = '[&_td]:border-b [&_td]:!border-b-slate-400'
+  const edgeR = lk ? '[&_td:last-child]:border-r [&_td:last-child]:!border-r-violet-400' : '[&_td:last-child]:border-r [&_td:last-child]:!border-r-slate-400'
+  const endB = lk ? '[&_td]:border-b [&_td]:!border-b-violet-400' : '[&_td]:border-b [&_td]:!border-b-slate-400'
   return (
     <>
       <TableRow data-trip-card={t.id} {...drop}
         draggable={dragTrip} onDragStart={dragTrip ? e => live.current.startDrag(e, t.ods.map(o => o.id), true) : undefined} onDragEnd={dragTrip ? () => live.current.endDrag() : undefined}
-        className={`cursor-pointer [&_td]:border-t-2 [&_td]:!border-t-slate-600 ${edgeR} ${shown.length ? '' : endB} ${bg} hover:bg-slate-100 ${hv ? 'outline outline-2 -outline-offset-2 outline-sky-400' : hit ? 'outline outline-2 -outline-offset-2 outline-green-400' : ''} ${dragTrip ? 'active:cursor-grabbing' : ''}`}
+        className={`cursor-pointer [&_td]:border-t-2 ${lk ? '[&_td]:!border-t-violet-600 hover:bg-violet-200' : '[&_td]:!border-t-slate-600 hover:bg-slate-100'} ${edgeR} ${shown.length ? '' : endB} ${bg} ${hv ? 'outline outline-2 -outline-offset-2 outline-sky-400' : hit ? 'outline outline-2 -outline-offset-2 outline-green-400' : ''} ${dragTrip ? 'active:cursor-grabbing' : ''}`}
         onClick={() => live.current.onOpenTrip(t.id)}>
         <RowCells cols={cols} cells={tripCells(ops, t, hv, open, () => onToggle(t.id), route)} bg={bg} />
       </TableRow>
       {shown.map((o, i) => {
         const dragOk = ops.canDrag && ed
         const s = ops.sel.has(o.id)
-        const rbg = s || hv ? 'bg-sky-50' : ops.q && ops.matches(o) ? 'bg-yellow-50' : 'bg-white'
+        const rbg = s || hv ? 'bg-sky-50' : ops.q && ops.matches(o) ? 'bg-yellow-50' : lk ? 'bg-violet-50' : 'bg-white'
         const last = i === shown.length - 1
         return (
           <TableRow key={o.id} {...drop} draggable={dragOk}
             onDragStart={dragOk ? e => live.current.startDrag(e, live.current.idsFor(o), true) : undefined} onDragEnd={dragOk ? () => live.current.endDrag() : undefined}
-            className={`cursor-pointer ${rbg} hover:bg-slate-50 ${edgeR} ${last ? endB : ''} ${dragOk ? 'active:cursor-grabbing' : ''}`} onClick={() => live.current.onOpenOd(o)}>
+            className={`cursor-pointer ${rbg} ${lk ? 'hover:bg-violet-100' : 'hover:bg-slate-50'} ${edgeR} ${last ? endB : ''} ${dragOk ? 'active:cursor-grabbing' : ''}`} onClick={() => live.current.onOpenOd(o)}>
             <RowCells cols={cols} cells={odCells(ops, o, t, { rail, last })} bg={rbg} />
           </TableRow>
         )

@@ -722,7 +722,8 @@ try {
   B = await planOf(B.id)
   // [10f2] (15/10, "xe cùng tuyến còn nhận đơn không" — nhãn tiếp nhận trên bàn) `fit-check` hỏi ĐÚNG hàm luật của cửa thả cho từng cặp
   //        (dòng OD, xe), không ghi gì: kết luận phải TRÙNG lời xem trước của cửa thả (`preview-move.blocked`) trên cùng cặp; OD3 → xe OD1+OD2
-  //        (7 + 3 = 10/9 pallet) không nhận, lý do vượt trần · xe lạ ⇒ không nhận + lý do · thân rỗng 400
+  //        (7 + 3 = 10/9 pallet) không nhận, lý do vượt trần · xe lạ ⇒ không nhận + lý do · thân rỗng 400.
+  //        `kind` (15/10 tối): chỉ vướng tải ⇒ 'full' (xe vẫn là xe của đơn, chỉ đầy) · xe lạ ⇒ 'off' · 'fit' đúng khi và chỉ khi nhận được
   {
     const X1f = tripOfOd(B, OD[0]), X3f = tripOfOd(B, OD[2])
     const pairs = [{ row_id: rowOf(B, OD[2]).id, trip_id: X1f.id }, { row_id: rowOf(B, OD[0]).id, trip_id: X3f.id }, { row_id: rowOf(B, OD[1]).id, trip_id: crypto.randomUUID() }]
@@ -732,10 +733,11 @@ try {
     const fcBad = await api(`/tms/dispatch/plans/${B.id}/fit-check`, 'POST', { pairs: [] })
     const B2 = await planOf(B.id)
     const r = fc.j?.data?.results ?? []
-    check('10f2. Xe còn nhận đơn (fit-check, chỉ đọc) TRÙNG lời xem trước của cửa thả trên cùng cặp · OD3 → xe OD1+OD2 (10/9 pallet) không nhận, lý do vượt trần · xe lạ ⇒ không nhận + lý do · thân rỗng 400 · kế hoạch không đổi',
+    check('10f2. Xe còn nhận đơn (fit-check, chỉ đọc) TRÙNG lời xem trước của cửa thả trên cùng cặp · OD3 → xe OD1+OD2 (10/9 pallet) không nhận, lý do vượt trần, kind "full" · xe lạ ⇒ không nhận + lý do, kind "off" · kind "fit" ⟺ nhận · thân rỗng 400 · kế hoạch không đổi',
       fc.s === 200 && r.length === 3 && r[0].fits === false && /trần/.test(r[0].reason ?? '') && r[0].fits === (pvA.j?.data?.blocked == null)
-      && r[1].fits === (pvB.j?.data?.blocked == null) && pvB.s === 200 && r[2].fits === false && !!r[2].reason && fcBad.s === 400 && B2?.updated_at === B?.updated_at,
-      `http=${fc.s} ${fc.j?.error?.message ?? ''} ${JSON.stringify(r.map(x => [x.fits, (x.reason ?? '').slice(0, 60)]))} · xem trước A=${pvA.j?.data?.blocked ? 'chặn' : 'qua'} B=${pvB.j?.data?.blocked ? 'chặn' : 'qua'} · rỗng=${fcBad.s} · đổi=${B2?.updated_at !== B?.updated_at}`)
+      && r[1].fits === (pvB.j?.data?.blocked == null) && pvB.s === 200 && r[2].fits === false && !!r[2].reason && fcBad.s === 400 && B2?.updated_at === B?.updated_at
+      && r[0].kind === 'full' && r[2].kind === 'off' && r.every(x => (x.kind === 'fit') === x.fits),
+      `http=${fc.s} ${fc.j?.error?.message ?? ''} ${JSON.stringify(r.map(x => [x.fits, x.kind, (x.reason ?? '').slice(0, 60)]))} · xem trước A=${pvA.j?.data?.blocked ? 'chặn' : 'qua'} B=${pvB.j?.data?.blocked ? 'chặn' : 'qua'} · rỗng=${fcBad.s} · đổi=${B2?.updated_at !== B?.updated_at}`)
   }
   const X3g = tripOfOd(B, OD[2])
   const mo = await mvB(B, { ids: [rowOf(B, OD[2]).id], to: 'trip', to_trip_id: tripOfOd(B, OD[0]).id })
@@ -2262,6 +2264,13 @@ try {
       check('21b. TRỘN KÊNH (kho không cho): kéo đơn kênh B lên xe kênh A · hai kênh ra Xe mới ⇒ 409 CHANNEL_MIX_BLOCKED · xem trước nêu "kênh"',
         /kênh/.test(pvC.j?.data?.blocked ?? '') && vio(mvC, 'CHANNEL_MIX_BLOCKED') && vio(newC, 'CHANNEL_MIX_BLOCKED') && (await tripOfRow(r3.id)) === s1.C.id,
         `xem=${String(pvC.j?.data?.blocked ?? '').slice(0, 60)} kéo=${em(mvC)} xeMới=${em(newC)}`)
+      // 15/10 tối (user: "nhận diện xe cùng tuyến phải theo config — xe 1 khách thì đơn khách khác liên quan gì"): cửa fit-check xếp cặp vướng
+      // CẤU HÌNH là 'off' (bàn không đánh dấu xe đó), KHÁC 'full' (chỉ vướng sức chứa — [10f2])
+      const fk = await api(`/tms/dispatch/plans/${s1.id}/fit-check`, 'POST', { pairs: [{ row_id: r1.id, trip_id: B.id }, { row_id: r3.id, trip_id: A.id }] })
+      const fr = fk.j?.data?.results ?? []
+      check('21b2. Xe cùng tuyến theo CẤU HÌNH: cặp vướng đi xe riêng / trộn kênh ⇒ fit-check kind "off" (không phải "đầy") kèm lý do',
+        fk.s === 200 && fr.length === 2 && fr.every(x => x.kind === 'off' && x.fits === false) && /xe riêng/.test(fr[0]?.reason ?? '') && /kênh/.test(fr[1]?.reason ?? ''),
+        `http=${fk.s} ${fk.j?.error?.message ?? ''} ${JSON.stringify(fr.map(x => [x.kind, (x.reason ?? '').slice(0, 50)]))}`)
       const two = await mv([r2.id, r3.id], 'trip', A.id)
       const m2 = two.j?.error?.message ?? ''
       check('21c. Phạm BA luật một lần (đi xe riêng + trộn kênh + 10/9 pallet) ⇒ 409 mã ưu tiên SEPARATE_CUSTOMER, câu liệt kê mỗi luật một dòng "• "',

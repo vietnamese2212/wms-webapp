@@ -715,12 +715,14 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
             <span className="text-[11px] text-slate-500 tabular-nums">{nf(plan.summary.pool_ods ?? pool.length)} OD · {nf(plan.summary.pool_pallets ?? 0, 1)} pl</span>
             <button type="button" className="ml-auto hidden lg:inline-flex rounded p-0.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700" title="Thu gọn khung chờ — bàn xe rộng hơn" onClick={() => setF({ poolHidden: true })}><ChevronsLeft className="h-4 w-4" /></button>
           </div>
-          <div className="flex items-center gap-1 text-[10px]">
-            <span className="text-slate-400">Gom theo</span>
+          {/* khung chờ dạng Thẻ chỉ 300 px (dạng Bảng kéo hẹp được tới 300): thêm nút "Lô n" (15/10) là chữ "Gom theo" bị bẻ hai dòng ⇒ chữ
+              không bẻ, hàng chật thì "Chọn hết" xuống dòng nguyên cụm (độ rộng khung chờ cố định theo dạng, không theo cỡ màn) */}
+          <div className="flex flex-wrap items-center gap-1 text-[10px]">
+            <span className="whitespace-nowrap text-slate-400">Gom theo</span>
             {([['lot', 'Lô'], ['ward', 'Phường'], ['region', 'Vùng'], ['customer', 'Khách']] as const).map(([k, l]) => (
               <button key={k} type="button" onClick={() => setF({ boardGroup: k })}
                 title={k === 'lot' ? 'Gom theo LÔ máy định xếp mà KHÔNG tạo xe — dưới Tối thiểu % của dải tải (thanh hổ phách) hoặc đơn lớn hơn xe (đỏ); số trên nút = số lô. "Xe mới" trên dòng lô = cả lô vào một xe; đơn không thuộc lô nào ở nhóm "Ngoài lô" cuối bảng.' : undefined}
-                className={`rounded px-1.5 py-0.5 ${f.boardGroup === k ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
+                className={`whitespace-nowrap rounded px-1.5 py-0.5 ${f.boardGroup === k ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
                 {l}{k === 'lot' && lotCount > 0 && <span className={`ml-1 font-semibold tabular-nums ${f.boardGroup === k ? '' : 'text-amber-700'}`}>{lotCount}</span>}
               </button>
             ))}

@@ -34,8 +34,8 @@ import { useEdgeFade } from '@/hooks/useEdgeFade'
 import { toast } from '@/components/ui/use-toast'
 import {
   useVehicleTypes, useMoveDispatchOds, previewDispatchMove, useUpdateDispatchTrip, useDeleteDispatchTrip, useReplaceDispatchOd, useReoptimizeDispatchPlan,
-  useHoldDispatchOds, useResyncDispatchOd, useDispatchPlanReview, useVehicleModels, useTransportCompanies,
-  type DispatchPlan, type DispatchTrip, type DispatchTripOd, type DispatchOdFlag, type DispatchMoveTo, type DispatchMovePreview,
+  useHoldDispatchOds, useResyncDispatchOd, useDispatchPlanReview, useVehicleModels, useTransportCompanies, tripRestoreOf,
+  type DispatchPlan, type DispatchTrip, type DispatchTripOd, type DispatchOdFlag, type DispatchMoveTo, type DispatchMovePreview, type DispatchTripRestore,
 } from '@/api/hooks'
 import { DispatchBoardTable, type BoardOps, type BoardDropAttrs, type BoardPoolGroup } from './DispatchBoardTable'
 import { DispatchOdDetailSheet, type OdSummary } from './DispatchOdDetailSheet'
@@ -48,7 +48,7 @@ import { DispatchLoadBandDialog, DispatchLoadBandChip, useLoadBandParents, fullB
 import { NewOdChip } from './DispatchReviewTable'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
-import { EDITABLE, tripStatus, issuesOf, needsWork, ISSUE_ORDER, ISSUE_SHORT, TODO_KEYS, RED_ISSUES, FLAG_VI, selectionAfterMove, poolLotGroups, lotTip, type IssueKey, type IssueCtx } from './dispatchIssues'
+import { EDITABLE, tripStatus, issuesOf, needsWork, ISSUE_ORDER, ISSUE_SHORT, TODO_KEYS, RED_ISSUES, FLAG_VI, selectionAfterMove, poolLotGroups, lotTip, liveTripId, undoSteps, type IssueKey, type IssueCtx } from './dispatchIssues'
 import { useScopeCatSet } from '@/hooks/useUserScope'
 
 const nf = (n: number | string | null | undefined, d = 0) => (n == null ? '—' : Number(n).toLocaleString('vi-VN', { maximumFractionDigits: d }))
@@ -75,7 +75,8 @@ export const ruleDialog = (e: unknown) => ({
 })
 const DRAG_MIME = 'application/x-dispatch-ods'
 const uniqStr = (a: string[]) => [...new Set(a)]
-type Op = { ids: string[]; to: DispatchMoveTo; to_trip_id?: string; prev: Map<string, string | null>; created?: string }
+// `trips` = xe nguồn chụp lúc chuyển: xe hết OD bị server bỏ ngay (15/10) ⇒ Hoàn tác dựng lại đúng xe đó từ bản chụp
+type Op = { ids: string[]; to: DispatchMoveTo; to_trip_id?: string; prev: Map<string, string | null>; created?: string; trips?: Map<string, DispatchTripRestore> }
 
 function useIsDesktop() {
   const [d, setD] = useState(() => typeof window !== 'undefined' && window.matchMedia('(min-width: 1024px)').matches)
@@ -139,6 +140,8 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
   const [sel, setSel] = useState<Set<string>>(new Set())
   const [undoStack, setUndo] = useState<Op[]>([])
   const [redoStack, setRedo] = useState<Op[]>([])
+  // xe đã bị bỏ (hết OD) rồi Hoàn tác dựng lại mang id MỚI — các bước cũ hơn trong ngăn còn trỏ id cũ ⇒ id cũ → id mới
+  const rebuilt = useRef(new Map<string, string>())
   const [busy, setBusy] = useState(false)
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
   const [showSide, setShowSide] = useState<'' | 'unplanned' | 'excluded'>('')
@@ -161,7 +164,7 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
   const [odDetail, setOdDetail] = useState<DispatchTripOd | null>(null)
   const odInfo = useDispatchPlanReview(odDetail ? plan.id : null, plan.updated_at)
   const pvCache = useRef(new Map<string, DispatchMovePreview>())
-  useEffect(() => { setSel(new Set()); setUndo([]); setRedo([]); setOdDetail(null); pvCache.current.clear() }, [plan.id])
+  useEffect(() => { setSel(new Set()); setUndo([]); setRedo([]); setOdDetail(null); pvCache.current.clear(); rebuilt.current.clear() }, [plan.id])
   useEffect(() => { pvCache.current.clear() }, [plan.updated_at, plan.trips])   // bật/tắt switch ghép loại không đổi updated_at của kế hoạch
   // dòng đã chọn mà không còn (người khác vừa chuyển / bỏ) thì bỏ khỏi lựa chọn
   useEffect(() => { setSel(p => { const n = new Set([...p].filter(id => rowBy.has(id))); return n.size === p.size ? p : n }) }, [rowBy])
@@ -171,20 +174,22 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
     : toast({ variant: 'destructive', title, description: apiMsg(e) })
 
   // ── MỘT cửa ghi cho mọi lần thả / chuyển (kể cả Hoàn tác) ──
-  const run = useCallback(async (ids: string[], to: DispatchMoveTo, to_trip_id?: string, record = true) => {
+  const run = useCallback(async (ids: string[], to: DispatchMoveTo, to_trip_id?: string, record = true, restore?: DispatchTripRestore) => {
     if (!ids.length) return null
     const prev = new Map(ids.map(id => [id, tripOf.get(id) ?? null]))
+    const src = new Set(prev.values())
+    const trips = new Map(plan.trips.filter(t => src.has(t.id)).map(t => [t.id, tripRestoreOf(t)]))
     setBusy(true)
     try {
-      const p = await move.mutateAsync({ plan_id: plan.id, ids, to, to_trip_id })
+      const p = await move.mutateAsync({ plan_id: plan.id, ids, to, to_trip_id, restore })
       const created = to === 'new' ? p.trips.find(t => t.ods.some(o => o.id === ids[0]))?.id : undefined
-      if (record) { setUndo(s => [...s.slice(-49), { ids, to, to_trip_id, prev, created }]); setRedo([]) }
+      if (record) { setUndo(s => [...s.slice(-49), { ids, to, to_trip_id, prev, created, trips }]); setRedo([]) }
       // chỉ bỏ chọn các đơn VỪA chuyển — người tick tiếp trong lúc chờ kế hoạch lớn trả lời thì không được mất các ô đó
       setSel(s => selectionAfterMove(s, ids))
       setJustHit(to === 'trip' ? to_trip_id ?? null : created ?? null)
       return p
     } catch (e) { err(e, 'Không chuyển được OD'); return null } finally { setBusy(false) }
-  }, [move, plan.id, tripOf])
+  }, [move, plan.id, plan.trips, tripOf])
 
   // Ctrl+Z lúc lần chuyển trước chưa xong (kế hoạch lớn trả lời ~8 s) từng bị bỏ qua IM LẶNG — người tưởng Hoàn tác hỏng
   const waitPrev = () => toast({ title: 'Đang chờ lần chuyển trước xong', description: 'Bàn cập nhật xong thì bấm lại.' })
@@ -193,25 +198,23 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
     if (busy) { waitPrev(); return }   // kể cả lần chuyển ĐẦU còn đang chạy (chưa vào ngăn hoàn tác)
     if (!op) return
     setUndo(s => s.slice(0, -1))
-    const byPrev = new Map<string | null, string[]>()
-    for (const id of op.ids) { if (!rowBy.has(id)) continue; const k = op.prev.get(id) ?? null; byPrev.set(k, [...(byPrev.get(k) ?? []), id]) }
-    let last: DispatchPlan | null = null
-    for (const [tid, ids] of byPrev) {
-      const exists = tid ? plan.trips.some(t => t.id === tid) : false
-      last = await run(ids, tid ? (exists ? 'trip' : 'new') : 'pool', exists ? tid ?? undefined : undefined, false) ?? last
+    // xe mới do thao tác đó sinh ra mà giờ hết OD thì server tự bỏ (15/10); xe cũ đã bị bỏ thì dựng lại từ bản chụp — bàn về đúng như trước
+    for (const s of undoSteps(op.prev, op.ids, rowBy, new Set(plan.trips.map(t => t.id)), op.trips, rebuilt.current)) {
+      const p = await run(s.ids, s.to, s.to_trip_id, false, s.restore)
+      const nt = p && s.to === 'new' && s.tid ? p.trips.find(t => t.ods.some(o => o.id === s.ids[0]))?.id : undefined
+      if (s.tid && nt) rebuilt.current.set(s.tid, nt)
     }
-    // xe mới do thao tác đó sinh ra mà giờ trống ⇒ bỏ luôn, Hoàn tác trả bàn về đúng như trước
-    if (op.created && last?.trips.some(t => t.id === op.created && !t.ods.length)) await delTrip.mutateAsync(op.created).catch(() => undefined)
     setRedo(s => [...s, op])
-  }, [undoStack, busy, rowBy, plan.trips, run, delTrip])
+  }, [undoStack, busy, rowBy, plan.trips, run])
   const redo = useCallback(async () => {
     const op = redoStack[redoStack.length - 1]
     if (busy) { waitPrev(); return }   // kể cả lần chuyển ĐẦU còn đang chạy (chưa vào ngăn hoàn tác)
     if (!op) return
     setRedo(s => s.slice(0, -1))
     const ids = op.ids.filter(id => rowBy.has(id))
-    const tgtExists = op.to_trip_id ? plan.trips.some(t => t.id === op.to_trip_id) : true
-    const p = await run(ids, op.to === 'trip' && !tgtExists ? 'new' : op.to, tgtExists ? op.to_trip_id : undefined, false)
+    const tgt = op.to_trip_id ? liveTripId(rebuilt.current, op.to_trip_id) : undefined
+    const tgtExists = tgt ? plan.trips.some(t => t.id === tgt) : true
+    const p = await run(ids, op.to === 'trip' && !tgtExists ? 'new' : op.to, tgtExists ? tgt : undefined, false)
     if (p) setUndo(s => [...s, { ...op, created: op.to === 'new' ? p.trips.find(t => t.ods.some(o => o.id === ids[0]))?.id : op.created }])
   }, [redoStack, busy, rowBy, plan.trips, run])
   useEffect(() => {

@@ -6265,14 +6265,20 @@ export function useDispatchPlanOd(id: string | null, od: string | null) {
 export type DispatchMoveTo = 'trip' | 'new' | 'pool' | 'remove' | 'unplan'
 /** Khoá chung của các thao tác bàn ghép xe — realtime hoãn hỏi dấu kế hoạch khi chính người này còn đang ghi (06/10). */
 export const DISPATCH_WRITE_KEY = ['dispatch-write'] as const
+/** Xe nguồn chụp lúc chuyển (15/10): xe hết OD bị bỏ ngay ⇒ Hoàn tác dựng lại đúng xe đó (`move {to:'new', restore}`). */
+export interface DispatchTripRestore { seq: number; vehicle_model_ids: string[]; transport_company_id: string | null; locked: boolean; allow_mix_categories: boolean | null }
+export const tripRestoreOf = (t: DispatchTrip): DispatchTripRestore => ({
+  seq: t.seq, vehicle_model_ids: t.vehicle_model_id ? [t.vehicle_model_id, ...(t.extra_vehicle_model_ids ?? [])] : [],
+  transport_company_id: t.transport_company_id, locked: t.locked === true, allow_mix_categories: t.allow_mix_categories ?? null,
+})
 export function useMoveDispatchOds() {
   const qc = useQueryClient()
   return useMutation({
     mutationKey: DISPATCH_WRITE_KEY,
     // 06/10 (user: "thao tác ở phần thay đổi"): server trả CÁC XE BỊ ĐỤNG + tổng kết + dấu, không trả cả kế hoạch (709 xe = 3,9 MB);
     // ghép vào kế hoạch đang giữ. Chưa có kế hoạch trong cache (hiếm) thì tải một lần.
-    mutationFn: async ({ plan_id, ids, to, to_trip_id }: { plan_id: string; ids: string[]; to: DispatchMoveTo; to_trip_id?: string }) => {
-      const d = (await apiClient.post(`/tms/dispatch/plans/${plan_id}/move`, { ids, to, ...(to_trip_id ? { to_trip_id } : {}), delta: true })).data.data as DispatchPlanDelta
+    mutationFn: async ({ plan_id, ids, to, to_trip_id, restore }: { plan_id: string; ids: string[]; to: DispatchMoveTo; to_trip_id?: string; restore?: DispatchTripRestore }) => {
+      const d = (await apiClient.post(`/tms/dispatch/plans/${plan_id}/move`, { ids, to, ...(to_trip_id ? { to_trip_id } : {}), ...(restore ? { restore } : {}), delta: true })).data.data as DispatchPlanDelta
       const old = qc.getQueryData<DispatchPlan>(['dispatch-plan', plan_id])
       return old ? applyDispatchDelta(old, d) : (await apiClient.get(`/tms/dispatch/plans/${plan_id}`)).data.data as DispatchPlan
     },

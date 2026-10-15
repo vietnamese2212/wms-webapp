@@ -594,9 +594,9 @@ try {
   await restWrite('Customer', 'DELETE', `ship_to_code=eq.QA61SHIP4`).catch(() => {})
 
   // ── [10] BÀN GHÉP XE + POOL LŨY TIẾN (user chốt 25/09) ──────────────────────────────────────────────
-  // Kéo thả = MỘT cửa `POST /plans/:id/move` (xe · xe mới · khung chờ · bỏ); vượt tải CHO THẢ đánh dấu đỏ; xe trống KHÔNG tự
-  // biến mất (Hoàn tác phải thả lại được đúng xe); khoá xe + "Tối ưu lại phần chưa khoá"; OD đã điều / đã đi / bị SAP thay
-  // phải tự rời đợt ghép và chặn Xác nhận; OD tồn đọng (ngày giao trước) gộp vào kèm số ngày trễ.
+  // Kéo thả = MỘT cửa `POST /plans/:id/move` (xe · xe mới · khung chờ · bỏ); sai luật ghép xe CHẶN (14/10); xe hết OD bị BỎ ngay
+  // (15/10 — trước đó giữ xe trống để Hoàn tác, nay Hoàn tác dựng lại xe từ `restore`); khoá xe + "Tối ưu lại phần chưa khoá"; OD đã
+  // điều / đã đi / bị SAP thay phải tự rời đợt ghép và chặn Xác nhận; OD tồn đọng (ngày giao trước) gộp vào kèm số ngày trễ.
   await cleanupTrips()
   const rowOf = (pl, od) => [...(pl?.trips ?? []).flatMap(t => t.ods), ...(pl?.pool ?? [])].find(o => o.od_number === od)
   const mvB = (pl, body) => api(`/tms/dispatch/plans/${pl.id}/move`, 'POST', body)
@@ -683,15 +683,42 @@ try {
   check('10d. Thả OD2 vào "Xe mới" → xe STT kế tiếp, MÁY chọn dòng xe QA61 + ĐVVT DA (chỉ DA có cước W1) · cước 200.000 × 3',
     mn.s === 200 && (B?.trips ?? []).length === 3 && TN?.detail?.vehicle_model?.sap_code === SAP && TN?.detail?.carrier?.code === DA.code && Number(TN?.detail?.freight?.base) === PRICE_DA * 3,
     `http=${mn.s} ${mn.j?.error?.message ?? ''} vm=${TN?.detail?.vehicle_model?.sap_code} co=${TN?.detail?.carrier?.code} base=${TN?.detail?.freight?.base}`)
-  const mt = await mvB(B, { ids: [rowOf(B, OD[1]).id], to: 'trip', to_trip_id: tripOfOd(B, OD[0]).id })
-  B = mt.j?.data
-  const emptyTrip = (B?.trips ?? []).find(t => t.id === TN?.id)
-  check('10e. Thả OD2 về xe OD1 → 7 pallet; xe mới còn TRỐNG (không tự xoá — Hoàn tác thả lại đúng xe) và KHÔNG tính vào số chuyến',
-    mt.s === 200 && Number(tripOfOd(B, OD[0])?.pallets) === 7 && !!emptyTrip && emptyTrip.ods.length === 0 && B?.summary?.trips === 2 && B?.summary?.empty_trips === 1,
-    `http=${mt.s} x1=${tripOfOd(B, OD[0])?.pallets} empty=${emptyTrip?.ods?.length} trips=${B?.summary?.trips} empty_n=${B?.summary?.empty_trips}`)
+  // 15/10 (user: "gỡ đơn ra khỏi xe 31 thì phải xoá cả xe — nó vẫn đang treo ở đó"): bản 25/09 ở đây KHOÁ hành vi cũ "xe trống không tự xoá"
+  const mt = await mvB(B, { ids: [rowOf(B, OD[1]).id], to: 'trip', to_trip_id: tripOfOd(B, OD[0]).id, delta: true })
+  B = await planOf(B.id)
+  check('10e. Thả OD2 (đơn duy nhất của xe mới) về xe OD1 → 7 pallet · xe mới HẾT OD bị BỎ ngay — delta nêu removed_trip_ids, kế hoạch không còn xe trống',
+    mt.s === 200 && (mt.j?.data?.removed_trip_ids ?? []).includes(TN?.id) && !(mt.j?.data?.trips ?? []).some(t => t.id === TN?.id) && Number(tripOfOd(B, OD[0])?.pallets) === 7
+    && !(B?.trips ?? []).some(t => t.id === TN?.id) && B?.summary?.trips === 2 && (B?.summary?.empty_trips ?? 0) === 0,
+    `http=${mt.s} ${mt.j?.error?.message ?? ''} removed=${(mt.j?.data?.removed_trip_ids ?? []).length} x1=${tripOfOd(B, OD[0])?.pallets} xeMớiCòn=${(B?.trips ?? []).some(t => t.id === TN?.id)} trips=${B?.summary?.trips} empty_n=${B?.summary?.empty_trips}`)
+  // [10e2] Hoàn tác (Ctrl+Z) dựng lại xe đã bị bỏ: `to:'new'` + `restore` (bản chụp xe lúc chuyển) ⇒ đúng SỐ xe cũ khi số còn trống (không
+  //        phải số kế tiếp như Xe mới) · dòng xe · ĐVVT · khoá; số đã có xe khác giữ ⇒ số khác; `restore` với to ≠ new ⇒ 400
+  {
+    const free = Math.max(0, ...(B?.trips ?? []).map(t => t.seq)) + 5
+    const rs = { seq: free, vehicle_model_ids: TN?.vehicle_model_id ? [TN.vehicle_model_id] : [], transport_company_id: TN?.transport_company_id ?? null, locked: true, allow_mix_categories: null }
+    const u1 = await mvB(B, { ids: [rowOf(B, OD[1]).id], to: 'new', restore: rs, delta: true })
+    B = await planOf(B.id)
+    const R1 = tripOfOd(B, OD[1]), held = tripOfOd(B, OD[2])?.seq
+    await mvB(B, { ids: [rowOf(B, OD[1]).id], to: 'trip', to_trip_id: tripOfOd(B, OD[0]).id })
+    B = await planOf(B.id)
+    const u2 = await mvB(B, { ids: [rowOf(B, OD[1]).id], to: 'new', restore: { ...rs, seq: held, locked: false } })
+    B = await planOf(B.id)
+    const R2 = tripOfOd(B, OD[1])
+    const bad = await mvB(B, { ids: [rowOf(B, OD[1]).id], to: 'pool', restore: rs })
+    await mvB(B, { ids: [rowOf(B, OD[1]).id], to: 'trip', to_trip_id: tripOfOd(B, OD[0]).id })   // trả lại như [10e] cho các bước sau
+    B = await planOf(B.id)
+    check('10e2. Hoàn tác dựng lại xe đã bỏ (restore): đúng số xe cũ còn trống (không phải số kế tiếp) · dòng xe · ĐVVT · khoá — số đã có xe giữ ⇒ số khác, không trùng · restore với to ≠ new → 400 · trả về xe OD1 thì xe dựng lại lại bị bỏ',
+      u1.s === 200 && R1?.seq === free && R1?.vehicle_model_id === (rs.vehicle_model_ids[0] ?? null) && R1?.transport_company_id === rs.transport_company_id && R1?.locked === true
+      && u2.s === 200 && !!R2 && R2.seq !== held && R2.locked === false && bad.s === 400 && (B?.trips ?? []).length === 2 && Number(tripOfOd(B, OD[0])?.pallets) === 7,
+      `u1=${u1.s} ${u1.j?.error?.message ?? ''} số=${R1?.seq}/${free} xe=${R1?.vehicle_model_id === (rs.vehicle_model_ids[0] ?? null)} đvvt=${R1?.transport_company_id === rs.transport_company_id} khoá=${R1?.locked} · u2=${u2.s} số=${R2?.seq} (giữ ${held}) khoá=${R2?.locked} · sai=${bad.s} · xe=${(B?.trips ?? []).length} x1=${tripOfOd(B, OD[0])?.pallets}`)
+  }
+  // xe trống chỉ còn là xe SÓT từ trước 15/10 (ghi thẳng) — cửa ✕ "Bỏ xe trống" vẫn phải bỏ được nó
+  const legacy = crypto.randomUUID()
+  await restWrite('dispatch_trip', 'POST', null, { id: legacy, plan_id: B.id, seq: 77, group_code: `${PREFIX}77`, stops: 0, status: 'DRAFT', updated_at: nowIso() })
   const dne = await api(`/tms/dispatch/trips/${tripOfOd(B, OD[0]).id}`, 'DELETE')
-  const de = await api(`/tms/dispatch/trips/${TN.id}`, 'DELETE')
-  check('10f. Bỏ xe còn OD → 409 TRIP_NOT_EMPTY · bỏ xe trống → 200', dne.s === 409 && dne.j?.error?.code === 'TRIP_NOT_EMPTY' && de.s === 200, `nonempty=${dne.s}/${dne.j?.error?.code} empty=${de.s}`)
+  const de = await api(`/tms/dispatch/trips/${legacy}`, 'DELETE')
+  const dg = await api(`/tms/dispatch/trips/${TN.id}`, 'DELETE')
+  check('10f. Bỏ xe còn OD → 409 TRIP_NOT_EMPTY · bỏ xe trống sót từ trước → 200 · xe đã bị bỏ → 404', dne.s === 409 && dne.j?.error?.code === 'TRIP_NOT_EMPTY' && de.s === 200 && dg.s === 404,
+    `nonempty=${dne.s}/${dne.j?.error?.code} empty=${de.s} gone=${dg.s}`)
   B = await planOf(B.id)
   const X3g = tripOfOd(B, OD[2])
   const mo = await mvB(B, { ids: [rowOf(B, OD[2]).id], to: 'trip', to_trip_id: tripOfOd(B, OD[0]).id })
@@ -2131,8 +2158,8 @@ try {
       check('20b. Rào DB trg_dispatch_od_trip_frozen: đổi trip_id của dòng OD trên xe CONFIRMED (ghi thẳng PostgREST) → từ chối TRIP_NOT_EDITABLE',
         /TRIP_NOT_EDITABLE/.test(rail), rail.slice(0, 160))
     } else check('20a. Fixture đua: lập kế hoạch có OD2 trên xe', false, `http=${p20.s} ${p20.j?.error?.message ?? ''} trips=${P20?.trips?.length}`)
-    // [20c] XE TRỐNG lúc Xác nhận (11/10): kéo OD1 ra xe mới rồi kéo trả lại ⇒ xe mới trống (giữ để Hoàn tác); Xác nhận phải BỎ xe trống,
-    //       kế hoạch không được thành "Chờ ĐVVT" với 0 xe chờ
+    // [20c] XE TRỐNG lúc Xác nhận (11/10): Xác nhận phải BỎ xe trống, kế hoạch không được thành "Chờ ĐVVT" với 0 xe chờ. Từ 15/10 kéo OD1
+    //       ra xe mới rồi kéo trả KHÔNG còn để lại xe trống (xe hết OD bị bỏ ngay) ⇒ xe trống ở đây là xe SÓT từ trước 15/10 (ghi thẳng)
     await cleanupTrips()
     const p20c = await mkPlan(PLAN_BODY)
     const Pc = p20c.j?.data
@@ -2140,15 +2167,17 @@ try {
     if (p20c.s === 201 && tA && od1) {
       const mvN = await api(`/tms/dispatch/plans/${Pc.id}/move`, 'POST', { ids: [od1.id], to: 'new', delta: true })
       const back = await api(`/tms/dispatch/plans/${Pc.id}/move`, 'POST', { ids: [od1.id], to: 'trip', to_trip_id: tA.id, delta: true })
+      const left = (await planOf(Pc.id))?.trips?.filter(t => !t.ods.length).length
+      await restWrite('dispatch_trip', 'POST', null, { id: crypto.randomUUID(), plan_id: Pc.id, seq: 88, group_code: `${PREFIX}88`, stops: 0, status: 'DRAFT', updated_at: nowIso() })
       const mid = await planOf(Pc.id)
       const emptyBefore = (mid?.trips ?? []).filter(t => !t.ods.length).length
       const cfc = await api(`/tms/dispatch/plans/${Pc.id}/confirm`, 'POST', {})
       const fin = await planOf(Pc.id)
       const emptyAfter = (fin?.trips ?? []).filter(t => !t.ods.length && t.status !== 'DISCARDED').length
-      check('20c. Xe trống còn lại sau kéo thả → Xác nhận bỏ nó (discarded_empty = 1), không còn xe trống, kế hoạch không "Chờ ĐVVT" với 0 xe chờ',
-        mvN.s === 200 && back.s === 200 && emptyBefore === 1 && cfc.s === 200 && cfc.j?.data?.discarded_empty === 1 && emptyAfter === 0
+      check('20c. Kéo ra xe mới rồi kéo trả → xe mới bị bỏ ngay (không xe trống) · xe trống SÓT từ trước → Xác nhận bỏ nó (discarded_empty = 1), không còn xe trống, kế hoạch không "Chờ ĐVVT" với 0 xe chờ',
+        mvN.s === 200 && back.s === 200 && (back.j?.data?.removed_trip_ids ?? []).length === 1 && left === 0 && emptyBefore === 1 && cfc.s === 200 && cfc.j?.data?.discarded_empty === 1 && emptyAfter === 0
         && (fin?.status !== 'TENDERED' || (fin?.summary?.tendered ?? 0) > 0),
-        `new=${mvN.s} back=${back.s} trốngTrước=${emptyBefore} confirm=${cfc.s} discarded_empty=${cfc.j?.data?.discarded_empty} trốngSau=${emptyAfter} plan=${fin?.status} tendered=${fin?.summary?.tendered}`)
+        `new=${mvN.s} back=${back.s} bỏNgay=${(back.j?.data?.removed_trip_ids ?? []).length} trốngSauKéo=${left} trốngTrước=${emptyBefore} confirm=${cfc.s} discarded_empty=${cfc.j?.data?.discarded_empty} trốngSau=${emptyAfter} plan=${fin?.status} tendered=${fin?.summary?.tendered}`)
     } else check('20c. Fixture xe trống: lập kế hoạch', false, `http=${p20c.s}`)
     // [20d] (11/10) Mở lại HẾT rồi Bỏ nháp ⇒ kế hoạch ĐÃ BỎ (bản cũ: syncPlanStatus thấy xe DISCARDED là xếp "Chờ ĐVVT" với 0 xe ⇒ băng "nháp quá
     //       ngày" sống mãi), và dòng OD của nháp bị bỏ (khung chờ + xe bỏ) được dọn — xe CONFIRMED giữ dòng

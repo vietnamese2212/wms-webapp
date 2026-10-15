@@ -313,7 +313,8 @@ export default function Dispatch() {
       })
       return
     }
-    // xe trống (hết OD sau kéo thả, giữ để Hoàn tác) bị bỏ lúc xác nhận — nói trước, kẻo kế hoạch thành "Chờ ĐVVT" với 0 xe chờ (11/10)
+    // xe trống bị bỏ lúc xác nhận — nói trước, kẻo kế hoạch thành "Chờ ĐVVT" với 0 xe chờ (11/10). Từ 15/10 kéo thả bỏ xe hết OD ngay;
+    // còn đếm cho xe trống sót từ trước
     const emptyN = open.filter(t => !t.ods.length).length
     const rows: CheckRow[] = ([
       { k: 'now', tone: 'ok', label: 'Xe vào Kế hoạch xuất ngay', value: nf(n - tenderCount) },

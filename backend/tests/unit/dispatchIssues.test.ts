@@ -4,7 +4,7 @@
 // Xác nhận; cửa Xác nhận và bảng Xem đơn đã đọc đúng) mà bộ đếm này vẫn tính là "OD đổi ở SAP" ⇒ Bàu Bàng 06/10: 695/709 xe "cần xử lý",
 // bảng mới tô đỏ gần hết xe. Hai cửa cùng một sổ mà khác luật (C19) — khoá ở đây.
 import { describe, it, expect } from 'vitest'
-import { issuesOf, needsWork, selectionAfterMove, inPlanRow, boardPlanOf, planHoldsOrders, outOfScopeCats, poolLotGroups, rowVehiclesTicked } from '../../../frontend/src/components/tms/dispatchIssues'
+import { issuesOf, needsWork, selectionAfterMove, inPlanRow, boardPlanOf, planHoldsOrders, outOfScopeCats, poolLotGroups, rowVehiclesTicked, undoSteps, liveTripId } from '../../../frontend/src/components/tms/dispatchIssues'
 import type { DispatchTrip, DispatchOdFlag, DispatchPlan, DispatchTripOd } from '../../../frontend/src/api/hooks'
 
 const trip = (ods: string[]): DispatchTrip => ({
@@ -75,6 +75,35 @@ describe('selectionAfterMove — lựa chọn sau một lần chuyển', () => {
   })
   it('chuyển đúng các đơn đã tick ⇒ lựa chọn rỗng như trước', () => {
     expect(selectionAfterMove(new Set(['a']), ['a']).size).toBe(0)
+  })
+})
+
+// 15/10 (user: "gỡ đơn ra khỏi xe 31 thì phải xoá cả xe"): server bỏ xe hết OD ngay ⇒ Hoàn tác phải DỰNG LẠI đúng xe đó từ bản chụp, không
+// "Xe mới" để máy chọn; bước Hoàn tác cũ hơn còn trỏ id xe cũ ⇒ đi theo id của xe vừa dựng lại
+describe('undoSteps — Hoàn tác khi xe nguồn đã bị bỏ', () => {
+  const snap = { seq: 31, vehicle_model_ids: ['vm'], transport_company_id: 'co', locked: false, allow_mix_categories: null }
+  const prev = new Map<string, string | null>([['a', 'X'], ['b', 'X'], ['c', 'Y'], ['d', null]])
+  it('xe cũ còn ⇒ thả vào xe đó · khung chờ ⇒ pool · dòng không còn trên bàn thì bỏ qua', () => {
+    const s = undoSteps(prev, ['a', 'b', 'c', 'd', 'z'], new Set(['a', 'b', 'c', 'd']), new Set(['X', 'Y']), new Map([['X', snap]]), new Map())
+    expect(s).toEqual([
+      { tid: 'X', ids: ['a', 'b'], to: 'trip', to_trip_id: 'X' },
+      { tid: 'Y', ids: ['c'], to: 'trip', to_trip_id: 'Y' },
+      { tid: null, ids: ['d'], to: 'pool' },
+    ])
+  })
+  it('xe cũ đã bị bỏ ⇒ to:new kèm BẢN CHỤP của chính xe đó (số xe · dòng xe · ĐVVT)', () => {
+    const s = undoSteps(prev, ['a', 'b'], new Set(['a', 'b']), new Set(['Y']), new Map([['X', snap]]), new Map())
+    expect(s).toEqual([{ tid: 'X', ids: ['a', 'b'], to: 'new', restore: snap }])
+  })
+  it('xe đã dựng lại ở lần Hoàn tác trước (X → X2 → X3) ⇒ thả vào id MỚI nhất, không dựng thêm xe thứ hai', () => {
+    const rebuilt = new Map([['X', 'X2'], ['X2', 'X3']])
+    expect(liveTripId(rebuilt, 'X')).toBe('X3')
+    const s = undoSteps(prev, ['a'], new Set(['a']), new Set(['X3', 'Y']), new Map([['X', snap]]), rebuilt)
+    expect(s).toEqual([{ tid: 'X', ids: ['a'], to: 'trip', to_trip_id: 'X3' }])
+  })
+  it('id dựng lại cũng đã bị bỏ ⇒ dựng lại lần nữa từ bản chụp của xe GỐC', () => {
+    const s = undoSteps(prev, ['a'], new Set(['a']), new Set(['Y']), new Map([['X', snap]]), new Map([['X', 'X2']]))
+    expect(s).toEqual([{ tid: 'X', ids: ['a'], to: 'new', restore: snap }])
   })
 })
 

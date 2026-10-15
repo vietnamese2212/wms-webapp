@@ -92,6 +92,26 @@ export const selectionAfterMove = (sel: Set<string>, moved: string[]): Set<strin
   for (const id of moved) n.delete(id)
   return n
 }
+/** Id hiện hành của một xe trong ngăn Hoàn tác — xe bị bỏ (hết OD) rồi Hoàn tác dựng lại mang id MỚI, có thể nhiều lần (id cũ → id mới, nối chuỗi). */
+export const liveTripId = (rebuilt: Map<string, string>, id: string): string => {
+  let x = id
+  for (let n = 0; n < 50 && rebuilt.has(x); n++) x = rebuilt.get(x)!
+  return x
+}
+export interface UndoStep<R> { tid: string | null; ids: string[]; to: 'trip' | 'new' | 'pool'; to_trip_id?: string; restore?: R }
+/** HOÀN TÁC một lần chuyển (15/10): trả các dòng còn trên bàn về chỗ cũ, mỗi chỗ cũ một bước. Xe cũ còn ⇒ thả vào xe đó; xe cũ đã bị bỏ
+ *  vì hết OD (server bỏ ngay — user: "gỡ đơn ra khỏi xe thì xoá cả xe") ⇒ dựng lại ĐÚNG xe đó từ bản chụp lúc chuyển (`to:'new'` +
+ *  `restore`), không để máy chọn như Xe mới; xe đã dựng lại ở lần Hoàn tác trước ⇒ thả vào id mới (`rebuilt`). */
+export function undoSteps<R>(prev: Map<string, string | null>, ids: string[], onBoard: { has: (id: string) => boolean }, tripIds: Set<string>,
+  snaps: Map<string, R> | undefined, rebuilt: Map<string, string>): UndoStep<R>[] {
+  const by = new Map<string | null, string[]>()
+  for (const id of ids) { if (!onBoard.has(id)) continue; const k = prev.get(id) ?? null; by.set(k, [...(by.get(k) ?? []), id]) }
+  return [...by].map(([tid, part]): UndoStep<R> => {
+    if (!tid) return { tid, ids: part, to: 'pool' }
+    const cur = liveTripId(rebuilt, tid)
+    return tripIds.has(cur) ? { tid, ids: part, to: 'trip', to_trip_id: cur } : { tid, ids: part, to: 'new', restore: snaps?.get(tid) }
+  })
+}
 /** KHUNG CHỜ GOM THEO LÔ (15/10, user: "khối vàng và bảng đang diễn giải gần giống nhau — gom lại dạng table, vừa đủ thông tin vừa dễ thao
  *  tác"; thay khối vàng "n đơn dưới tối thiểu" chỉ in 6 lô): mỗi LÔ máy định xếp mà KHÔNG tạo xe là một nhóm của bảng khung chờ — lô dưới
  *  Tối thiểu % (`under_min`, hổ phách) và đơn lớn hơn xe (`too_big`, đỏ, mỗi đơn một lô); đơn còn lại ở nhóm "Ngoài lô" cuối bảng. Lô nhận

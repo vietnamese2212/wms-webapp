@@ -1523,20 +1523,34 @@ try {
       rsy.s === 200 && rsy.j?.data?.resynced?.pallets_before === 4 && Number(rsy.j?.data?.resynced?.pallets_after) === 5 && tAfter?.id === tBefore?.id && Number(tAfter?.pallets) === 5 && Number(tAfter?.detail?.freight?.base) === PRICE_DA * 5
       && rsy3.s === 200 && rowNow(PR, OD[2])?.trip_id == null && rowNow(PR, OD[2])?.note === 'QA61 NPP hẹn giao sáng' && !(syC2.j?.data?.flags ?? []).some(x => x.kind === 'CHANGED') && rsyNo.s === 404,
       `r1=${rsy.s} ${rsy.j?.error?.message ?? ''} ${JSON.stringify(rsy.j?.data?.resynced)} same=${tAfter?.id === tBefore?.id} pal=${tAfter?.pallets} base=${tAfter?.detail?.freight?.base} r3=${rsy3.s} note=${rowNow(PR, OD[2])?.note} flags=${JSON.stringify(syC2.j?.data?.flags)} no=${rsyNo.s}`)
-    // Dòng xe được vào của KHÁCH sửa từ bàn — chỉ cột dòng xe; OD của khách trên nháp chụp lại danh sách ngay
-    const vms = (await api('/tms/vehicle-models')).j?.data?.items ?? []
-    const pick = vms.find(m => m.is_active && m.id !== vmId && m.sap_code !== SAP)
-    const gV = await api(`/tms/dispatch/plans/${pid(PR)}/customers/${SHIP[0]}/vehicles`)
-    const gNo = await api(`/tms/dispatch/plans/${pid(PR)}/customers/QA61KHONGCO/vehicles`)
-    const pBad = await api(`/tms/dispatch/plans/${pid(PR)}/customers/${SHIP[0]}/vehicles`, 'PUT', { dispatch_vehicles: { '*': ['khong-co-that'] } })
-    const pOk = await api(`/tms/dispatch/plans/${pid(PR)}/customers/${SHIP[0]}/vehicles`, 'PUT', { dispatch_vehicles: { '*': [pick?.id] } })
-    const cNow = (await restAll('Customer', `select=dispatch_vehicles,channel&id=eq.${c1.id}`))[0]
-    const snap = [...(pOk.j?.data?.trips ?? []).flatMap(t => t.ods), ...(pOk.j?.data?.pool ?? [])].find(o => o.od_number === OD[0])
+    // 15/10 — icon xe tải = NGOẠI LỆ "dòng xe được vào" CHỈ cho xe của dòng đó (user: "chỉ thay đổi cho chuyến đó thôi"); cấu hình GỐC của
+    // khách KHÔNG đổi. Trước 15/10 cửa này ghi Customer.dispatch_vehicles — phép cũ khoá đúng hành vi đó (user không muốn) ⇒ viết lại.
+    const rid = r => r && r.id   // không viết ${x?.id} trong đường dẫn (thước độ phủ đọc tới dấu '?')
+    const row1 = rowNow(PR, OD[0]), row2 = rowNow(PR, OD[1]), t1 = tripOfOd(PR, OD[0])
+    const cBefore = (await restAll('Customer', `select=dispatch_vehicles&id=eq.${c1.id}`))[0]
+    const gV = await api(`/tms/dispatch/plans/${pid(PR)}/rows/${rid(row1)}/vehicles`)
+    const gNo = await api(`/tms/dispatch/plans/${pid(PR)}/rows/${crypto.randomUUID()}/vehicles`)
+    const tm = gV.j?.data?.trip?.vehicle_model_id ?? vmId   // dòng xe xe OD1 đang chạy — "xe khác" là dòng nào khác nó
+    const pick = (gV.j?.data?.models ?? []).find(m => m.id !== tm)
+    const pBad = await api(`/tms/dispatch/plans/${pid(PR)}/rows/${rid(row1)}/vehicles`, 'PUT', { allowed_models: [crypto.randomUUID()] })
+    const pEmpty = await api(`/tms/dispatch/plans/${pid(PR)}/rows/${rid(row1)}/vehicles`, 'PUT', { allowed_models: [] })
+    const pOk = await api(`/tms/dispatch/plans/${pid(PR)}/rows/${rid(row1)}/vehicles`, 'PUT', { allowed_models: [pick?.id] })
+    const cNow = (await restAll('Customer', `select=dispatch_vehicles&id=eq.${c1.id}`))[0]
     const tW = tripOfOd(pOk.j?.data, OD[0])
-    check('15f. Bàn ghép xe: xem dòng xe khách → 200 (kèm kênh) · ship-to lạ → 404 · id lạ → 400 · lưu → Customer đổi, OD1 chụp danh sách mới, xe OD1 cảnh báo khách không được vào xe QA',
-      gV.s === 200 && gV.j?.data?.ship_to_code === SHIP[0] && gNo.s === 404 && pBad.s === 400 && pOk.s === 200 && JSON.stringify(cNow?.dispatch_vehicles) === JSON.stringify({ '*': [pick?.id] })
-      && JSON.stringify(snap?.allowed_models) === JSON.stringify([pick?.id]) && pOk.j?.data?.customer_vehicles?.ods_updated >= 1 && /không được vào dòng xe/.test((tW?.detail?.warnings ?? []).join(' ')),
-      `get=${gV.s} no=${gNo.s} bad=${pBad.s} ok=${pOk.s} ${pOk.j?.error?.message ?? ''} cust=${JSON.stringify(cNow?.dispatch_vehicles)} snap=${JSON.stringify(snap?.allowed_models)} warn=${(tW?.detail?.warnings ?? []).join(' | ').slice(0, 120)}`)
+    const g2 = await api(`/tms/dispatch/plans/${pid(PR)}/rows/${rid(row1)}/vehicles`)
+    const pPool = await api(`/tms/dispatch/plans/${pid(PR)}/rows/${rid(row2)}/vehicles`, 'PUT', { allowed_models: [tm] })
+    const rst = await api(`/tms/dispatch/plans/${pid(PR)}/rows/${rid(row1)}/vehicles`, 'PUT', { allowed_models: null })
+    PR = rst.j?.data ?? PR
+    const tR = tripOfOd(rst.j?.data, OD[0])
+    const am = (p, od) => JSON.stringify(rowNow(p, od)?.allowed_models)
+    check('15f. Icon xe tải = NGOẠI LỆ chỉ xe đó (15/10): xem → 200 (cấu hình khách · xe đang chạy · dòng xe của kho, chưa ngoại lệ) · dòng lạ → 404 · dòng xe lạ → 400 · rỗng → 400 · lưu [xe khác] → 200: dòng OD1 chụp [xe khác], Customer KHÔNG đổi, xe OD1 cảnh báo "không được vào dòng xe", xem lại báo đang ngoại lệ · đơn ở khung chờ (OD2) → 200 chỉ đúng đơn đó · "Về theo cấu hình khách" → OD1 về như cấu hình, hết cảnh báo',
+      gV.s === 200 && gV.j?.data?.od_number === OD[0] && gV.j?.data?.trip?.id === t1?.id && (gV.j?.data?.models ?? []).some(m => m.id === tm) && gV.j?.data?.exception === false && !!pick
+      && gNo.s === 404 && pBad.s === 400 && pEmpty.s === 400
+      && pOk.s === 200 && am(pOk.j?.data, OD[0]) === JSON.stringify([pick?.id]) && JSON.stringify(cNow?.dispatch_vehicles) === JSON.stringify(cBefore?.dispatch_vehicles)
+      && /không được vào dòng xe/.test((tW?.detail?.warnings ?? []).join(' ')) && pOk.j?.data?.row_vehicles?.trip_seq === t1?.seq && g2.j?.data?.exception === true
+      && pPool.s === 200 && pPool.j?.data?.row_vehicles?.trip_seq == null && am(pPool.j?.data, OD[1]) === JSON.stringify([tm]) && am(pPool.j?.data, OD[0]) === JSON.stringify([pick?.id])
+      && rst.s === 200 && am(rst.j?.data, OD[0]) === JSON.stringify(gV.j?.data?.config) && !/không được vào dòng xe/.test((tR?.detail?.warnings ?? []).join(' ')),
+      `get=${gV.s} ${gV.j?.error?.message ?? ''} exc=${gV.j?.data?.exception}/${g2.j?.data?.exception} no=${gNo.s} bad=${pBad.s} empty=${pEmpty.s} ok=${pOk.s} ${pOk.j?.error?.message ?? ''} cust=${JSON.stringify(cNow?.dispatch_vehicles) === JSON.stringify(cBefore?.dispatch_vehicles) ? 'giữ' : 'ĐỔI'} od1=${am(pOk.j?.data, OD[0])} warn=${(tW?.detail?.warnings ?? []).join(' | ').slice(0, 100)} pool=${pPool.s}/${am(pPool.j?.data, OD[1])} reset=${rst.s}/${am(rst.j?.data, OD[0]) === JSON.stringify(gV.j?.data?.config)}`)
 
     // THẺ NHIỀU XE: OD 14 pallet, khách chỉ được vào xe QA 9 pallet ⇒ KHÔNG tách OD, một thẻ 2 × xe QA (9 + 5), cước = Σ từng xe
     await cleanupTrips()

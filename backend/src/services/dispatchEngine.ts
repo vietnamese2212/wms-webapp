@@ -442,7 +442,8 @@ export function manualRuleBlocks(fleet: EngineModel[], staying: RuleRow[], movin
     if (conds.length && !servesConditions(m, conds))
       out.push({ code: 'CONDITION_MISMATCH', message: `Dòng xe ${m.name} không chở được điều kiện bảo quản ${conds.map(c => o.condLabel?.(c) ?? c).join(' + ')} của đơn${o.modelOnly || o.whole ? ' trên xe' : ' đưa lên'}.` })
     const outList = asked.filter(r => Array.isArray(r.allowed_models) && r.allowed_models.length > 0 && !r.allowed_models.includes(m.id) && !posmOnly(r))
-    if (outList.length) out.push({ code: 'VEHICLE_NOT_ALLOWED', message: `Khách ${few(uniq(outList.map(who)))} không được vào dòng xe ${m.name} (Khách hàng → Dòng xe được vào).` })
+    // 15/10: lối ra cho RIÊNG một xe = icon xe tải trên dòng đơn (ngoại lệ trên bản chụp dòng OD); đổi hẳn = trang Khách hàng
+    if (outList.length) out.push({ code: 'VEHICLE_NOT_ALLOWED', message: `Khách ${few(uniq(outList.map(who)))} không được vào dòng xe ${m.name}. Cho riêng xe này: bấm icon xe tải trên dòng đơn của khách · đổi hẳn: Khách hàng → Dòng xe được vào.` })
   }
   // luật 3: tải SAU thao tác không quá trần dải tải (01/10: trần của dòng xe cha, vd 105 %) — chỉ khi lần này THÊM tải hoặc đổi xe
   if (m0 && asked.length) {

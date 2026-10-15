@@ -130,8 +130,9 @@ router.post('/dispatch/plans/:id/unhide',     requirePerm('dispatch', 'view'),  
 router.post('/dispatch/khvc/remove',          requireAnyPerm(['dispatch', 'confirm'], ['external_khvc', 'delete']), validate({ body: dispatch.zKhvcRemove }),   dispatch.removeFromKhvc)
 router.post('/dispatch/khvc/renumber',        requireAnyPerm(['dispatch', 'confirm'], ['external_khvc', 'edit']),   validate({ body: dispatch.zKhvcRenumber }), dispatch.renumberKhvc)
 // Dòng xe được vào của KHÁCH sửa ngay trên bàn ghép xe (27/09) — CHỈ cột dispatch_vehicles, kênh vẫn ở trang Khách hàng
-router.get('/dispatch/plans/:id/customers/:shipTo/vehicles', requirePerm('dispatch', 'view'), validate({ params: dispatch.zShipToParam }), dispatch.getCustomerVehicles)
-router.put('/dispatch/plans/:id/customers/:shipTo/vehicles', requireAnyPerm(['dispatch', 'customer_vehicles'], ['customers', 'edit']), validate({ params: dispatch.zShipToParam, body: dispatch.zCustVehicles }), dispatch.setCustomerVehicles)
+// dòng xe khách được vào — NGOẠI LỆ chỉ cho xe của dòng đó (15/10); cấu hình gốc của khách chỉ sửa ở trang Khách hàng (thay cửa 27/09)
+router.get('/dispatch/plans/:id/rows/:rowId/vehicles', requirePerm('dispatch', 'view'), validate({ params: dispatch.zRowParam }), dispatch.getRowVehicles)
+router.put('/dispatch/plans/:id/rows/:rowId/vehicles', requirePerm('dispatch', 'customer_vehicles'), validate({ params: dispatch.zRowParam, body: dispatch.zRowVehicles }), dispatch.setRowVehicles)
 router.post('/dispatch/plans/:id/refresh-pool', requirePerm('dispatch', 'plan'),  validate({ params: zIdParam }),                                dispatch.refreshPool)
 router.post('/dispatch/plans/:id/replace-od', requirePerm('dispatch', 'plan'),    validate({ params: zIdParam, body: dispatch.zReplaceOd }),     dispatch.replaceOd)
 router.post('/dispatch/plans/:id/resync-od', requirePerm('dispatch', 'plan'),     validate({ params: zIdParam, body: dispatch.zReplaceOd }),     dispatch.resyncOd)   // OD bị SAP sửa (SL / dòng / ghi chú) ⇒ chụp lại, ở nguyên chỗ

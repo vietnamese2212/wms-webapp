@@ -6406,20 +6406,27 @@ export function useHideDispatchOds() {
     onSuccess: r => qc.setQueryData(['dispatch-plan', r.plan_id], (old: DispatchPlan | undefined) => (old ? { ...old, hidden: r.hidden } : old)),
   })
 }
-/** Dòng xe được vào của MỘT khách — xem/sửa ngay trên bàn ghép xe (chỉ dòng xe; kênh vẫn đổi ở trang Khách hàng). */
-export interface DispatchCustomerVehicles { ship_to_code: string; name: string; channel: string | null; channel_label: string | null; is_active: boolean; dispatch_vehicles: Record<string, string[]>; channel_vehicles: Record<string, string[]> | null }
-export function useDispatchCustomerVehicles(planId: string | null, shipTo: string | null) {
+/** Dòng xe khách được vào — NGOẠI LỆ chỉ cho xe của một dòng OD (15/10, user: "chỉ thay đổi cho chuyến đó thôi"): `current` = bản chụp
+ *  đang áp trên dòng · `config` = theo cấu hình khách (trang Khách hàng) · `models` = dòng xe đang dùng ở kho. Cấu hình gốc KHÔNG sửa ở đây. */
+export interface DispatchRowVehicles {
+  row_id: string; od_number: string; ship_to_code: string | null; ship_to_name: string | null; customer_found: boolean; channel_label: string | null
+  trip: { id: string; seq: number; vehicle_model_id: string | null } | null; editable: boolean; ods: string[]
+  current: string[] | null; config: string[]; exception: boolean
+  models: { id: string; sap_code: string; name: string; parent_type_name: string | null }[]
+}
+export function useDispatchRowVehicles(planId: string | null, rowId: string | null) {
   return useQuery({
-    queryKey: ['dispatch-customer-vehicles', planId, shipTo], enabled: !!planId && !!shipTo, staleTime: 0,
-    queryFn: async () => (await apiClient.get(`/tms/dispatch/plans/${planId}/customers/${encodeURIComponent(shipTo!)}/vehicles`)).data.data as DispatchCustomerVehicles,
+    queryKey: ['dispatch-row-vehicles', planId, rowId], enabled: !!planId && !!rowId, staleTime: 0,
+    queryFn: async () => (await apiClient.get(`/tms/dispatch/plans/${planId}/rows/${rowId}/vehicles`)).data.data as DispatchRowVehicles,
   })
 }
-export function useSetDispatchCustomerVehicles() {
+/** `allowed_models: null` = về theo cấu hình khách */
+export function useSetDispatchRowVehicles() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ plan_id, ship_to_code, dispatch_vehicles }: { plan_id: string; ship_to_code: string; dispatch_vehicles: Record<string, string[]> }) =>
-      apiClient.put(`/tms/dispatch/plans/${plan_id}/customers/${encodeURIComponent(ship_to_code)}/vehicles`, { dispatch_vehicles }).then(r => r.data.data as DispatchPlan & { customer_vehicles: { ship_to_code: string; ods_updated: number; trips_repriced: number } }),
-    onSuccess: p => { putDispatchPlan(qc, p); qc.invalidateQueries({ queryKey: ['dispatch-customer-vehicles'] }); qc.invalidateQueries({ queryKey: ['customers'] }) },
+    mutationFn: ({ plan_id, row_id, allowed_models }: { plan_id: string; row_id: string; allowed_models: string[] | null }) =>
+      apiClient.put(`/tms/dispatch/plans/${plan_id}/rows/${row_id}/vehicles`, { allowed_models }).then(r => r.data.data as DispatchPlan & { row_vehicles: { ods: string[]; trip_seq: number | null; reset: boolean } }),
+    onSuccess: p => { putDispatchPlan(qc, p); qc.invalidateQueries({ queryKey: ['dispatch-row-vehicles'] }) },
   })
 }
 export function useRefreshDispatchPool() {

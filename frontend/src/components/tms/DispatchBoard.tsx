@@ -8,7 +8,8 @@
 //   • Phải = LƯỚI THẺ XE: % tải tô màu (Non tải hổ phách · đạt xanh · vượt đỏ), điểm giao, cước, cờ vấn đề.
 //   • Thả = server tính lại cước/tải/điều kiện bảo quản NGAY rồi trả nguyên kế hoạch (dải chỉ số đổi theo).
 //   • Rê qua một xe = XEM TRƯỚC (pallet · % tải · điểm · cước mới) — biết kết quả trước khi thả.
-//   • Vượt tải CHO THẢ, đánh dấu đỏ (user chốt) — không chặn như máy; Xác nhận nhắc lại.
+//   • ~~Vượt tải CHO THẢ, đánh dấu đỏ (25/09)~~ — 14/10 user chốt: MỌI luật ghép xe (tải · số khách · đi xe riêng · kênh · Loại kho ·
+//     bảo quản · dòng xe được vào) CHẶN + hộp thoại ở mọi cửa làm tay (`manualRuleBlocks`); Non tải thì cho.
 //   • Hoàn tác / Làm lại (Ctrl+Z / Ctrl+Y), khoá xe, bỏ xe trống, "Chuyển tới xe…" cho người không kéo được (điện thoại,
 //     hoặc 80 thẻ xe không kéo chính xác nổi).
 //   • BƯỚC 1 = XEM ĐƠN nằm ở BẢNG riêng (DispatchReviewTable, 27/09 tối). 07/10: khung chờ = đơn THUỘC kế hoạch chưa lên xe
@@ -125,8 +126,9 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
   const hold = useHoldDispatchOds(), resync = useResyncDispatchOd()
   const perms = (useAuthStore(s => s.user)?.module_permissions as ModulePermissions | null) ?? null
   // sửa "Dòng xe được vào" của khách từ bàn (27/09) — quyền riêng của điều vận, hoặc quyền sửa Khách hàng
-  const canCustVeh = can(perms, 'dispatch', 'customer_vehicles') || can(perms, 'customers', 'edit')
-  const [custSheet, setCustSheet] = useState<string | null>(null)
+  // 15/10: icon xe tải = NGOẠI LỆ dòng xe được vào chỉ cho xe của dòng đó (cấu hình gốc của khách chỉ sửa ở trang Khách hàng ⇒ bỏ vế customers.edit)
+  const canCustVeh = can(perms, 'dispatch', 'customer_vehicles')
+  const [vehRow, setVehRow] = useState<string | null>(null)
   // HOÃN / KHÔNG ĐIỀU (27/09): OD rời kế hoạch, dấu giữ qua mọi lần nạp — khác "Bỏ khỏi kế hoạch" chỉ là tạm
   const [holdDlg, setHoldDlg] = useState(false)
   const [holdMode, setHoldMode] = useState<'date' | 'never'>('date')
@@ -347,8 +349,6 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
     setHoldMode(mode); setHoldUntil(d.toISOString().slice(0, 10)); setHoldReason('')
     setHoldDlg(true)
   }
-  // nút trên thẻ (30/09): chọn đúng các dòng OD đó rồi mở hộp Không điều — cùng cửa ghi với thanh nổi
-  const openHoldFor = (ids: string[]) => { setSel(new Set(ids)); openHold('date') }
   const doHold = () => {
     const ods = uniqStr(selIds.map(id => rowBy.get(id)?.od_number ?? '').filter(Boolean))
     hold.mutateAsync({ plan_id: plan.id, ids: selIds, until: holdMode === 'date' ? holdUntil : null, reason: holdReason.trim() || undefined })
@@ -457,16 +457,11 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
                   Lớn hơn xe · {b.vehicle} {nf(b.pct, 1)} %
                 </span>) })()}
             </div>
-            {/* dòng xe được vào của KHÁCH — mở/sửa ngay tại bàn (user 27/09); đổi kênh vẫn ở trang Khách hàng */}
-            {o.ship_to_code && (
-              <button type="button" className="shrink-0 rounded p-0.5 text-slate-400 hover:bg-slate-100 hover:text-sky-700" title={`Dòng xe được vào của khách ${o.ship_to_name ?? o.ship_to_code}${canCustVeh ? ' — xem / sửa' : ' — xem'}`}
-                onClick={e => { e.stopPropagation(); setCustSheet(o.ship_to_code) }}><Truck className="h-3.5 w-3.5" /></button>
-            )}
-            {/* KHÔNG ĐIỀU từng OD ngay trên dòng (user 30/09) — hiện khi rê chuột, luôn hiện trên màn cảm ứng */}
-            {editable && (!tr || editableTrip(tr)) && (
-              <button type="button" className="shrink-0 rounded p-0.5 text-slate-300 hover:bg-red-50 hover:text-red-600 [@media(pointer:coarse)]:text-slate-400 lg:opacity-0 lg:group-hover:opacity-100 focus:opacity-100" title="Không điều OD này (chọn ngày điều lại hoặc không điều)" disabled={busy}
-                onClick={e => { e.stopPropagation(); openHoldFor([o.id]) }}><Ban className="h-3.5 w-3.5" /></button>
-            )}
+            {/* dòng xe khách được vào — NGOẠI LỆ chỉ cho xe này / đơn này (15/10); cấu hình gốc của khách chỉ sửa ở trang Khách hàng.
+                ⊘ "Không điều OD này" (30/09) BỎ 15/10 (user: "tick ô thì đã ra đủ action") — tick ô ⇒ thanh nổi */}
+            <button type="button" className="shrink-0 rounded p-0.5 text-slate-400 hover:bg-slate-100 hover:text-sky-700"
+              title={`Dòng xe ${o.ship_to_name ?? o.ship_to_code ?? ''} được vào — ${canCustVeh && editable && (!tr || editableTrip(tr)) ? 'ngoại lệ' : 'xem'} chỉ cho ${tr ? `xe #${tr.seq}` : 'đơn này'} (cấu hình khách giữ nguyên)`}
+              onClick={e => { e.stopPropagation(); setVehRow(o.id) }}><Truck className="h-3.5 w-3.5" /></button>
           </div>
           {/* ghi chú giao hàng SAP (27/09) — người review đọc: "GIAO 10/9", "NPP không nhận CN"… máy KHÔNG đọc */}
           {o.note && <div className="mt-0.5 flex items-start gap-1 rounded bg-amber-50 px-1 py-0.5 text-[10px] text-amber-900 leading-snug break-words"><StickyNote className="h-3 w-3 shrink-0 mt-px" />{o.note}</div>}
@@ -616,6 +611,11 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
         className={`relative rounded-lg border bg-white shadow-sm flex flex-col transition-shadow ${border} ${isHover ? 'ring-2 ring-sky-400' : justHit === t.id ? 'ring-2 ring-green-400' : ''} ${t.locked ? 'bg-slate-50' : ''}`}>
         {/* TIÊU ĐỀ THẺ = thanh khung màu trung tính (user 30/09): "#số · dòng xe" + cảnh báo cần xử lý ngay trong thanh; nút xe bên phải */}
         <div className="flex items-start gap-1.5 rounded-t-lg border-b border-slate-200 bg-slate-100 px-2 py-1">
+          {/* 15/10: TICK CẢ XE (như ô dòng xe của dạng Bảng) thay nút ⊘ "Không điều cả xe" — thanh nổi có Không điều · Chuyển · Gán ĐVVT · Đổi dòng xe */}
+          {ed && t.ods.length > 0 && (() => { const n = t.ods.filter(o => sel.has(o.id)).length; return (
+            <input type="checkbox" className="mt-0.5 h-3.5 w-3.5 shrink-0 accent-sky-600" checked={n === t.ods.length} ref={el => { if (el) el.indeterminate = n > 0 && n < t.ods.length }}
+              onChange={() => toggleMany(t.ods.map(o => o.id))} aria-label={`Chọn mọi đơn của xe #${t.seq}`} title="Chọn mọi đơn của xe — thanh nổi: Không điều · Chuyển tới xe · Gán ĐVVT · Đổi dòng xe" />
+          ) })()}
           <button type="button" className="min-w-0 flex-1 text-left leading-snug hover:text-sky-700" onClick={() => onOpenTrip(t.id)} title={`Số xe ${t.group_code} — mở chi tiết xe: đổi dòng xe, chuyển từng OD`}>
             <span className="font-mono text-xs font-bold text-slate-800">#{t.seq}</span>
             <span className="mx-1 text-slate-400">·</span>
@@ -632,11 +632,6 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
           </button>
           <div className="flex items-center gap-0.5 shrink-0">
             {st !== 'DRAFT' && <StatusBadge tone={st === 'CONFIRMED' ? 'green' : st === 'DECLINED' ? 'red' : 'blue'}>{st === 'CONFIRMED' ? 'Đã vào KH' : st === 'DECLINED' ? 'Từ chối' : st === 'TENDERED' ? 'Chờ ĐVVT' : st}</StatusBadge>}
-            {/* KHÔNG ĐIỀU cả xe — một nhát bấm chuyển mọi OD của xe (user 30/09: "trên thẻ cần nút chuyển thẳng trạng thái về không ghép của cả xe") */}
-            {ed && t.ods.length > 0 && (
-              <button type="button" className="rounded p-1 text-slate-400 hover:bg-white hover:text-red-600" title="Không điều cả xe — mọi OD của xe rời kế hoạch (chọn ngày điều lại hoặc không điều)" disabled={busy}
-                onClick={() => openHoldFor(t.ods.map(o => o.id))}><Ban className="h-3.5 w-3.5" /></button>
-            )}
             {ed && (
               <button type="button" className={`rounded p-1 ${t.locked ? 'text-slate-800' : 'text-slate-400 hover:bg-white hover:text-slate-700'}`} disabled={patchTrip.isPending}
                 title={t.locked ? 'Đang khoá — "Tối ưu lại" không đụng vào xe này. Bấm để mở khoá' : 'Khoá xe để "Tối ưu lại" giữ nguyên'}
@@ -851,7 +846,7 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
     regionBands: byVtype && (f.boardSort || 'region') === 'region', noModelKey: NO_MODEL,
     tripsShown: shownTrips.length, tripsTotal: trips.length, clearFilter: () => setF({ issue: '', search: '' }),
     onOpenTrip, onOpenOd: setOdDetail,
-    openHoldFor, openCustVehicles: setCustSheet, canCustVeh,
+    openRowVehicles: setVehRow, canCustVeh,
     resync: od => { void doResync(od) }, replace: od => { void doReplace(od) }, sapBusy: resync.isPending || replace.isPending,
     toggleLock: t => { void patchTrip.mutateAsync({ id: t.id, locked: !t.locked }).catch(e => err(e, 'Không đổi được khoá')) },
     removeTrip: t => { void delTrip.mutateAsync(t.id).catch(e => err(e, 'Không bỏ được xe')) },
@@ -979,7 +974,7 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
           <DialogHeader><DialogTitle className="text-sm">Chuyển {selIds.length} dòng OD tới…</DialogTitle></DialogHeader>
           <SingleSelect value={moveTarget} onChange={setMoveTarget} placeholder="Chọn xe…"
             options={[{ value: '__new__', label: '＋ Xe mới (máy chọn dòng xe + ĐVVT)' }, { value: '__pool__', label: 'Khung chờ (bỏ khỏi xe)' }, ...targets]} />
-          <p className="text-[11px] text-slate-500">Cước + % tải của xe cũ và xe mới tính lại ngay. Vượt tải vẫn chuyển được — xe sẽ báo đỏ.</p>
+          <p className="text-[11px] text-slate-500">Cước + % tải của xe cũ và xe mới tính lại ngay. Sai quy định ghép xe (vượt tải, số khách, đi xe riêng, trộn kênh…) thì không chuyển — hộp thoại nêu lý do.</p>
           <DialogFooter>
             <Button size="sm" variant="outline" className="h-8" disabled={busy} onClick={() => setMoveDlg(false)}>Huỷ</Button>
             <Button size="sm" className="h-8" disabled={!moveTarget || busy} onClick={() => {
@@ -1038,7 +1033,7 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
         intro={`Máy ghép lại các OD ở khung chờ (${nf(plan.summary.pool_ods ?? 0)} OD) + mọi xe CHƯA KHOÁ còn sửa được theo dải % tải dưới đây.\n${lockedN ? `${lockedN} xe đã khoá giữ nguyên.` : 'Chưa khoá xe nào — khoá (🔒) những xe đã ưng trước khi bấm để máy không đụng vào.'}\nThao tác này KHÔNG hoàn tác được bằng Ctrl+Z.`}
         parents={bandParents} initial={{ bands: fullBands(bandParents, plan.params.load_bands, plan.params.underload_pct), bypass: plan.params.load_bypass === true }} busy={reopt.isPending}
         onConfirm={doReoptWith} />
-      <DispatchCustomerVehiclesSheet planId={plan.id} shipTo={custSheet} canEdit={canCustVeh && editable} onClose={() => setCustSheet(null)} />
+      <DispatchCustomerVehiclesSheet planId={plan.id} rowId={vehRow} canEdit={canCustVeh && editable} onClose={() => setVehRow(null)} />
       <DispatchOdDetailSheet planId={plan.id} info={odDetail ? odInfo.data?.ods[odDetail.od_number] : undefined} onClose={() => setOdDetail(null)}
         sum={odDetail ? odSum(odDetail) : null} />
       {confirmNode}

@@ -13,7 +13,7 @@
 //   • Bảng chuẩn ResizableTable (kéo giãn cột, đầu bảng + cột đầu dính, cột thao tác ghim phải trên PC) — cùng khuôn bảng Xem đơn.
 // Cửa ghi · Hoàn tác · xem trước · hộp thoại · thanh chọn-nhiều dùng CHUNG với bản thẻ (DispatchBoard) — file này chỉ VẼ.
 import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { ChevronDown, ChevronRight, Lock, Unlock, X, Ban, Truck, StickyNote, RotateCw, Replace } from 'lucide-react'
+import { ChevronDown, ChevronRight, Lock, Unlock, X, Truck, StickyNote, RotateCw, Replace } from 'lucide-react'
 import { TableBody, TableCell, TableRow } from '@/components/ui/table'
 import { Switch } from '@/components/ui/switch'
 import { ResizableTable, type RtColDef } from '@/components/shared/ResizableTable'
@@ -70,7 +70,8 @@ export interface BoardOps {
   tripGroups: BoardTripGroup[]; groupOpen: (k: string) => boolean; toggleGroup: (k: string) => void; armOpen: (k: string) => void
   regionBands: boolean; noModelKey: string; tripsShown: number; tripsTotal: number; clearFilter: () => void
   onOpenTrip: (id: string) => void; onOpenOd: (o: DispatchTripOd) => void
-  openHoldFor: (ids: string[]) => void; openCustVehicles: (shipTo: string) => void; canCustVeh: boolean
+  /** icon xe tải trên dòng đơn — dòng xe khách được vào, NGOẠI LỆ chỉ cho xe của dòng đó (15/10) */
+  openRowVehicles: (rowId: string) => void; canCustVeh: boolean
   resync: (od: string) => void; replace: (od: string) => void; sapBusy: boolean
   toggleLock: (t: DispatchTrip) => void; removeTrip: (t: DispatchTrip) => void
   mixOn: (t: DispatchTrip) => boolean; setMix: (t: DispatchTrip, on: boolean) => void
@@ -94,7 +95,7 @@ const tripCols = (desktop: boolean): RtColDef[] => [
   { id: 'region', label: 'Vùng', w: 120 },
   { id: 'note', label: 'Ghi chú giao hàng SAP', w: 240 },
   { id: 'warn', label: 'Lưu ý', w: 300 },
-  { id: 'act', label: '', w: 84, align: 'right', stickyRight: desktop },
+  { id: 'act', label: '', w: 56, align: 'right', stickyRight: desktop },   // 15/10: bỏ ⊘ — còn khoá / bỏ xe trống / xe tải
 ]
 // Gom theo LÔ (15/10): thêm cột Tải (thanh % xe máy định, cùng dáng cột Tải của bảng xe) ngay sau cột đầu — khung chờ 400 px vẫn thấy
 // Lô · Tải · Pallet · nút Xe mới; cột thao tác rộng hơn cho nút chữ
@@ -268,9 +269,10 @@ function odCells(ops: BoardOps, o: DispatchTripOd, t: DispatchTrip | null, tree?
       stop: true,
       node: (
         <span className="inline-flex items-center gap-0.5">
-          {/* dòng xe được vào của KHÁCH — xem / sửa ngay tại bàn (27/09); đổi kênh vẫn ở trang Khách hàng */}
-          {o.ship_to_code && <IconBtn title={`Dòng xe được vào của khách ${o.ship_to_name ?? o.ship_to_code}${ops.canCustVeh ? ' — xem / sửa' : ' — xem'}`} onClick={() => ops.openCustVehicles(o.ship_to_code!)}><Truck className="h-3.5 w-3.5" /></IconBtn>}
-          {can && <IconBtn danger title="Không điều OD này (chọn ngày điều lại hoặc không điều)" disabled={ops.busy} onClick={() => ops.openHoldFor([o.id])}><Ban className="h-3.5 w-3.5" /></IconBtn>}
+          {/* dòng xe khách được vào — NGOẠI LỆ chỉ cho xe này / đơn này (15/10); cấu hình gốc của khách chỉ sửa ở trang Khách hàng.
+              ⊘ "Không điều OD này" (30/09) BỎ 15/10 — tick ô ⇒ thanh nổi */}
+          <IconBtn title={`Dòng xe ${o.ship_to_name ?? o.ship_to_code ?? ''} được vào — ${ops.canCustVeh && can ? 'ngoại lệ' : 'xem'} chỉ cho ${t ? `xe #${t.seq}` : 'đơn này'} (cấu hình khách giữ nguyên)`}
+            onClick={() => ops.openRowVehicles(o.id)}><Truck className="h-3.5 w-3.5" /></IconBtn>
         </span>
       ),
     },
@@ -400,8 +402,7 @@ function tripCells(ops: BoardOps, t: DispatchTrip, hv: BoardHover, open: boolean
       stop: true,
       node: (
         <span className="inline-flex items-center gap-0.5">
-          {/* KHÔNG ĐIỀU cả xe — một nhát chuyển mọi OD của xe (user 30/09) */}
-          {ed && t.ods.length > 0 && <IconBtn danger title="Không điều cả xe — mọi OD của xe rời kế hoạch (chọn ngày điều lại hoặc không điều)" disabled={ops.busy} onClick={() => ops.openHoldFor(ids)}><Ban className="h-3.5 w-3.5" /></IconBtn>}
+          {/* ⊘ "Không điều cả xe" (30/09) BỎ 15/10 (user: "tick ô thì đã ra đủ action") — tick ô dòng xe ⇒ thanh nổi "Không điều ngày này" / "Không điều" */}
           {ed && <IconBtn title={t.locked ? 'Đang khoá — "Tối ưu lại" không đụng vào xe này. Bấm để mở khoá' : 'Khoá xe để "Tối ưu lại" giữ nguyên'} disabled={ops.tripBusy} onClick={() => ops.toggleLock(t)}>
             {t.locked ? <Lock className="h-3.5 w-3.5 text-slate-700" /> : <Unlock className="h-3.5 w-3.5" />}</IconBtn>}
           {ed && !t.ods.length && <IconBtn danger title="Bỏ xe trống" disabled={ops.tripBusy} onClick={() => ops.removeTrip(t)}><X className="h-3.5 w-3.5" /></IconBtn>}

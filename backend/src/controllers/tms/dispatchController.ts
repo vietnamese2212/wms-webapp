@@ -45,8 +45,6 @@ import { applyWarehouseOverrides, loadWarehouseOverrides, multiVehicleOf, detour
 import { replanKhvcGroups } from '../wms/outboundController'
 import { classifyKhvcDelete } from '../external/khvcController'
 import { logOutboundEvents, actorOf, type OutboundEventInput } from '../../services/outboundEvents'
-import { logAdmin } from '../../services/adminAudit'
-import { parseDispatchVehicles } from '../masterdata/customerController'
 import type { Database, Json } from '../../types/database'
 import type { LoadMat } from '../../utils/loadCalc'
 
@@ -1123,7 +1121,7 @@ function computeTripPatch(plan: PlanRow, trip: TripRow & { ods: TripOdRow[] }, m
     const outList = trip.ods.filter(o => o.allowed_models?.length && !o.allowed_models.includes(m.id) && !posmOnly(o))
     if (outList.length) {
       const who = uniq(outList.map(o => o.ship_to_name ?? o.ship_to_code ?? o.od_number))
-      warnings.push(`Khách ${who.slice(0, 2).join(', ')}${who.length > 2 ? '…' : ''} không được vào dòng xe ${m.name} (Khách hàng → Dòng xe được vào)`)
+      warnings.push(`Khách ${who.slice(0, 2).join(', ')}${who.length > 2 ? '…' : ''} không được vào dòng xe ${m.name} — cho riêng xe này: icon xe tải trên dòng đơn của khách; đổi hẳn: Khách hàng → Dòng xe được vào`)
     }
   }
   // 28/09 (user: "khách không khai thì không chọn"): người vẫn tự đặt xe cho khách chưa khai được — không chặn, nhưng nói ra
@@ -2500,11 +2498,14 @@ async function unholdOdsInner(req: Request, res: Response) {
   }
 }
 
-// ══ DÒNG XE ĐƯỢC VÀO CỦA KHÁCH — sửa ngay trên bàn ghép xe (27/09, user: "điều vận config được, nhưng đổi KÊNH thì kho làm sai")
-// Cửa này CHỈ ghi `Customer.dispatch_vehicles` — kênh (quyết %Date bên kho) vẫn chỉ đổi ở trang Khách hàng. Lưu xong: OD của khách
-// trên kế hoạch ĐANG MỞ này chụp lại danh sách + xe chở chúng tính lại cảnh báo ngay (không phải "Lập lại" mới thấy). ══
-export const zShipToParam = z.object({ id: zId, shipTo: zText(1, 20) })
-export const zCustVehicles = z.object({ dispatch_vehicles: z.record(z.string(), z.array(zId).max(100)).nullable() })
+// ══ DÒNG XE ĐƯỢC VÀO — NGOẠI LỆ CHỈ MỘT XE (15/10, user: "icon xe tải chỉ để thay đổi cho chuyến đó hay thay đổi luôn setting — tôi muốn
+// chỉ thay đổi cho chuyến đó thôi", chọn "Ngoại lệ chỉ xe đó"). Thay cửa 27/09 ghi `Customer.dispatch_vehicles` từ bàn: cấu hình GỐC của
+// khách nay chỉ sửa ở trang Khách hàng. Cửa này sửa BẢN CHỤP `dispatch_trip_od.allowed_models` của các đơn CÙNG KHÁCH trên ĐÚNG XE của
+// dòng được bấm (dòng ở khung chờ: chỉ dòng đó) — luật "dòng xe khách được vào" (cửa làm tay · Xác nhận · cảnh báo xe) đọc bản chụp nên
+// xe đó qua luật; xe khác / kế hoạch khác vẫn theo cấu hình khách. "Tối ưu lại" dựng lại xe (không khoá) ⇒ dòng chụp lại từ cấu hình khách,
+// ngoại lệ hết. `allowed_models: null` = về theo cấu hình khách. ══
+export const zRowParam = z.object({ id: zId, rowId: zId })
+export const zRowVehicles = z.object({ allowed_models: z.array(zId).min(1).max(100).nullable() })
 async function customerVehiclesCtx(shipTo: string) {
   const { data: cust, error } = await db.from('Customer').select('id, ship_to_code, name, channel, is_active, dispatch_vehicles').eq('ship_to_code', shipTo).maybeSingle()
   if (error) throw error
@@ -2513,59 +2514,76 @@ async function customerVehiclesCtx(shipTo: string) {
   const meta = (ch?.meta ?? null) as { label?: string; dispatch_vehicles?: Record<string, unknown> } | null
   return { cust, channel_label: meta?.label ?? cust.channel ?? null, channel_vehicles: (meta?.dispatch_vehicles ?? null) as Record<string, unknown> | null }
 }
-export async function getCustomerVehicles(req: Request, res: Response) {
+/** Dòng đích của ngoại lệ: đơn CÙNG KHÁCH trên xe của dòng `rowId` (dòng ở khung chờ: chỉ dòng đó) + danh sách theo cấu hình khách của
+ *  TỪNG dòng (cùng `resolveAllowedModels` lúc lập — Loại kho CHÍNH của OD). Đọc đúng xe đó, không nạp cả kế hoạch. */
+async function rowVehiclesCtx(plan: PlanRow, rowId: string) {
+  const { data: row, error } = await db.from('dispatch_trip_od').select('*').eq('id', rowId).eq('plan_id', plan.id).maybeSingle()
+  if (error) throw error
+  if (!row) return null
+  const trip = row.trip_id ? (await readTrips(plan.id, [row.trip_id]))[0] ?? null : null
+  const rows: TripOdRow[] = trip ? trip.ods.filter(o => o.ship_to_code === row.ship_to_code) : [row]
+  const c = row.ship_to_code ? await customerVehiclesCtx(row.ship_to_code) : null
+  const follow = engineParams(plan).follow_categories ?? []
+  const chan = c && c.cust.is_active !== false && c.cust.channel ? c.channel_vehicles : null
+  const configOf = (o: TripOdRow) => resolveAllowedModels((c?.cust.dispatch_vehicles ?? null) as Record<string, unknown> | null, chan,
+    mainCatsOf(Object.keys((o.cat_load ?? {}) as Record<string, unknown>).map(k => ({ category: k })), follow))
+  return { row, trip, rows, c, configOf }
+}
+const sameModels = (a: string[] | null, b: string[] | null) => JSON.stringify([...(a ?? [])].sort()) === JSON.stringify([...(b ?? [])].sort())
+export async function getRowVehicles(req: Request, res: Response) {
   try {
-    const { data: plan } = await db.from('dispatch_plan').select('id, warehouse_id').eq('id', String(req.params.id)).maybeSingle()
+    const { data: plan, error } = await db.from('dispatch_plan').select('*').eq('id', String(req.params.id)).maybeSingle()
+    if (error) throw error
     if (!plan) return fail(res, 'Không tìm thấy kế hoạch', 404)
     if (!whAllowed(req, plan.warehouse_id)) return fail(res, 'Kho này ngoài phạm vi được giao', 403)
-    const c = await customerVehiclesCtx(String(req.params.shipTo))
-    if (!c) return fail(res, 404, 'CUSTOMER_NOT_FOUND', `Ship-to ${req.params.shipTo} chưa có trong danh mục Khách hàng — thêm ở trang Khách hàng trước.`)
-    return ok(res, { ship_to_code: c.cust.ship_to_code, name: c.cust.name, channel: c.cust.channel, channel_label: c.channel_label, is_active: c.cust.is_active,
-      dispatch_vehicles: c.cust.dispatch_vehicles ?? {}, channel_vehicles: c.cust.is_active === false || !c.cust.channel ? null : c.channel_vehicles })
+    const ctx = await rowVehiclesCtx(plan, String(req.params.rowId))
+    if (!ctx) return fail(res, 404, 'ROW_NOT_FOUND', 'Không thấy dòng OD này trên kế hoạch — bàn vừa đổi, tải lại rồi mở lại.')
+    const models = await loadModels(plan.warehouse_id)
+    const config = ctx.configOf(ctx.row)
+    return ok(res, {
+      row_id: ctx.row.id, od_number: ctx.row.od_number, ship_to_code: ctx.row.ship_to_code, ship_to_name: ctx.row.ship_to_name,
+      customer_found: !!ctx.c, channel_label: ctx.c?.channel_label ?? null,
+      trip: ctx.trip ? { id: ctx.trip.id, seq: ctx.trip.seq, vehicle_model_id: ctx.trip.vehicle_model_id } : null,
+      editable: OPEN_PLAN.includes(plan.status) && (!ctx.trip || EDITABLE_TRIP.includes(statusOf(ctx.trip))),
+      ods: uniq(ctx.rows.map(o => o.od_number)),
+      current: ctx.row.allowed_models, config, exception: !sameModels(ctx.row.allowed_models, config),
+      models: models.map(m => ({ id: m.id, sap_code: m.sap_code, name: m.name, parent_type_name: m.parent_type_name ?? null })),
+    })
   } catch (e) { return failAny(res, e) }
 }
-export async function setCustomerVehicles(req: Request, res: Response) {
+async function setRowVehiclesInner(req: Request, res: Response) {
   try {
-    const b = req.body as z.infer<typeof zCustVehicles>
+    const b = req.body as z.infer<typeof zRowVehicles>
     const got = await loadOpenPlan(req, String(req.params.id))
     if ('err' in got) return sendErr(res, got)
     const { plan } = got
-    const c = await customerVehiclesCtx(String(req.params.shipTo))
-    if (!c) return fail(res, 404, 'CUSTOMER_NOT_FOUND', `Ship-to ${req.params.shipTo} chưa có trong danh mục Khách hàng — thêm ở trang Khách hàng trước.`)
-    const parsed = await parseDispatchVehicles(b.dispatch_vehicles)
-    if ('err' in parsed) return fail(res, 400, 'VALIDATION', parsed.err)
+    const ctx = await rowVehiclesCtx(plan, String(req.params.rowId))
+    if (!ctx) return fail(res, 404, 'ROW_NOT_FOUND', 'Không thấy dòng OD này trên kế hoạch — bàn vừa đổi, tải lại rồi mở lại.')
+    if (ctx.trip && !EDITABLE_TRIP.includes(statusOf(ctx.trip))) return fail(res, 409, 'TRIP_NOT_EDITABLE', `Xe #${ctx.trip.seq} đã gửi ĐVVT / đã chốt — không sửa được.`)
+    if (b.allowed_models) {
+      const known = new Set((await loadModels(plan.warehouse_id)).map(m => m.id))
+      const bad = b.allowed_models.filter(id => !known.has(id))
+      if (bad.length) return fail(res, 400, 'VALIDATION', `Dòng xe không có / không dùng ở kho này: ${bad.slice(0, 3).join(', ')}`)
+    }
+    // mỗi dòng: danh sách người chọn, hoặc (null) danh sách theo cấu hình khách của CHÍNH dòng đó — gom theo giá trị, mỗi giá trị một câu
     const t = now()
-    const { error } = await db.from('Customer').update({ dispatch_vehicles: parsed.map, updated_by: req.user?.name ?? null, updated_at: t }).eq('id', c.cust.id)
-    if (error) return fail(res, error)
-    await logAdmin(req, { action: 'CUSTOMER_UPDATE', target_type: 'Customer', target_id: c.cust.id, target_label: `${c.cust.ship_to_code} — ${c.cust.name} (từ bàn ghép xe)`,
-      before: { dispatch_vehicles: c.cust.dispatch_vehicles ?? {} }, after: { dispatch_vehicles: parsed.map } })
-    // chụp lại danh sách dòng xe cho OD của khách trên kế hoạch này (theo Loại kho chính của TỪNG OD — cùng resolveAllowedModels)
-    const follow = engineParams(plan).follow_categories ?? []
-    const full = (await readPlan(plan.id))!
-    const tripBy = new Map(full.trips.map(x => [x.id, x]))
-    const mine = [...full.trips.flatMap(x => x.ods), ...full.pool].filter(o => o.ship_to_code === c.cust.ship_to_code && (!o.trip_id || EDITABLE_TRIP.includes(statusOf(tripBy.get(o.trip_id)!))))
-    const chan = c.cust.is_active === false || !c.cust.channel ? null : c.channel_vehicles
-    const byList = new Map<string, string[]>()
-    const listOf = new Map<string, string[] | null>()
-    for (const o of mine) {
-      const l = resolveAllowedModels(parsed.map, chan, mainCatsOf(Object.keys((o.cat_load ?? {}) as Record<string, unknown>).map(k => ({ category: k })), follow))
-      const k = JSON.stringify(l)
-      listOf.set(k, l)
-      byList.set(k, [...(byList.get(k) ?? []), o.id])
+    const by = new Map<string, { list: string[]; ids: string[] }>()
+    for (const o of ctx.rows) {
+      const list = b.allowed_models ? uniq(b.allowed_models).sort() : ctx.configOf(o)
+      const k = JSON.stringify(list), g = by.get(k) ?? { list, ids: [] }
+      g.ids.push(o.id); by.set(k, g)
     }
-    for (const [k, ids] of byList) {
-      for (let i = 0; i < ids.length; i += 300) {
-        const { error: e2 } = await db.from('dispatch_trip_od').update({ allowed_models: listOf.get(k) ?? null, updated_at: t }).in('id', ids.slice(i, i + 300))
-        if (e2) throw e2
-      }
+    for (const g of by.values()) for (let i = 0; i < g.ids.length; i += 300) {
+      const { error } = await db.from('dispatch_trip_od').update({ allowed_models: g.list, updated_at: t }).in('id', g.ids.slice(i, i + 300))
+      if (error) throw error
     }
-    const touched = uniq(mine.map(o => o.trip_id).filter((x): x is string => !!x))
-    const after = (await readPlan(plan.id))!
-    await repriceMany(plan, after.trips.filter(x => touched.includes(x.id)))
+    // xe chở các dòng đó tính lại cảnh báo ("Khách … không được vào dòng xe …" hết / có) — như mọi cửa sửa tay
+    if (ctx.trip) await repriceMany(plan, await readTrips(plan.id, [ctx.trip.id]))
     await writeSummary(plan)
-    return ok(res, { ...(await readPlan(plan.id)), customer_vehicles: { ship_to_code: c.cust.ship_to_code, dispatch_vehicles: parsed.map, ods_updated: mine.length, trips_repriced: touched.length } })
+    return ok(res, { ...(await readPlan(plan.id)), row_vehicles: { ods: uniq(ctx.rows.map(o => o.od_number)), trip_seq: ctx.trip?.seq ?? null, reset: b.allowed_models === null } })
   } catch (e) { return failAny(res, e) }
 }
+export const setRowVehicles = withPlanLease(setRowVehiclesInner)
 
 export { pickBookingCategory }
 

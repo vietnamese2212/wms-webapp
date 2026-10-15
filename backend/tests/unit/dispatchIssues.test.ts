@@ -4,7 +4,7 @@
 // Xác nhận; cửa Xác nhận và bảng Xem đơn đã đọc đúng) mà bộ đếm này vẫn tính là "OD đổi ở SAP" ⇒ Bàu Bàng 06/10: 695/709 xe "cần xử lý",
 // bảng mới tô đỏ gần hết xe. Hai cửa cùng một sổ mà khác luật (C19) — khoá ở đây.
 import { describe, it, expect } from 'vitest'
-import { issuesOf, needsWork, selectionAfterMove, inPlanRow, boardPlanOf, planHoldsOrders, outOfScopeCats, poolLotGroups } from '../../../frontend/src/components/tms/dispatchIssues'
+import { issuesOf, needsWork, selectionAfterMove, inPlanRow, boardPlanOf, planHoldsOrders, outOfScopeCats, poolLotGroups, rowVehiclesTicked } from '../../../frontend/src/components/tms/dispatchIssues'
 import type { DispatchTrip, DispatchOdFlag, DispatchPlan, DispatchTripOd } from '../../../frontend/src/api/hooks'
 
 const trip = (ods: string[]): DispatchTrip => ({
@@ -134,5 +134,18 @@ describe('poolLotGroups — khung chờ gom theo lô máy định xếp', () => 
     expect(g[0].lot).toEqual({ kind: 'under', vehicle: 'Xe 9', pct: 44.4, bound: 70 })
     expect(g[2].lot).toEqual({ kind: 'big', vehicle: 'Xe 9', pct: 277.8, bound: 100 })
     expect(g.map(x => x.pallets)).toEqual([4, 2, 25, 20, 7])
+  })
+})
+
+// 15/10 — tấm "Dòng xe được vào — ngoại lệ chỉ xe đó": bản chụp có dòng xe KHO KHÁC (khai theo kênh) mà tấm không hiện; bản đầu giữ chúng
+// trong danh sách gửi lên ⇒ server 400 "không dùng ở kho này" dù người không đụng (kiểm giao diện nháp Ba Vì: 5 ô tick, bản chụp 6 dòng).
+describe('rowVehiclesTicked — ô tick ban đầu của tấm ngoại lệ dòng xe', () => {
+  const models = [{ id: 'A' }, { id: 'B' }, { id: 'C' }]
+  it('bản chụp có dòng xe kho khác ⇒ chỉ tick (và chỉ gửi) dòng xe của kho', () => {
+    expect(rowVehiclesTicked(['A', 'X_KHO_KHAC', 'C'], ['A', 'B'], models)).toEqual(['A', 'C'])
+  })
+  it('chưa có bản chụp (null) ⇒ theo cấu hình khách ∩ kho; bản chụp RỖNG (chưa khai) ⇒ không tick gì, không lấy cấu hình', () => {
+    expect(rowVehiclesTicked(null, ['B', 'Y_KHO_KHAC'], models)).toEqual(['B'])
+    expect(rowVehiclesTicked([], ['A', 'B'], models)).toEqual([])
   })
 })

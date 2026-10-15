@@ -124,6 +124,13 @@ const pct1 = (n: number) => n.toLocaleString('vi-VN', { maximumFractionDigits: 1
 export const lotTip = (l: PoolLot) => l.kind === 'under'
   ? `${l.vehicle}: ${pct1(l.pct)} % < tối thiểu ${l.bound} % — máy không tạo xe. "Xe mới" = cả lô vào MỘT xe (máy chọn dòng xe + ĐVVT, xe báo Non tải); hoặc kéo lô lên xe còn chỗ, tick rồi "Trả về Chờ điều", hay Tối ưu lại với "Bỏ qua dải %"`
   : `${l.vehicle}: ${pct1(l.pct)} % > trần ${l.bound} % và loại xe này không ghép nhiều xe trên một thẻ — nới trần dải, đổi dòng xe được vào, bật "Ghép nhiều xe" cho loại xe, hoặc tách DO bên SAP`
+/** Tấm "Dòng xe được vào — ngoại lệ chỉ xe đó" (15/10): ô tick ban đầu = bản chụp của dòng (chưa chụp thì cấu hình khách) GIAO dòng xe
+ *  CỦA KHO. Bản chụp / cấu hình có thể kể cả dòng xe kho khác (khai theo kênh) — tấm không hiện chúng; giữ trong danh sách gửi lên là server
+ *  400 "không dùng ở kho này" dù người không đụng tới (bắt ở kiểm giao diện 15/10 trên nháp Ba Vì: 5 ô tick, bản chụp 6 dòng). */
+export const rowVehiclesTicked = (current: string[] | null, config: string[], models: { id: string }[]): string[] => {
+  const k = new Set(models.map(m => m.id))
+  return (current ?? config).filter(id => k.has(id))
+}
 export const FLAG_VI: Record<DispatchOdFlag['kind'], string> = {
   // 03/10 tối: SHIPPED / SAP_ASSIGNED là cờ THAM CHIẾU (không loại đơn, không chặn Xác nhận) — chữ phải nói "SAP nói vậy", không khẳng định hàng đã đi
   REPLACED: 'SAP đã thay', GONE: 'SAP đã bỏ', SHIPPED: 'SAP đã post', SAP_ASSIGNED: 'SAP đã gắn xe', IN_PLAN: 'Đã vào KH xuất', CHANGED: 'SAP đã sửa',

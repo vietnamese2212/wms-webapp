@@ -9,6 +9,7 @@ import { FormSheet } from '@/components/shared/FormSheet'
 import { Button } from '@/components/ui/button'
 import { toast } from '@/components/ui/use-toast'
 import { useDispatchRowVehicles, useSetDispatchRowVehicles, type DispatchRowVehicles } from '@/api/hooks'
+import { rowVehiclesTicked } from './dispatchIssues'
 
 const apiMsg = (e: unknown) => (e as AxiosError<{ error?: { message?: string } }>)?.response?.data?.error?.message ?? 'Không lưu được'
 
@@ -16,17 +17,19 @@ export function DispatchCustomerVehiclesSheet({ planId, rowId, canEdit, onClose 
   const { data, isLoading, error } = useDispatchRowVehicles(planId, rowId)
   const save = useSetDispatchRowVehicles()
   const [sel, setSel] = useState<Set<string>>(new Set())
-  useEffect(() => { setSel(new Set(data?.current ?? data?.config ?? [])) }, [data])
+  // CHỈ dòng xe của kho: bản chụp / cấu hình có thể kể cả dòng xe kho khác (khai theo kênh) — giữ chúng trong danh sách gửi lên là server
+  // 400 "không dùng ở kho này" dù người không đụng tới (bắt ở kiểm giao diện 15/10, nháp Ba Vì: 5 ô tick nhưng bản chụp 6 dòng)
+  const known = useMemo(() => new Set((data?.models ?? []).map(m => m.id)), [data])
+  const cur = useMemo(() => new Set(data ? rowVehiclesTicked(data.current ?? [], data.config, data.models) : []), [data])
+  useEffect(() => { setSel(new Set(data ? rowVehiclesTicked(data.current, data.config, data.models) : [])) }, [data])
   // nhóm theo loại xe cha, giữ thứ tự danh mục
   const groups = useMemo(() => {
     const m = new Map<string, DispatchRowVehicles['models']>()
     for (const x of data?.models ?? []) { const k = x.parent_type_name ?? 'Khác'; m.set(k, [...(m.get(k) ?? []), x]) }
     return [...m.entries()]
   }, [data])
-  const known = new Set((data?.models ?? []).map(m => m.id))
   const nameOf = (id: string) => data?.models.find(m => m.id === id)?.name ?? id
   const cfg = (data?.config ?? []).filter(id => known.has(id)), cfgOther = (data?.config ?? []).length - cfg.length
-  const cur = new Set(data?.current ?? [])
   const dirty = !!data && (sel.size !== cur.size || [...sel].some(id => !cur.has(id)))
   const ed = canEdit && !!data?.editable
   const where = data?.trip ? `xe #${data.trip.seq}` : 'đơn này'

@@ -2540,13 +2540,15 @@ export async function getRowVehicles(req: Request, res: Response) {
     if (!ctx) return fail(res, 404, 'ROW_NOT_FOUND', 'Không thấy dòng OD này trên kế hoạch — bàn vừa đổi, tải lại rồi mở lại.')
     const models = await loadModels(plan.warehouse_id)
     const config = ctx.configOf(ctx.row)
+    // "đang ngoại lệ" so trên dòng xe CỦA KHO — bản chụp và cấu hình chỉ khác ở dòng xe kho khác (khai theo kênh) thì không phải ngoại lệ
+    const inWh = new Set(models.map(m => m.id)), here = (l: string[] | null) => (l ?? []).filter(id => inWh.has(id))
     return ok(res, {
       row_id: ctx.row.id, od_number: ctx.row.od_number, ship_to_code: ctx.row.ship_to_code, ship_to_name: ctx.row.ship_to_name,
       customer_found: !!ctx.c, channel_label: ctx.c?.channel_label ?? null,
       trip: ctx.trip ? { id: ctx.trip.id, seq: ctx.trip.seq, vehicle_model_id: ctx.trip.vehicle_model_id } : null,
       editable: OPEN_PLAN.includes(plan.status) && (!ctx.trip || EDITABLE_TRIP.includes(statusOf(ctx.trip))),
       ods: uniq(ctx.rows.map(o => o.od_number)),
-      current: ctx.row.allowed_models, config, exception: !sameModels(ctx.row.allowed_models, config),
+      current: ctx.row.allowed_models, config, exception: !sameModels(here(ctx.row.allowed_models), here(config)),
       models: models.map(m => ({ id: m.id, sap_code: m.sap_code, name: m.name, parent_type_name: m.parent_type_name ?? null })),
     })
   } catch (e) { return failAny(res, e) }

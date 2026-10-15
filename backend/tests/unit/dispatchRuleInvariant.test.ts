@@ -58,7 +58,7 @@ function scenario(seed: number) {
     load_bands: bands, load_bypass: R() < 0.1,
   }
   const input: EngineInput = { ods, models, carriers: [A], tariffs, surcharges: [], allocations: [], share_targets: [], share_actual: {}, params }
-  return { input, customers }
+  return { input }
 }
 
 // Câu cảnh báo của máy khi KHÔNG tìm được xe đúng luật (xe vẫn tạo để người thấy, Xác nhận chặn là đúng) — xem assignSingle / oversize
@@ -69,10 +69,9 @@ describe('bất biến — xe máy ghép (không tự nhận sai luật) luôn q
     const fails: string[] = []
     let checked = 0
     for (let seed = 1; seed <= Number(process.env.INV_SEEDS ?? 3000) && fails.length < 5; seed++) {
-      const { input, customers } = scenario(seed)
+      const { input } = scenario(seed)
       const out = runDispatch(input)
       const banded = withLoadBands(input.models, input.params)
-      const chan = new Map(customers.map(c => [c.code, c.channel]))
       for (const t of out.trips) {
         if (!t.vehicle_model || t.warnings.some(w => ENGINE_ADMITS.test(w))) continue
         // OD bị tách nhiều phần không qua được Xác nhận vì luật riêng (OD_SPLIT_ACROSS_TRIPS) — vẫn kiểm luật ghép như mọi xe
@@ -80,7 +79,7 @@ describe('bất biến — xe máy ghép (không tự nhận sai luật) luôn q
         const rows: RuleRow[] = t.ods.map(o => ({ ...o }))
         const blocks = manualRuleBlocks(fleet, [], rows, {
           allowMixCategories: input.params.allow_mix_categories, allowMixChannels: input.params.allow_mix_channels, follow: input.params.follow_categories ?? [],
-          channelOf: s => (s ? chan.get(s) ?? null : null), maxVehicles: input.params.max_vehicles, posmFollows: input.params.allow_mix_categories === false,
+          maxVehicles: input.params.max_vehicles, posmFollows: input.params.allow_mix_categories === false, whole: true,
         })
         checked++
         if (blocks.length) fails.push(`seed ${seed} xe ${t.group_code} [${fleet.map(m => m.id).join('+')}] ${t.ods.length} OD: ${blocks.map(b => `${b.code}: ${b.message}`).join(' | ')}`)

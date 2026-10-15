@@ -6088,6 +6088,8 @@ export interface DispatchTripOd {
   is_transfer?: boolean                // trung chuyển giữa các kho của mình — chỉ loại OD này được lên container
   allowed_models?: string[] | null      // dòng xe khách được vào (chụp lúc lập / lúc sửa trên bàn) — [] = khách + kênh chưa khai (28/09: máy không chọn xe) · null = dòng chụp trước 28/09
   note?: string | null                  // ghi chú giao hàng SAP (27/09) — người review đọc, máy không đọc
+  separate?: boolean | null             // khách "Đi xe riêng" (chụp lúc lập)
+  channel?: string | null               // kênh khách (chụp lúc lập, 15/10) — luật không trộn kênh đọc bản chụp này, đổi kênh thì "Tối ưu lại"
   // 07/10: RANH GIỚI kế hoạch — dòng khung chờ chưa có mốc = CHỜ ĐIỀU (tab Bán hàng / Trung chuyển của Xem đơn); có mốc = thuộc kế hoạch
   // (khung chờ của bàn ghép xe). Dòng trên xe luôn thuộc kế hoạch. Dùng `inPlanRow` (dispatchIssues), đừng tự đọc cột này rải rác.
   reviewed_at?: string | null

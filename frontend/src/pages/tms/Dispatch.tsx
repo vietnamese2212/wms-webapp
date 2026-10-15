@@ -164,7 +164,8 @@ export default function Dispatch() {
   }, [planId, isOpen, canPlan, freshKey, refresh])
   // phạm vi Loại kho của người xem (12/10): xe chở loại ngoài phạm vi = việc "Cần xử lý" + chip đỏ, báo trước khi Xác nhận bị 403 (C78)
   const scope = useScopeCatSet()
-  const ictx = useMemo(() => ({ flags, scope }), [flags, scope])
+  const mixChannels = plan?.params?.allow_mix_channels === true
+  const ictx = useMemo(() => ({ flags, scope, mixChannels }), [flags, scope, mixChannels])
   const openN = openPlans.length
   const permTabs = useMemo(() => [
     // Xem đơn đứng ĐẦU (27/09 tối): bảng theo trạng thái Điều · Không điều ngày này · Không điều · Đã điều — thay tab "Dữ liệu OD"
@@ -255,7 +256,7 @@ export default function Dispatch() {
     const split = [...odTrips].filter(([, g]) => g.length > 1)
     // 14/10 (user: "làm sai rule cần hiện popup và ngăn chặn"): xe vượt tải / sai luật ghép xe ⇒ cửa Xác nhận trả 409 TRIP_RULE_VIOLATION
     // (bản 25/09 chỉ là một dòng cảnh báo "Xe vượt tải" trong hộp thoại rồi vẫn cho chốt) — nói TRƯỚC, đưa tới đúng xe
-    const ruled = open.filter(t => t.ods.length && (t.oversize || ruleWarnings(t).length > 0))
+    const ruled = open.filter(t => t.ods.length && (t.oversize || ruleWarnings(t, mixChannels).length > 0))
     // chỉ khung chờ CỦA kế hoạch (07/10) — đơn Chờ điều chưa từng vào kế hoạch, không phải "bị bỏ lại"
     const poolN = planView?.summary.pool_ods ?? 0
     // 03/10 tối: cờ "SAP đã post" / "SAP đã gắn xe" chỉ THAM CHIẾU — hỏi lại một lần, không chặn (người không đánh dấu Ngoài app là đã quyết điều)
@@ -294,9 +295,9 @@ export default function Dispatch() {
         title: `Chưa xác nhận được: ${ruled.length} xe sai quy định ghép xe — sửa trên Bàn ghép xe`, danger: true, cancelLabel: null,
         body: close => <CheckRows close={close} rows={[
           ...ruled.slice(0, 8).map(t => ({ k: t.id, tone: 'warn' as const, label: `#${t.seq} ${t.group_code}`,
-            value: [t.oversize ? `vượt tải ${nf(t.load_pct)}%` : '', ...ruleWarnings(t)].filter(Boolean).join(' · ') })),
+            value: [t.oversize ? `vượt tải ${nf(t.load_pct)}%` : '', ...ruleWarnings(t, mixChannels)].filter(Boolean).join(' · ') })),
           ...(ruled.length > 8 ? [{ k: 'more', tone: 'warn' as const, label: `… và ${ruled.length - 8} xe nữa`, value: '' }] : []),
-          { k: 'go', tone: 'info', label: 'Lọc các xe này trên Bàn ghép xe', value: nf(ruled.length), go: toBoard(ruled.some(t => ruleWarnings(t).length > 0) ? 'rule' : 'over') },
+          { k: 'go', tone: 'info', label: 'Lọc các xe này trên Bàn ghép xe', value: nf(ruled.length), go: toBoard(ruled.some(t => ruleWarnings(t, mixChannels).length > 0) ? 'rule' : 'over') },
         ]} />,
       })
       return

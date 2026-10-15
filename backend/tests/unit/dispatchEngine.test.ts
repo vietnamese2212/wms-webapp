@@ -768,12 +768,17 @@ describe('manualRuleBlocks — MỌI luật ghép xe ở cửa làm tay (user 14
     expect(codes(manualRuleBlocks([xe], [r('A', 'K1')], [r('B', 'K2', { separate: true })], opt))).toEqual(['SEPARATE_CUSTOMER'])
     expect(manualRuleBlocks([xe], [r('A', 'K1', { separate: true })], [r('B', 'K1', { separate: true })], opt)).toEqual([])
   })
-  it('kho không cho trộn kênh ⇒ CHANNEL_MIX_BLOCKED; khách chưa biết kênh không tính', () => {
-    const ch: Record<string, string | null> = { K1: 'GT', K2: 'MT', K3: null }
-    const o2 = { ...opt, allowMixChannels: false, channelOf: (s: string | null) => (s ? ch[s] ?? null : null) }
-    expect(codes(manualRuleBlocks([xe], [r('A', 'K1')], [r('B', 'K2')], o2))).toEqual(['CHANNEL_MIX_BLOCKED'])
-    expect(manualRuleBlocks([xe], [r('A', 'K1')], [r('B', 'K3')], o2)).toEqual([])
-    expect(manualRuleBlocks([xe], [r('A', 'K1')], [r('B', 'K2')], opt)).toEqual([])
+  it('kho không cho trộn kênh ⇒ CHANNEL_MIX_BLOCKED theo kênh CHỤP trên dòng OD (15/10); khách chưa biết kênh không tính', () => {
+    const o2 = { ...opt, allowMixChannels: false }
+    expect(codes(manualRuleBlocks([xe], [r('A', 'K1', { channel: 'GT' })], [r('B', 'K2', { channel: 'MT' })], o2))).toEqual(['CHANNEL_MIX_BLOCKED'])
+    expect(manualRuleBlocks([xe], [r('A', 'K1', { channel: 'GT' })], [r('B', 'K3', { channel: null })], o2)).toEqual([])
+    expect(manualRuleBlocks([xe], [r('A', 'K1', { channel: 'GT' })], [r('B', 'K2', { channel: 'MT' })], opt)).toEqual([])
+  })
+  it('cửa Xác nhận (whole): câu nói về XE, không về "OD đang chọn"', () => {
+    const rows = [r('A', 'K1', { channel: 'GT', pallets: 6 }), r('B', 'K2', { channel: 'MT', pallets: 4 })]
+    const msgs = manualRuleBlocks([model({ id: 'X1', name: 'Xe 1 điểm', max_drops: 1, load_max_pct: 105 })], [], rows, { ...opt, allowMixChannels: false, whole: true }).map(b => b.message)
+    expect(msgs.join(' | ')).not.toMatch(/đang chọn|đưa lên|sẽ tải/)
+    expect(msgs).toEqual([expect.stringMatching(/^Xe chở 2 khách/), expect.stringMatching(/^Xe chở lẫn kênh GT \+ MT/), expect.stringMatching(/^Xe đang tải 111\.1%/)])
   })
   it('xe không chở được điều kiện bảo quản của đơn đưa lên ⇒ CONDITION_MISMATCH, câu dùng nhãn điều kiện', () => {
     const b = manualRuleBlocks([xeThuong], [r('A', 'K1')], [r('B', 'K2', { conditions: ['COLD'] })], { ...opt, condLabel: c => (c === 'COLD' ? 'Lạnh 2–8 °C' : c) })

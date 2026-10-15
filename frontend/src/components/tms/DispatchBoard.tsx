@@ -108,7 +108,8 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
   const q = f.search.trim().toLowerCase()
   // phạm vi Loại kho của người xem (12/10): xe chở loại ngoài phạm vi = chip đỏ + "Cần xử lý" — cùng luật cửa Xác nhận 403 (C78)
   const scope = useScopeCatSet()
-  const ctx = useMemo<IssueCtx>(() => ({ flags, scope }), [flags, scope])
+  const mixChannels = plan.params?.allow_mix_channels === true
+  const ctx = useMemo<IssueCtx>(() => ({ flags, scope, mixChannels }), [flags, scope, mixChannels])
   const pool = useMemo(() => plan.pool ?? [], [plan.pool])
   const trips = plan.trips.filter(t => tripStatus(t) !== 'DISCARDED')
   const tripOf = useMemo(() => new Map([...plan.trips.flatMap(t => t.ods.map(o => [o.id, t.id] as const)), ...pool.map(o => [o.id, null] as const)]), [plan.trips, pool])

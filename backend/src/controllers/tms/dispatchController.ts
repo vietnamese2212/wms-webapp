@@ -517,7 +517,7 @@ function odRow(planId: string, tripId: string | null, o: TripOd, m: OdMeta | und
     pallets: o.pallets, tons: o.tons, lines: o.lines, part_index: o.part?.index ?? null, part_of: o.part?.of ?? null, material_codes: o.material_codes,
     conditions: o.conditions, cat_load: asJson(o.cat_load), region_code: m?.region_code ?? null, region_name: m?.region_name ?? null, delivery_date: m?.delivery_date ?? null,
     is_transfer: o.transfer, allowed_models: o.allowed_models, note: m?.note ?? null, updated_at: t,
-    separate: o.separate, max_customers: o.max_customers,
+    separate: o.separate, max_customers: o.max_customers, channel: o.channel,
     sap_sig: m?.sig ?? null, reviewed_at: rev?.at ?? null, reviewed_by: rev?.by ?? null,
   }
 }
@@ -526,7 +526,7 @@ function wholeOd(od: EngineOd): TripOd {
   const s = sumLines(od.lines)
   return { od_number: od.od_number, ship_to_code: od.ship_to_code, ship_to_name: od.ship_to_name, ward_code: od.ward_code, pallets: s.pallets, tons: s.tons, lines: od.lines.length, part: null,
     material_codes: od.lines.map(l => l.material_code), conditions: condsOf(od.lines), cat_load: catLoadOf(od.lines), transfer: isTransferOd(od), allowed_models: od.allowed_models ?? null,
-    separate: od.separate === true, max_customers: od.max_customers ?? null }
+    separate: od.separate === true, max_customers: od.max_customers ?? null, channel: od.channel ?? null }
 }
 async function insertOdRows(rows: Tables['dispatch_trip_od']['Insert'][]) {
   for (let i = 0; i < rows.length; i += CHUNK) {
@@ -1045,24 +1045,18 @@ function engineParams(plan: PlanRow): EngineInput['params'] {
 }
 type RuleTrip = { vehicle_model_id: string | null; extra_vehicle_model_ids?: string[] | null; allow_mix_categories?: boolean | null }
 /** LUẬT GHÉP XE cho xe đích SAU một thao tác tay (14/10, user: "làm sai rule cần hiện popup và ngăn chặn — không chỉ số khách") —
- *  nạp dòng xe của kho (+ dải tải của kế hoạch), nhãn điều kiện bảo quản và kênh khách (khi kho không cho trộn kênh) rồi hỏi
- *  `manualRuleBlocks`. MỌI cửa làm tay + cửa Xác nhận đi qua đây — không cửa nào tự kiểm lẻ một luật (C80: cửa kéo tay từng khác luật máy). */
-async function ruleBlocksFor(plan: PlanRow, trip: RuleTrip, staying: TripOdRow[], moving: TripOdRow[], opts: { modelOnly?: boolean; models?: EngineModel[]; condLabels?: Record<string, string>; channels?: Map<string, string | null> } = {}): Promise<RuleBlock[]> {
+ *  nạp dòng xe của kho (+ dải tải của kế hoạch) và nhãn điều kiện bảo quản rồi hỏi `manualRuleBlocks`. MỌI cửa làm tay + cửa Xác nhận đi
+ *  qua đây — không cửa nào tự kiểm lẻ một luật (C80: cửa kéo tay từng khác luật máy). Kênh khách đọc BẢN CHỤP trên dòng OD (15/10 — trước
+ *  đó tra sống `Customer.channel`, đổi kênh sau khi lập là Xác nhận chặn xe máy vừa xếp đúng). `whole` = cửa Xác nhận (hỏi cả xe). */
+async function ruleBlocksFor(plan: PlanRow, trip: RuleTrip, staying: TripOdRow[], moving: TripOdRow[], opts: { modelOnly?: boolean; whole?: boolean; models?: EngineModel[]; condLabels?: Record<string, string> } = {}): Promise<RuleBlock[]> {
   const P = engineParams(plan)
-  const needCh = !opts.modelOnly && !P.allow_mix_channels && !opts.channels
-  const ships = needCh ? uniq([...staying, ...moving].map(r => r.ship_to_code).filter((x): x is string => !!x)) : []
-  const [models, condLabels, chanRows] = await Promise.all([
-    opts.models ?? loadModels(plan.warehouse_id),
-    opts.condLabels ?? loadConditionLabels(),
-    ships.length ? fetchAllByIdChunks(ships, c => db.from('Customer').select('ship_to_code, channel').in('ship_to_code', c).order('ship_to_code')) as Promise<{ ship_to_code: string; channel: string | null }[]> : Promise.resolve([]),
-  ])
-  const chBy = opts.channels ?? new Map(chanRows.map(c => [c.ship_to_code, c.channel]))
+  const [models, condLabels] = await Promise.all([opts.models ?? loadModels(plan.warehouse_id), opts.condLabels ?? loadConditionLabels()])
   const banded = withLoadBands(models, P)
   const main = trip.vehicle_model_id ? banded.find(m => m.id === trip.vehicle_model_id) ?? null : null
   const fleet = main ? [main, ...(trip.extra_vehicle_model_ids ?? []).map(id => banded.find(m => m.id === id)).filter((m): m is EngineModel => !!m)] : []
   return manualRuleBlocks(fleet, staying, moving, {
     allowMixCategories: trip.allow_mix_categories ?? P.allow_mix_categories, allowMixChannels: P.allow_mix_channels, follow: P.follow_categories ?? [],
-    channelOf: s => (s ? chBy.get(s) ?? null : null), condLabel: c => condLabels[c] ?? c, maxVehicles: P.max_vehicles, modelOnly: opts.modelOnly,
+    condLabel: c => condLabels[c] ?? c, maxVehicles: P.max_vehicles, modelOnly: opts.modelOnly, whole: opts.whole,
     posmFollows: P.allow_mix_categories === false,
   })
 }
@@ -2030,17 +2024,14 @@ async function tripGuards(req: Request, full: FullPlan, subset: FullTrip[]): Pro
   // LUẬT GHÉP XE ở cửa chốt (14/10, user: "làm sai rule cần hiện popup và ngăn chặn") — CÙNG hàm với cửa kéo thả: xe sai luật (vượt tải ·
   // vượt số khách · đi xe riêng · trộn kênh / Loại kho · điều kiện bảo quản · dòng xe khách được vào) không vào Kế hoạch xuất. Xe vượt từ
   // trước khi có luật, hay cấu hình khách / dòng xe đổi sau lúc lập, đều dừng ở đây, nêu đích danh xe + luật. Trước 14/10 vượt tải và vượt
-  // số khách vẫn chốt được (chỉ hộp thoại nhắc).
+  // số khách vẫn chốt được (chỉ hộp thoại nhắc). Mọi cấu hình khách (kể cả kênh — 15/10) là BẢN CHỤP lúc lập trên dòng OD: đổi cấu hình
+  // sau khi lập thì "Tối ưu lại" mới áp, Xác nhận không tự đổi luật của xe đã xếp.
   const loaded = subset.filter(t => t.ods.length)
   if (loaded.length) {
-    const P = engineParams(full)
-    const ships = P.allow_mix_channels ? [] : uniq(loaded.flatMap(t => t.ods.map(o => o.ship_to_code)).filter((x): x is string => !!x))
-    const [models, condLabels, chanRows] = await Promise.all([loadModels(full.warehouse_id), loadConditionLabels(),
-      ships.length ? fetchAllByIdChunks(ships, c => db.from('Customer').select('ship_to_code, channel').in('ship_to_code', c).order('ship_to_code')) as Promise<{ ship_to_code: string; channel: string | null }[]> : Promise.resolve([])])
-    const channels = new Map(chanRows.map(c => [c.ship_to_code, c.channel]))
+    const [models, condLabels] = await Promise.all([loadModels(full.warehouse_id), loadConditionLabels()])
     const bad: { t: FullTrip; blocks: RuleBlock[] }[] = []
     for (const t of loaded) {
-      const blocks = await ruleBlocksFor(full, t, [], t.ods, { models, condLabels, channels })
+      const blocks = await ruleBlocksFor(full, t, [], t.ods, { models, condLabels, whole: true })
       if (blocks.length) bad.push({ t, blocks })
     }
     if (bad.length) return { err: [`${bad.length} xe sai quy định ghép xe — chưa vào Kế hoạch xuất được:\n${bad.slice(0, 6).map(x => `• Xe #${x.t.seq} ${x.t.group_code}: ${x.blocks.map(b => b.message).join(' ')}`).join('\n')}${bad.length > 6 ? `\n• … và ${bad.length - 6} xe nữa` : ''}\nSửa trên Bàn ghép xe (chip "Sai quy định" / "Vượt tải") rồi xác nhận lại.`, 409, 'TRIP_RULE_VIOLATION'] }

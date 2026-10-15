@@ -2269,6 +2269,16 @@ try {
       check('21j. ĐUA: hai người cùng kéo hai đơn vào một xe (một mình vừa, cùng nhau quá 9 pallet) ⇒ đúng MỘT 200, người sau 409 PLAN_BUSY / LOAD_EXCEEDED · xe ≤ 9 pallet',
         [ra, rb].filter(r => r.s === 200).length === 1 && lose?.s === 409 && ['PLAN_BUSY', 'LOAD_EXCEEDED'].includes(lose?.j?.error?.code) && fin <= 9 + 1e-9,
         `a=${em(ra)} b=${em(rb)} xe A=${fin} pallet`)
+      // [21k] KÊNH CHỤP LÚC LẬP (15/10, user chốt): đổi kênh khách SAU khi lập không đổi luật của nháp đang mở (kéo / Xác nhận đọc kênh đã
+      // chụp trên dòng OD); "Tối ưu lại" nạp lại cấu hình khách ⇒ dòng mang kênh mới và máy tách xe theo kênh
+      for (const o of (await restAll('dispatch_trip_od', `select=id,od_number&trip_id=eq.${A.id}`)).filter(o => o.od_number !== OD[0])) await mv([o.id], 'new')
+      await setCust(1, { channel: 'QA61CHB' })   // khách 2 đổi kênh SAU khi lập — dòng OD2 vẫn chụp kênh rỗng, khách 1 = QA61CHA
+      const kIn = await mv([q2.id], 'trip', A.id)
+      const ro = await api(`/tms/dispatch/plans/${s2.id}/reoptimize`, 'POST', {})
+      const pk = ro.j?.data
+      check('21k. KÊNH CHỤP LÚC LẬP: đổi kênh khách 2 sau khi lập ⇒ kéo OD2 lên xe kênh A vẫn CHO · "Tối ưu lại" ⇒ dòng OD2 mang kênh mới, OD1 và OD2 tách hai xe',
+        kIn.s === 200 && ro.s === 200 && rowOf(pk, OD[1])?.channel === 'QA61CHB' && rowOf(pk, OD[0])?.channel === 'QA61CHA' && !!tripOfOd(pk, OD[0]) && !!tripOfOd(pk, OD[1]) && tripOfOd(pk, OD[0]).id !== tripOfOd(pk, OD[1]).id,
+        `kéo=${em(kIn)} ${(kIn.j?.error?.message ?? '').slice(0, 80)} · tối ưu lại=${em(ro)} · kênh OD1/OD2=${rowOf(pk, OD[0])?.channel}/${rowOf(pk, OD[1])?.channel} · cùng xe=${tripOfOd(pk, OD[0])?.id === tripOfOd(pk, OD[1])?.id}`)
     } else check('21e. Fixture: 3 OD, mỗi OD một xe qua ô Xe mới', false, `plan=${s2.s} A=${s2.A?.id} B=${s2.B?.id} C=${s2.C?.id}`)
     await cleanupTrips()
     await Promise.all([0, 1, 2].map(i => setCust(i, { dispatch_vehicles: ALLV })))

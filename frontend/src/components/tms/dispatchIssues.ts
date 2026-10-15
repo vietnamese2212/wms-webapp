@@ -34,10 +34,25 @@ export type IssueKey = 'declined' | 'sapflag' | 'scope' | 'nomodel' | 'nocarrier
  *  CHẶN — xe còn mang câu này là xe vượt từ trước (lập trước luật / cấu hình đổi sau) ⇒ việc ĐỎ, và cửa Xác nhận cũng chặn (409
  *  TRIP_RULE_VIOLATION). Vượt tải có cờ riêng (`oversize`). Sửa câu ở BE thì sửa các mẫu này. "chưa khai Dòng xe được vào" KHÔNG là sai luật. */
 export const RULE_WARNING = /^(Vượt số khách cùng xe|Dòng xe .+ không phục vụ điều kiện bảo quản|Khách .+ không được vào dòng xe|Xe chở lẫn )/
-export const ruleWarnings = (t: Pick<DispatchTrip, 'detail'>) => t.detail.warnings.filter(w => RULE_WARNING.test(w))
+/** Hai luật đọc thẳng DÒNG OD (bản chụp lúc lập — đi xe riêng · kênh), không cần dòng xe ⇒ tính ngay trên trình duyệt (15/10, user: chip phải
+ *  bắt đủ mọi luật). Xe sai TỪ TRƯỚC (kéo trước 14/10) cũng lên chip ngay, không đợi ai sửa xe để server ghi câu cảnh báo. MIRROR của
+ *  `manualRuleBlocks` ở cửa Xác nhận (`whole`) — `backend/tests/mirror/dispatchRuleChip.mirror.test.ts` gác. `mixChannels` = kế hoạch cho
+ *  trộn kênh (`params.allow_mix_channels`; không khai = không cho, như server). */
+export function rowRuleWarnings(ods: Pick<DispatchTripOd, 'od_number' | 'ship_to_code' | 'ship_to_name' | 'separate' | 'channel'>[], mixChannels = false): string[] {
+  const out: string[] = []
+  const stops = new Set(ods.map(o => o.ship_to_code ?? o.od_number)).size
+  const sep = [...new Set(ods.filter(o => o.separate === true).map(o => o.ship_to_name || o.ship_to_code || o.od_number))]
+  if (stops > 1 && sep.length) out.push(`Khách ${sep.slice(0, 2).join(', ')}${sep.length > 2 ? '…' : ''} đi xe riêng — xe đang chở ${stops} khách`)
+  const chs = mixChannels ? [] : [...new Set(ods.map(o => o.channel).filter((c): c is string => !!c))].sort()
+  if (chs.length > 1) out.push(`Xe trộn kênh khách ${chs.join(' + ')} — kho không cho trộn kênh`)
+  return out
+}
+export const ruleWarnings = (t: Pick<DispatchTrip, 'detail' | 'ods'>, mixChannels = false) =>
+  [...t.detail.warnings.filter(w => RULE_WARNING.test(w)), ...rowRuleWarnings(t.ods, mixChannels)]
 /** `scope` (12/10): Loại kho người xem được giao — null = không giới hạn (superadmin / NATIONAL / chưa cấu hình), MIRROR `scopeCategoriesOf`
- *  của BE. Xe chở loại ngoài phạm vi thì Xác nhận bị 403 `CATEGORY_OUT_OF_SCOPE` (C78) — báo SỚM trên bàn, đừng để bấm rồi mới biết. */
-export type IssueCtx = { flags: Map<string, DispatchOdFlag>; scope?: Set<string> | null }
+ *  của BE. Xe chở loại ngoài phạm vi thì Xác nhận bị 403 `CATEGORY_OUT_OF_SCOPE` (C78) — báo SỚM trên bàn, đừng để bấm rồi mới biết.
+ *  `mixChannels` (15/10): kế hoạch cho trộn kênh khách — luật kênh của chip "Sai quy định". */
+export type IssueCtx = { flags: Map<string, DispatchOdFlag>; scope?: Set<string> | null; mixChannels?: boolean }
 /** Loại kho NGOÀI phạm vi được giao trong `cats` — cùng luật với cửa Xác nhận (từng loại phải được giao; null = mọi loại). */
 export const outOfScopeCats = (cats: string[] | null | undefined, scope: Set<string> | null | undefined): string[] =>
   scope ? (cats ?? []).filter(c => !scope.has(c)) : []
@@ -52,7 +67,7 @@ export const ISSUES: { key: IssueKey; label: string; tip: string; todo: boolean;
   { key: 'nomodel',   label: 'Chưa có dòng xe', todo: true, tip: 'Máy không tìm được dòng xe vừa tải / đủ điều kiện bảo quản',    test: t => t.ods.length > 0 && !t.vehicle_model_id },
   { key: 'nocarrier', label: 'Chưa có ĐVVT',   todo: true,  tip: 'Không ĐVVT nào có cước cho tuyến + dòng xe này — chọn tay',      test: t => t.ods.length > 0 && !t.transport_company_id },
   { key: 'over',      label: 'Vượt tải',       todo: true,  tip: 'Xe vượt trần tải của dòng xe — kéo bớt OD sang xe khác hoặc đổi xe lớn hơn. Xe vượt tải KHÔNG xác nhận được (14/10)', test: t => t.oversize },
-  { key: 'rule',      label: 'Sai quy định',   todo: true,  tip: 'Xe sai luật ghép xe (vượt số khách · dòng xe không chở được điều kiện bảo quản · khách không được vào dòng xe · chở lẫn Loại kho) — kéo bớt OD hoặc đổi dòng xe. Kéo thả mới đã bị chặn; xe này sai từ trước và KHÔNG xác nhận được', test: t => ruleWarnings(t).length > 0 },
+  { key: 'rule',      label: 'Sai quy định',   todo: true,  tip: 'Xe sai luật ghép xe (vượt số khách · đi xe riêng · trộn kênh khách · dòng xe không chở được điều kiện bảo quản · khách không được vào dòng xe · chở lẫn Loại kho) — kéo bớt OD hoặc đổi dòng xe. Kéo thả mới đã bị chặn; xe này sai từ trước và KHÔNG xác nhận được', test: (t, c) => ruleWarnings(t, c.mixChannels).length > 0 },
   { key: 'under',     label: 'Non tải',        todo: true,  tip: 'Dưới ngưỡng Non tải — máy đã thử gộp cùng vùng, còn lại cần người quyết', test: t => t.underload },
   { key: 'nofreight', label: 'Chưa có cước',   todo: false, tip: 'Thường vì bảng cước chưa có tuyến + dòng xe này — xác nhận vẫn được, chuyến sẽ không có cước dự tính', test: t => t.ods.length > 0 && t.freight_estimated == null },
   { key: 'warn',      label: 'Có cảnh báo',    todo: false, tip: 'Máy ghi lại chỗ nó không tự xử được — đọc Ghi chú máy',          test: t => t.detail.warnings.length > 0 },

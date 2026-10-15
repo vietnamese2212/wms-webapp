@@ -454,6 +454,13 @@ kế hoạch chờ: kéo vào xe chờ / sửa xe 409 `TRIP_NOT_EDITABLE`, lập
   sai từng luật (1 điểm · 5 pallet · khách không được vào · sai mức bảo quản · xe không ghép nhiều xe · quá số xe kho) · kéo lên xe đang mang
   dòng xe sai · Non tải ⇒ CHO · hai người cùng kéo vào một xe ⇒ đúng một 200. (d) giao diện trên nháp thật Ba Vì 02/10 (không ghi gì — lệnh
   kéo chỉ tới server khi xem trước báo "không nhận"): rê qua hiện "⛔ Xe không nhận", thả / panel xe ⇒ hộp thoại câu server, đổi dòng xe +
-  Xác nhận ⇒ hộp thoại, chip "Sai quy định" + Xác nhận dừng sớm không gửi lệnh. **Còn để ngỏ (chưa làm):** xe sai luật ĐI XE RIÊNG / TRỘN KÊNH
-  có từ trước KHÔNG có câu cảnh báo xe ⇒ không lên chip "Sai quy định" (Xác nhận vẫn chặn, hộp thoại nêu xe); kênh đọc SỐNG ở Khách hàng còn
-  các luật khác đọc bản chụp lúc lập ⇒ đổi kênh khách sau khi lập có thể chặn Xác nhận xe máy đã xếp.
+  Xác nhận ⇒ hộp thoại, chip "Sai quy định" + Xác nhận dừng sớm không gửi lệnh. Hai điểm để ngỏ của vòng này đã làm ở vòng 5.
+- **15/10 — vòng 5: KÊNH CHỤP LÚC LẬP + CHIP BẮT ĐỦ LUẬT (user hỏi ví dụ rồi chốt "ok làm theo bạn đề xuất"):** (a) cột MỚI
+  `dispatch_trip_od.channel` (migration `20261015_dispatch_trip_od_channel`, điền kênh hiện tại cho dòng cũ) — `odRow` ghi ở mọi cửa ghi dòng
+  OD; luật không trộn kênh ở cửa làm tay + Xác nhận đọc BẢN CHỤP (như đi xe riêng / số khách / dòng xe được vào), không tra sống `Customer`
+  nữa (bớt một câu mỗi lần kéo). Đổi kênh khách sau khi lập ⇒ nháp đang mở giữ luật cũ; **"Tối ưu lại" mới áp kênh mới** (nạp lại cấu hình
+  khách, máy tách xe theo kênh). (b) chip "Sai quy định" thêm ĐI XE RIÊNG + TRỘN KÊNH, tính thẳng từ dòng OD trên trình duyệt
+  (`rowRuleWarnings`, ngữ cảnh `IssueCtx.mixChannels` = `params.allow_mix_channels`) ⇒ xe sai từ trước cũng lên chip ngay, không đợi ai sửa
+  xe. Lưới: mirror `backend/tests/mirror/dispatchRuleChip` (chip FE ⇄ `manualRuleBlocks` cửa Xác nhận, đỏ khi làm hỏng FE). (c) câu chặn ở cửa
+  Xác nhận (`whole`) nói về XE ("Xe chở 2 khách…", "Xe chở lẫn kênh GT + MT…", "Xe đang tải…"), không còn "Các OD đang chọn…" / "đơn đưa
+  lên" / "sẽ tải". Gói 61 [21k]: đổi kênh sau khi lập ⇒ kéo vẫn CHO; Tối ưu lại ⇒ dòng mang kênh mới, hai khách tách hai xe.

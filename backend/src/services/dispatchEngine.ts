@@ -171,6 +171,7 @@ export interface TripOd {
   allowed_models: string[] | null                   // luật 10 — dòng xe khách được vào (chụp lúc lập); null = không giới hạn
   separate: boolean                                 // 28/09 — khách đi xe riêng (cấu hình trên Khách)
   max_customers: number | null                      // 28/09 — số khách tối đa cùng xe của OD (khách → kênh); null = CHƯA KHAI = 1 (02/10)
+  channel: string | null                            // 15/10 — kênh khách CHỤP lúc lập (luật không trộn kênh ở cửa làm tay / Xác nhận đọc bản chụp này)
   stop_seq?: number | null                          // 08/10 — điểm giao thứ mấy của xe (theo `DispatchTrip.route`); null = không đo được
 }
 /** 08/10 — thứ tự giao của xe (kho → các điểm, gần trước) + km; xe tuyến liên tỉnh in thứ tự này lên Kế hoạch xuất / chuyến Xuất kho.
@@ -331,7 +332,7 @@ export function resolveMaxCustomers(cust: MaxCustomersCfg, chan: MaxCustomersCfg
 /** Switch "Ghép Loại kho khác" trên thẻ xe (27/09, user: "TẮT = chặn thả"): trả câu lý do nếu xe (sau khi nhận `moving`) chở hơn
  *  MỘT bộ Loại kho chính; null = cho thả. `allow` = switch của xe, không khai thì của kế hoạch (undefined = cho — kế hoạch cũ).
  *  Một OD tự chứa hai loại chính không tách được vẫn thả được (chỉ MỘT bộ). Dòng không có tải theo loại (kế hoạch cũ) không tính. */
-export function mixBlockReason(allow: boolean | null | undefined, staying: { cat_load?: unknown }[], moving: { cat_load?: unknown }[], follow: string[] = []): string | null {
+export function mixBlockReason(allow: boolean | null | undefined, staying: { cat_load?: unknown }[], moving: { cat_load?: unknown }[], follow: string[] = [], whole = false): string | null {
   if (allow !== false) return null
   const keyOf = (o: { cat_load?: unknown }) => mainCatsOf(Object.keys((o.cat_load ?? {}) as Record<string, unknown>).map(c => ({ category: c })), follow).join('+')
   const keys = (rs: { cat_load?: unknown }[]) => uniq(rs.map(keyOf).filter(Boolean)).sort(cmp)
@@ -340,6 +341,7 @@ export function mixBlockReason(allow: boolean | null | undefined, staying: { cat
   const on = keys(staying), mv = keys(moving)
   return on.length
     ? `Xe đang chở ${on.join(', ')} — OD thả vào là ${mv.filter(k => !on.includes(k)).join(', ') || mv.join(', ')}. Bật "Ghép Loại kho khác" trên thẻ xe để cho ghép.`
+    : whole ? `Xe chở lẫn ${mv.join(' + ')} khi "Ghép Loại kho khác" của xe đang tắt — kéo các OD khác loại sang xe khác.`
     : `Các OD đang chọn gồm nhiều Loại kho (${mv.join(', ')}) — bật "Ghép Loại kho khác" trên thẻ xe, hoặc thả từng loại vào một xe.`
 }
 type StopRow = { od_number: string; ship_to_code: string | null; max_customers?: number | null }
@@ -347,8 +349,8 @@ type StopRow = { od_number: string; ship_to_code: string | null; max_customers?:
  *  chỉ ra cảnh báo xám, không vào "Cần xử lý"): cùng HAI trần máy ghép dùng ở `binFits` — dòng xe `max_drops` (chưa khai = 1) và
  *  "số khách tối đa cùng xe" khắt khe nhất của các OD trên xe (`odStopsCap`). Trả câu lý do khi xe SAU lần thả chở nhiều khách hơn trần;
  *  null = cho thả. Chỉ chặn lần thả THÊM KHÁCH MỚI: xe đã vượt từ trước vẫn nhận thêm đơn của khách đang có trên xe, kéo ra luôn được.
- *  `model` null (xe chưa có dòng xe) ⇒ chỉ trần theo khách / kênh. */
-export function dropsBlockReason(model: { name: string; max_drops: number | null } | null, staying: StopRow[], moving: StopRow[]): string | null {
+ *  `model` null (xe chưa có dòng xe) ⇒ chỉ trần theo khách / kênh. `whole` = hỏi CẢ xe (cửa Xác nhận) — câu nói về xe, không về "OD đang chọn". */
+export function dropsBlockReason(model: { name: string; max_drops: number | null } | null, staying: StopRow[], moving: StopRow[], whole = false): string | null {
   const keyOf = (o: StopRow) => o.ship_to_code ?? o.od_number
   const before = new Set(staying.map(keyOf)).size
   const after = new Set([...staying, ...moving].map(keyOf)).size
@@ -361,6 +363,7 @@ export function dropsBlockReason(model: { name: string; max_drops: number | null
     : `khách / kênh của đơn trên xe chỉ cho ${capOds} khách cùng xe (Khách hàng → Số khách tối đa cùng xe)`
   return before
     ? `Xe sẽ chở ${after} khách — ${why}. Thả vào xe khác hoặc ô Xe mới.`
+    : whole ? `Xe chở ${after} khách — ${why}. Kéo bớt khách sang xe khác.`
     : `Các OD đang chọn thuộc ${after} khách — ${why}. Thả từng khách vào một xe.`
 }
 
@@ -368,6 +371,7 @@ export function dropsBlockReason(model: { name: string; max_drops: number | null
 export type RuleRow = StopRow & {
   ship_to_name?: string | null; separate?: boolean | null; allowed_models?: string[] | null; conditions?: string[] | null
   pallets?: number | string | null; tons?: number | string | null; cat_load?: unknown
+  channel?: string | null   // 15/10: kênh khách CHỤP lúc lập (cột dispatch_trip_od.channel) — như đi xe riêng / số khách / dòng xe được vào
 }
 export type RuleBlockCode = 'MULTI_VEHICLE_BLOCKED' | 'CATEGORY_MIX_BLOCKED' | 'DROPS_EXCEEDED' | 'SEPARATE_CUSTOMER' | 'CHANNEL_MIX_BLOCKED'
   | 'CONDITION_MISMATCH' | 'VEHICLE_NOT_ALLOWED' | 'LOAD_EXCEEDED'
@@ -381,11 +385,12 @@ export interface RuleBlock { code: RuleBlockCode; message: string }
  *  Chỉ chặn cái LẦN NÀY gây ra: khách / kênh mới, điều kiện / danh sách dòng xe của OD đưa lên, tải SAU khi nhận — xe vượt từ trước vẫn
  *  kéo ra được. `modelOnly` (đổi dòng xe): chỉ hỏi luật phụ thuộc XE (thẻ nhiều xe · số điểm của dòng xe · điều kiện · dòng xe được vào ·
  *  sức chứa) trên MỌI OD của xe. KHÔNG chặn: Non tải (người được Gom lô dưới tối thiểu — 12/10) · khách CHƯA KHAI dòng xe được vào
- *  (kênh KHAC tự lấy — user 08/10) · OD chưa biết kênh. */
+ *  (kênh KHAC tự lấy — user 08/10) · OD chưa biết kênh. Kênh đọc BẢN CHỤP trên dòng OD (15/10, user chốt: như các luật khác — đổi kênh
+ *  khách sau khi lập thì "Tối ưu lại" mới áp). `whole` = hỏi CẢ xe ở cửa Xác nhận (staying rỗng) — câu nói về xe, không về "OD đang chọn". */
 export function manualRuleBlocks(fleet: EngineModel[], staying: RuleRow[], moving: RuleRow[], o: {
   allowMixCategories?: boolean | null; allowMixChannels: boolean; follow: string[]
-  channelOf?: (shipTo: string | null) => string | null; condLabel?: (c: string) => string
-  maxVehicles?: number; modelOnly?: boolean
+  condLabel?: (c: string) => string
+  maxVehicles?: number; modelOnly?: boolean; whole?: boolean
   /** KẾ HOẠCH không trộn Loại kho ⇒ đơn CHỈ hàng đi kèm (POSM) theo xe của đơn chính, bỏ danh sách dòng xe riêng — cùng `followOnlyOd`
    *  của máy ghép và cảnh báo của `computeTripPatch`. Kho cho trộn thì đơn POSM cũng phải đúng danh sách của khách. */
   posmFollows?: boolean
@@ -404,9 +409,9 @@ export function manualRuleBlocks(fleet: EngineModel[], staying: RuleRow[], movin
     if (o.maxVehicles && fleet.length > o.maxVehicles) out.push({ code: 'MULTI_VEHICLE_BLOCKED', message: `Thẻ ${fleet.length} xe — kho chỉ cho tối đa ${o.maxVehicles} xe một thẻ (Cài đặt WMS → Kho → XUẤT — Điều vận).` })
   }
   if (!o.modelOnly) {
-    const mix = mixBlockReason(o.allowMixCategories, staying, moving, o.follow)
+    const mix = mixBlockReason(o.allowMixCategories, staying, moving, o.follow, o.whole)
     if (mix) out.push({ code: 'CATEGORY_MIX_BLOCKED', message: mix })
-    const drops = dropsBlockReason(m0, staying, moving)
+    const drops = dropsBlockReason(m0, staying, moving, o.whole)
     if (drops) out.push({ code: 'DROPS_EXCEEDED', message: drops })
     // luật 1: khách bật "Đi xe riêng" không chung xe với khách nào khác
     const before = new Set(staying.map(keyOf)).size, after = new Set(all.map(keyOf)).size
@@ -415,11 +420,12 @@ export function manualRuleBlocks(fleet: EngineModel[], staying: RuleRow[], movin
       if (sep.length) out.push({ code: 'SEPARATE_CUSTOMER', message: `Khách ${few(sep)} đi xe riêng (Khách hàng → Đi xe riêng) — không ghép khách khác cùng xe.` })
     }
     // kho không cho trộn kênh khách — OD chưa biết kênh không tính
-    if (!o.allowMixChannels && o.channelOf) {
-      const chs = (rs: RuleRow[]) => new Set(rs.map(r => o.channelOf!(r.ship_to_code)).filter((c): c is string => !!c))
+    if (!o.allowMixChannels) {
+      const chs = (rs: RuleRow[]) => new Set(rs.map(r => r.channel).filter((c): c is string => !!c))
       const cb = chs(staying), ca = chs(all)
       if (ca.size > 1 && ca.size > cb.size) out.push({ code: 'CHANNEL_MIX_BLOCKED', message: cb.size
         ? `Xe đang chở kênh ${[...cb].sort(cmp).join(', ')} — đơn đưa lên là kênh ${[...ca].filter(c => !cb.has(c)).sort(cmp).join(', ')}; kho không cho trộn kênh khách trên một xe (Cài đặt WMS → Kho → XUẤT — Điều vận).`
+        : o.whole ? `Xe chở lẫn kênh ${[...ca].sort(cmp).join(' + ')} — kho không cho trộn kênh khách trên một xe (Cài đặt WMS → Kho → XUẤT — Điều vận). Kéo đơn khác kênh sang xe khác.`
         : `Các OD đang chọn thuộc nhiều kênh (${[...ca].sort(cmp).join(', ')}) — kho không cho trộn kênh khách trên một xe.` })
     }
   } else if (m0) {
@@ -432,7 +438,7 @@ export function manualRuleBlocks(fleet: EngineModel[], staying: RuleRow[], movin
   for (const m of models) {
     const conds = uniq(asked.flatMap(r => r.conditions ?? []).filter(Boolean)).sort(cmp)
     if (conds.length && !servesConditions(m, conds))
-      out.push({ code: 'CONDITION_MISMATCH', message: `Dòng xe ${m.name} không chở được điều kiện bảo quản ${conds.map(c => o.condLabel?.(c) ?? c).join(' + ')} của đơn${o.modelOnly ? ' trên xe' : ' đưa lên'}.` })
+      out.push({ code: 'CONDITION_MISMATCH', message: `Dòng xe ${m.name} không chở được điều kiện bảo quản ${conds.map(c => o.condLabel?.(c) ?? c).join(' + ')} của đơn${o.modelOnly || o.whole ? ' trên xe' : ' đưa lên'}.` })
     const outList = asked.filter(r => Array.isArray(r.allowed_models) && r.allowed_models.length > 0 && !r.allowed_models.includes(m.id) && !posmOnly(r))
     if (outList.length) out.push({ code: 'VEHICLE_NOT_ALLOWED', message: `Khách ${few(uniq(outList.map(who)))} không được vào dòng xe ${m.name} (Khách hàng → Dòng xe được vào).` })
   }
@@ -442,7 +448,7 @@ export function manualRuleBlocks(fleet: EngineModel[], staying: RuleRow[], movin
     const lm = fleet.length > 1 ? comboModel(fleet) : m0
     const ld = tripLoad(lm, sumOf('pallets'), sumOf('tons'), null)
     const max = ld.max_pct ?? 100
-    if (ld.pct != null && ld.pct > max) out.push({ code: 'LOAD_EXCEEDED', message: `Xe sẽ tải ${ld.pct}% — quá trần ${max}% của ${fleet.length > 1 ? `${fleet.length} xe trên thẻ cộng lại` : `dòng xe ${m0.name}`}. ${o.modelOnly ? 'Chọn dòng xe lớn hơn hoặc kéo bớt OD.' : 'Thả vào xe khác / ô Xe mới, hoặc đổi xe lớn hơn trước.'}` })
+    if (ld.pct != null && ld.pct > max) out.push({ code: 'LOAD_EXCEEDED', message: `Xe ${o.whole ? 'đang' : 'sẽ'} tải ${ld.pct}% — quá trần ${max}% của ${fleet.length > 1 ? `${fleet.length} xe trên thẻ cộng lại` : `dòng xe ${m0.name}`}. ${o.modelOnly || o.whole ? 'Chọn dòng xe lớn hơn hoặc kéo bớt OD.' : 'Thả vào xe khác / ô Xe mới, hoặc đổi xe lớn hơn trước.'}` })
   }
   return out
 }
@@ -1220,7 +1226,7 @@ export function runDispatch(input: EngineInput): DispatchResult {
     trips.push({
       seq, group_code: `${P.code_prefix}${seq}`, cluster: b.key,
       vehicle_model: a.model, vehicles: a.vehicles, carrier: a.carrier,
-      ods: b.units.map(u => ({ od_number: u.od.od_number, ship_to_code: u.od.ship_to_code, ship_to_name: u.od.ship_to_name, ward_code: u.od.ward_code, pallets: u.pallets, tons: u.tons, lines: u.lines.length, part: u.part, material_codes: u.lines.map(l => l.material_code), conditions: condsOf(u.lines), cat_load: catLoadOf(u.lines), transfer: isTransferOd(u.od), allowed_models: u.od.allowed_models ?? null, separate: u.od.separate === true, max_customers: u.od.max_customers ?? null, stop_seq: (u.od.ship_to_code && stopSeq.get(u.od.ship_to_code)) || null })),
+      ods: b.units.map(u => ({ od_number: u.od.od_number, ship_to_code: u.od.ship_to_code, ship_to_name: u.od.ship_to_name, ward_code: u.od.ward_code, pallets: u.pallets, tons: u.tons, lines: u.lines.length, part: u.part, material_codes: u.lines.map(l => l.material_code), conditions: condsOf(u.lines), cat_load: catLoadOf(u.lines), transfer: isTransferOd(u.od), allowed_models: u.od.allowed_models ?? null, separate: u.od.separate === true, max_customers: u.od.max_customers ?? null, channel: u.od.channel ?? null, stop_seq: (u.od.ship_to_code && stopSeq.get(u.od.ship_to_code)) || null })),
       route,
       wards: a.wards, stops: a.stops, pallets: a.pallets, tons: a.tons, categories: a.cats, conditions: a.conds, booking_category: pickBookingCategory(b.units.flatMap(u => u.lines)),
       load, underload: load.pct != null && load.pct < load.underload_pct, oversize: a.oversize, freight: a.freight, carrier_reasons: a.reasons,

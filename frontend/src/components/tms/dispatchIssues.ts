@@ -8,7 +8,7 @@
 // vẫn thiếu — đếm vào là bộ đếm KHÔNG BAO GIỜ về 0 (đo 24/09), và bộ đếm không về 0 dạy người ta bỏ qua nó.
 // 25/09 thêm "OD đổi ở SAP": OD trên xe bị SAP thay (sửa SO) / bỏ / đã xuất / đã điều cho ĐVVT khác sau khi lập nháp —
 // việc NGƯỜI ĐÓNG ĐƯỢC (thay OD / kéo OD ra), và cửa Xác nhận chặn 409 nếu còn.
-import type { DispatchTrip, DispatchTripStatus, DispatchOdFlag, DispatchTripOd, DispatchPlan } from '@/api/hooks'
+import type { DispatchTrip, DispatchTripStatus, DispatchOdFlag, DispatchTripOd, DispatchPlan, DispatchUnderMin, DispatchTooBig } from '@/api/hooks'
 
 /** RANH GIỚI KẾ HOẠCH (07/10, user: "đơn không tick ở lại Chờ điều"): dòng trên xe, hoặc dòng khung chờ ĐÃ có mốc `reviewed_at`, thuộc
  *  kế hoạch; dòng khung chờ chưa mốc = CHỜ ĐIỀU — nằm ở tab Bán hàng / Trung chuyển của Xem đơn, bàn ghép xe không vẽ, "Tối ưu lại" không
@@ -92,6 +92,38 @@ export const selectionAfterMove = (sel: Set<string>, moved: string[]): Set<strin
   for (const id of moved) n.delete(id)
   return n
 }
+/** KHUNG CHỜ GOM THEO LÔ (15/10, user: "khối vàng và bảng đang diễn giải gần giống nhau — gom lại dạng table, vừa đủ thông tin vừa dễ thao
+ *  tác"; thay khối vàng "n đơn dưới tối thiểu" chỉ in 6 lô): mỗi LÔ máy định xếp mà KHÔNG tạo xe là một nhóm của bảng khung chờ — lô dưới
+ *  Tối thiểu % (`under_min`, hổ phách) và đơn lớn hơn xe (`too_big`, đỏ, mỗi đơn một lô); đơn còn lại ở nhóm "Ngoài lô" cuối bảng. Lô nhận
+ *  theo MÃ LÔ máy ghi (`lot`) — khoá đoán cũ (phường · xe · % · số OD) tách lô hai phường làm đôi và gộp hai lô cùng phường cùng % làm một,
+ *  "Xe mới" trên dòng lô thành hai xe / một xe quá tải; kế hoạch ghép trước 15/10 không có mã thì vẫn đoán. Lô sắp pallet giảm (gần đủ tải
+ *  lên đầu). Test: `backend/tests/unit/dispatchIssues.test.ts`. */
+export type PoolLot = { kind: 'under' | 'big'; vehicle: string; pct: number; bound: number }
+export const POOL_OUT_OF_LOT = 'Ngoài lô'
+const lotOf = (o: DispatchTripOd, um: DispatchUnderMin | undefined, tb: DispatchTooBig | undefined): { k: string; lot: PoolLot | null } =>
+  um ? { k: `U|${um.lot ?? o.ward_code ?? ''}|${um.vehicle}|${um.pct}|${um.ods}`, lot: { kind: 'under', vehicle: um.vehicle, pct: um.pct, bound: um.min } }
+    : tb ? { k: `B|${o.od_number}`, lot: { kind: 'big', vehicle: tb.vehicle, pct: tb.pct, bound: tb.max } }
+    : { k: POOL_OUT_OF_LOT, lot: null }
+const lotRank = (l: PoolLot | null) => (!l ? 2 : l.kind === 'big' ? 1 : 0)
+export function poolLotGroups(pool: DispatchTripOd[], under: Record<string, DispatchUnderMin>, big: Record<string, DispatchTooBig>) {
+  const by = new Map<string, { rows: DispatchTripOd[]; lot: PoolLot | null }>()
+  for (const o of pool) {
+    const { k, lot } = lotOf(o, under[o.od_number], big[o.od_number])
+    const g = by.get(k) ?? { rows: [], lot }
+    g.rows.push(o); by.set(k, g)
+  }
+  return [...by.entries()].map(([k, g]) => {
+    const custs = [...new Set(g.rows.map(o => o.ship_to_name || o.ship_to_code || '—'))]
+    const n = new Set(g.rows.map(o => o.od_number)).size
+    const who = !g.lot ? POOL_OUT_OF_LOT : custs.length > 1 ? `${custs[0]} +${custs.length - 1} khách` : custs[0]
+    return { k, label: n > 1 || !g.lot ? `${who} · ${n} OD` : who, rows: g.rows, lot: g.lot, pallets: g.rows.reduce((s, o) => s + Number(o.pallets ?? 0), 0) }
+  }).sort((a, b) => lotRank(a.lot) - lotRank(b.lot) || b.pallets - a.pallets || a.k.localeCompare(b.k))
+}
+const pct1 = (n: number) => n.toLocaleString('vi-VN', { maximumFractionDigits: 1 })
+/** Lời của một lô (rê chuột ô Tải / % của dòng lô) — cùng câu ở hai dạng bàn */
+export const lotTip = (l: PoolLot) => l.kind === 'under'
+  ? `${l.vehicle}: ${pct1(l.pct)} % < tối thiểu ${l.bound} % — máy không tạo xe. "Xe mới" = cả lô vào MỘT xe (máy chọn dòng xe + ĐVVT, xe báo Non tải); hoặc kéo lô lên xe còn chỗ, tick rồi "Trả về Chờ điều", hay Tối ưu lại với "Bỏ qua dải %"`
+  : `${l.vehicle}: ${pct1(l.pct)} % > trần ${l.bound} % và loại xe này không ghép nhiều xe trên một thẻ — nới trần dải, đổi dòng xe được vào, bật "Ghép nhiều xe" cho loại xe, hoặc tách DO bên SAP`
 export const FLAG_VI: Record<DispatchOdFlag['kind'], string> = {
   // 03/10 tối: SHIPPED / SAP_ASSIGNED là cờ THAM CHIẾU (không loại đơn, không chặn Xác nhận) — chữ phải nói "SAP nói vậy", không khẳng định hàng đã đi
   REPLACED: 'SAP đã thay', GONE: 'SAP đã bỏ', SHIPPED: 'SAP đã post', SAP_ASSIGNED: 'SAP đã gắn xe', IN_PLAN: 'Đã vào KH xuất', CHANGED: 'SAP đã sửa',

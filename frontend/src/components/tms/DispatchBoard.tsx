@@ -36,7 +36,7 @@ import {
   useHoldDispatchOds, useResyncDispatchOd, useDispatchPlanReview, useVehicleModels, useTransportCompanies,
   type DispatchPlan, type DispatchTrip, type DispatchTripOd, type DispatchOdFlag, type DispatchMoveTo, type DispatchMovePreview,
 } from '@/api/hooks'
-import { DispatchBoardTable, type BoardOps, type BoardDropAttrs } from './DispatchBoardTable'
+import { DispatchBoardTable, type BoardOps, type BoardDropAttrs, type BoardPoolGroup } from './DispatchBoardTable'
 import { DispatchOdDetailSheet, type OdSummary } from './DispatchOdDetailSheet'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { useWhTypeMetaMap } from '@/hooks/useWhTypeMeta'
@@ -47,7 +47,7 @@ import { DispatchLoadBandDialog, DispatchLoadBandChip, useLoadBandParents, fullB
 import { NewOdChip } from './DispatchReviewTable'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
-import { EDITABLE, tripStatus, issuesOf, needsWork, ISSUE_ORDER, ISSUE_SHORT, TODO_KEYS, RED_ISSUES, FLAG_VI, selectionAfterMove, type IssueKey, type IssueCtx } from './dispatchIssues'
+import { EDITABLE, tripStatus, issuesOf, needsWork, ISSUE_ORDER, ISSUE_SHORT, TODO_KEYS, RED_ISSUES, FLAG_VI, selectionAfterMove, poolLotGroups, lotTip, type IssueKey, type IssueCtx } from './dispatchIssues'
 import { useScopeCatSet } from '@/hooks/useUserScope'
 
 const nf = (n: number | string | null | undefined, d = 0) => (n == null ? '—' : Number(n).toLocaleString('vi-VN', { maximumFractionDigits: d }))
@@ -119,8 +119,9 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
   const move = useMoveDispatchOds(), patchTrip = useUpdateDispatchTrip(), delTrip = useDeleteDispatchTrip()
   const replace = useReplaceDispatchOd(), reopt = useReoptimizeDispatchPlan()
   const fresh = useMemo(() => new Set(plan.params.fresh_ods ?? []), [plan.params.fresh_ods])
-  const underMin = plan.params.under_min ?? {}   // 07/10: lô máy không tạo xe vì dưới Tối thiểu % (chip trên dòng khung chờ)
-  const tooBig = plan.params.too_big ?? {}       // 07/10: OD lớn hơn xe mà loại xe không được ghép nhiều xe
+  // 07/10: lô máy không tạo xe vì dưới Tối thiểu % · OD lớn hơn xe mà loại xe không được ghép nhiều xe (chip trên dòng khung chờ + gom theo Lô)
+  const underMin = useMemo(() => plan.params.under_min ?? {}, [plan.params.under_min])
+  const tooBig = useMemo(() => plan.params.too_big ?? {}, [plan.params.too_big])
   const hold = useHoldDispatchOds(), resync = useResyncDispatchOd()
   const perms = (useAuthStore(s => s.user)?.module_permissions as ModulePermissions | null) ?? null
   // sửa "Dòng xe được vào" của khách từ bàn (27/09) — quyền riêng của điều vận, hoặc quyền sửa Khách hàng
@@ -287,35 +288,18 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
 
   // ── Khung chờ ──
   const poolNotes = pool.filter(o => !!o.note).length
-  // 08/10 (đóng vai điều vận: "Tạo kế hoạch" 3 đơn ra 0 xe, chip lý do nằm ở cột Cảnh báo ngoài màn 1280 px): đếm ngay ở đầu khung chờ
-  const poolOds = new Set(pool.map(o => o.od_number))
-  const nUnder = Object.keys(underMin).filter(od => poolOds.has(od)).length
-  const nTooBig = Object.keys(tooBig).filter(od => poolOds.has(od)).length
-  // LÔ DƯỚI TỐI THIỂU theo từng nhóm (12/10, đóng vai 12/10: Cao Bằng 23/48 đơn kẹt khung chờ, đường gom tay là tick nhóm → "Chuyển tới
-  // xe…" → chọn "Xe mới" ẩn trong ô chọn): mỗi lô máy định xếp = một dòng "khách/phường · n đơn · pallet → xe máy định dùng x %" kèm nút
-  // "Gom" = đúng các dòng đó vào MỘT xe mới (máy chọn dòng xe + ĐVVT). Luật "máy không tự tạo xe dưới tối thiểu" không đổi — người quyết.
-  const underGroups = useMemo(() => {
-    const by = new Map<string, { rows: DispatchTripOd[]; um: NonNullable<DispatchPlan['params']['under_min']>[string] }>()
-    for (const o of pool) {
-      const um = underMin[o.od_number]
-      if (!um) continue
-      const k = `${o.ward_code ?? ''}|${um.vehicle}|${um.pct}|${um.ods}`
-      const g = by.get(k) ?? { rows: [], um }
-      g.rows.push(o); by.set(k, g)
-    }
-    return [...by.values()].map(g => {
-      const custs = uniqStr(g.rows.map(o => o.ship_to_name || o.ship_to_code || '—'))
-      return { ...g, label: custs.length === 1 ? custs[0] : `${g.rows[0].ward_code ?? 'Chưa có phường'} · ${custs.length} khách`,
-        ods: new Set(g.rows.map(o => o.od_number)).size, pallets: g.rows.reduce((s, o) => s + Number(o.pallets ?? 0), 0) }
-    }).sort((a, b) => b.pallets - a.pallets)
-  }, [pool, underMin])
+  // LÔ máy định xếp mà không tạo xe — dưới Tối thiểu % / lớn hơn xe (07/10). 08/10 (đóng vai: "Tạo kế hoạch" 3 đơn ra 0 xe, lý do nằm ở
+  // cột ngoài màn 1280 px) đếm ở đầu khung chờ; 12/10 thêm khối vàng mỗi lô một dòng + "Gom"; 15/10 (user: "khối vàng và bảng diễn giải gần
+  // giống nhau — gom lại dạng table") LÔ là một cách GOM của chính bảng khung chờ: dòng lô = % xe máy định + "Xe mới", số lô in trên nút "Lô"
+  const lotCount = useMemo(() => poolLotGroups(pool, underMin, tooBig).filter(g => g.lot).length, [pool, underMin, tooBig])
   const poolShown = pool.filter(o => matches(o, q) && (!notesOnly || !!o.note))
-  const groups = useMemo(() => {
+  const groups = useMemo<BoardPoolGroup[]>(() => {
+    if (f.boardGroup === 'lot') return poolLotGroups(poolShown, underMin, tooBig)
     const m = new Map<string, DispatchTripOd[]>()
     for (const o of poolShown) { const k = groupKeyOf(o, f.boardGroup); m.set(k, [...(m.get(k) ?? []), o]) }
     return [...m.entries()].map(([k, rs]) => ({ k, rows: rs, pallets: rs.reduce((s, o) => s + Number(o.pallets ?? 0), 0) }))
       .sort((a, b) => b.pallets - a.pallets || a.k.localeCompare(b.k))
-  }, [poolShown, f.boardGroup])
+  }, [poolShown, f.boardGroup, underMin, tooBig])
 
   // ── Thẻ xe: cùng bộ lọc "Soát" với bảng Danh sách xe ──
   // KHÁCH CHÍNH của xe = khách chiếm nhiều pallet nhất — khoá sắp xếp để xe cùng khách ĐỨNG CẠNH NHAU (user 30/09: "sort đơn
@@ -733,9 +717,12 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
           </div>
           <div className="flex items-center gap-1 text-[10px]">
             <span className="text-slate-400">Gom theo</span>
-            {([['ward', 'Phường'], ['region', 'Vùng'], ['customer', 'Khách']] as const).map(([k, l]) => (
+            {([['lot', 'Lô'], ['ward', 'Phường'], ['region', 'Vùng'], ['customer', 'Khách']] as const).map(([k, l]) => (
               <button key={k} type="button" onClick={() => setF({ boardGroup: k })}
-                className={`rounded px-1.5 py-0.5 ${f.boardGroup === k ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>{l}</button>
+                title={k === 'lot' ? 'Gom theo LÔ máy định xếp mà KHÔNG tạo xe — dưới Tối thiểu % của dải tải (thanh hổ phách) hoặc đơn lớn hơn xe (đỏ); số trên nút = số lô. "Xe mới" trên dòng lô = cả lô vào một xe; đơn không thuộc lô nào ở nhóm "Ngoài lô" cuối bảng.' : undefined}
+                className={`rounded px-1.5 py-0.5 ${f.boardGroup === k ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
+                {l}{k === 'lot' && lotCount > 0 && <span className={`ml-1 font-semibold tabular-nums ${f.boardGroup === k ? '' : 'text-amber-700'}`}>{lotCount}</span>}
+              </button>
             ))}
             {poolShown.length > 0 && editable && (
               <button type="button" className="ml-auto text-[10px] text-sky-700 hover:underline whitespace-nowrap" onClick={() => toggleMany(poolShown.map(o => o.id))}>
@@ -749,29 +736,6 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
               title="OD có ghi chú giao hàng từ SAP — đọc trước khi ghép (hẹn ngày khác, không nhận Chủ nhật, ghép xe riêng…)">
               <StickyNote className="h-3 w-3" /> {notesOnly ? 'Đang xem' : 'Chỉ'} {poolNotes} OD có ghi chú
             </button>
-          )}
-          {(nUnder > 0 || nTooBig > 0) && (
-            <div className="flex flex-wrap gap-1 text-[10px]">
-              {nUnder > 0 && (
-                <div className="w-full rounded bg-amber-50 px-1.5 py-0.5 text-amber-900"
-                  title={'Lô dưới Tối thiểu % của dải tải nên máy KHÔNG tạo xe — "Gom" = các đơn của lô vào một xe mới (máy chọn dòng xe + ĐVVT); hoặc kéo lên xe, tick rồi "Trả về Chờ điều", hoặc Tối ưu lại với "Bỏ qua dải %".'}>
-                  <div className="font-medium">{nUnder} đơn dưới tối thiểu — máy không tạo xe{underGroups.length > 1 ? ` · ${underGroups.length} lô` : ''}</div>
-                  {underGroups.slice(0, 6).map(g => (
-                    <div key={g.label + g.um.vehicle} className="flex items-center gap-1.5 leading-snug">
-                      <span className="min-w-0 flex-1 truncate" title={`${g.label}: ${g.ods} đơn · ${nf(g.pallets, 1)} pallet → ${g.um.vehicle} ${nf(g.um.pct, 1)} % (tối thiểu ${g.um.min} %)`}>
-                        <b>{g.label}</b> · {g.ods} đơn · {nf(g.pallets, 1)} pl → {g.um.vehicle} <span className="tabular-nums">{nf(g.um.pct, 0)} %</span>
-                      </span>
-                      {editable && <button type="button" className="shrink-0 rounded border border-amber-300 bg-white px-1.5 py-0 font-medium text-amber-900 hover:bg-amber-100 disabled:opacity-50" disabled={busy}
-                        title="Gom các đơn của lô này vào MỘT xe mới — máy chọn dòng xe + ĐVVT; xe sẽ báo Non tải nếu dưới ngưỡng" onClick={() => void run(g.rows.map(o => o.id), 'new')}>Gom</button>}
-                    </div>
-                  ))}
-                  {underGroups.length > 6 && <div className="text-amber-800">… và {underGroups.length - 6} lô nữa — chi tiết ở cột Lưu ý</div>}
-                </div>
-              )}
-              {nTooBig > 0 && <span className="rounded bg-amber-100 px-1.5 py-0.5 font-medium text-amber-900"
-                title={'Đơn lớn hơn xe lớn nhất mà loại xe không được ghép nhiều xe trên một thẻ — nới trần dải, đổi dòng xe được vào, bật "Ghép nhiều xe" cho loại xe, hoặc tách DO bên SAP. Chi tiết ở cột Cảnh báo.'}>
-                {nTooBig} đơn lớn hơn xe — máy không tạo xe</span>}
-            </div>
           )}
         </div>
   )
@@ -880,6 +844,7 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
     togglePoolGroup: k => setCollapsed(p => { const n = new Set(p); n.has(k) ? n.delete(k) : n.add(k); return n }),
     poolEmpty: !pool.length ? (canDrag ? 'Kéo OD từ xe về đây để bỏ khỏi xe — OD ở khung chờ KHÔNG đi khi Xác nhận.' : 'Không có OD nào chờ xếp xe.')
       : !poolShown.length ? `Không OD nào khớp "${f.search}"` : null,
+    newTripFor: ids => { void run(ids, 'new') },
     tripGroups, groupOpen: k => forceOpen || openSet.has(k), toggleGroup, armOpen,
     regionBands: byVtype && (f.boardSort || 'region') === 'region', noModelKey: NO_MODEL,
     tripsShown: shownTrips.length, tripsTotal: trips.length, clearFilter: () => setF({ issue: '', search: '' }),
@@ -917,8 +882,13 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
                   <button type="button" className="text-slate-400" onClick={() => setCollapsed(p => { const n = new Set(p); n.has(g.k) ? n.delete(g.k) : n.add(g.k); return n })}>
                     {open ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
                   </button>
-                  <span className="text-[11px] font-semibold text-slate-700 break-words flex-1 min-w-0">{g.k}</span>
+                  <span className="text-[11px] font-semibold text-slate-700 break-words flex-1 min-w-0">{g.label ?? g.k}</span>
+                  {/* gom theo LÔ (15/10): % xe máy định + "Xe mới" — cùng dòng lô của dạng Bảng */}
+                  {g.lot && <span className={`text-[10px] font-medium tabular-nums whitespace-nowrap ${g.lot.kind === 'big' ? 'text-red-600' : 'text-amber-700'}`} title={lotTip(g.lot)}>{nf(g.lot.pct, 0)}%</span>}
                   <span className="text-[10px] text-slate-500 tabular-nums whitespace-nowrap">{g.rows.length} OD · {nf(g.pallets, 1)} pl</span>
+                  {g.lot?.kind === 'under' && editable && <button type="button" disabled={busy} onClick={() => void run(g.rows.map(o => o.id), 'new')}
+                    title="Cả lô vào MỘT xe mới — máy chọn dòng xe + ĐVVT; xe báo Non tải vì dưới tối thiểu"
+                    className="shrink-0 rounded border border-amber-300 bg-white px-1 text-[10px] font-medium text-amber-900 hover:bg-amber-50 disabled:opacity-50">Xe mới</button>}
                   {editable && <input type="checkbox" className="h-3.5 w-3.5 accent-sky-600" checked={g.rows.every(o => sel.has(o.id))} onChange={() => toggleMany(g.rows.map(o => o.id))} title="Chọn cả nhóm để kéo một lượt" />}
                 </div>
                 {open && <div className="p-0.5">{g.rows.map(o => odRow(o))}</div>}

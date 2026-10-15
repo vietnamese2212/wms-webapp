@@ -264,7 +264,8 @@ Memory `dispatch-daytest-2026-10-12`. Không lỗi kỹ thuật; năm chỗ ngư
   **Bàn ghép xe giữ nguyên là bàn** (user: "5 vẫn là bàn — còn 7 là tab nháp"): ô ngày / kho / mảng ở đầu trang là bộ lọc.
 - **"Xe mới" ngay trên thanh nổi** của bàn (trước ẩn trong ô chọn của "Chuyển tới xe…"). **Lô "dưới tối thiểu" liệt kê từng nhóm**
   ("Nơi Phùng · 21 đơn · 4,5 pl → Xe 16 Pallet 28 %") kèm nút **"Gom"** = các đơn của lô vào MỘT xe mới (`move {to:'new'}`); luật
-  "máy không tự tạo xe dưới tối thiểu" (07/10) không đổi — người bấm mới tạo.
+  "máy không tự tạo xe dưới tối thiểu" (07/10) không đổi — người bấm mới tạo. **15/10: khối này BỎ — lô là một cách "Gom theo" của chính
+  bảng khung chờ, nút đổi tên "Xe mới"** (mục 15/10 cuối file).
 - **Số xe liền mạch sau "Tối ưu lại"**: xe sắp làm lại nhả số, xe mới lấp chỗ trống rồi mới nối tiếp (`seqPlan` → engine `free_seqs`);
   xe khoá / đã chốt / Kế hoạch xuất / mảng kia giữ số. Trước: khoá #1 #2 rồi Tối ưu lại ⇒ #11…#18, #3–#10 biến mất (STT = max + 1).
   `dispatch_trip.group_code` không có ràng buộc duy nhất nên vẫn "ghi mới trước, dọn cũ sau" (06/10). Test engine + gói 61 [10i2].
@@ -467,3 +468,20 @@ kế hoạch chờ: kéo vào xe chờ / sửa xe 409 `TRIP_NOT_EDITABLE`, lập
   [21k] ĐỎ đúng chỗ: Tối ưu lại chỉ chụp lại dòng của đơn LÊN XE — đơn ở lại khung chờ (dưới Tối thiểu % · chưa khai dòng xe) giữ cấu hình cũ, kéo
   tay lên xe sẽ hỏi luật theo cấu hình cũ. Nay Tối ưu lại sửa TẠI CHỖ (giữ id dòng) kênh · đi xe riêng · số khách · dòng xe được vào của mọi
   đơn nó nạp mà không xếp được, chỉ dòng thật đổi.
+
+## 15/10 — KHUNG CHỜ GOM THEO LÔ (thay khối vàng "n đơn dưới tối thiểu"; user: "diễn giải các nội dung gần giống nhau — gom lại dạng table, vừa đủ thông tin vừa dễ thao tác, văn xuôi không phù hợp")
+
+Nháp Ba Vì 02/10: 31/32 đơn khung chờ là đơn dưới tối thiểu (29 lô, hầu hết một khách một lô) ⇒ khối vàng (mỗi lô một dòng chữ, chỉ in 6 lô
++ "… và 23 lô nữa") và bảng khung chờ (gom theo khách) in CÙNG một danh sách hai lần, khối vàng chiếm ~1/4 chiều cao khung chờ. User chọn
+phương án "Lô là một cách gom" (phương án kia: khối vàng thu / mở thành bảng nhỏ — vẫn hai danh sách):
+- **"Gom theo: Lô · Phường · Vùng · Khách"** — nút Lô in số lô (hổ phách khi chưa chọn). Mỗi LÔ máy định xếp mà KHÔNG tạo xe = một dòng nhóm
+  của bảng khung chờ (thu / mở, tick cả lô, kéo cả lô lên xe như mọi nhóm): cột **Tải** (thanh % xe máy định, cùng dáng cột Tải của bảng xe —
+  hổ phách = dưới Tối thiểu, vạch = mức tối thiểu; đỏ = đơn lớn hơn xe, mỗi đơn một lô) · Pallet · Tấn · nút **"Xe mới"** ở cột thao tác ghim
+  phải (= nút "Gom" cũ, đổi tên vì đứng cạnh "Gom theo"; cùng cửa `move {to:'new'}` với nút Xe mới của thanh nổi). Rê chuột ô Tải: "Xe 16
+  Pallet: 82 % < tối thiểu 95 % — máy không tạo xe…". Đơn không thuộc lô nào ở nhóm **"Ngoài lô"** cuối bảng. Lô sắp pallet giảm. Dạng Thẻ:
+  đầu nhóm in % + nút Xe mới. Đủ mọi lô (khối vàng cắt ở 6). Khối vàng + chip "n đơn lớn hơn xe" BỎ; chip trên từng đơn ở cột Lưu ý giữ.
+  Lựa chọn Gom theo nhớ theo người (`boardGroup`, mặc định vẫn Phường).
+- **MÃ LÔ do máy ghi** (`params.under_min[od].lot` = OD nhỏ nhất của lô, engine): khối vàng cũ ĐOÁN lô theo phường · xe · % · số OD ⇒ lô hai
+  phường (luật 5b ghép lô dưới tối thiểu khác phường) bị tách đôi, hai lô cùng phường cùng % (5 + 5 pallet không vừa một xe 9) bị gộp làm một
+  ⇒ "Gom" ra hai xe / một xe 10 pallet trên xe 9. Nay `poolLotGroups` (dispatchIssues) gom theo mã; kế hoạch ghép trước 15/10 không có mã thì
+  vẫn đoán. Lưới: test đơn vị `dispatchIssues.test` (đỏ trên khoá đoán cũ) + engine "MÃ LÔ" + gói 61 [16d] kiểm `lot`.

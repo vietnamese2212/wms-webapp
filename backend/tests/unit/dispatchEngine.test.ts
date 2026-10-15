@@ -926,7 +926,7 @@ describe('07/10 — cận dưới của dải tải là BẮT BUỘC: dưới T�
   it('2/9 pallet (22,2 %) ⇒ 0 xe, OD ở khung chờ mang xe máy định dùng + % tải + mức tối thiểu; 7/9 (77,8 %) vẫn lên xe', () => {
     const r = runDispatch(input([od('1', 'W1', 2)], { models: [P9], params: band }))
     expect(r.trips).toHaveLength(0)
-    expect(r.unplanned).toEqual([{ od_number: '1', ship_to_code: 'S1', code: 'UNDER_MIN', under: { vehicle: 'M9', pct: 22.2, min: 70, ods: 1 }, reason: expect.stringMatching(/Dưới tải tối thiểu: M9 22\.2% < 70%/) }])
+    expect(r.unplanned).toEqual([{ od_number: '1', ship_to_code: 'S1', code: 'UNDER_MIN', under: { vehicle: 'M9', pct: 22.2, min: 70, ods: 1, lot: '1' }, reason: expect.stringMatching(/Dưới tải tối thiểu: M9 22\.2% < 70%/) }])
     expect(runDispatch(input([od('2', 'W1', 7)], { models: [P9], params: band })).trips).toHaveLength(1)
   })
   it('lô nhiều OD: 3 khách 0,5 pallet cùng phường (16,7 %) ⇒ cả 3 OD ở khung chờ, cùng thông tin lô (3 OD)', () => {
@@ -945,7 +945,16 @@ describe('07/10 — cận dưới của dải tải là BẮT BUỘC: dưới T�
   it('thẻ nhiều xe dưới tối thiểu: OD một dòng 10 pallet trên 2 × xe 9 (55,6 %) ⇒ khung chờ, ghi "2 × M9"', () => {
     const r = runDispatch(input([od('1', 'W1', 10)], { models: [P9], params: { ...band, max_vehicles: 2 } }))
     expect(r.trips).toHaveLength(0)
-    expect(r.unplanned[0].under).toEqual({ vehicle: '2 × M9', pct: 55.6, min: 70, ods: 1 })
+    expect(r.unplanned[0].under).toEqual({ vehicle: '2 × M9', pct: 55.6, min: 70, ods: 1, lot: '1' })
+  })
+  // 15/10 — bàn gom khung chờ THEO LÔ (user: "khối vàng và bảng diễn giải gần giống nhau — gom lại dạng table"): nhóm phải là ĐÚNG lô máy
+  // định xếp. Khoá đoán cũ của bàn (phường · xe · % · số OD) tách lô hai phường làm đôi và gộp hai lô cùng phường cùng % làm một ⇒ "Xe mới"
+  // trên dòng lô ra hai xe / một xe 10 pallet trên xe 9.
+  it('MÃ LÔ: lô hai phường mang MỘT mã; hai lô cùng phường cùng % (5 + 5 pallet không vừa một xe 9) mang HAI mã', () => {
+    const lots = (ods: EngineOd[]) => runDispatch(input(ods, { models: [P9], params: band })).unplanned
+      .map(u => [u.od_number, u.under?.ods, u.under?.pct, u.under?.lot]).sort((a, b) => String(a[0]).localeCompare(String(b[0])))
+    expect(lots([od('1', 'W1', 1), od('2', 'W2', 1)])).toEqual([['1', 2, 22.2, '1'], ['2', 2, 22.2, '1']])
+    expect(lots([od('1', 'W1', 5), od('2', 'W1', 5)])).toEqual([['1', 1, 55.6, '1'], ['2', 1, 55.6, '2']])
   })
   it('lô chứa PHẦN của OD bị tách giữ nguyên xe (Non tải) — bỏ một phần là OD nửa trên xe nửa không ở đâu', () => {
     const o = od('1', 'W1', 0, { lines: [line(9, { material_code: 'a' }), line(1, { material_code: 'b' })] })

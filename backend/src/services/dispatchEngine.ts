@@ -226,9 +226,11 @@ export interface DispatchTrip {
 }
 /** `code` = OD vẫn NẰM KHUNG CHỜ (không vào "không lên xe"): NO_VEHICLE = thiếu KHAI BÁO dòng xe (khách/kênh) — khai xong ghép được;
  *  FOLLOW_ONLY = chỉ có hàng đi kèm đơn (POSM) chưa có chuyến chính cùng cụm — đơn chính về là ké theo (30/09);
- *  UNDER_MIN = xe máy định tạo cho lô này dưới "Tối thiểu %" của dải tải (07/10) — `under` = xe đó · % tải · mức tối thiểu · số OD của lô;
+ *  UNDER_MIN = xe máy định tạo cho lô này dưới "Tối thiểu %" của dải tải (07/10) — `under` = xe đó · % tải · mức tối thiểu · số OD của lô ·
+ *  `lot` = MÃ LÔ (OD nhỏ nhất của lô, 15/10): bàn gom khung chờ theo lô — trước đó bàn đoán lô theo phường + xe + % nên lô hai phường bị
+ *  tách đôi, hai lô cùng phường cùng % bị gộp làm một;
  *  TOO_BIG = OD lớn hơn xe lớn nhất được vào mà loại xe đó KHÔNG được ghép nhiều xe trên một thẻ (07/10) — `too_big` = xe · % tải · trần. */
-export interface UnderMin { vehicle: string; pct: number; min: number; ods: number }
+export interface UnderMin { vehicle: string; pct: number; min: number; ods: number; lot: string }
 export interface TooBig { vehicle: string; pct: number; max: number }
 export interface UnplannedOd { od_number: string; ship_to_code: string | null; reason: string; code?: 'NO_VEHICLE' | 'FOLLOW_ONLY' | 'UNDER_MIN' | 'TOO_BIG'; under?: UnderMin; too_big?: TooBig }
 export interface CarrierShare { transport_company_id: string; code: string; name: string; trips: number; pallets: number; tons: number; pct: number | null; target_pct: number | null; basis: ShareBasis }
@@ -1213,7 +1215,8 @@ export function runDispatch(input: EngineInput): DispatchResult {
     // bỏ một phần là OD nửa trên xe nửa không ở đâu (cửa ghi xoá dòng khung chờ của OD đã lên xe).
     if (lm?.load_min_pct != null && load.pct != null && load.pct < load.underload_pct && b.units.every(u => !u.part)) {
       const vehicle = a.vehicles.length > 1 ? `${a.vehicles.length} × ${lm.name}` : lm.name
-      const under: UnderMin = { vehicle, pct: load.pct, min: load.underload_pct, ods: b.units.length }   // không có phần OD ⇒ một đơn vị = một OD
+      // không có phần OD ⇒ một đơn vị = một OD
+      const under: UnderMin = { vehicle, pct: load.pct, min: load.underload_pct, ods: b.units.length, lot: b.units.map(u => u.od.od_number).sort()[0] }
       for (const u of b.units) unplanned.push({ od_number: u.od.od_number, ship_to_code: u.od.ship_to_code, code: 'UNDER_MIN', under,
         reason: `Dưới tải tối thiểu: ${vehicle} ${load.pct}% < ${load.underload_pct}% (lô ${b.units.length} OD) — máy không tạo xe; kéo lên xe / Xe mới, hoặc Trả về Chờ điều` })
       continue

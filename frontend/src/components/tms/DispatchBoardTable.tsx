@@ -24,7 +24,7 @@ import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import type { DispatchPlan, DispatchTrip, DispatchTripOd, DispatchOdFlag, DispatchMoveTo, DispatchMovePreview } from '@/api/hooks'
 import { DispatchCarrierPicker } from './DispatchCarrierPicker'
 import { NewOdChip } from './DispatchReviewTable'
-import { tripStatus, issuesOf, ISSUE_ORDER, ISSUE_SHORT, TODO_KEYS, RED_ISSUES, FLAG_VI, SOFT_FLAG_KINDS, type IssueCtx } from './dispatchIssues'
+import { tripStatus, issuesOf, ISSUE_ORDER, ISSUE_SHORT, TODO_KEYS, RED_ISSUES, FLAG_VI, SOFT_FLAG_KINDS, lotTip, type IssueCtx, type PoolLot } from './dispatchIssues'
 
 const nf = (n: number | string | null | undefined, d = 0) => (n == null ? '—' : Number(n).toLocaleString('vi-VN', { maximumFractionDigits: d }))
 const money = (n: number | string | null | undefined) => {
@@ -48,7 +48,8 @@ export type BoardDropAttrs = {
   onDrop?: (e: React.DragEvent) => void
 }
 export interface BoardTripGroup { k: string; label: string; trips: DispatchTrip[]; pallets: number; tons: number; freight: number; todo: number; over: number }
-export interface BoardPoolGroup { k: string; rows: DispatchTripOd[]; pallets: number }
+/** `label` / `lot` chỉ có khi khung chờ gom theo LÔ (15/10, `poolLotGroups`) — `k` khi đó là khoá máy, không phải chữ để in */
+export interface BoardPoolGroup { k: string; rows: DispatchTripOd[]; pallets: number; label?: string; lot?: PoolLot | null }
 /** Mọi thứ bảng cần từ DispatchBoard — cửa ghi / trạng thái kéo thả / bộ lọc là MỘT với bản thẻ. */
 export interface BoardOps {
   plan: DispatchPlan; editable: boolean; canDrag: boolean; desktop: boolean; q: string
@@ -64,6 +65,8 @@ export interface BoardOps {
   ownDrop: (tripId: string) => boolean
   hover: BoardHover; justHit: string | null; busy: boolean
   poolGroups: BoardPoolGroup[]; poolGroupOpen: (k: string) => boolean; togglePoolGroup: (k: string) => void; poolEmpty: ReactNode
+  /** "Xe mới" trên dòng lô — các đơn đó vào MỘT xe mới (cùng cửa ghi với nút Xe mới của thanh nổi) */
+  newTripFor: (ids: string[]) => void
   tripGroups: BoardTripGroup[]; groupOpen: (k: string) => boolean; toggleGroup: (k: string) => void; armOpen: (k: string) => void
   regionBands: boolean; noModelKey: string; tripsShown: number; tripsTotal: number; clearFilter: () => void
   onOpenTrip: (id: string) => void; onOpenOd: (o: DispatchTripOd) => void
@@ -93,8 +96,11 @@ const tripCols = (desktop: boolean): RtColDef[] => [
   { id: 'warn', label: 'Lưu ý', w: 300 },
   { id: 'act', label: '', w: 84, align: 'right', stickyRight: desktop },
 ]
-const poolCols = (desktop: boolean): RtColDef[] => [
-  { id: 'x', label: 'OD', w: desktop ? 160 : 150 },
+// Gom theo LÔ (15/10): thêm cột Tải (thanh % xe máy định, cùng dáng cột Tải của bảng xe) ngay sau cột đầu — khung chờ 400 px vẫn thấy
+// Lô · Tải · Pallet · nút Xe mới; cột thao tác rộng hơn cho nút chữ
+const poolCols = (desktop: boolean, lot: boolean): RtColDef[] => [
+  { id: 'x', label: lot ? 'Lô · OD' : 'OD', w: desktop ? 160 : 150 },
+  ...(lot ? [{ id: 'load', label: 'Tải', w: 96 }] : []),
   { id: 'pal', label: 'Pallet', w: 60, align: 'right' },
   { id: 'ton', label: 'Tấn', w: 60, align: 'right' },
   { id: 'cust', label: 'Khách', w: 180 },
@@ -103,7 +109,7 @@ const poolCols = (desktop: boolean): RtColDef[] => [
   { id: 'cat', label: 'Loại kho', w: 100 },
   { id: 'note', label: 'Ghi chú giao hàng SAP', w: 220 },
   { id: 'warn', label: 'Lưu ý', w: 220 },
-  { id: 'act', label: '', w: 60, align: 'right', stickyRight: desktop },
+  { id: 'act', label: '', w: lot ? 64 : 60, align: 'right', stickyRight: desktop },
 ]
 
 type Cell = { node?: ReactNode; cls?: string; title?: string; stop?: boolean }
@@ -149,6 +155,21 @@ function LoadMini({ t, pv, loading }: { t: DispatchTrip; pv: DispatchMovePreview
       <span className={`w-12 shrink-0 text-right tabular-nums ${pv ? 'font-semibold text-sky-700' : over ? 'font-semibold text-red-600' : under ? 'font-medium text-amber-700' : 'text-slate-700'}`}>
         {pv ? '→ ' : ''}{nf(p, 0)}%
       </span>
+    </div>
+  )
+}
+
+/** Tải của một LÔ máy định xếp mà không tạo xe (15/10) — cùng dáng thanh của dòng xe: hổ phách = dưới Tối thiểu (vạch = mức tối thiểu),
+ *  đỏ = lớn hơn xe (vạch = trần) */
+function LotLoad({ lot }: { lot: PoolLot }) {
+  const big = lot.kind === 'big'
+  return (
+    <div className="flex items-center gap-1.5">
+      <div className="relative h-1.5 min-w-[36px] flex-1 overflow-hidden rounded-full bg-slate-200">
+        <div className={`absolute inset-y-0 left-0 ${big ? 'bg-red-500' : 'bg-amber-500'}`} style={{ width: `${Math.min(100, lot.pct)}%` }} />
+        <div className="absolute inset-y-0 w-px bg-slate-500/60" style={{ left: `${Math.min(100, lot.bound)}%` }} />
+      </div>
+      <span className={`w-10 shrink-0 text-right font-medium tabular-nums ${big ? 'text-red-600' : 'text-amber-700'}`}>{nf(lot.pct, 0)}%</span>
     </div>
   )
 }
@@ -449,7 +470,10 @@ export function DispatchBoardTable({ ops, toolbar, rail, poolHeader, poolExtras 
   const f = useWmsFilterStore(s => s.dispatch)
   const setF = useWmsFilterStore(s => s.setDispatch)
   const { desktop } = ops
-  const tcols = useMemo(() => tripCols(desktop), [desktop]), pcols = useMemo(() => poolCols(desktop), [desktop])
+  const lotMode = f.boardGroup === 'lot'
+  const tcols = useMemo(() => tripCols(desktop), [desktop]), pcols = useMemo(() => poolCols(desktop, lotMode), [desktop, lotMode])
+  // bộ cột đổi theo cách gom ⇒ khoá độ rộng riêng + remount (useColumnResize chỉ đọc độ rộng lúc mount)
+  const pkey = `dispatch_board_pool_v1${lotMode ? '_lot' : ''}${desktop ? '' : '_m'}`
   // bản ops MỚI NHẤT cho thao tác lúc bấm / kéo trong các dòng xe không vẽ lại (TripRows memo)
   const live = useRef(ops)
   live.current = ops
@@ -499,7 +523,7 @@ export function DispatchBoardTable({ ops, toolbar, rail, poolHeader, poolExtras 
             className={`flex min-h-0 shrink-0 flex-col border-b lg:border-b-0 ${poolHover ? 'bg-sky-50 ring-2 ring-inset ring-sky-400' : 'bg-white'}`}>
             {poolHeader}
             <div className="max-h-[40vh] min-h-0 flex-1 overflow-auto lg:max-h-none" onDragOver={ops.canDrag ? edgeScroll : undefined}>
-              <ResizableTable storageKey={`dispatch_board_pool_v1${desktop ? '' : '_m'}`} cols={pcols}>
+              <ResizableTable key={pkey} storageKey={pkey} cols={pcols}>
                 <TableBody>
                   {ops.poolEmpty && <TableEmptyRow colSpan={pcols.length}>{ops.poolEmpty}</TableEmptyRow>}
                   {ops.poolGroups.map(g => {
@@ -507,27 +531,36 @@ export function DispatchBoardTable({ ops, toolbar, rail, poolHeader, poolExtras 
                     const ids = g.rows.map(o => o.id)
                     const nSel = ids.filter(id => ops.sel.has(id)).length
                     const dragG = ops.canDrag && ops.editable
+                    const label = g.label ?? g.k
                     return (
                       <Fragment key={g.k}>
                         <TableRow className="cursor-pointer bg-slate-100 hover:bg-slate-200" onClick={() => ops.togglePoolGroup(g.k)}
                           draggable={dragG} onDragStart={dragG ? e => ops.startDrag(e, ids, true) : undefined} onDragEnd={dragG ? ops.endDrag : undefined}>
                           <RowCells cols={pcols} bg="bg-slate-100" cells={{
                             x: {
-                              title: `${g.k} — bấm để ${open ? 'thu' : 'mở'}${dragG ? ' · kéo dòng này = kéo cả cụm' : ''}`,
+                              title: `${label} — bấm để ${open ? 'thu' : 'mở'}${dragG ? ` · kéo dòng này = kéo cả ${g.lot ? 'lô' : 'cụm'}` : ''}`,
                               node: (
                                 <div className="flex min-w-0 items-center gap-1">
                                   {open ? <ChevronDown className="h-3.5 w-3.5 shrink-0 text-slate-500" /> : <ChevronRight className="h-3.5 w-3.5 shrink-0 text-slate-500" />}
                                   {ops.editable
                                     ? <input type="checkbox" className="h-3.5 w-3.5 shrink-0 accent-sky-600" checked={nSel === ids.length} ref={el => { if (el) el.indeterminate = nSel > 0 && nSel < ids.length }}
-                                        onChange={() => ops.toggleMany(ids)} onClick={e => e.stopPropagation()} aria-label={`Chọn cả nhóm ${g.k}`} />
+                                        onChange={() => ops.toggleMany(ids)} onClick={e => e.stopPropagation()} aria-label={`Chọn cả nhóm ${label}`} />
                                     : null}
-                                  <span className="min-w-0 truncate text-[11px] font-semibold text-slate-700">{g.k}</span>
+                                  <span className="min-w-0 truncate text-[11px] font-semibold text-slate-700">{label}</span>
                                 </div>
                               ),
                             },
+                            // gom theo LÔ (15/10): % xe máy định + "Xe mới" ngay trên dòng lô — thay khối vàng "n đơn dưới tối thiểu"
+                            load: g.lot ? { title: lotTip(g.lot), node: <LotLoad lot={g.lot} /> } : {},
                             pal: { cls: 'font-semibold', node: nf(g.pallets, 1) },
                             ton: { cls: 'font-semibold', node: nf(g.rows.reduce((s, o) => s + Number(o.tons ?? 0), 0), 2) },
                             cust: { cls: 'text-slate-500', node: `${new Set(g.rows.map(o => o.od_number)).size} OD` },
+                            act: g.lot?.kind === 'under' && ops.editable ? {
+                              stop: true,
+                              node: <button type="button" disabled={ops.busy} onClick={() => ops.newTripFor(ids)}
+                                title="Cả lô vào MỘT xe mới — máy chọn dòng xe + ĐVVT; xe báo Non tải vì dưới tối thiểu"
+                                className="rounded border border-amber-300 bg-white px-1 font-medium text-amber-900 hover:bg-amber-50 disabled:opacity-50">Xe mới</button>,
+                            } : {},
                           }} />
                         </TableRow>
                         {open && g.rows.map(o => {

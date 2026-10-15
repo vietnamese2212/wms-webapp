@@ -4,7 +4,7 @@
 // Xác nhận; cửa Xác nhận và bảng Xem đơn đã đọc đúng) mà bộ đếm này vẫn tính là "OD đổi ở SAP" ⇒ Bàu Bàng 06/10: 695/709 xe "cần xử lý",
 // bảng mới tô đỏ gần hết xe. Hai cửa cùng một sổ mà khác luật (C19) — khoá ở đây.
 import { describe, it, expect } from 'vitest'
-import { issuesOf, needsWork, selectionAfterMove, inPlanRow, boardPlanOf, planHoldsOrders, outOfScopeCats } from '../../../frontend/src/components/tms/dispatchIssues'
+import { issuesOf, needsWork, selectionAfterMove, inPlanRow, boardPlanOf, planHoldsOrders, outOfScopeCats, poolLotGroups } from '../../../frontend/src/components/tms/dispatchIssues'
 import type { DispatchTrip, DispatchOdFlag, DispatchPlan, DispatchTripOd } from '../../../frontend/src/api/hooks'
 
 const trip = (ods: string[]): DispatchTrip => ({
@@ -104,5 +104,35 @@ describe('ranh giới kế hoạch — Chờ điều ⇄ trong kế hoạch', ()
     expect(planHoldsOrders({ trips: 0, pool_ods: 3500, unreviewed_ods: 3499 })).toBe(true)
     expect(planHoldsOrders({ trips: 0, pool_ods: 12 })).toBe(true)   // tổng kết cũ thiếu số Chờ điều ⇒ coi như còn giữ (nhắc thừa hơn bỏ sót)
     expect(planHoldsOrders(null)).toBe(false)
+  })
+})
+
+// 15/10 — KHUNG CHỜ GOM THEO LÔ (user: "khối vàng và bảng diễn giải gần giống nhau — gom lại dạng table"). Nhóm phải là ĐÚNG lô máy định
+// xếp: khoá đoán cũ của khối vàng (phường · xe · % · số OD) tách lô hai phường làm đôi và gộp hai lô cùng phường cùng % làm một ⇒ "Gom" /
+// "Xe mới" trên dòng lô ra hai xe, hoặc một xe 10 pallet trên xe 9.
+describe('poolLotGroups — khung chờ gom theo lô máy định xếp', () => {
+  const prow = (od: string, ward: string, cust: string, pallets: number): DispatchTripOd => ({
+    id: `r${od}`, plan_id: 'p1', trip_id: null, od_number: od, ship_to_code: `S${cust}`, ship_to_name: cust, ward_code: ward, pallets, tons: 1, lines: 1, part_index: null, part_of: null, material_codes: [],
+  })
+  const um = (lot: string | undefined, pct: number, ods: number) => ({ vehicle: 'Xe 9', pct, min: 70, ods, ...(lot ? { lot } : {}) })
+  const keyOf = (gs: ReturnType<typeof poolLotGroups>) => gs.map(g => [g.label, g.rows.map(r => r.od_number).join('+'), g.lot?.kind ?? null])
+
+  it('lô hai phường (cùng mã lô) là MỘT nhóm; hai lô cùng phường cùng % (khác mã) là HAI nhóm', () => {
+    const pool = [prow('1', 'W1', 'An', 1), prow('2', 'W2', 'Bình', 1), prow('3', 'W3', 'Chi', 5), prow('4', 'W3', 'Dũng', 5)]
+    const g = poolLotGroups(pool, { 1: um('1', 22.2, 2), 2: um('1', 22.2, 2), 3: um('3', 55.6, 1), 4: um('4', 55.6, 1) }, {})
+    expect(keyOf(g)).toEqual([['Chi', '3', 'under'], ['Dũng', '4', 'under'], ['An +1 khách · 2 OD', '1+2', 'under']])
+  })
+  it('kế hoạch ghép trước 15/10 (không mã lô) vẫn đoán theo phường · xe · % · số OD', () => {
+    const pool = [prow('1', 'W1', 'An', 2), prow('2', 'W1', 'An', 3), prow('3', 'W2', 'Chi', 1)]
+    const g = poolLotGroups(pool, { 1: um(undefined, 55.6, 2), 2: um(undefined, 55.6, 2), 3: um(undefined, 11.1, 1) }, {})
+    expect(keyOf(g)).toEqual([['An · 2 OD', '1+2', 'under'], ['Chi', '3', 'under']])
+  })
+  it('đơn lớn hơn xe: mỗi đơn một lô (đỏ) sau lô dưới tối thiểu; đơn không thuộc lô nào ở "Ngoài lô" cuối bảng; lô sắp pallet giảm', () => {
+    const pool = [prow('9', 'W9', 'Zen', 7), prow('1', 'W1', 'An', 2), prow('5', 'W5', 'Em', 20), prow('6', 'W6', 'Phú', 25), prow('2', 'W2', 'Bình', 4)]
+    const g = poolLotGroups(pool, { 1: um('1', 22.2, 1), 2: um('2', 44.4, 1) }, { 5: { vehicle: 'Xe 9', pct: 222.2, max: 100 }, 6: { vehicle: 'Xe 9', pct: 277.8, max: 100 } })
+    expect(keyOf(g)).toEqual([['Bình', '2', 'under'], ['An', '1', 'under'], ['Phú', '6', 'big'], ['Em', '5', 'big'], ['Ngoài lô · 1 OD', '9', null]])
+    expect(g[0].lot).toEqual({ kind: 'under', vehicle: 'Xe 9', pct: 44.4, bound: 70 })
+    expect(g[2].lot).toEqual({ kind: 'big', vehicle: 'Xe 9', pct: 277.8, bound: 100 })
+    expect(g.map(x => x.pallets)).toEqual([4, 2, 25, 20, 7])
   })
 })

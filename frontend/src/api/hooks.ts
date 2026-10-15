@@ -6156,8 +6156,9 @@ export interface DispatchConfigGaps {
 /** Dải % tải theo dòng xe CHA (01/10): `min` = dưới mức này máy KHÔNG tạo xe (07/10 — trước là cờ Non tải) · `max` = máy được xếp tới
  *  mức này (105 = cho vượt 5 %). Khoá = VehicleType.id. */
 export type DispatchLoadBands = Record<string, { min: number; max: number }>
-/** Lô máy không tạo xe vì dưới Tối thiểu % (07/10): xe máy định dùng ("2 × Bộ cont 40" nếu thẻ nhiều xe) · % tải · mức tối thiểu · số OD */
-export interface DispatchUnderMin { vehicle: string; pct: number; min: number; ods: number }
+/** Lô máy không tạo xe vì dưới Tối thiểu % (07/10): xe máy định dùng ("2 × Bộ cont 40" nếu thẻ nhiều xe) · % tải · mức tối thiểu · số OD ·
+ *  `lot` = mã lô (15/10, OD nhỏ nhất của lô) — kế hoạch ghép trước 15/10 không có, bàn đoán lô theo phường + xe + % như cũ */
+export interface DispatchUnderMin { vehicle: string; pct: number; min: number; ods: number; lot?: string }
 /** OD lớn hơn xe lớn nhất được vào mà loại xe không được ghép nhiều xe trên một thẻ (07/10) — xe · % tải · trần dải */
 export interface DispatchTooBig { vehicle: string; pct: number; max: number }
 /** MẢNG điều vận (03/10 tối): mỗi kho × ngày một nháp cho MỖI mảng — Trung chuyển (khách tick) · Bán hàng (còn lại). */

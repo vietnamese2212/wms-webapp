@@ -434,7 +434,7 @@ interface DispatchFilters {
   reviewTab: string
   // MẢNG đang làm (03/10 tối): 'SALES' Bán hàng (mặc định) · 'TRANSFER' Trung chuyển — mỗi mảng một kế hoạch riêng cùng kho × ngày; nhớ theo người
   segment: string
-  boardGroup: string     // khung chờ gom theo 'ward' (phường) | 'region' (vùng) | 'customer' (khách)
+  boardGroup: string     // khung chờ gom theo 'lot' (lô máy định xếp mà không tạo xe — 15/10) | 'ward' (phường) | 'region' (vùng) | 'customer' (khách)
   boardSort: string      // thẻ xe sắp theo 'region' (vùng → phường → khách) | 'todo' (cần xử lý trước) | 'load' (tải thấp trước) | 'freight' (cước cao trước) | 'seq' — sắp lại SAU MỖI LẦN THẢ (user 25/09)
   boardTripGroup: string // thẻ xe NHÓM theo 'region' (vùng — mặc định 30/09: xe cùng khách phải đứng cạnh nhau, nhóm theo loại xe tách chúng ra) | 'vtype' (dòng xe cha)
   // Bàn làm việc rộng rãi (user 25/09 tối): nhóm xe theo dòng xe CHA đóng mặc định · khung chờ thu gọn được

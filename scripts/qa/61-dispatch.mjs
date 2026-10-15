@@ -2071,12 +2071,13 @@ try {
     const back = await api(`/tms/dispatch/plans/${p16Id}/reoptimize`, 'POST', { review_all: true, load_bands: { [XEPALLET.id]: { min: 70, max: 100 } } })
     const tBack = (back.j?.data?.trips ?? []).filter(t => t.ods?.length).map(t => Number(t.pallets)).sort((a, b) => b - a)
     // 07/10 CẬN DƯỚI BẮT BUỘC (user: "đã ràng % cận dưới mà sao lại có xe 5 %"): lô 3 pallet = 33,3 % < 70 KHÔNG thành xe — ở khung chờ
-    // của kế hoạch (có mốc), params.under_min ghi xe máy định dùng + % để bàn in chip; trước 07/10 phép này mong 7 + 3 (xe Non tải)
+    // của kế hoạch (có mốc), params.under_min ghi xe máy định dùng + % để bàn in chip; trước 07/10 phép này mong 7 + 3 (xe Non tải).
+    // 15/10: kèm MÃ LÔ (`lot` = OD nhỏ nhất của lô) — bàn gom khung chờ theo lô bằng mã này, không đoán theo phường + xe + %
     const um = back.j?.data?.params?.under_min ?? {}, umOds = Object.keys(um)
     const poolIn = (back.j?.data?.pool ?? []).filter(o => !o.trip_id && o.reviewed_at).map(o => o.od_number)
-    check('16d. Tối ưu lại với dải 70–100 % gửi kèm: dải của lượt ghép thắng dải cũ — 7 pallet lên xe; lô 3 pallet (33,3 % < 70) KHÔNG thành xe, ở khung chờ kế hoạch kèm params.under_min',
+    check('16d. Tối ưu lại với dải 70–100 % gửi kèm: dải của lượt ghép thắng dải cũ — 7 pallet lên xe; lô 3 pallet (33,3 % < 70) KHÔNG thành xe, ở khung chờ kế hoạch kèm params.under_min (có mã lô)',
       back.s === 200 && tBack.join('+') === '7' && bandEq(back.j?.data?.params?.load_bands, 70, 100) && back.j?.data?.reoptimized?.under_min === 1
-      && umOds.length === 1 && um[umOds[0]]?.pct === 33.3 && um[umOds[0]]?.min === 70 && poolIn.includes(umOds[0]),
+      && umOds.length === 1 && um[umOds[0]]?.pct === 33.3 && um[umOds[0]]?.min === 70 && um[umOds[0]]?.lot === umOds[0] && poolIn.includes(umOds[0]),
       `s=${back.s} xe=${tBack.join('+')} bands=${JSON.stringify(back.j?.data?.params?.load_bands)} under_min=${JSON.stringify(um)} khungChờKH=${poolIn.join(',')}`)
   } else check('16a. Fixture: cần Loại xe cha XEPALLET', false)
 

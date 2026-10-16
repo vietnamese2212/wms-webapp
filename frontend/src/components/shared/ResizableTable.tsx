@@ -15,6 +15,8 @@ export interface RtColDef {
   align?: 'right' | 'center'
   /** Cột thao tác cuối bảng rộng → ghim mép phải (cell body tự thêm `sticky right-0 bg-white`) */
   stickyRight?: boolean
+  /** Ô đầu cột vẽ phần tử này thay cho `label` — vd ô tick "chọn tất cả đang hiện" (16/10, user: "checkbox all thay cho action chọn all") */
+  head?: ReactNode
 }
 
 export function ResizableTable({ storageKey, cols, children }: {
@@ -38,7 +40,7 @@ export function ResizableTable({ storageKey, cols, children }: {
                 c.align === 'right' ? 'text-right' : c.align === 'center' ? 'text-center px-1' : ''
               } ${i === 0 ? 'sticky left-0 z-20 bg-slate-50' : ''} ${c.stickyRight ? 'sticky right-0 z-20 bg-slate-50' : ''}`}
             >
-              {c.label}
+              {c.head ?? c.label}
               {i > 0 && (
                 <span
                   onPointerDown={e => startResize(i, e)}

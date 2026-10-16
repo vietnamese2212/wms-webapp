@@ -564,3 +564,31 @@ phương án "Lô là một cách gom" (phương án kia: khối vàng thu / m�
 - **Còn mở (C77):** `POST /dispatch/segment/take` ("lấy đơn sang mảng mình") xoá dòng / xe trống ở kế hoạch mảng kia + chèn dòng vào kế
   hoạch đích mà KHÔNG thuê các kế hoạch đó — đua được với Xác nhận của mảng kia. Chưa vá (ngoài phạm vi lượt này) — đề xuất thuê mọi kế
   hoạch đụng tới (thứ tự id) + phép kiểm tĩnh "mọi route ghi `/dispatch` đi qua `withPlanLease` / `withTripPlanLease` trừ danh sách có lý do".
+
+## 16/10 chiều — tab KẾ HOẠCH · SỬA kế hoạch đã xác nhận = mở khoá TỪNG xe · HUỶ cả kế hoạch · ô tick "chọn tất cả" (user chốt)
+
+User (16/10, sau khi xác nhận kế hoạch 02/10 và muốn sửa): *"có 2 mục Xem đơn — bỏ ở dưới cho gọn. Kế hoạch nếu đã tạo thì cần được đưa vào 1 tab,
+tab đó là table: ngày nào, kế hoạch nào; click row để xem — có nút sửa, khi đó nó kéo thêm các đơn chờ vào. Tất cả các xe đều khoá lại, muốn sửa xe
+nào thì mở khoá xe đó. Cần 1 hướng nữa: kế hoạch làm nhầm, xoá toàn bộ. Khi bấm Sửa thì chuyển về Bàn."* Hai lựa chọn user chốt: **(a) mở từng xe**
+(không phải mở cả kế hoạch rồi khoá) · **bỏ ô chọn kế hoạch** ở góc trái.
+
+- **Tab "Kế hoạch"** (`DispatchPlansTable`, thay tab "Nháp" 12/10): mọi kế hoạch của kho (200 gần nhất, cả hai mảng) — Ngày · Mảng · Trạng thái ·
+  Xe · Đơn · Khung chờ · Pallet · Σ cước · Người lập · Lúc · Xác nhận; lọc nhanh Đang mở / Đã xác nhận / Đã bỏ / Tất cả. Bấm dòng = mở (đặt ngày +
+  mảng, sang Bàn ghép xe). Nút dòng: **Sửa** (đã xác nhận) · **Bỏ nháp / Bỏ xe chưa chốt** (đang mở) · **Huỷ kế hoạch** (có xe đã chốt, quyền xác
+  nhận). Ô chọn kế hoạch ở hàng 2 và nút "Xem đơn" ở hàng 2 (vốn tạo NHÁP MỚI cho ngày đã có kế hoạch xác nhận) bỏ — thêm đơn vào ngày đó = Sửa.
+- **Sửa (cách a):** `refresh-pool` trên chính kế hoạch đã xác nhận (đơn chờ của ngày vào khung chờ) rồi về bàn ở **chế độ sửa** (FE `editing` =
+  kế hoạch đang mở HOẶC đã bấm Sửa): khung chờ kéo được, "Xe mới" tạo được; xe đã vào KH xuất mang **ổ khoá XANH** (`LockKeyhole`, bảng · thẻ · panel
+  "Mở lại xe này") — bấm = hỏi rồi `reopen { trip_ids: [id] }` CHỈ xe đó về nháp (gỡ dòng KH xuất của nó, chuyến ngừng, nhả khung giờ của riêng nó);
+  xe khác giữ nguyên KH xuất + khung giờ. Ổ khoá TÍM (`Lock`) trên xe nháp vẫn là "giữ nguyên khi Tối ưu lại" — hai hình, hai chữ tooltip.
+- **BE:** `EDIT_PLAN = OPEN_PLAN + CONFIRMED` cho `loadOpenPlan` (refresh-pool · move · reoptimize · hold · outside · pull…), Bỏ nháp, `/sync`,
+  fit-check — xe đã chốt tự gác bằng `EDITABLE_TRIP`, chỉ DISCARDED đóng. Kế hoạch CONFIRMED có thêm xe nháp (xe mới từ khung chờ / "Tạo kế hoạch"
+  ở chế độ sửa) ⇒ `planPartlyOpen` CAS status → TENDERED; cửa Xác nhận nay chỉ hỏi "có xe NHÁP không" (không hỏi trạng thái kế hoạch) — xe đã
+  chốt giữ mốc `confirmed_at`. Bỏ nháp trên kế hoạch đã xác nhận = bỏ xe chưa chốt + khung chờ, trạng thái về theo `syncPlanStatus`.
+- **Huỷ kế hoạch** (làm nhầm): FE ghép hai cửa có sẵn — `reopen {}` (mọi xe mở được) rồi `DELETE /plans/:id` — hộp hỏi nêu số xe sẽ huỷ và
+  luật giữ lại (chuyến đã bắt đầu / hoàn thành / đang giữ hàng nhặt lẻ → xử bên Xuất kho rồi huỷ lại); đơn về Chờ điều, chuyến Xuất kho
+  `plan_dropped` (ngừng hoạt động, giữ lịch sử — luật 03/08), khung giờ nhả, sổ sự kiện `PLAN_DO_REMOVED` / `TMS_PLAN_DROPPED`.
+- **Ô tick "chọn tất cả"** (user: "checkbox all thay vì action chọn all"): bảng Xem đơn bỏ nút "Chọn N đơn đang hiện", ô đầu cột chọn là `TickBox`
+  (tick = chọn mọi đơn đang hiện + chọn được; nửa tick khi chọn một phần). `RtColDef.head` mới cho ô đầu cột tuỳ ý.
+- Gói QA 61 **[21m]** đi trọn vòng: xác nhận → nạp khung chờ trên kế hoạch đã chốt → mở lại riêng xe C (A·B vẫn chốt, kế hoạch mở một phần) → không
+  xe nháp ⇒ Xác nhận 409 → xe mới từ khung chờ trên kế hoạch CONFIRMED → Xác nhận chỉ ghi xe mới (A·B giữ `confirmed_at`) → Bỏ nháp chỉ bỏ xe
+  nháp → Huỷ (mở lại hết + bỏ) ⇒ DISCARDED, dòng KH xuất 0.

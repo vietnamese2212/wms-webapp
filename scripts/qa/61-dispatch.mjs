@@ -2379,6 +2379,47 @@ try {
         `kéo=${em(d0)} bật=${em(on)} kéo2=${em(d1)} ${(d1.j?.error?.message ?? '').slice(0, 80)} tắt=${em(off)} xe=${JSON.stringify(aNow)} xnTắt=${em(cfNo)} xnBật=${em(cfYes)} ${(cfYes.j?.error?.message ?? '').slice(0, 120)}`)
     } else check('21l. Fixture: 3 OD, mỗi OD một xe qua ô Xe mới', false, `plan=${s3.s} A=${s3.A?.id} B=${s3.B?.id} C=${s3.C?.id}`)
     await cleanupTrips()
+    // ── [21m] SỬA / HUỶ KẾ HOẠCH ĐÃ XÁC NHẬN (16/10, user chốt "mở từng xe"): kế hoạch CONFIRMED vẫn nhận thao tác mức XE — nạp khung chờ,
+    //     mở lại MỘT xe (xe khác giữ CONFIRMED), xe mới từ khung chờ ⇒ kế hoạch mở một phần, Xác nhận chỉ ghi xe nháp, Bỏ nháp chỉ bỏ xe
+    //     chưa chốt; Huỷ = mở lại hết + bỏ ⇒ DISCARDED, dòng KH xuất 0 ──
+    await Promise.all([setCust(0), setCust(1), setCust(2)])
+    const s4 = await build()
+    if (s4.ok) {
+      const { A, B, C, q: [, , r3], mv } = s4
+      const P = async () => (await api(`/tms/dispatch/plans/${s4.id}`)).j?.data
+      const tripSt = (pl, id) => pl?.trips?.find(t => t.id === id)?.status
+      const kh = async gc => (await restAll('khvc_lines', `select=id&group_code=eq.${gc}&sync_status=neq.OBSOLETE`)).length
+      for (const t of [A, B, C]) await restWrite('dispatch_trip', 'PATCH', `id=eq.${t.id}`, { transport_company_id: DA.id, updated_at: nowIso() })   // ĐVVT không cần phản hồi ⇒ vào KH xuất ngay
+      const cf1 = await api(`/tms/dispatch/plans/${s4.id}/confirm`, 'POST', {})
+      const p1 = await P()
+      const rp = await api(`/tms/dispatch/plans/${s4.id}/refresh-pool`, 'POST', {})                       // "Sửa": nạp khung chờ trên kế hoạch ĐÃ XÁC NHẬN
+      const ro1 = await api(`/tms/dispatch/plans/${s4.id}/reopen`, 'POST', { trip_ids: [C.id] })          // mở lại RIÊNG xe C
+      const p2 = await P()
+      const mvP = await mv([r3.id], 'pool')                                                                  // đơn của C về khung chờ (C hết đơn ⇒ bỏ)
+      const cf2 = await api(`/tms/dispatch/plans/${s4.id}/confirm`, 'POST', {})                           // không còn xe nháp ⇒ 409
+      await restWrite('dispatch_plan', 'PATCH', `id=eq.${s4.id}`, { status: 'CONFIRMED', updated_at: nowIso() })   // trạng thái như sau "Sửa" (mọi xe còn lại đã chốt)
+      const mvN = await mv([r3.id], 'new')                                                                   // xe MỚI từ khung chờ trên kế hoạch đã chốt
+      const p3 = await P()
+      const D = tripOfOd(p3, OD[2])
+      const cf3 = await api(`/tms/dispatch/plans/${s4.id}/confirm`, 'POST', {})                           // chỉ ghi xe nháp D
+      const p4 = await P()
+      const ro2 = D ? await api(`/tms/dispatch/plans/${s4.id}/reopen`, 'POST', { trip_ids: [D.id] }) : { s: 0 }
+      const dc1 = await api(`/tms/dispatch/plans/${s4.id}`, 'DELETE')                                       // Bỏ xe chưa chốt: chỉ D, A·B giữ
+      const p5 = await P()
+      const roAll = await api(`/tms/dispatch/plans/${s4.id}/reopen`, 'POST', {})                           // Huỷ = mở lại hết + bỏ
+      const dc2 = await api(`/tms/dispatch/plans/${s4.id}`, 'DELETE')
+      const p6 = await P()
+      check('21m. SỬA KẾ HOẠCH ĐÃ XÁC NHẬN: xác nhận 3 xe → CONFIRMED · nạp khung chờ trên kế hoạch đã chốt → 200 · mở lại RIÊNG xe C → C nháp, A·B vẫn chốt, kế hoạch mở một phần · không xe nháp ⇒ Xác nhận 409 · xe MỚI từ khung chờ trên kế hoạch CONFIRMED → 200, kế hoạch TENDERED · Xác nhận chỉ ghi xe mới (A·B giữ mốc chốt) · Bỏ nháp chỉ bỏ xe nháp · Huỷ (mở lại hết + bỏ) ⇒ DISCARDED, dòng KH xuất 0',
+        cf1.s === 200 && p1?.status === 'CONFIRMED' && rp.s === 200
+        && ro1.s === 200 && ro1.j?.data?.reopened?.trips === 1 && tripSt(p2, C.id) === 'DRAFT' && tripSt(p2, A.id) === 'CONFIRMED' && tripSt(p2, B.id) === 'CONFIRMED' && p2?.status === 'TENDERED' && await kh(C.group_code) === 0 && await kh(A.group_code) === 1
+        && mvP.s === 200 && cf2.s === 409 && cf2.j?.error?.code === 'PLAN_NOT_DRAFT'
+        && mvN.s === 200 && !!D && D.status === 'DRAFT' && p3?.status === 'TENDERED'
+        && cf3.s === 200 && cf3.j?.data?.trips === 1 && p4?.status === 'CONFIRMED' && p4.trips.find(t => t.id === A.id)?.confirmed_at === p1.trips.find(t => t.id === A.id)?.confirmed_at
+        && ro2.s === 200 && dc1.s === 200 && dc1.j?.data?.discarded_trips === 1 && p5?.status === 'CONFIRMED' && tripSt(p5, A.id) === 'CONFIRMED' && await kh(A.group_code) === 1
+        && roAll.s === 200 && roAll.j?.data?.reopened?.trips === 2 && dc2.s === 200 && p6?.status === 'DISCARDED' && await kh(A.group_code) === 0 && await kh(B.group_code) === 0,
+        `xn=${em(cf1)}/${p1?.status} nạp=${em(rp)} mởC=${em(ro1)}/${ro1.j?.data?.reopened?.trips} C=${tripSt(p2, C.id)} A=${tripSt(p2, A.id)} kh=${p2?.status} khC=${await kh(C.group_code)} · về chờ=${em(mvP)} xn2=${em(cf2)} · xe mới=${em(mvN)} D=${D?.status} kh=${p3?.status} · xn3=${em(cf3)}/${cf3.j?.data?.trips} kh=${p4?.status} · bỏ=${em(dc1)}/${dc1.j?.data?.discarded_trips} kh=${p5?.status} · huỷ=${em(roAll)}/${roAll.j?.data?.reopened?.trips} ${em(dc2)} kh=${p6?.status} khA=${await kh(A.group_code)}`)
+    } else check('21m. Fixture: 3 OD, mỗi OD một xe qua ô Xe mới', false, `plan=${s4.s}`)
+    await cleanupTrips()
     await Promise.all([0, 1, 2].map(i => setCust(i, { dispatch_vehicles: ALLV })))
     await restWrite('vehicle_model', 'DELETE', `sap_code=in.(QA61X05,QA61X06,QA61X07,QA61X08,QA61X04)`).catch(() => {})
     await restWrite('erp_outbound_orders', 'PATCH', `od_number=in.(${OD.join(',')})`, { sync_status: 'OBSOLETE', updated_at: nowIso() })

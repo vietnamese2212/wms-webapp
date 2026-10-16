@@ -1,0 +1,148 @@
+// TAB "KẾ HOẠCH" của Điều vận (16/10, user: "kế hoạch nếu đã tạo thì cần được đưa vào 1 tab, tab đó là table: ngày nào, kế hoạch nào;
+// click vào row để xem; có nút sửa") — thay tab "Nháp" (12/10) vốn chỉ liệt kê nháp còn mở. Bảng MỌI kế hoạch của kho (mọi ngày, cả hai
+// mảng): ngày giao · mảng · trạng thái (nháp quá ngày ⚠) · xe · đơn · khung chờ · pallet · cước · người lập · lúc · người xác nhận.
+// Bấm dòng = mở kế hoạch (đặt ngày + mảng, sang Bàn ghép xe). Nút trên dòng: "Sửa" (đã xác nhận — nạp đơn chờ, mở từng xe trên bàn) ·
+// "Bỏ nháp" / "Bỏ xe chưa chốt" (đang mở) · "Huỷ kế hoạch" (đã xác nhận, quyền xác nhận — mở lại mọi xe mở được rồi bỏ).
+// Lọc nhanh: Đang mở · Đã xác nhận · Đã bỏ · Tất cả (mặc định ẩn đã bỏ). Nháp chỉ chứa Chờ điều (bấm Xem đơn rồi để đó) in mờ.
+import { useEffect, useMemo, useState } from 'react'
+import { AlertTriangle, Ban, LayoutGrid, Pencil, Trash2 } from 'lucide-react'
+import { TableBody, TableCell, TableRow } from '@/components/ui/table'
+import { ResizableTable, type RtColDef } from '@/components/shared/ResizableTable'
+import { TableEmptyRow } from '@/components/shared/TableEmptyRow'
+import { ListFooter } from '@/components/shared/ListPager'
+import { StatusBadge } from '@/components/shared/StatusBadge'
+import { SEGMENT_VI, type DispatchPlanListItem } from '@/api/hooks'
+import { formatDate, formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
+import { planHoldsOrders } from './dispatchIssues'
+
+const nf = (n: number | string | null | undefined, d = 0) => (n == null ? '—' : Number(n).toLocaleString('vi-VN', { maximumFractionDigits: d }))
+const money = (n: number | string | null | undefined) => (n == null ? '—' : `${(Number(n) / 1_000_000).toLocaleString('vi-VN', { maximumFractionDigits: 2 })} tr`)
+const TD = 'px-2 py-1 text-[10px] whitespace-nowrap'
+const todayVN = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
+type Show = 'open' | 'confirmed' | 'discarded' | 'all'
+const SHOW: { k: Show; label: string; tip: string }[] = [
+  { k: 'open', label: 'Đang mở', tip: 'Nháp + đang chờ ĐVVT — chưa vào Kế hoạch xuất hết' },
+  { k: 'confirmed', label: 'Đã xác nhận', tip: 'Mọi xe đã vào Kế hoạch xuất — "Sửa" để mở từng xe' },
+  { k: 'discarded', label: 'Đã bỏ', tip: 'Chỉ xem' },
+  { k: 'all', label: 'Tất cả', tip: 'Mọi kế hoạch của kho (200 gần nhất)' },
+]
+const STATUS: Record<DispatchPlanListItem['status'], { label: string; tone: 'amber' | 'blue' | 'green' | 'slate' }> = {
+  DRAFT: { label: 'Bản nháp', tone: 'amber' }, TENDERED: { label: 'Chờ ĐVVT / mở một phần', tone: 'blue' }, CONFIRMED: { label: 'Đã xác nhận', tone: 'green' }, DISCARDED: { label: 'Đã bỏ', tone: 'slate' },
+}
+
+function useIsDesktop() {
+  const [d, setD] = useState(() => typeof window !== 'undefined' && window.matchMedia('(min-width: 1024px)').matches)
+  useEffect(() => {
+    const mq = window.matchMedia('(min-width: 1024px)')
+    const h = () => setD(mq.matches)
+    mq.addEventListener('change', h)
+    return () => mq.removeEventListener('change', h)
+  }, [])
+  return d
+}
+
+export function DispatchPlansTable({ plans, loading, error, currentPlanId, canPlan, canConfirm, busyId, onOpen, onEdit, onDiscard, onCancel }: {
+  plans: DispatchPlanListItem[]; loading: boolean; error: string | null
+  currentPlanId: string | null   // kế hoạch đang mở trên bàn — tô nhẹ để biết "mình đang ở đâu"
+  canPlan: boolean; canConfirm: boolean; busyId: string | null
+  onOpen: (p: DispatchPlanListItem) => void
+  onEdit: (p: DispatchPlanListItem) => void       // kế hoạch đã xác nhận: nạp đơn chờ + sang bàn, mở từng xe
+  onDiscard: (p: DispatchPlanListItem) => void    // bỏ nháp / bỏ xe chưa chốt
+  onCancel: (p: DispatchPlanListItem) => void     // huỷ cả kế hoạch đã xác nhận (làm nhầm)
+}) {
+  const desktop = useIsDesktop()
+  const today = todayVN()
+  const [show, setShow] = useState<Show>('open')
+  const cols = useMemo<RtColDef[]>(() => [
+    { id: 'date', label: 'Ngày giao', w: 96 },
+    { id: 'seg', label: 'Mảng', w: 96 },
+    { id: 'status', label: 'Trạng thái', w: 200 },
+    { id: 'trips', label: 'Xe', w: 52, align: 'right' },
+    { id: 'ods', label: 'Đơn trên xe', w: 84, align: 'right' },
+    { id: 'pool', label: 'Khung chờ', w: 80, align: 'right' },
+    { id: 'pal', label: 'Pallet', w: 70, align: 'right' },
+    { id: 'freight', label: 'Σ cước', w: 80, align: 'right' },
+    { id: 'by', label: 'Người lập', w: 140 },
+    { id: 'at', label: 'Lập lúc', w: 110 },
+    { id: 'cby', label: 'Xác nhận', w: 170 },
+    { id: 'act', label: '', w: 230, align: 'right', stickyRight: desktop },
+  ], [desktop])
+  const counts = useMemo(() => ({
+    open: plans.filter(p => p.status === 'DRAFT' || p.status === 'TENDERED').length,
+    confirmed: plans.filter(p => p.status === 'CONFIRMED').length,
+    discarded: plans.filter(p => p.status === 'DISCARDED').length,
+    all: plans.length,
+  }), [plans])
+  // đang mở: quá ngày lên đầu (việc bị bỏ quên) rồi ngày giao gần nhất; còn lại: ngày giao mới nhất trước
+  const rows = useMemo(() => plans
+    .filter(p => show === 'all' || (show === 'open' ? p.status === 'DRAFT' || p.status === 'TENDERED' : show === 'confirmed' ? p.status === 'CONFIRMED' : p.status === 'DISCARDED'))
+    .sort((a, b) => (show === 'open' ? a.plan_date.localeCompare(b.plan_date) || a.created_at.localeCompare(b.created_at) : b.plan_date.localeCompare(a.plan_date) || b.created_at.localeCompare(a.created_at))), [plans, show])
+  const overdueN = rows.filter(p => p.plan_date < today && (p.status === 'DRAFT' || p.status === 'TENDERED')).length
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      {/* lọc nhanh theo trạng thái — số của từng lựa chọn thấy ngay (khuôn switch 17/09); một hàng ở mọi màn */}
+      <div className="flex shrink-0 items-center gap-1.5 overflow-x-auto no-scrollbar border-b bg-white px-3 py-1.5 [&>*]:shrink-0">
+        {SHOW.map(o => (
+          <button key={o.k} type="button" title={o.tip} aria-pressed={show === o.k} onClick={() => setShow(o.k)}
+            className={`flex items-center gap-1.5 rounded-md px-2.5 h-9 sm:h-7 text-[11px] font-medium whitespace-nowrap ${show === o.k ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
+            {o.label}<span className={`rounded-full px-1.5 text-[10px] font-semibold tabular-nums ${show === o.k ? 'bg-white/25 text-white' : 'bg-white text-slate-500'}`}>{nf(counts[o.k])}</span>
+          </button>
+        ))}
+      </div>
+      <div className="min-h-0 flex-1 overflow-auto pb-20 lg:pb-0">
+        <ResizableTable storageKey={`dispatch_plans_v1${desktop ? '' : '_m'}`} cols={cols}>
+          <TableBody>
+            {error && <TableEmptyRow colSpan={cols.length}><span className="text-red-600">Không tải được danh sách kế hoạch: {error}</span></TableEmptyRow>}
+            {!error && loading && !rows.length && <TableEmptyRow colSpan={cols.length}>Đang tải…</TableEmptyRow>}
+            {!error && !loading && !rows.length && <TableEmptyRow colSpan={cols.length}>{show === 'open' ? 'Kho này không còn kế hoạch nào đang mở — mọi kế hoạch đã xác nhận hoặc đã bỏ.' : 'Không có kế hoạch nào ở trạng thái này.'}</TableEmptyRow>}
+            {rows.map(p => {
+              const isOpen = p.status === 'DRAFT' || p.status === 'TENDERED'
+              const overdue = isOpen && p.plan_date < today
+              const holds = p.status === 'DISCARDED' ? true : planHoldsOrders(p.summary)
+              const cur = p.id === currentPlanId
+              const bg = cur ? 'bg-sky-50' : 'bg-white'
+              const pool = Math.max(0, (p.summary?.pool_ods ?? 0) - (p.summary?.unreviewed_ods ?? 0))
+              const st = STATUS[p.status]
+              const busy = busyId === p.id
+              return (
+                <TableRow key={p.id} className={`cursor-pointer hover:bg-slate-50 ${bg} ${holds ? '' : 'text-slate-400'} ${p.status === 'DISCARDED' ? 'text-slate-400' : ''}`} onClick={() => onOpen(p)}
+                  title={p.status === 'DISCARDED' ? 'Kế hoạch đã bỏ — bấm để xem (chỉ xem)' : holds ? 'Bấm dòng để mở kế hoạch này' : 'Nháp chỉ chứa đơn Chờ điều (bấm Xem đơn rồi để đó) — không giữ đơn nào'}>
+                  <TableCell className={`${TD} sticky left-0 z-10 font-semibold ${bg} ${holds && p.status !== 'DISCARDED' ? 'text-slate-800' : ''}`}>{formatDate(p.plan_date)}</TableCell>
+                  <TableCell className={TD}>{SEGMENT_VI[p.segment ?? 'SALES']}</TableCell>
+                  <TableCell className={TD}>
+                    <span className="inline-flex items-center gap-1">
+                      <StatusBadge tone={st.tone}>{st.label}</StatusBadge>
+                      {overdue && holds && <span className="inline-flex items-center gap-0.5 rounded bg-red-100 px-1 text-[9px] font-semibold text-red-700" title="Ngày giao đã qua mà nháp chưa xác nhận — đơn trên nháp vẫn bị giữ, kế hoạch ngày khác không lấy được"><AlertTriangle className="h-3 w-3" />quá ngày</span>}
+                      {isOpen && !holds && <span className="text-[9px]">chưa giữ đơn</span>}
+                    </span>
+                  </TableCell>
+                  <TableCell className={`${TD} text-right tabular-nums`}>{nf(p.summary?.trips ?? 0)}</TableCell>
+                  <TableCell className={`${TD} text-right tabular-nums`}>{nf(p.summary?.ods ?? 0)}</TableCell>
+                  <TableCell className={`${TD} text-right tabular-nums`} title="Đơn đã vào kế hoạch nhưng chưa lên xe">{nf(pool)}</TableCell>
+                  <TableCell className={`${TD} text-right tabular-nums`}>{nf(p.summary?.pallets ?? 0, 1)}</TableCell>
+                  <TableCell className={`${TD} text-right tabular-nums`} title={p.summary?.freight_total != null ? `${Number(p.summary.freight_total).toLocaleString('vi-VN')} ₫` : ''}>{money(p.summary?.freight_total)}</TableCell>
+                  <TableCell className={`${TD} truncate`} title={p.created_by ?? ''}>{p.created_by || <span className="text-slate-300">—</span>}</TableCell>
+                  <TableCell className={`${TD} tabular-nums`}>{formatTimestampDate(p.created_at, true)} {formatTimestampTime(p.created_at, false)}</TableCell>
+                  <TableCell className={`${TD} truncate`} title={p.confirmed_by ?? ''}>{p.confirmed_at ? <>{p.confirmed_by || '—'} <span className="text-slate-400">{formatTimestampDate(p.confirmed_at, true)} {formatTimestampTime(p.confirmed_at, false)}</span></> : <span className="text-slate-300">—</span>}</TableCell>
+                  <TableCell className={`${TD} text-right ${desktop ? `sticky right-0 z-10 ${bg}` : ''}`} onClick={e => e.stopPropagation()}>
+                    <span className="inline-flex items-center gap-2">
+                      <button type="button" className="inline-flex items-center gap-1 font-medium text-sky-700 hover:underline" onClick={() => onOpen(p)}><LayoutGrid className="h-3 w-3" />Mở</button>
+                      {/* SỬA kế hoạch đã xác nhận (16/10): nạp đơn chờ vào khung chờ, sang bàn — xe đã chốt hiện ổ khoá, mở khoá xe nào thì xe đó về nháp */}
+                      {canPlan && p.status === 'CONFIRMED' && <button type="button" className="inline-flex items-center gap-1 font-medium text-sky-700 hover:underline disabled:opacity-50" disabled={busy} onClick={() => onEdit(p)} title="Nạp đơn chờ của ngày vào khung chờ rồi sang Bàn ghép xe; xe đã vào Kế hoạch xuất hiện ổ khoá — mở khoá xe cần sửa"><Pencil className="h-3 w-3" />{busy ? 'Đang nạp…' : 'Sửa'}</button>}
+                      {canPlan && isOpen && <button type="button" className="inline-flex items-center gap-1 font-medium text-red-700 hover:underline disabled:opacity-50" disabled={busy} onClick={() => onDiscard(p)}>
+                        <Trash2 className="h-3 w-3" />{busy ? 'Đang bỏ…' : p.status === 'TENDERED' ? 'Bỏ xe chưa chốt' : 'Bỏ nháp'}</button>}
+                      {/* HUỶ kế hoạch đã xác nhận (16/10, user: "kế hoạch làm nhầm, xoá toàn bộ") */}
+                      {canConfirm && (p.status === 'CONFIRMED' || p.status === 'TENDERED') && (p.summary?.confirmed ?? 0) > 0 && <button type="button" className="inline-flex items-center gap-1 font-medium text-red-700 hover:underline disabled:opacity-50" disabled={busy} onClick={() => onCancel(p)} title="Mở lại mọi xe mở được rồi bỏ cả kế hoạch — đơn về Chờ điều, chuyến Xuất kho ngừng hoạt động, khung giờ nhả"><Ban className="h-3 w-3" />{busy ? 'Đang huỷ…' : 'Huỷ kế hoạch'}</button>}
+                    </span>
+                  </TableCell>
+                </TableRow>
+              )
+            })}
+          </TableBody>
+        </ResizableTable>
+      </div>
+      <ListFooter page={1} pageSize={Math.max(1, rows.length)} total={rows.length} unit="kế hoạch" onPageSize={() => { }} options={[]}
+        right={`${overdueN ? `${nf(overdueN)} nháp quá ngày · ` : ''}kế hoạch của kho, mọi ngày, cả Bán hàng lẫn Trung chuyển — bấm dòng để mở; "Sửa" kế hoạch đã xác nhận = mở khoá từng xe trên bàn`} />
+    </div>
+  )
+}

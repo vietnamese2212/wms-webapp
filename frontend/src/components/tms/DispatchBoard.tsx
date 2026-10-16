@@ -20,7 +20,7 @@
 // khung chờ | bảng cây xe → đơn); công tắc Bảng | Thẻ trên thanh công cụ giữ bản thẻ để so. Mọi cửa ghi / hoàn tác / hộp thoại ở ĐÂY, dùng chung.
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { AxiosError } from 'axios'
-import { Lock, Unlock, X, Plus, Undo2, Redo2, Sparkles, Inbox, AlertTriangle, Replace, ChevronDown, ChevronRight, ChevronsLeft, ChevronsRight, ChevronsDownUp, ChevronsUpDown, Truck, CalendarClock, StickyNote, Ban, RotateCw, Table2, LayoutGrid, ListCollapse, ListTree, MapPin, Route } from 'lucide-react'
+import { Lock, LockKeyhole, Unlock, X, Plus, Undo2, Redo2, Sparkles, Inbox, AlertTriangle, Replace, ChevronDown, ChevronRight, ChevronsLeft, ChevronsRight, ChevronsDownUp, ChevronsUpDown, Truck, CalendarClock, StickyNote, Ban, RotateCw, Table2, LayoutGrid, ListCollapse, ListTree, MapPin, Route } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -95,8 +95,9 @@ const groupKeyOf = (o: DispatchTripOd, g: string) =>
 const matches = (o: DispatchTripOd, q: string) =>
   !q || [o.od_number, o.ship_to_code, o.ship_to_name, o.ward_code, o.region_code, o.region_name, o.note].some(v => (v ?? '').toLowerCase().includes(q))
 
-export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds, onFocused, soat }: {
+export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds, onFocused, soat, onReopenTrip }: {
   plan: DispatchPlan; editable: boolean; flags: Map<string, DispatchOdFlag>; onOpenTrip: (id: string) => void
+  onReopenTrip?: (t: DispatchTrip) => void   // 16/10: ổ khoá xanh trên xe ĐÃ VÀO KH XUẤT — mở lại riêng xe đó (quyền xác nhận)
   focusTripIds?: string[]; onFocused?: () => void   // xe vừa tạo ở bảng Xem đơn ("Tạo kế hoạch") — bàn mở nhóm của chúng (07/10)
   soat?: ReactNode   // 14/10: dải Soát (chip Tất cả · Cần xử lý…) của trang nằm TRONG thanh công cụ này; dải chỉ số ở hàng đầu trang
 }) {
@@ -686,6 +687,11 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
               </button>
             )}
             {!ed && lk && <Lock className="h-3.5 w-3.5 text-violet-700" aria-label="Xe đã khoá" />}
+            {/* 16/10 (chế độ Sửa kế hoạch đã xác nhận): ổ khoá XANH = xe đã vào KH xuất — bấm để mở lại riêng xe này (khác ổ khoá tím = giữ khi Tối ưu lại) */}
+            {!ed && st === 'CONFIRMED' && editable && onReopenTrip && (
+              <button type="button" className="rounded p-1 text-green-700 hover:bg-green-100" title="Đã vào Kế hoạch xuất — bấm để MỞ LẠI riêng xe này về nháp (hỏi lại trước)" aria-label={`Mở lại xe #${t.seq}`}
+                onClick={() => onReopenTrip(t)}><LockKeyhole className="h-3.5 w-3.5" /></button>
+            )}
             {ed && !t.ods.length && (
               <button type="button" className="rounded p-1 text-slate-400 hover:text-red-600" title="Bỏ xe trống" disabled={delTrip.isPending}
                 onClick={() => delTrip.mutateAsync(t.id).catch(e => err(e, 'Không bỏ được xe'))}><X className="h-3.5 w-3.5" /></button>
@@ -918,6 +924,7 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
     routeOf: id => routeRows.get(id) ?? null, tripRoute: id => tripTags?.get(id) ?? null, tripLabel, odLabel,
     resync: od => { void doResync(od) }, replace: od => { void doReplace(od) }, sapBusy: resync.isPending || replace.isPending,
     toggleLock: t => { void toggleLock(t) },
+    reopenTrip: onReopenTrip,
     removeTrip: t => { void delTrip.mutateAsync(t.id).catch(e => err(e, 'Không bỏ được xe')) },
     mixOn, setMix: (t, v) => { void patchTrip.mutateAsync({ id: t.id, allow_mix_categories: v }).then(() => setJustHit(t.id)).catch(e => err(e, 'Không đổi được switch ghép loại')) },
     setCarrier: (t, id) => { void patchTrip.mutateAsync({ id: t.id, transport_company_id: id }).then(() => setJustHit(t.id)).catch(e => err(e, 'Không đổi được ĐVVT')) },

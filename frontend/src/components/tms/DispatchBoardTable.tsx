@@ -13,7 +13,7 @@
 //   • Bảng chuẩn ResizableTable (kéo giãn cột, đầu bảng + cột đầu dính, cột thao tác ghim phải trên PC) — cùng khuôn bảng Xem đơn.
 // Cửa ghi · Hoàn tác · xem trước · hộp thoại · thanh chọn-nhiều dùng CHUNG với bản thẻ (DispatchBoard) — file này chỉ VẼ.
 import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { ChevronDown, ChevronRight, Lock, Unlock, X, Truck, StickyNote, RotateCw, Replace, Route, UserPlus } from 'lucide-react'
+import { ChevronDown, ChevronRight, Lock, LockKeyhole, Unlock, X, Truck, StickyNote, RotateCw, Replace, Route, UserPlus } from 'lucide-react'
 import { TableBody, TableCell, TableRow } from '@/components/ui/table'
 import { Switch } from '@/components/ui/switch'
 import { ResizableTable, type RtColDef } from '@/components/shared/ResizableTable'
@@ -79,6 +79,8 @@ export interface BoardOps {
   tripLabel: (tripId: string) => string; odLabel: (rowId: string) => string
   resync: (od: string) => void; replace: (od: string) => void; sapBusy: boolean
   toggleLock: (t: DispatchTrip) => void; removeTrip: (t: DispatchTrip) => void
+  /** 16/10 (Sửa kế hoạch đã xác nhận): mở lại RIÊNG một xe đã vào KH xuất — có khi người xem có quyền xác nhận */
+  reopenTrip?: (t: DispatchTrip) => void
   mixOn: (t: DispatchTrip) => boolean; setMix: (t: DispatchTrip, on: boolean) => void
   setCarrier: (t: DispatchTrip, carrierId: string) => void; tripBusy: boolean
   catChips: (cats: string[]) => ReactNode
@@ -468,6 +470,9 @@ function tripCells(ops: BoardOps, t: DispatchTrip, hv: BoardHover, open: boolean
           {/* ⊘ "Không điều cả xe" (30/09) BỎ 15/10 (user: "tick ô thì đã ra đủ action") — tick ô dòng xe ⇒ thanh nổi "Không điều ngày này" / "Không điều" */}
           {ed && <IconBtn title={t.locked ? 'Đang khoá — "Tối ưu lại" không đụng vào xe này. Bấm để mở khoá' : 'Khoá xe để "Tối ưu lại" giữ nguyên (hỏi lại trước khi khoá)'} disabled={ops.tripBusy} onClick={() => ops.toggleLock(t)}>
             {t.locked ? <Lock className="h-3.5 w-3.5 text-violet-700" /> : <Unlock className="h-3.5 w-3.5" />}</IconBtn>}
+          {/* 16/10 (chế độ Sửa kế hoạch đã xác nhận): ổ khoá XANH = xe đã vào KH xuất — bấm để mở lại riêng xe này (khác ổ khoá tím = giữ khi Tối ưu lại) */}
+          {!ed && st === 'CONFIRMED' && ops.editable && ops.reopenTrip && <IconBtn title="Đã vào Kế hoạch xuất — bấm để MỞ LẠI riêng xe này về nháp (hỏi lại trước)" disabled={ops.tripBusy} onClick={() => ops.reopenTrip!(t)}>
+            <LockKeyhole className="h-3.5 w-3.5 text-green-700" /></IconBtn>}
           {ed && !t.ods.length && <IconBtn danger title="Bỏ xe trống" disabled={ops.tripBusy} onClick={() => ops.removeTrip(t)}><X className="h-3.5 w-3.5" /></IconBtn>}
         </span>
       ),

@@ -16,6 +16,7 @@ import { useMemo, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import type { AxiosError } from 'axios'
 import { CalendarClock, Ban, CheckCircle2, StickyNote, Sparkles, Undo2 } from 'lucide-react'
+import { TickBox } from './DispatchBoardTable'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { TableBody, TableCell, TableRow } from '@/components/ui/table'
@@ -478,7 +479,11 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped, canAct =
     st === 'DONE' && !r.by ? { who: i?.khvc?.by ?? '', at: i?.khvc?.at, how: KHVC_SRC_VI[i?.khvc?.source ?? ''] ?? i?.khvc?.source ?? '' }
       : { who: r.by ?? '', at: r.at, how: st === 'DONE' ? 'ghi vào Kế hoạch xuất' : 'đặt / sửa dấu gần nhất' }
   const cols: RtColDef[] = [
-    ...(selectableTab ? [{ id: 'sel', label: '', w: 34, align: 'center' as const }] : []),
+    // Ô ĐẦU CỘT = tick "chọn tất cả đang hiện" (16/10, user: "checkbox all thay cho action chọn all") — thay nút "Chọn N đơn đang hiện";
+    // chỉ các đơn ĐANG HIỆN theo tìm / lọc và chọn được (đơn ngoài phạm vi Loại kho không tick)
+    ...(selectableTab ? [{ id: 'sel', label: '', w: 34, align: 'center' as const, head: pick.length > 0
+      ? <TickBox checked={pick.every(r => sel.has(r.key))} indeterminate={pick.some(r => sel.has(r.key))} onChange={() => setSel(pick.every(r => sel.has(r.key)) ? new Set() : new Set(pick.map(r => r.key)))} label={pick.every(r => sel.has(r.key)) ? 'Bỏ chọn tất cả' : `Chọn ${nf(pick.length)} đơn đang hiện`} />
+      : undefined }] : []),
     { id: 'od', label: 'OD', w: 104 },
     { id: 'where', label: st === 'GO' || st === 'PLAN' ? 'Đang ở' : st === 'DONE' ? 'Đã điều ở đâu' : st === 'ELSEWHERE' ? 'Đang xếp ở' : 'Trạng thái', w: st === 'ELSEWHERE' ? 300 : 150 },
     ...(showBy ? [{ id: 'by', label: 'Ai đưa vào', w: 170 }] : []),
@@ -603,12 +608,7 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped, canAct =
                 : `Đang xem ${nf(marks.data?.rows.length ?? markCounts.data?.limit)} đơn đánh dấu gần nhất / ${nf(markTotal)} — gõ ô tìm để tra toàn bộ`}
             </span>
           )}
-          {editable && pick.length > 0 && (
-            <button type="button" className="text-[11px] text-sky-700 hover:underline whitespace-nowrap" title="Chỉ tick các đơn ĐANG HIỆN theo tìm kiếm / bộ lọc"
-              onClick={() => setSel(pick.every(r => sel.has(r.key)) ? new Set() : new Set(pick.map(r => r.key)))}>
-              {pick.every(r => sel.has(r.key)) ? 'Bỏ chọn' : `Chọn ${pick.length} đơn đang hiện`}
-            </button>
-          )}
+          {/* nút "Chọn N đơn đang hiện" BỎ 16/10 — thành ô tick ở đầu cột chọn (cùng tập đơn: đang hiện + chọn được) */}
         </div>}
       </div>
 

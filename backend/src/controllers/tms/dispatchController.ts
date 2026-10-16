@@ -60,6 +60,9 @@ const EDITABLE_TRIP: TripStatus[] = ['DRAFT', 'DECLINED']
  *  đây là ngõ cụt — lối ra duy nhất từng là ghi "từ chối" dù ĐVVT đã nhận (check-app 27/09 tối). Xe vẫn đứng chờ. */
 const SAP_SYNC_TRIP: TripStatus[] = [...EDITABLE_TRIP, 'TENDERED']
 const OPEN_PLAN = ['DRAFT', 'TENDERED']
+/** SỬA KẾ HOẠCH ĐÃ XÁC NHẬN (16/10, user chốt "mở từng xe"): kế hoạch CONFIRMED vẫn nhận thao tác ở MỨC XE — nạp khung chờ, xe mới
+ *  từ đơn chờ, kéo thả vào xe nháp, mở lại từng xe, bỏ các xe chưa chốt; xe đã vào Kế hoạch xuất tự gác bằng EDITABLE_TRIP. Chỉ DISCARDED đóng. */
+const EDIT_PLAN = [...OPEN_PLAN, 'CONFIRMED']
 
 const ENGINE_VERSION = '2026-10-01.1'   // dải tải theo dòng xe cha
 const now = () => new Date().toISOString()
@@ -1418,8 +1421,16 @@ async function loadOpenPlan(req: Request, planId: string): Promise<{ plan: PlanR
   if (error) throw error
   if (!plan) return { err: ['Không tìm thấy kế hoạch', 404] }
   if (!whAllowed(req, plan.warehouse_id)) return { err: ['Kho này ngoài phạm vi được giao', 403] }
-  if (!OPEN_PLAN.includes(plan.status)) return { err: ['Kế hoạch đã xác nhận / đã bỏ — không sửa được bản nháp', 409, 'PLAN_NOT_DRAFT'] }
+  if (!EDIT_PLAN.includes(plan.status)) return { err: ['Kế hoạch đã bỏ — không sửa được', 409, 'PLAN_NOT_DRAFT'] }
   return { plan: plan as PlanRow }
+}
+/** Kế hoạch ĐÃ XÁC NHẬN nhận thêm xe nháp (16/10 — "Sửa": xe mới từ khung chờ / Tạo kế hoạch ở chế độ sửa) ⇒ kế hoạch mở MỘT PHẦN
+ *  (TENDERED) để cửa Xác nhận ghi các xe nháp đó; xe đã chốt giữ nguyên. CAS trên status — hai người cùng bấm chỉ một câu ghi. */
+async function planPartlyOpen(plan: PlanRow) {
+  if (plan.status !== 'CONFIRMED') return
+  const { error } = await db.from('dispatch_plan').update({ status: 'TENDERED', updated_at: now() }).eq('id', plan.id).eq('status', 'CONFIRMED')
+  if (error) throw error
+  plan.status = 'TENDERED'
 }
 /** THUÊ một kế hoạch cho thao tác DỰNG LẠI / CHÈN dòng OD (ghép · tối ưu lại · nạp OD mới · thay OD · cập nhật theo SAP) — hai
  *  người cùng bấm thì chỉ một người chạy, người sau 409 PLAN_BUSY. Đo 27/09 tối (check-app): hai lượt "Xác nhận & ghép" đồng thời
@@ -1610,6 +1621,7 @@ async function moveOdsInner(req: Request, res: Response) {
     const hit = read.filter(x => !emptied.includes(x.id))
     await fillMissingVehicles(plan, hit, async () => (await readPlanLight(plan.id)).trips)
     const repriced = await repriceMany(plan, hit)
+    if (b.to === 'new' || b.to === 'trip') await planPartlyOpen(plan)   // 16/10: kế hoạch đã xác nhận có thêm xe nháp ⇒ mở một phần
     const sum = await writeSummary(plan)
     // `delta` (bàn ghép xe từ 06/10): trả PHẦN THAY ĐỔI — các xe bị đụng (đủ dòng OD) · dòng về khung chờ · id các dòng vừa chuyển ·
     // tổng kết · dấu phiên bản. Không cờ ⇒ cả kế hoạch như trước (gói QA 61 + bản app cũ còn nằm trong bộ nhớ đệm trình duyệt).
@@ -1670,7 +1682,7 @@ export async function fitCheck(req: Request, res: Response) {
       readTrips(plan.id, tripIds), loadModels(plan.warehouse_id), loadConditionLabels(),
     ])
     const rowBy = new Map(rows.map(r => [r.id, r])), tripBy = new Map(trips.map(t => [t.id, t]))
-    const open = OPEN_PLAN.includes(plan.status)
+    const open = EDIT_PLAN.includes(plan.status)
     const P = engineParams(plan), follow = P.follow_categories ?? []
     const results: { row_id: string; trip_id: string; fits: boolean; kind: RouteKind; reason: string | null }[] = []
     for (const p of b.pairs) {
@@ -1783,6 +1795,7 @@ async function reoptimizePlanInner(req: Request, res: Response) {
       }
       throw e
     }
+    if (tripRows.length) await planPartlyOpen(plan)   // 16/10: "Tạo kế hoạch" ở chế độ Sửa kế hoạch đã xác nhận ⇒ mở một phần
     // dọn cũ: OD của xe làm lại mà máy KHÔNG xếp được (hoặc đã bị SAP điều / thay) về khung chờ; xoá xe làm lại (CASCADE dòng đã xếp lại
     // ở xe mới); xoá dòng khung chờ của đơn đã lên xe mới
     const placedSet = new Set(placed)
@@ -1951,7 +1964,7 @@ export async function planSync(req: Request, res: Response) {
       await writeSummary(full as PlanRow)
       full = (await readPlan(full.id)) ?? full
     }
-    if (!OPEN_PLAN.includes(full.status)) return ok(res, { flags: [], new_ods: 0, healed })
+    if (!EDIT_PLAN.includes(full.status)) return ok(res, { flags: [], new_ods: 0, healed })   // 16/10: kế hoạch đã xác nhận ở chế độ Sửa vẫn cần cờ SAP + đơn mới
     const live = full.trips.filter(t => EDITABLE_TRIP.includes(statusOf(t)) || statusOf(t) === 'TENDERED')
     const liveRows = [...live.flatMap(t => t.ods), ...full.pool]
     const odNos = uniq(liveRows.map(o => o.od_number))
@@ -2261,8 +2274,10 @@ async function confirmPlanInner(req: Request, res: Response) {
     if (!whAllowed(req, full.warehouse_id)) return fail(res, 'Kho này ngoài phạm vi được giao', 403)
     // Kế hoạch đang mở một phần (vừa "Mở lại" vài xe, xe khác vẫn trong Kế hoạch xuất / chờ ĐVVT) vẫn xác nhận được các xe NHÁP
     const trips = full.trips.filter(t => t.ods.length && statusOf(t) === 'DRAFT')
-    if (full.status !== 'DRAFT' && !(full.status === 'TENDERED' && trips.length)) return fail(res, 409, 'PLAN_NOT_DRAFT', 'Kế hoạch đã xác nhận / đang chờ ĐVVT / đã bỏ — chốt từng xe ở panel chuyến, hoặc "Mở lại" xe cần sửa')
-    if (!trips.length) return fail(res, 422, 'PLAN_EMPTY', 'Kế hoạch không có chuyến nào để xác nhận')
+    if (full.status === 'DISCARDED') return fail(res, 409, 'PLAN_NOT_DRAFT', 'Kế hoạch đã bỏ')
+    // 16/10 (Sửa kế hoạch đã xác nhận): có xe NHÁP là xác nhận được, kế hoạch đang ở trạng thái nào cũng vậy — xe đã chốt giữ nguyên
+    if (!trips.length) return full.status === 'DRAFT' ? fail(res, 422, 'PLAN_EMPTY', 'Kế hoạch không có chuyến nào để xác nhận')
+      : fail(res, 409, 'PLAN_NOT_DRAFT', 'Không có xe nháp nào để xác nhận — chốt từng xe ở panel chuyến, hoặc "Mở lại" xe cần sửa')
     const wh = await loadWarehouse(full.warehouse_id)
     if (!wh) return fail(res, 'Không tìm thấy kho', 404)
     step(res, 'gác trước khi ghi (OD đổi ở SAP · mã hàng · Số xe đã dùng)')
@@ -2403,7 +2418,7 @@ async function discardPlanInner(req: Request, res: Response) {
     if (pErr) throw pErr   // id rác (22P02) → 400 qua fail(), không phải "không tìm thấy"
     if (!plan) return fail(res, 'Không tìm thấy kế hoạch', 404)
     if (!whAllowed(req, plan.warehouse_id)) return fail(res, 'Kho này ngoài phạm vi được giao', 403)
-    if (!OPEN_PLAN.includes(plan.status)) return fail(res, 409, 'PLAN_NOT_DRAFT', 'Kế hoạch đã xác nhận / đã bỏ')
+    if (!EDIT_PLAN.includes(plan.status)) return fail(res, 409, 'PLAN_NOT_DRAFT', 'Kế hoạch đã bỏ')   // 16/10: kế hoạch đã xác nhận cũng bỏ được các xe CHƯA chốt + khung chờ
     const t = now()
     const { data: dropped, error: tErr } = await db.from('dispatch_trip').update({ status: 'DISCARDED', updated_at: t }).eq('plan_id', plan.id).neq('status', 'CONFIRMED').select('id')
     if (tErr) throw tErr
@@ -2625,7 +2640,7 @@ export async function getRowVehicles(req: Request, res: Response) {
       row_id: ctx.row.id, od_number: ctx.row.od_number, ship_to_code: ctx.row.ship_to_code, ship_to_name: ctx.row.ship_to_name,
       customer_found: !!ctx.c, channel_label: ctx.c?.channel_label ?? null,
       trip: ctx.trip ? { id: ctx.trip.id, seq: ctx.trip.seq, vehicle_model_id: ctx.trip.vehicle_model_id } : null,
-      editable: OPEN_PLAN.includes(plan.status) && (!ctx.trip || EDITABLE_TRIP.includes(statusOf(ctx.trip))),
+      editable: EDIT_PLAN.includes(plan.status) && (!ctx.trip || EDITABLE_TRIP.includes(statusOf(ctx.trip))),
       ods: uniq(ctx.rows.map(o => o.od_number)),
       current: ctx.row.allowed_models, config, exception: !sameModels(here(ctx.row.allowed_models), here(config)),
       models: models.map(m => ({ id: m.id, sap_code: m.sap_code, name: m.name, parent_type_name: m.parent_type_name ?? null })),

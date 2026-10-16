@@ -163,9 +163,10 @@ export default function Dispatch() {
   // 16/10 tối (user: "Bán hàng và Trung chuyển là một dòng, sửa cũng xem được cả hai"): chế độ sửa theo NGÀY — cả hai mảng của ngày đó.
   // Nhớ trong store bộ lọc (không phải state component): user bấm Sửa 02/10 → sang Dữ liệu bên ngoài nạp ZSD02 → quay lại thì bản state
   // cũ đã quên chế độ sửa ⇒ kế hoạch đã xác nhận về chế độ XEM, không /sync, 130 OD mới không vào Chờ điều ("upload rồi không thấy ở Xem đơn").
+  // khoá theo KHO + NGÀY (16/10 tối, tự soi): chỉ ngày thì đổi kho cùng ngày là kế hoạch đã chốt của kho kia vào chế độ sửa mà không ai bấm
   const editDay = f.editDay || null
-  const setEditDay = (d: string | null) => setF({ editDay: d ?? '' })
-  const editing = !!plan && plan.status !== 'DISCARDED' && (isOpen || editDay === plan.plan_date)
+  const setEditDay = (d: string | null) => setF({ editDay: d ? `${f.warehouseId}|${d}` : '' })
+  const editing = !!plan && plan.status !== 'DISCARDED' && (isOpen || editDay === `${plan.warehouse_id}|${plan.plan_date}`)
   // AI ĐANG LÀM trên kế hoạch này (16/10 tối, user "hiện tên người đang làm ok") — presence realtime, không ghi DB; chip cạnh trạng thái
   const others = useDispatchPresence(planId, user ? { id: user.id, name: user.name } : null, editing)
   // Cờ SỐNG so với ZSD02 hiện tại (lũy tiến): OD bị SAP thay / bỏ / đã xuất / đã điều sau khi lập + số OD mới về

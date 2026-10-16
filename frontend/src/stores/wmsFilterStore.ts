@@ -423,6 +423,7 @@ interface FreightFilters {
 interface DispatchFilters {
   warehouseId: string
   planDate: string       // '' → trang mặc định NGÀY MAI (điều vận xếp xe cho hôm sau)
+  editDay: string        // ngày đang ở CHẾ ĐỘ SỬA kế hoạch đã xác nhận (16/10 tối) — nhớ qua điều hướng: đi upload ZSD02 rồi quay lại vẫn đang sửa, OD mới tự nạp
   planId: string         // kế hoạch đang mở ('' = bản nháp mới nhất của kho×ngày)
   // Việc của NGƯỜI ở bước này là soát bản máy ghép rồi xác nhận ⇒ lọc theo VẤN ĐỀ, không lọc theo
   // thuộc tính. '' = tất cả · 'todo' = mọi xe cần người quyết · còn lại là từng loại vấn đề.
@@ -699,7 +700,7 @@ function initialFilters() {
     doSap: { search: '', dateFrom: '', dateTo: '', source: '', plant: '', shipto: '', material: '', od: '', inPlan: '', used: '', flow: [], dispatch: '', deliveryFrom: '', deliveryTo: '', createdFrom: '', createdTo: '', soCreatedFrom: '', soCreatedTo: '', page: 1, pageSize: 50 },
     soLines: { search: '', dateFrom: '', dateTo: '', plant: '', status: ['OPEN'], flow: [], page: 1, pageSize: 50 },
     freight: { tab: 'tariffs' as const, warehouseId: '', companyId: '', modelId: '', search: '', page: 1, pageSize: 100 },
-    dispatch: { warehouseId: '', planDate: '', planId: '', issue: '', todoFirst: true, tab: 'review', reviewTab: 'GO', segment: 'SALES', boardGroup: 'ward', boardSort: 'region', boardTripGroup: 'region', search: '', boardOpen: [], poolHidden: false, boardView: 'table', boardPoolW: 0, boardOdsHidden: false, createdFrom: '', createdTo: '', soCreatedFrom: '', soCreatedTo: '', deliveryFrom: '', deliveryTo: '', channels: [], regions: [] },
+    dispatch: { warehouseId: '', planDate: '', editDay: '', planId: '', issue: '', todoFirst: true, tab: 'review', reviewTab: 'GO', segment: 'SALES', boardGroup: 'ward', boardSort: 'region', boardTripGroup: 'region', search: '', boardOpen: [], poolHidden: false, boardView: 'table', boardPoolW: 0, boardOdsHidden: false, createdFrom: '', createdTo: '', soCreatedFrom: '', soCreatedTo: '', deliveryFrom: '', deliveryTo: '', channels: [], regions: [] },
     vehicleModels: { search: '', parents: [], status: '', capMode: '', whId: '' },
     khvc: { search: '', dateFrom: '', dateTo: '', exportFrom: '', exportTo: '', warehouse: '', vehType: '', source: '', syncStatus: '', group: '', doNo: '', inDoSap: '', gdoIssue: '', page: 1, pageSize: 50 },
     reconcile: { search: '', status: 'OPEN', dateFrom: '', dateTo: '', page: 1, pageSize: 50 },

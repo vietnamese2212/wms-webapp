@@ -581,6 +581,13 @@ nào thì mở khoá xe đó. Cần 1 hướng nữa: kế hoạch làm nhầm, 
   công tắc), **Sửa / Bỏ / Huỷ áp cho mọi kế hoạch sống của ngày** (Sửa: mảng đã chốt / mở một phần nạp `review_all`, mảng còn nguyên nháp chỉ nạp
   OD mới — giữ luật tick 07/10). Ngày là "Đang mở" khi còn mảng nháp / chờ ĐVVT; "Đã xác nhận" khi mọi mảng sống đã chốt. Kế hoạch ĐÃ BỎ = lịch sử,
   mỗi bản một dòng riêng (chỉ xem), không gộp.
+- **Chế độ sửa NHỚ trong store bộ lọc (`dispatch.editDay`, 16/10 tối):** user bấm Sửa 02/10 → sang Dữ liệu bên ngoài nạp ZSD02 → quay lại, bản
+  state component cũ quên chế độ sửa ⇒ kế hoạch đã xác nhận về XEM, không `/sync`, 130 OD mới không vào Chờ điều ("upload rồi không thấy ở
+  Xem đơn"). Bấm dòng (xem) xoá `editDay`; Sửa / ổ khoá xanh đặt lại. Khuôn: trạng thái quyết "bàn có tự nạp không" phải sống qua điều hướng.
+- **AI ĐANG LÀM (16/10 tối, user "hiện tên người đang làm ok"):** presence Realtime trên kênh riêng tư `wms-dispatch-<plan_id>` (policy
+  `20261016b`, `hooks/useDispatchPresence.ts`): mỗi bàn đang mở kế hoạch track { id, name, mode sửa / xem }; chip hổ phách cạnh trạng thái
+  "A đang sửa · B xem" (người khác, gộp theo người). Không ghi DB, không qua PostgREST. Cửa ghi vẫn thuê kế hoạch 90 s (`leasePlan`, 409
+  PLAN_BUSY, không thử lại); Tối ưu lại chỉ sắp xe CHƯA khoá ⇒ muốn giữ việc tay thì khoá xe.
 - **Sửa (cách a):** `refresh-pool { review_all: true }` trên chính kế hoạch đã xác nhận — nạp đơn chờ MỚI NHẤT từ ZSD02 rồi đưa MỌI dòng Chờ điều
   của kế hoạch (cũ + vừa nạp) vào khung chờ (ghi `reviewed_at` theo bộ lọc kế hoạch, không theo danh sách id) — rồi về bàn ở **chế độ sửa** (FE
   `editing` = kế hoạch đang mở HOẶC đã bấm Sửa): khung chờ kéo được, "Xe mới" tạo được. **16/10 tối (user: "sửa mà không có đơn chờ"):** bản đầu chỉ

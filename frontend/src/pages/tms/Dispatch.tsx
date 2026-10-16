@@ -17,7 +17,7 @@
 // làm lại từ đầu = Bỏ nháp rồi Xem đơn.
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { CheckCircle2, Trash2, Download, Waypoints, ArrowRightLeft, AlertTriangle, ThumbsUp, ThumbsDown, Send, LayoutGrid, ListChecks, RotateCcw, ChevronDown, ChevronUp, Map as MapIcon, FileText, Lock, LockKeyhole, Ban } from 'lucide-react'
+import { CheckCircle2, Trash2, Download, Waypoints, ArrowRightLeft, AlertTriangle, ThumbsUp, ThumbsDown, Send, LayoutGrid, ListChecks, RotateCcw, ChevronDown, ChevronUp, Map as MapIcon, FileText, Lock, LockKeyhole, Ban, Users } from 'lucide-react'
 import { DispatchMap } from '@/components/tms/DispatchMap'
 import { TripRouteMap } from '@/components/tms/TripRouteMap'
 import { DispatchCarrierPicker } from '@/components/tms/DispatchCarrierPicker'
@@ -28,6 +28,7 @@ import { Switch } from '@/components/ui/switch'
 import { useWhTypeMetaMap } from '@/hooks/useWhTypeMeta'
 import { whTypeBadgeCls } from '@/utils/cargoCategory'
 import { DispatchPlansTable, type DispatchPlanDay } from '@/components/tms/DispatchPlansTable'
+import { useDispatchPresence } from '@/hooks/useDispatchPresence'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { DispatchBoard, RULE_BLOCK_CODES, apiCode, ruleDialog } from '@/components/tms/DispatchBoard'
 import { DispatchKpiBar } from '@/components/tms/DispatchKpiBar'
@@ -159,9 +160,14 @@ export default function Dispatch() {
   const isOpen = plan?.status === 'DRAFT' || plan?.status === 'TENDERED'
   // SỬA KẾ HOẠCH ĐÃ XÁC NHẬN (16/10, user chốt "mở từng xe"): nút Sửa ở tab Kế hoạch nạp đơn chờ rồi đưa về bàn ở CHẾ ĐỘ SỬA — khung chờ
   // kéo được, xe mới tạo được; xe đã chốt hiện ổ khoá xanh, bấm = "Mở lại" riêng xe đó. Kế hoạch đang mở (nháp / một phần) luôn sửa được.
-  // 16/10 tối (user: "Bán hàng và Trung chuyển là một dòng, sửa cũng xem được cả hai"): chế độ sửa theo NGÀY — cả hai mảng của ngày đó
-  const [editDay, setEditDay] = useState<string | null>(null)
+  // 16/10 tối (user: "Bán hàng và Trung chuyển là một dòng, sửa cũng xem được cả hai"): chế độ sửa theo NGÀY — cả hai mảng của ngày đó.
+  // Nhớ trong store bộ lọc (không phải state component): user bấm Sửa 02/10 → sang Dữ liệu bên ngoài nạp ZSD02 → quay lại thì bản state
+  // cũ đã quên chế độ sửa ⇒ kế hoạch đã xác nhận về chế độ XEM, không /sync, 130 OD mới không vào Chờ điều ("upload rồi không thấy ở Xem đơn").
+  const editDay = f.editDay || null
+  const setEditDay = (d: string | null) => setF({ editDay: d ?? '' })
   const editing = !!plan && plan.status !== 'DISCARDED' && (isOpen || editDay === plan.plan_date)
+  // AI ĐANG LÀM trên kế hoạch này (16/10 tối, user "hiện tên người đang làm ok") — presence realtime, không ghi DB; chip cạnh trạng thái
+  const others = useDispatchPresence(planId, user ? { id: user.id, name: user.name } : null, editing)
   // Cờ SỐNG so với ZSD02 hiện tại (lũy tiến): OD bị SAP thay / bỏ / đã xuất / đã điều sau khi lập + số OD mới về
   const syncQ = useDispatchPlanSync(planId, editing)
   const flags = useMemo(() => new Map((syncQ.data?.flags ?? []).map(x => [x.od_number, x])), [syncQ.data])
@@ -379,7 +385,8 @@ export default function Dispatch() {
   const openDay = (d: DispatchPlanDay) => {
     const target = (d.discarded ? d.plans : livePlans(d)).find(p => (p.segment ?? 'SALES') === seg) ?? d.plans[0]
     if (!target) return
-    setF({ planDate: d.plan_date, planId: target.id, segment: target.segment ?? 'SALES', tab: 'board' })
+    // bấm dòng = XEM bản lúc lưu ⇒ rời chế độ sửa (nếu đang sửa ngày này thì "Sửa" đặt lại)
+    setF({ planDate: d.plan_date, planId: target.id, segment: target.segment ?? 'SALES', tab: 'board', editDay: '' })
   }
   // Bỏ nháp từ tab Kế hoạch — mọi mảng đang mở của ngày, cùng cửa DELETE với nút trên bàn
   const discardDay = async (d: DispatchPlanDay) => {
@@ -407,7 +414,7 @@ export default function Dispatch() {
     const targets = livePlans(d)
     if (!targets.length) return
     openDay(d)
-    setEditDay(d.plan_date)
+    setEditDay(d.plan_date)   // sau openDay (openDay xoá editDay)
     setDiscardingId(targets[0].id)
     Promise.all(targets.map(p => refresh.mutateAsync({ id: p.id, review_all: p.status !== 'DRAFT' }).then(r => ({ p, r })))).then(rs => {
       const reviewed = rs.reduce((a, x) => a + (x.r.refreshed.reviewed ?? 0), 0), added = rs.reduce((a, x) => a + x.r.refreshed.added, 0)
@@ -618,6 +625,15 @@ export default function Dispatch() {
                     <div>Lúc nạp: {nf(plan.params.pool_ods)} đơn chờ điều · {nf(plan.params.in_plan)} đơn đã có trong Kế hoạch xuất</div>
                     <div className="text-slate-500">Tham số theo kho: Cài đặt WMS → Kho → "XUẤT — Điều vận".</div>
                   </div>} />
+                  {/* người khác đang mở kế hoạch này: sửa (hổ phách) / xem (xám) — mọi cửa ghi vẫn thuê kế hoạch, người sau được 409 */}
+                  {others.length > 0 && (
+                    <span className="inline-flex items-center gap-1 rounded-md bg-amber-50 px-1.5 h-9 sm:h-7 text-[11px] text-amber-900 whitespace-nowrap max-w-[260px] truncate" data-presence={others.length}
+                      title={`Đang mở kế hoạch này: ${others.map(o => `${o.name} (${o.mode === 'edit' ? 'đang sửa' : 'xem'})`).join(', ')}. Hai người cùng ghi thì người sau được báo "đang được người khác cập nhật"; Tối ưu lại sắp mọi xe chưa khoá — khoá xe đã ưng trước.`}>
+                      <Users className="h-3.5 w-3.5 shrink-0" />
+                      {others.filter(o => o.mode === 'edit').length ? <b>{others.filter(o => o.mode === 'edit').map(o => o.name).join(', ')} đang sửa</b> : null}
+                      {others.some(o => o.mode === 'view') && <span className="text-slate-500">{others.filter(o => o.mode === 'edit').length ? ' · ' : ''}{others.filter(o => o.mode === 'view').map(o => o.name).join(', ')} xem</span>}
+                    </span>
+                  )}
                 </span>
               )}
               {/* KHAI THIẾU (26/09, user: "không khai báo đúng thì FG02 có thể dùng container mất") — máy xếp sai mà không lỗi

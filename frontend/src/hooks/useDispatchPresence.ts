@@ -3,7 +3,7 @@
 // (nháp / đã bấm Sửa), 'view' khi chỉ xem. Không ghi DB, không qua PostgREST. Trả danh sách NGƯỜI KHÁC, gộp theo người: một người có
 // nhiều bản ghi (hai tab, hoặc bản của kết nối CŨ còn treo trên server vài chục giây sau khi tải lại trang — đo 16/10: > 45 s) thì lấy bản
 // MỚI NHẤT theo `at`, không lấy "sửa thắng xem". Rời trang (pagehide) gỡ presence chủ động để người khác hết thấy ngay.
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { supabaseClient } from '@/lib/supabase'
 
 export type DispatchPresence = { id: string; name: string; mode: 'edit' | 'view' }
@@ -12,6 +12,10 @@ type Tracked = { id?: string; name?: string; mode?: string; at?: number }
 export function useDispatchPresence(planId: string | null, me: { id: string; name: string } | null, editing: boolean): DispatchPresence[] {
   const [others, setOthers] = useState<DispatchPresence[]>([])
   const myId = me?.id ?? '', myName = me?.name ?? ''
+  // đọc `editing` lúc track, không lấy bản chụp lúc mở kênh: tải lại trang thì kế hoạch về sau SUBSCRIBED vài trăm ms — bản chụp còn
+  // 'view' trong khi bàn đã ở chế độ sửa, và effect dưới bỏ qua vì kênh chưa 'joined' (đo 16/10: 1/3 lần người kia thấy "xem" sai)
+  const editingRef = useRef(editing)
+  editingRef.current = editing
   useEffect(() => {
     const sb = supabaseClient
     if (!sb || !planId || !myId) { setOthers([]); return }
@@ -31,7 +35,7 @@ export function useDispatchPresence(planId: string | null, me: { id: string; nam
     }
     const leave = () => { void ch.untrack(); void sb.removeChannel(ch) }
     ch.on('presence', { event: 'sync' }, sync)
-      .subscribe(status => { if (status === 'SUBSCRIBED') void ch.track({ id: myId, name: myName, mode: editing ? 'edit' : 'view', at: Date.now() }) })
+      .subscribe(status => { if (status === 'SUBSCRIBED') void ch.track({ id: myId, name: myName, mode: editingRef.current ? 'edit' : 'view', at: Date.now() }) })
     window.addEventListener('pagehide', leave)
     return () => { window.removeEventListener('pagehide', leave); setOthers([]); leave() }
     // editing đổi ⇒ track lại ở effect dưới (không mở lại kênh)

@@ -589,7 +589,8 @@ nào thì mở khoá xe đó. Cần 1 hướng nữa: kế hoạch làm nhầm, 
   "A đang sửa · B xem" (người khác, gộp theo người). Không ghi DB, không qua PostgREST. Cửa ghi vẫn thuê kế hoạch 90 s (`leasePlan`, 409
   PLAN_BUSY, không thử lại); Tối ưu lại chỉ sắp xe CHƯA khoá ⇒ muốn giữ việc tay thì khoá xe.
 - **Sửa (cách a):** `refresh-pool { review_all: true }` trên chính kế hoạch đã xác nhận — nạp đơn chờ MỚI NHẤT từ ZSD02 rồi đưa MỌI dòng Chờ điều
-  của kế hoạch (cũ + vừa nạp) vào khung chờ (ghi `reviewed_at` theo bộ lọc kế hoạch, không theo danh sách id) — rồi về bàn ở **chế độ sửa** (FE
+  của kế hoạch (cũ + vừa nạp) vào khung chờ (ghi `reviewed_at` theo bộ lọc kế hoạch, không theo danh sách id; đơn "Không liên quan" của CHÍNH
+  người bấm ở lại Chờ điều — gỡ mốc vừa ghi theo lô 300, tự soi 16/10 tối) — rồi về bàn ở **chế độ sửa** (FE
   `editing` = kế hoạch đang mở HOẶC đã bấm Sửa): khung chờ kéo được, "Xe mới" tạo được. **16/10 tối (user: "sửa mà không có đơn chờ"):** bản đầu chỉ
   gọi `refresh-pool` trần nên đơn chờ nằm ở Chờ điều của Xem đơn, bàn trống. **Xem (bấm dòng) = bản lúc lưu:** không nạp gì, không `/sync`, khung chờ
   chỉ dòng đã tick. Xe đã vào KH xuất **tô TÍM như xe khoá** (user: "trạng thái khoá còn có layout màu khác") + **ổ khoá XANH** (`LockKeyhole`, bảng ·

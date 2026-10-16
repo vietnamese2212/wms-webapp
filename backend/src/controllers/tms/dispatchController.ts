@@ -2018,12 +2018,23 @@ async function refreshPoolInner(req: Request, res: Response) {
     step(res, `ghi ${loadable.length} dòng OD mới vào khung chờ`)
     await insertOdRows(loadable.map(o => odRow(plan.id, null, wholeOd(o), cand.meta.get(o.od_number), t, null)))
     // Sửa kế hoạch: mọi dòng Chờ điều (cũ + vừa nạp) vào khung chờ — lọc theo kế hoạch, không theo danh sách id (không dính trần URL)
-    const reviewed = b.review_all ? full.pool.filter(o => !o.reviewed_at).length + loadable.length : 0
+    let reviewed = b.review_all ? full.pool.filter(o => !o.reviewed_at).length + loadable.length : 0
     if (b.review_all) {
       step(res, `đưa ${reviewed} dòng Chờ điều vào khung chờ`)
       const { error } = await db.from('dispatch_trip_od').update({ reviewed_at: t, reviewed_by: req.user?.name ?? null, updated_at: t })
         .eq('plan_id', plan.id).is('trip_id', null).is('reviewed_at', null)
       if (error) throw error
+      // "Không liên quan" CỦA CHÍNH NGƯỜI BẤM (dấu riêng từng người, tab Xem đơn) ở lại Chờ điều — tự soi 16/10 tối: bản đầu kéo cả chúng
+      // lên khung chờ. Gỡ mốc vừa ghi (đúng mốc t) theo lô 300; thường rỗng ⇒ không thêm request
+      const { data: hid, error: hErr } = await db.from('dispatch_od_hidden').select('od_number').eq('plan_id', plan.id).eq('user_id', userKey(req)).limit(1000)
+      if (hErr) throw hErr
+      const hidden = uniq((hid ?? []).map(x => x.od_number))
+      for (let i = 0; i < hidden.length; i += 300) {
+        const { data: back, error: bErr } = await db.from('dispatch_trip_od').update({ reviewed_at: null, reviewed_by: null, updated_at: t })
+          .eq('plan_id', plan.id).is('trip_id', null).eq('reviewed_at', t).in('od_number', hidden.slice(i, i + 300)).select('id')
+        if (bErr) throw bErr
+        reviewed -= (back ?? []).length
+      }
     }
     const prev = (plan.params ?? {}) as Record<string, unknown>
     const inPool = new Set(full.pool.map(o => o.od_number))

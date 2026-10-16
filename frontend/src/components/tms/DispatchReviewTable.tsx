@@ -34,6 +34,7 @@ import { DispatchDecisionQueue, gdoStage } from './DispatchDecisionQueue'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { useWhTypeMetaMap } from '@/hooks/useWhTypeMeta'
 import { useDebouncedValue } from '@/hooks/useDebouncedValue'
+import { useEdgeFade } from '@/hooks/useEdgeFade'
 import { whTypeBadgeCls } from '@/utils/cargoCategory'
 import { QTY_CONVERTED_LABEL } from '@/utils/qtyUnits'
 import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
@@ -531,14 +532,17 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped, canAct =
       ...(i.taken && (st === 'GO' || st === 'PLAN') && i.taken.segment === seg ? [`${i.taken.by ?? '?'} lấy sang ${SEGMENT_VI[i.taken.segment]}${i.taken.at ? ` lúc ${when(i.taken.at)}` : ''}`] : []),
     ].join(' · ')
   }
+  const tabFade = useEdgeFade(`${st}|${seg}|${rows.length}`)
 
   return (
     <div className="flex flex-col min-h-0 h-full">
       <div className="shrink-0 border-b bg-white px-3 py-1.5 space-y-1.5">
         {/* SWITCH trạng thái — cả lựa chọn lẫn SỐ của từng tab thấy ngay, không phải bấm thử (khuôn switch 17/09) */}
         {/* điện thoại: dải switch cuộn ngang riêng một hàng, nút Ghép xe xuống hàng dưới rộng hết màn (nút chính phải THẤY NGAY) */}
+        {/* ≥ 1280 MỘT hàng ở mọi cỡ màn (C81, đo 16/10: 10 switch + nút ở 1280 hai hàng, 1920 một hàng) — chật thì cuộn ngang mép mờ */}
         <div className="flex flex-col sm:flex-row sm:items-center gap-1.5">
-        <div className="flex items-center gap-1.5 overflow-x-auto sm:flex-wrap min-w-0 [&>*]:shrink-0">
+        <div ref={tabFade.ref} style={tabFade.style} onWheel={tabFade.onWheel}
+          className="flex items-center gap-1.5 overflow-x-auto no-scrollbar sm:overflow-visible sm:flex-wrap xl:flex-nowrap xl:overflow-x-auto min-w-0 [&>*]:shrink-0">
           {TABS.map(t => {
             const other = !!t.seg && t.seg !== seg
             const active = st === t.k && !other

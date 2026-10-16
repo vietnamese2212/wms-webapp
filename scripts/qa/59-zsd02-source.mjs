@@ -18,7 +18,9 @@ const DELIV = new Date(Date.now() + 40 * 86400000).toLocaleDateString('en-CA', {
 const OD_CREATED = new Date(Date.now() + 35 * 86400000).toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })   // "Thời gian tạo OD" — khác DELIV để lọc Ngày tạo OD không ăn theo Ngày giao
 const SO_CREATED = new Date(Date.now() + 33 * 86400000).toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })   // "Thời gian tạo SO" — khác cả OD_CREATED
 const SO1 = 'QA59SO1', SO2 = 'QA59SO2', SO3 = 'QA59SO3', OD1 = 'QA59OD1', OD3 = 'QA59OD3'
-const SHIPTO = 'QA59ST', SHIPTO2 = 'QA59ST2', ROUTE = 'BVQA59', WARD = 'QA59-Test', PLANT = '1102'
+// PLANT = plant của kho kiểm thử QA61WH (16/10, C49 lặp): bản cũ gieo đơn vào plant 1102 = Ba Vì THẬT ⇒ bàn ghép xe đang mở của người dùng
+// tự hút "QA59OD1 · QA59 KHÁCH TEST" vào khung chờ nháp thật (pool luỹ tiến + realtime), bước dọn xoá ZSD02 nhưng dòng khung chờ ở lại = dòng ma.
+const SHIPTO = 'QA59ST', SHIPTO2 = 'QA59ST2', ROUTE = 'BVQA59', WARD = 'QA59-Test', PLANT = 'QA61P'
 const GC = `${FIX.WH_QR.code}_X_${todayVN.slice(8, 10)}${todayVN.slice(5, 7)}${todayVN.slice(2, 4)}_959`
 // [4d] chuyến dựng thẳng ở kho kiểm thử riêng của gói 61 (bền, không phải kho thật)
 const QA61WH = '6a610000-0000-4000-8000-000000000061', GC_S = 'QA59_SHIPTO_GDO'
@@ -335,12 +337,15 @@ try {
     up7c.s === 200 && up7c.j?.data?.od?.gone === 2 && goneRows.length === 2 && goneRows.every(r => r.sync_status === 'OBSOLETE' && !r.replaced_by_od)
     && (await restAll('erp_outbound_orders', `select=sync_status&od_number=eq.${OD3}`))[0]?.sync_status === 'ACTIVE',
     `http=${up7c.s} gone=${up7c.j?.data?.od?.gone} rows=${JSON.stringify(goneRows)}`)
-  // Công tắc BẮT BUỘC: fixture không phủ ngày tạo của đơn chưa đi thật ⇒ kiểm trước có lỗi "Phủ ngày tạo" (will_write 0), ghi thật 422 COVERAGE_MISSING
+  // Công tắc BẮT BUỘC: plant kiểm thử có MỘT đơn chưa đi tạo NGOÀI khoảng file (QA59OLD, 16/10 — bản cũ dựa vào đơn thật của Ba Vì)
+  // ⇒ kiểm trước có lỗi "Phủ ngày tạo" (will_write 0), ghi thật 422 COVERAGE_MISSING. Bước dọn xoá theo `QA59*`.
+  const OLD_CREATED = new Date(Date.now() + 20 * 86400000).toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })   // ≠ OD_CREATED, không trong file
+  await restWrite('erp_outbound_orders', 'POST', null, { id: randomUUID(), od_number: 'QA59OLD', od_item: '10', material_code: FIX.MAT_POOL, qty_base: 1, ship_to_code: SHIPTO, ship_to_name: 'QA59 KHÁCH TEST', ward_code: WARD, plant: PLANT, od_created_at: OLD_CREATED, flow: 'SALE', source: 'EXCEL', sync_status: 'ACTIVE', last_synced_at: new Date().toISOString(), updated_at: new Date().toISOString() })
   await api('/wms/settings/zsd02_coverage_mode', 'PUT', { value: 'REQUIRE' })
   const pf7 = await waitFor(async () => { const r = await upload('/external/do-sap/upload-zsd02?preflight=1', xlsxOf(ROWS)); return r.s === 200 && (r.j?.data?.errors_total ?? 0) > 0 ? r : null })
   const wr7 = await upload('/external/do-sap/upload-zsd02', xlsxOf(ROWS))
   const covPlant = pf7?.j?.data?.coverage?.plants?.find(p => p.plant === PLANT)
-  check('7d. Công tắc Bắt buộc: file không phủ ngày tạo của đơn chưa đi (plant 1102) → kiểm trước lỗi "Phủ ngày tạo" nêu ngày + số OD + khoảng nên đổ, will_write 0 · ghi thật 422 COVERAGE_MISSING',
+  check(`7d. Công tắc Bắt buộc: file không phủ ngày tạo của đơn chưa đi QA59OLD (plant ${PLANT}) → kiểm trước lỗi "Phủ ngày tạo" nêu ngày + số OD + khoảng nên đổ, will_write 0 · ghi thật 422 COVERAGE_MISSING`,
     !!pf7 && pf7.j?.data?.will_write === 0 && (pf7.j?.data?.errors ?? []).some(e => /Phủ ngày tạo/.test(e) && /Đổ lại ZSD02/.test(e)) && (covPlant?.missing?.length ?? 0) > 0 && pf7.j?.data?.coverage?.mode === 'REQUIRE'
     && wr7.s === 422 && wr7.j?.error?.code === 'COVERAGE_MISSING',
     `pf=${pf7?.s ?? 'timeout'} will=${pf7?.j?.data?.will_write} err0=${(pf7?.j?.data?.errors ?? [])[0]?.slice(0, 120)} missing=${covPlant?.missing?.length} write=${wr7.s}/${wr7.j?.error?.code}`)

@@ -186,6 +186,18 @@ async function purgePlans() {
     const n = (mine?.length ?? 0) + (stale?.length ?? 0)
     if (n) console.error(`[ci-account] đã xoá ${n} nháp Điều vận của tài khoản CI`)
   } catch (e) { console.error(`[ci-account] không xoá được nháp Điều vận của tài khoản CI — ${String(e).slice(0, 200)}`) }
+  await purgeGhostOds()
+}
+
+/** DÒNG MA trong nháp của NGƯỜI DÙNG (C49 lặp 16/10): gói kiểm gieo ZSD02 vào plant thật ⇒ bàn ghép xe đang mở hút đơn `QA…`
+ *  vào khung chờ nháp thật (pool luỹ tiến + realtime); bước dọn của gói xoá ZSD02 nhưng dòng `dispatch_trip_od` ở lại — người dùng
+ *  thấy "QA59OD1 · QA59 KHÁCH TEST" Chờ điều mãi. OD thật là số SAP, OD `QA*` chỉ có thể là mồi của bộ kiểm ⇒ xoá dòng khung
+ *  chờ (không đụng dòng đã lên xe) và NÊU TÊN gói để sửa gốc (gói phải gieo vào plant QA61P). */
+async function purgeGhostOds() {
+  try {
+    const ghosts = await rest(`dispatch_trip_od?od_number=like.QA*&trip_id=is.null&select=id,od_number,plan_id`, { method: 'DELETE', headers: { Prefer: 'return=representation' } })
+    if (ghosts?.length) console.error(`::warning::[ci-account] xoá ${ghosts.length} dòng ma OD kiểm thử trong khung chờ nháp người dùng (${[...new Set(ghosts.map(g => g.od_number.slice(0, 4)))].join(',')}) — gói gieo ZSD02 vào plant THẬT, chuyển sang plant QA61P (C49)`)
+  } catch (e) { console.error(`[ci-account] không quét được dòng ma OD kiểm thử — ${String(e).slice(0, 200)}`) }
 }
 
 const mode = process.argv[2]

@@ -27,7 +27,7 @@ import { SettingsGroup, SettingRow } from '@/components/shared/SettingRow'
 import { Switch } from '@/components/ui/switch'
 import { useWhTypeMetaMap } from '@/hooks/useWhTypeMeta'
 import { whTypeBadgeCls } from '@/utils/cargoCategory'
-import { DispatchPlansTable } from '@/components/tms/DispatchPlansTable'
+import { DispatchPlansTable, type DispatchPlanDay } from '@/components/tms/DispatchPlansTable'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { DispatchBoard, RULE_BLOCK_CODES, apiCode, ruleDialog } from '@/components/tms/DispatchBoard'
 import { DispatchKpiBar } from '@/components/tms/DispatchKpiBar'
@@ -159,8 +159,9 @@ export default function Dispatch() {
   const isOpen = plan?.status === 'DRAFT' || plan?.status === 'TENDERED'
   // SỬA KẾ HOẠCH ĐÃ XÁC NHẬN (16/10, user chốt "mở từng xe"): nút Sửa ở tab Kế hoạch nạp đơn chờ rồi đưa về bàn ở CHẾ ĐỘ SỬA — khung chờ
   // kéo được, xe mới tạo được; xe đã chốt hiện ổ khoá xanh, bấm = "Mở lại" riêng xe đó. Kế hoạch đang mở (nháp / một phần) luôn sửa được.
-  const [editPlanId, setEditPlanId] = useState<string | null>(null)
-  const editing = !!plan && plan.status !== 'DISCARDED' && (isOpen || editPlanId === plan.id)
+  // 16/10 tối (user: "Bán hàng và Trung chuyển là một dòng, sửa cũng xem được cả hai"): chế độ sửa theo NGÀY — cả hai mảng của ngày đó
+  const [editDay, setEditDay] = useState<string | null>(null)
+  const editing = !!plan && plan.status !== 'DISCARDED' && (isOpen || editDay === plan.plan_date)
   // Cờ SỐNG so với ZSD02 hiện tại (lũy tiến): OD bị SAP thay / bỏ / đã xuất / đã điều sau khi lập + số OD mới về
   const syncQ = useDispatchPlanSync(planId, editing)
   const flags = useMemo(() => new Map((syncQ.data?.flags ?? []).map(x => [x.od_number, x])), [syncQ.data])
@@ -371,30 +372,50 @@ export default function Dispatch() {
     }) === null) return
     discard.mutateAsync(plan.id).then(r => { if (r.status === 'DISCARDED') setF({ planId: '' }); toast({ title: `Đã bỏ ${r.discarded_trips} xe` }) }).catch(e => err(e, 'Không bỏ được nháp'))
   }
-  // Bỏ nháp từ tab Nháp (12/10) — nháp bất kỳ ngày / mảng của kho, cùng cửa DELETE với nút trên bàn
+  // Tab Kế hoạch (16/10 tối): MỘT DÒNG = MỘT NGÀY (cả Bán hàng lẫn Trung chuyển) — Mở / Sửa / Bỏ / Huỷ áp cho mọi kế hoạch sống của ngày.
+  // Mở: giữ mảng đang xem nếu ngày đó có, không thì sang mảng kia; bàn chuyển mảng bằng công tắc Bán hàng | Trung chuyển như thường.
   const [discardingId, setDiscardingId] = useState<string | null>(null)
-  const discardOne = async (p: DispatchPlanListItem) => {
-    const tendered = p.status === 'TENDERED'
+  const livePlans = (d: DispatchPlanDay) => d.plans.filter(p => p.status !== 'DISCARDED')
+  const openDay = (d: DispatchPlanDay) => {
+    const target = (d.discarded ? d.plans : livePlans(d)).find(p => (p.segment ?? 'SALES') === seg) ?? d.plans[0]
+    if (!target) return
+    setF({ planDate: d.plan_date, planId: target.id, segment: target.segment ?? 'SALES', tab: 'board' })
+  }
+  // Bỏ nháp từ tab Kế hoạch — mọi mảng đang mở của ngày, cùng cửa DELETE với nút trên bàn
+  const discardDay = async (d: DispatchPlanDay) => {
+    const targets = livePlans(d).filter(p => p.status === 'DRAFT' || p.status === 'TENDERED')
+    if (!targets.length) return
+    const partly = livePlans(d).some(p => p.status === 'TENDERED' || p.status === 'CONFIRMED')
+    const segs = targets.map(p => SEGMENT_VI[p.segment ?? 'SALES']).join(' · ')
     if (await ask({
-      title: tendered ? `Bỏ các xe CHƯA vào Kế hoạch xuất của kế hoạch ${SEGMENT_VI[p.segment ?? 'SALES']} ngày ${formatDate(p.plan_date)}?` : `Bỏ nháp ${SEGMENT_VI[p.segment ?? 'SALES']} ngày ${formatDate(p.plan_date)}?`,
-      danger: true, confirmLabel: tendered ? 'Bỏ xe chưa chốt' : 'Bỏ nháp',
-      body: tendered ? 'Gồm xe đang chờ / bị từ chối / nháp. Xe đã vào Kế hoạch xuất giữ nguyên; đơn của xe bị bỏ quay về Chờ điều.' : 'Đơn trên nháp được nhả ra — kế hoạch ngày khác lấy được ngay (khung chờ vốn đã tự do).',
+      title: partly ? `Bỏ các xe CHƯA vào Kế hoạch xuất ngày ${formatDate(d.plan_date)} (${segs})?` : `Bỏ nháp ngày ${formatDate(d.plan_date)} (${segs})?`,
+      danger: true, confirmLabel: partly ? 'Bỏ xe chưa chốt' : 'Bỏ nháp',
+      body: partly ? 'Gồm xe đang chờ / bị từ chối / nháp. Xe đã vào Kế hoạch xuất giữ nguyên; đơn của xe bị bỏ quay về Chờ điều.' : 'Đơn trên nháp được nhả ra — kế hoạch ngày khác lấy được ngay (khung chờ vốn đã tự do).',
     }) === null) return
-    setDiscardingId(p.id)
-    discard.mutateAsync(p.id).then(r => { if (r.status === 'DISCARDED' && p.id === planId) setF({ planId: '' }); toast({ title: `Đã bỏ nháp ${formatDate(p.plan_date)} — ${r.discarded_trips} xe` }) })
-      .catch(e => err(e, 'Không bỏ được nháp')).finally(() => setDiscardingId(null))
+    setDiscardingId(targets[0].id)
+    try {
+      let trips = 0
+      for (const p of targets) { const r = await discard.mutateAsync(p.id); trips += r.discarded_trips; if (r.status === 'DISCARDED' && p.id === planId) setF({ planId: '' }) }
+      toast({ title: `Đã bỏ nháp ${formatDate(d.plan_date)} — ${nf(trips)} xe` })
+    } catch (e) { err(e, 'Không bỏ được nháp') } finally { setDiscardingId(null) }
   }
   // SỬA kế hoạch đã xác nhận (16/10): nạp đơn chờ MỚI NHẤT (ZSD02 hiện tại) rồi đưa MỌI đơn Chờ điều của kế hoạch vào khung chờ (review_all —
   // 16/10 tối, user: "sửa mà không có đơn chờ"; bản đầu để chúng ở Chờ điều của Xem đơn nên bàn trống), về Bàn ghép xe ở chế độ sửa —
   // xe đã chốt hiện ổ khoá, mở khoá xe nào thì xe đó về nháp; xe không đụng giữ nguyên khung giờ đã đặt. Xem (bấm dòng) KHÔNG nạp gì: bản lúc lưu.
-  const startEdit = (p: DispatchPlanListItem) => {
-    setF({ planDate: p.plan_date, planId: p.id, segment: p.segment ?? 'SALES', tab: 'board' })
-    setEditPlanId(p.id)
-    setDiscardingId(p.id)
-    refresh.mutateAsync({ id: p.id, review_all: true }).then(r => toast({
-      title: r.refreshed.reviewed ? `${nf(r.refreshed.reviewed)} đơn chờ vào khung chờ${r.refreshed.added ? ` (${nf(r.refreshed.added)} mới từ ZSD02)` : ''}` : 'Không có đơn chờ',
-      description: 'Kéo đơn chờ lên xe mới; xe đã vào Kế hoạch xuất tô tím + ổ khoá xanh — bấm ổ khoá để mở lại riêng xe đó rồi sửa. Xong bấm Xác nhận.',
-    })).catch(e => err(e, 'Không nạp được đơn chờ')).finally(() => setDiscardingId(null))
+  // Áp cho CẢ HAI mảng của ngày: mảng đã chốt / mở một phần nạp kiểu Sửa (review_all); mảng còn nguyên nháp chỉ nạp OD mới (giữ luật tick 07/10).
+  const startEdit = (d: DispatchPlanDay) => {
+    const targets = livePlans(d)
+    if (!targets.length) return
+    openDay(d)
+    setEditDay(d.plan_date)
+    setDiscardingId(targets[0].id)
+    Promise.all(targets.map(p => refresh.mutateAsync({ id: p.id, review_all: p.status !== 'DRAFT' }).then(r => ({ p, r })))).then(rs => {
+      const reviewed = rs.reduce((a, x) => a + (x.r.refreshed.reviewed ?? 0), 0), added = rs.reduce((a, x) => a + x.r.refreshed.added, 0)
+      toast({
+        title: reviewed ? `${nf(reviewed)} đơn chờ vào khung chờ${added ? ` (${nf(added)} mới từ ZSD02)` : ''}` : added ? `${nf(added)} OD mới từ ZSD02` : 'Không có đơn chờ',
+        description: `${rs.map(x => `${SEGMENT_VI[x.p.segment ?? 'SALES']}: ${nf(x.r.refreshed.reviewed ?? 0)}`).join(' · ')}. Kéo đơn chờ lên xe mới; xe đã vào Kế hoạch xuất tô tím + ổ khoá xanh — bấm ổ khoá để mở lại riêng xe đó rồi sửa. Xong bấm Xác nhận.`,
+      })
+    }).catch(e => err(e, 'Không nạp được đơn chờ')).finally(() => setDiscardingId(null))
   }
   // MỞ LẠI MỘT XE (16/10, user: "tất cả các xe đều khoá lại, muốn sửa xe nào thì mở khoá xe đó") — cùng cửa với "Mở lại" cả kế hoạch, chỉ một id
   const reopenTrip = async (t: DispatchTrip) => {
@@ -403,7 +424,7 @@ export default function Dispatch() {
       title: `Mở lại xe #${t.seq} (${t.group_code})?`, confirmLabel: 'Mở lại xe',
       body: 'Xe về NHÁP để sửa trên bàn: dòng Kế hoạch xuất của xe bị gỡ, chuyến bên Xuất kho tạm NGỪNG, lệnh VC NHẢ khung giờ đã đặt. Sửa xong bấm Xác nhận — cùng Số xe sống lại, khung giờ phải đặt lại.\nChuyến đã bắt đầu / đang giữ hàng nhặt lẻ thì không mở được.',
     }) === null) return
-    setEditPlanId(plan.id)
+    setEditDay(plan.plan_date)
     reopen.mutateAsync({ plan_id: plan.id, trip_ids: [t.id] }).then(r => toast({
       title: r.reopened.trips ? `Đã mở lại xe #${t.seq} — sửa rồi Xác nhận lại` : `Không mở lại được xe #${t.seq}`,
       description: r.reopened.blocked[0]?.reason ?? r.reopened.replan_error ?? undefined,
@@ -411,25 +432,40 @@ export default function Dispatch() {
     })).catch(e => err(e, 'Không mở lại được xe'))
   }
   // HUỶ CẢ KẾ HOẠCH (16/10, user: "kế hoạch làm nhầm, xoá toàn bộ"): mở lại mọi xe mở được → bỏ nháp; xe không mở được liệt kê để xử bên Xuất kho
-  const cancelPlan = async (p: Pick<DispatchPlanListItem, 'id' | 'plan_date' | 'segment' | 'summary'>) => {
-    const n = p.summary?.confirmed ?? 0
-    if (await ask({
-      title: `Huỷ cả kế hoạch ${SEGMENT_VI[p.segment ?? 'SALES']} ngày ${formatDate(p.plan_date)}?`, danger: true, confirmLabel: 'Huỷ kế hoạch',
-      body: `${nf(n)} xe đã vào Kế hoạch xuất sẽ được mở lại rồi bỏ cùng mọi xe nháp: đơn về Chờ điều, dòng Kế hoạch xuất gỡ, chuyến Xuất kho ngừng hoạt động (giữ lịch sử), lệnh VC nhả khung giờ.\nXe có chuyến đã bắt đầu / đã hoàn thành / đang giữ hàng nhặt lẻ KHÔNG huỷ được — giữ nguyên, xử bên Xuất kho (xoá QR đã quét → Bỏ bắt đầu) rồi huỷ lại.`,
-    }) === null) return
+  type CancelTarget = Pick<DispatchPlanListItem, 'id' | 'plan_date' | 'segment' | 'summary'>
+  const cancelBody = (n: number) => `${nf(n)} xe đã vào Kế hoạch xuất sẽ được mở lại rồi bỏ cùng mọi xe nháp: đơn về Chờ điều, dòng Kế hoạch xuất gỡ, chuyến Xuất kho ngừng hoạt động (giữ lịch sử), lệnh VC nhả khung giờ.\nXe có chuyến đã bắt đầu / đã hoàn thành / đang giữ hàng nhặt lẻ KHÔNG huỷ được — giữ nguyên, xử bên Xuất kho (xoá QR đã quét → Bỏ bắt đầu) rồi huỷ lại.`
+  // một kế hoạch: luôn thử mở lại (số xe đã chốt trong summary có thể cũ vài giây sau khi Xác nhận) — không có xe nào để mở thì 422, bỏ qua
+  const cancelInner = async (p: CancelTarget) => {
+    let r: Awaited<ReturnType<typeof reopen.mutateAsync>> | null = null
+    try { r = await reopen.mutateAsync({ plan_id: p.id }) } catch (e) { if (apiCode(e) !== 'NOTHING_TO_REOPEN') throw e }
+    const d = await discard.mutateAsync(p.id)
+    if (d.status === 'DISCARDED' && p.id === planId) setF({ planId: '' })
+    return { trips: (r?.reopened.trips ?? 0) + d.discarded_trips, blocked: r?.reopened.blocked ?? [], replan_error: r?.reopened.replan_error ?? null, discarded: d.status === 'DISCARDED' }
+  }
+  const cancelToast = (label: string, rs: Awaited<ReturnType<typeof cancelInner>>[]) => {
+    const blocked = rs.flatMap(x => x.blocked), replan = rs.find(x => x.replan_error)?.replan_error ?? null
+    toast({
+      title: rs.every(x => x.discarded) ? `Đã huỷ kế hoạch ${label} — ${nf(rs.reduce((a, x) => a + x.trips, 0))} xe` : `Đã huỷ phần mở được — ${nf(blocked.length)} xe giữ lại`,
+      description: blocked.length ? blocked.slice(0, 3).map(b => `${b.group_code}: ${b.reason}`).join('; ') : replan ?? undefined,
+      variant: blocked.length || replan ? 'destructive' : undefined,
+    })
+  }
+  const cancelPlan = async (p: CancelTarget) => {
+    if (await ask({ title: `Huỷ cả kế hoạch ${SEGMENT_VI[p.segment ?? 'SALES']} ngày ${formatDate(p.plan_date)}?`, danger: true, confirmLabel: 'Huỷ kế hoạch', body: cancelBody(p.summary?.confirmed ?? 0) }) === null) return
     setDiscardingId(p.id)
+    try { cancelToast(formatDate(p.plan_date), [await cancelInner(p)]) } catch (e) { err(e, 'Không huỷ được kế hoạch') } finally { setDiscardingId(null) }
+  }
+  // Huỷ từ tab Kế hoạch: CẢ HAI mảng của ngày (16/10 tối) — mảng nào có xe chốt / xe nháp đều bỏ
+  const cancelDay = async (d: DispatchPlanDay) => {
+    const targets = livePlans(d)
+    if (!targets.length) return
+    const n = targets.reduce((a, p) => a + (p.summary?.confirmed ?? 0), 0)
+    if (await ask({ title: `Huỷ cả kế hoạch ngày ${formatDate(d.plan_date)} (${targets.map(p => SEGMENT_VI[p.segment ?? 'SALES']).join(' · ')})?`, danger: true, confirmLabel: 'Huỷ kế hoạch', body: cancelBody(n) }) === null) return
+    setDiscardingId(targets[0].id)
     try {
-      // luôn thử mở lại (số xe đã chốt trong summary có thể cũ vài giây sau khi Xác nhận) — không có xe nào để mở thì 422, bỏ qua
-      let r: Awaited<ReturnType<typeof reopen.mutateAsync>> | null = null
-      try { r = await reopen.mutateAsync({ plan_id: p.id }) } catch (e) { if (apiCode(e) !== 'NOTHING_TO_REOPEN') throw e }
-      const d = await discard.mutateAsync(p.id)
-      if (d.status === 'DISCARDED' && p.id === planId) setF({ planId: '' })
-      const blocked = r?.reopened.blocked ?? []
-      toast({
-        title: d.status === 'DISCARDED' ? `Đã huỷ kế hoạch ${formatDate(p.plan_date)} — ${nf((r?.reopened.trips ?? 0) + d.discarded_trips)} xe` : `Đã huỷ phần mở được — ${nf(blocked.length)} xe giữ lại`,
-        description: blocked.length ? blocked.slice(0, 3).map(b => `${b.group_code}: ${b.reason}`).join('; ') : r?.reopened.replan_error ?? undefined,
-        variant: blocked.length || r?.reopened.replan_error ? 'destructive' : undefined,
-      })
+      const rs: Awaited<ReturnType<typeof cancelInner>>[] = []
+      for (const p of targets) rs.push(await cancelInner(p))
+      cancelToast(formatDate(d.plan_date), rs)
     } catch (e) { err(e, 'Không huỷ được kế hoạch') } finally { setDiscardingId(null) }
   }
   // MỞ LẠI (user chốt 25/09 "lưu rồi có sửa lại được không"): kéo xe đã vào Kế hoạch xuất về nháp — chỉ xe mà chuyến
@@ -670,10 +706,10 @@ export default function Dispatch() {
               <p className="text-xs">Pool = OD ZSD02 của kho (theo Plant SAP) có ngày giao đó và chưa nằm trong Kế hoạch xuất.</p>
             </div>
           ) : tab === 'plans' ? (
-            // tab KẾ HOẠCH (16/10): mọi kế hoạch của kho, mọi ngày — bấm dòng mở (đặt ngày + mảng rồi sang bàn); Sửa / Bỏ nháp / Huỷ kế hoạch
+            // tab KẾ HOẠCH (16/10): một dòng một NGÀY (cả hai mảng) — bấm dòng mở (giữ mảng đang xem rồi sang bàn); Sửa / Bỏ nháp / Huỷ cho cả ngày
             <DispatchPlansTable plans={allPlans} loading={allPlansQ.isLoading} error={allPlansQ.isError ? apiMsg(allPlansQ.error) : null} currentPlanId={planId}
-              canPlan={canPlan} canConfirm={canConfirm} busyId={discardingId} onOpen={p => setF({ planDate: p.plan_date, planId: p.id, segment: p.segment ?? 'SALES', tab: 'board' })}
-              onEdit={startEdit} onDiscard={p => void discardOne(p)} onCancel={p => void cancelPlan(p)} />
+              canPlan={canPlan} canConfirm={canConfirm} busyId={discardingId} onOpen={openDay}
+              onEdit={startEdit} onDiscard={d => void discardDay(d)} onCancel={d => void cancelDay(d)} />
           ) : plans.isLoading || planQ.isLoading ? (
             <div className="p-6 text-center text-xs text-slate-400">Đang tải…</div>
           ) : !plan ? (

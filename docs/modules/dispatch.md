@@ -576,6 +576,11 @@ nào thì mở khoá xe đó. Cần 1 hướng nữa: kế hoạch làm nhầm, 
   Xe · Đơn · Khung chờ · Pallet · Σ cước · Người lập · Lúc · Xác nhận; lọc nhanh Đang mở / Đã xác nhận / Đã bỏ / Tất cả. Bấm dòng = mở (đặt ngày +
   mảng, sang Bàn ghép xe). Nút dòng: **Sửa** (đã xác nhận) · **Bỏ nháp / Bỏ xe chưa chốt** (đang mở) · **Huỷ kế hoạch** (có xe đã chốt, quyền xác
   nhận). Ô chọn kế hoạch ở hàng 2 và nút "Xem đơn" ở hàng 2 (vốn tạo NHÁP MỚI cho ngày đã có kế hoạch xác nhận) bỏ — thêm đơn vào ngày đó = Sửa.
+  **16/10 tối (user: "Bán hàng và Trung chuyển là MỘT dòng, xem riêng ở các tab"):** một dòng = một NGÀY, hai cột Bán hàng · Trung chuyển mang
+  trạng thái + xe/đơn từng mảng (`groupPlanDays`), số xe · đơn · khung chờ · pallet · cước cộng cả hai; Mở giữ mảng đang xem (bàn đổi mảng bằng
+  công tắc), **Sửa / Bỏ / Huỷ áp cho mọi kế hoạch sống của ngày** (Sửa: mảng đã chốt / mở một phần nạp `review_all`, mảng còn nguyên nháp chỉ nạp
+  OD mới — giữ luật tick 07/10). Ngày là "Đang mở" khi còn mảng nháp / chờ ĐVVT; "Đã xác nhận" khi mọi mảng sống đã chốt. Kế hoạch ĐÃ BỎ = lịch sử,
+  mỗi bản một dòng riêng (chỉ xem), không gộp.
 - **Sửa (cách a):** `refresh-pool { review_all: true }` trên chính kế hoạch đã xác nhận — nạp đơn chờ MỚI NHẤT từ ZSD02 rồi đưa MỌI dòng Chờ điều
   của kế hoạch (cũ + vừa nạp) vào khung chờ (ghi `reviewed_at` theo bộ lọc kế hoạch, không theo danh sách id) — rồi về bàn ở **chế độ sửa** (FE
   `editing` = kế hoạch đang mở HOẶC đã bấm Sửa): khung chờ kéo được, "Xe mới" tạo được. **16/10 tối (user: "sửa mà không có đơn chờ"):** bản đầu chỉ

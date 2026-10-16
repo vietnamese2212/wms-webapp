@@ -576,10 +576,13 @@ nào thì mở khoá xe đó. Cần 1 hướng nữa: kế hoạch làm nhầm, 
   Xe · Đơn · Khung chờ · Pallet · Σ cước · Người lập · Lúc · Xác nhận; lọc nhanh Đang mở / Đã xác nhận / Đã bỏ / Tất cả. Bấm dòng = mở (đặt ngày +
   mảng, sang Bàn ghép xe). Nút dòng: **Sửa** (đã xác nhận) · **Bỏ nháp / Bỏ xe chưa chốt** (đang mở) · **Huỷ kế hoạch** (có xe đã chốt, quyền xác
   nhận). Ô chọn kế hoạch ở hàng 2 và nút "Xem đơn" ở hàng 2 (vốn tạo NHÁP MỚI cho ngày đã có kế hoạch xác nhận) bỏ — thêm đơn vào ngày đó = Sửa.
-- **Sửa (cách a):** `refresh-pool` trên chính kế hoạch đã xác nhận (đơn chờ của ngày vào khung chờ) rồi về bàn ở **chế độ sửa** (FE `editing` =
-  kế hoạch đang mở HOẶC đã bấm Sửa): khung chờ kéo được, "Xe mới" tạo được; xe đã vào KH xuất mang **ổ khoá XANH** (`LockKeyhole`, bảng · thẻ · panel
-  "Mở lại xe này") — bấm = hỏi rồi `reopen { trip_ids: [id] }` CHỈ xe đó về nháp (gỡ dòng KH xuất của nó, chuyến ngừng, nhả khung giờ của riêng nó);
-  xe khác giữ nguyên KH xuất + khung giờ. Ổ khoá TÍM (`Lock`) trên xe nháp vẫn là "giữ nguyên khi Tối ưu lại" — hai hình, hai chữ tooltip.
+- **Sửa (cách a):** `refresh-pool { review_all: true }` trên chính kế hoạch đã xác nhận — nạp đơn chờ MỚI NHẤT từ ZSD02 rồi đưa MỌI dòng Chờ điều
+  của kế hoạch (cũ + vừa nạp) vào khung chờ (ghi `reviewed_at` theo bộ lọc kế hoạch, không theo danh sách id) — rồi về bàn ở **chế độ sửa** (FE
+  `editing` = kế hoạch đang mở HOẶC đã bấm Sửa): khung chờ kéo được, "Xe mới" tạo được. **16/10 tối (user: "sửa mà không có đơn chờ"):** bản đầu chỉ
+  gọi `refresh-pool` trần nên đơn chờ nằm ở Chờ điều của Xem đơn, bàn trống. **Xem (bấm dòng) = bản lúc lưu:** không nạp gì, không `/sync`, khung chờ
+  chỉ dòng đã tick. Xe đã vào KH xuất **tô TÍM như xe khoá** (user: "trạng thái khoá còn có layout màu khác") + **ổ khoá XANH** (`LockKeyhole`, bảng ·
+  thẻ · panel "Mở lại xe này") — bấm = hỏi rồi `reopen { trip_ids: [id] }` CHỈ xe đó về nháp (gỡ dòng KH xuất của nó, chuyến ngừng, nhả khung giờ của
+  riêng nó); xe khác giữ nguyên KH xuất + khung giờ. Ổ khoá TÍM (`Lock`) trên xe nháp vẫn là "giữ nguyên khi Tối ưu lại" — hai hình, hai chữ tooltip.
 - **BE:** `EDIT_PLAN = OPEN_PLAN + CONFIRMED` cho `loadOpenPlan` (refresh-pool · move · reoptimize · hold · outside · pull…), Bỏ nháp, `/sync`,
   fit-check — xe đã chốt tự gác bằng `EDITABLE_TRIP`, chỉ DISCARDED đóng. Kế hoạch CONFIRMED có thêm xe nháp (xe mới từ khung chờ / "Tạo kế hoạch"
   ở chế độ sửa) ⇒ `planPartlyOpen` CAS status → TENDERED; cửa Xác nhận nay chỉ hỏi "có xe NHÁP không" (không hỏi trạng thái kế hoạch) — xe đã

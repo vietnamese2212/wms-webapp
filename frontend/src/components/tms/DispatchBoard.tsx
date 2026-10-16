@@ -645,7 +645,8 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
     const ed = editableTrip(t)
     const iss = ISSUE_ORDER.filter(k => issuesOf(t, ctx).includes(k))
     const isHover = hover?.target === t.id
-    const lk = t.locked === true
+    // 16/10 tối (user: "trạng thái khoá còn có layout màu khác"): xe ĐÃ VÀO KH XUẤT cũng là xe khoá ⇒ cùng khối tím (ổ khoá xanh = mở lại)
+    const lk = t.locked === true || st === 'CONFIRMED'
     // viền theo việc cần làm (đỏ / hổ phách) trước; xe khoá còn lại viền tím — nền tím cả thẻ luôn có
     const border = !ed ? 'border-slate-200 opacity-80' : t.oversize ? 'border-red-400' : iss.some(k => TODO_KEYS.has(k)) ? 'border-amber-300' : lk ? 'border-violet-400' : 'border-slate-200'
     // 02/10: không còn trần điểm giao của KHO — trần thật (dòng xe · kênh / khách) xe báo qua cảnh báo "Vượt số khách cùng xe"

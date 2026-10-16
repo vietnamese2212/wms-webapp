@@ -172,7 +172,7 @@ export default function Dispatch() {
   useEffect(() => {
     if (!planId || !editing || !canPlan || !freshKey || tried.current === freshKey || refresh.isPending) return
     tried.current = freshKey
-    refresh.mutateAsync(planId)
+    refresh.mutateAsync({ id: planId })
       .then(r => { if (r.refreshed.added) toast({ title: `${r.refreshed.added} OD mới vào Chờ điều`, description: 'Nhãn "Mới" ở tab Bán hàng / Trung chuyển của Xem đơn — tick rồi "Thêm vào kế hoạch" nếu cần đi ngày này.' }) })
       .catch(() => { setTimeout(() => { if (tried.current === freshKey) tried.current = '' }, 15_000) })
   }, [planId, editing, canPlan, freshKey, refresh])
@@ -384,15 +384,16 @@ export default function Dispatch() {
     discard.mutateAsync(p.id).then(r => { if (r.status === 'DISCARDED' && p.id === planId) setF({ planId: '' }); toast({ title: `Đã bỏ nháp ${formatDate(p.plan_date)} — ${r.discarded_trips} xe` }) })
       .catch(e => err(e, 'Không bỏ được nháp')).finally(() => setDiscardingId(null))
   }
-  // SỬA kế hoạch đã xác nhận (16/10): nạp đơn chờ của ngày vào khung chờ của CHÍNH kế hoạch ấy rồi về Bàn ghép xe ở chế độ sửa —
-  // xe đã chốt hiện ổ khoá, mở khoá xe nào thì xe đó về nháp; xe không đụng giữ nguyên khung giờ đã đặt
+  // SỬA kế hoạch đã xác nhận (16/10): nạp đơn chờ MỚI NHẤT (ZSD02 hiện tại) rồi đưa MỌI đơn Chờ điều của kế hoạch vào khung chờ (review_all —
+  // 16/10 tối, user: "sửa mà không có đơn chờ"; bản đầu để chúng ở Chờ điều của Xem đơn nên bàn trống), về Bàn ghép xe ở chế độ sửa —
+  // xe đã chốt hiện ổ khoá, mở khoá xe nào thì xe đó về nháp; xe không đụng giữ nguyên khung giờ đã đặt. Xem (bấm dòng) KHÔNG nạp gì: bản lúc lưu.
   const startEdit = (p: DispatchPlanListItem) => {
     setF({ planDate: p.plan_date, planId: p.id, segment: p.segment ?? 'SALES', tab: 'board' })
     setEditPlanId(p.id)
     setDiscardingId(p.id)
-    refresh.mutateAsync(p.id).then(r => toast({
-      title: r.refreshed.added ? `${nf(r.refreshed.added)} đơn chờ vào khung chờ` : 'Không có đơn chờ mới',
-      description: 'Kéo đơn chờ lên xe mới; xe đã vào Kế hoạch xuất mang ổ khoá — bấm ổ khoá để mở lại riêng xe đó rồi sửa. Xong bấm Xác nhận.',
+    refresh.mutateAsync({ id: p.id, review_all: true }).then(r => toast({
+      title: r.refreshed.reviewed ? `${nf(r.refreshed.reviewed)} đơn chờ vào khung chờ${r.refreshed.added ? ` (${nf(r.refreshed.added)} mới từ ZSD02)` : ''}` : 'Không có đơn chờ',
+      description: 'Kéo đơn chờ lên xe mới; xe đã vào Kế hoạch xuất tô tím + ổ khoá xanh — bấm ổ khoá để mở lại riêng xe đó rồi sửa. Xong bấm Xác nhận.',
     })).catch(e => err(e, 'Không nạp được đơn chờ')).finally(() => setDiscardingId(null))
   }
   // MỞ LẠI MỘT XE (16/10, user: "tất cả các xe đều khoá lại, muốn sửa xe nào thì mở khoá xe đó") — cùng cửa với "Mở lại" cả kế hoạch, chỉ một id

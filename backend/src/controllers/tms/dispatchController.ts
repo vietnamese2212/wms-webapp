@@ -1990,8 +1990,12 @@ export async function planSync(req: Request, res: Response) {
 }
 
 // POST /tms/dispatch/plans/:id/refresh-pool — nạp OD mới (ZSD02 vừa về, lũy tiến) vào KHUNG CHỜ của kế hoạch
+// `review_all` (16/10 tối, nút "Sửa" kế hoạch đã xác nhận — user: "khi sửa thì đơn chờ phải là mới nhất"): mọi dòng Chờ điều của kế hoạch
+// (cũ lẫn vừa nạp) nhận mốc reviewed_at ⇒ hiện ngay ở khung chờ trên bàn, không phải sang Xem đơn tick từng đơn
+export const zRefreshPool = z.object({ review_all: z.boolean().optional() })
 async function refreshPoolInner(req: Request, res: Response) {
   try {
+    const b = (req.body ?? {}) as z.infer<typeof zRefreshPool>
     const got = await loadOpenPlan(req, String(req.params.id))
     if ('err' in got) return sendErr(res, got)
     const { plan } = got
@@ -2013,6 +2017,14 @@ async function refreshPoolInner(req: Request, res: Response) {
     // mà còn nằm khung chờ — nhãn tự hết khi OD lên xe; OD đã rời khung chờ thì lần nạp sau bỏ khỏi danh sách.
     step(res, `ghi ${loadable.length} dòng OD mới vào khung chờ`)
     await insertOdRows(loadable.map(o => odRow(plan.id, null, wholeOd(o), cand.meta.get(o.od_number), t, null)))
+    // Sửa kế hoạch: mọi dòng Chờ điều (cũ + vừa nạp) vào khung chờ — lọc theo kế hoạch, không theo danh sách id (không dính trần URL)
+    const reviewed = b.review_all ? full.pool.filter(o => !o.reviewed_at).length + loadable.length : 0
+    if (b.review_all) {
+      step(res, `đưa ${reviewed} dòng Chờ điều vào khung chờ`)
+      const { error } = await db.from('dispatch_trip_od').update({ reviewed_at: t, reviewed_by: req.user?.name ?? null, updated_at: t })
+        .eq('plan_id', plan.id).is('trip_id', null).is('reviewed_at', null)
+      if (error) throw error
+    }
     const prev = (plan.params ?? {}) as Record<string, unknown>
     const inPool = new Set(full.pool.map(o => o.od_number))
     const fresh_ods = uniq([...((prev.fresh_ods ?? []) as string[]).filter(od => inPool.has(od)), ...loadable.map(o => o.od_number)])
@@ -2023,7 +2035,7 @@ async function refreshPoolInner(req: Request, res: Response) {
     step(res, 'tổng kết kế hoạch')
     await writeSummary({ ...plan, params: asJson(params) })
     step(res, 'đọc lại kế hoạch để trả về')
-    return ok(res, { ...(await readPlan(plan.id)), refreshed: { added: loadable.length, skipped_not_loadable: fresh.length - loadable.length } })
+    return ok(res, { ...(await readPlan(plan.id)), refreshed: { added: loadable.length, skipped_not_loadable: fresh.length - loadable.length, reviewed } })
   } catch (e) { return failAny(res, e) }
 }
 

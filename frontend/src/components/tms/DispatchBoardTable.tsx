@@ -499,8 +499,9 @@ const TripRows = memo(function TripRows({ ops, live, t, open, onToggle, cols, hv
   // Bản cũ tô xám DÒNG XE còn đơn + khoảng trống trắng ⇒ đơn của xe trước liền vào khoảng trống, không thấy chỗ hết một xe (đo bằng ảnh
   // trên nháp Ba Vì 02/10: tô nhạt cả cụm kiểu slate-50 gần như không khác bản cũ).
   // XE KHOÁ (15/10 tối, user: "xe đã khoá cả xe nên có màu khác để nổi bật lên"): CẢ KHỐI tím — dòng xe violet-100, dòng đơn violet-50, khung
-  // tím; vạch trái vẫn theo việc cần làm (đỏ / hổ phách) nên xe khoá mà sai luật vẫn thấy đỏ.
-  const lk = t.locked === true
+  // tím; vạch trái vẫn theo việc cần làm (đỏ / hổ phách) nên xe khoá mà sai luật vẫn thấy đỏ. 16/10 tối: xe ĐÃ VÀO KH XUẤT cũng tím (user:
+  // "trạng thái khoá còn có layout màu khác") — ổ khoá xanh ở cột thao tác = mở lại riêng xe đó.
+  const lk = t.locked === true || tripStatus(t) === 'CONFIRMED'
   const bg = hv ? 'bg-sky-100' : hit ? 'bg-green-50' : lk ? 'bg-violet-100' : 'bg-slate-50'
   const rail = tripRail(t, ops.ctx)
   const shown = open ? t.ods : []

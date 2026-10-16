@@ -6450,7 +6450,9 @@ export function useSetDispatchRowVehicles() {
 export function useRefreshDispatchPool() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (id: string) => apiClient.post(`/tms/dispatch/plans/${id}/refresh-pool`, {}, { timeout: 120_000 }).then(r => r.data.data as DispatchPlan & { refreshed: { added: number; skipped_not_loadable: number } }),
+    // review_all (16/10): nút "Sửa" kế hoạch đã xác nhận — mọi đơn Chờ điều vào thẳng khung chờ của bàn
+    mutationFn: (v: { id: string; review_all?: boolean }) => apiClient.post(`/tms/dispatch/plans/${v.id}/refresh-pool`, v.review_all ? { review_all: true } : {}, { timeout: 120_000 })
+      .then(r => r.data.data as DispatchPlan & { refreshed: { added: number; skipped_not_loadable: number; reviewed: number } }),
     onSuccess: p => { putDispatchPlan(qc, p); qc.invalidateQueries({ queryKey: ['dispatch-sync', p.id] }) },
   })
 }

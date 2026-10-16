@@ -134,7 +134,7 @@ router.post('/dispatch/khvc/renumber',        requireAnyPerm(['dispatch', 'confi
 // dòng xe khách được vào — NGOẠI LỆ chỉ cho xe của dòng đó (15/10); cấu hình gốc của khách chỉ sửa ở trang Khách hàng (thay cửa 27/09)
 router.get('/dispatch/plans/:id/rows/:rowId/vehicles', requirePerm('dispatch', 'view'), validate({ params: dispatch.zRowParam }), dispatch.getRowVehicles)
 router.put('/dispatch/plans/:id/rows/:rowId/vehicles', requirePerm('dispatch', 'customer_vehicles'), validate({ params: dispatch.zRowParam, body: dispatch.zRowVehicles }), dispatch.setRowVehicles)
-router.post('/dispatch/plans/:id/refresh-pool', requirePerm('dispatch', 'plan'),  validate({ params: zIdParam }),                                dispatch.refreshPool)
+router.post('/dispatch/plans/:id/refresh-pool', requirePerm('dispatch', 'plan'),  validate({ params: zIdParam, body: dispatch.zRefreshPool }),   dispatch.refreshPool)
 router.post('/dispatch/plans/:id/replace-od', requirePerm('dispatch', 'plan'),    validate({ params: zIdParam, body: dispatch.zReplaceOd }),     dispatch.replaceOd)
 router.post('/dispatch/plans/:id/resync-od', requirePerm('dispatch', 'plan'),     validate({ params: zIdParam, body: dispatch.zReplaceOd }),     dispatch.resyncOd)   // OD bị SAP sửa (SL / dòng / ghi chú) ⇒ chụp lại, ở nguyên chỗ
 router.post('/dispatch/plans/:id/reopen',     requirePerm('dispatch', 'confirm'), validate({ params: zIdParam, body: dispatch.zReopen }),        dispatch.reopenPlan)    // mở lại xe đã vào KH xuất (chuyến chưa bắt đầu)

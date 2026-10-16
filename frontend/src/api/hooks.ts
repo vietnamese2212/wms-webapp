@@ -6136,6 +6136,7 @@ export interface DispatchTrip {
   status: DispatchTripStatus; tendered_at: string | null; responded_at: string | null; response_by: string | null; response_note: string | null; confirmed_at: string | null
   locked?: boolean
   allow_mix_categories?: boolean | null // switch "Ghép Loại kho khác" của xe (27/09); null = theo kế hoạch
+  allow_extra_drops?: boolean           // công tắc "Cho vượt số khách" của xe (16/10): luật số khách cùng xe không chặn riêng xe này
   ods: DispatchTripOd[]
 }
 export interface DispatchShare { transport_company_id: string; code: string; name: string; trips: number; pallets: number; tons: number; pct: number | null; target_pct: number | null; basis: 'TRIPS' | 'PALLETS' | 'TONS' }
@@ -6267,10 +6268,10 @@ export type DispatchMoveTo = 'trip' | 'new' | 'pool' | 'remove' | 'unplan'
 /** Khoá chung của các thao tác bàn ghép xe — realtime hoãn hỏi dấu kế hoạch khi chính người này còn đang ghi (06/10). */
 export const DISPATCH_WRITE_KEY = ['dispatch-write'] as const
 /** Xe nguồn chụp lúc chuyển (15/10): xe hết OD bị bỏ ngay ⇒ Hoàn tác dựng lại đúng xe đó (`move {to:'new', restore}`). */
-export interface DispatchTripRestore { seq: number; vehicle_model_ids: string[]; transport_company_id: string | null; locked: boolean; allow_mix_categories: boolean | null }
+export interface DispatchTripRestore { seq: number; vehicle_model_ids: string[]; transport_company_id: string | null; locked: boolean; allow_mix_categories: boolean | null; allow_extra_drops: boolean }
 export const tripRestoreOf = (t: DispatchTrip): DispatchTripRestore => ({
   seq: t.seq, vehicle_model_ids: t.vehicle_model_id ? [t.vehicle_model_id, ...(t.extra_vehicle_model_ids ?? [])] : [],
-  transport_company_id: t.transport_company_id, locked: t.locked === true, allow_mix_categories: t.allow_mix_categories ?? null,
+  transport_company_id: t.transport_company_id, locked: t.locked === true, allow_mix_categories: t.allow_mix_categories ?? null, allow_extra_drops: t.allow_extra_drops === true,
 })
 export function useMoveDispatchOds() {
   const qc = useQueryClient()
@@ -6523,7 +6524,7 @@ export function useUpdateDispatchTrip() {
   const qc = useQueryClient()
   return useMutation({
     mutationKey: DISPATCH_WRITE_KEY,
-    mutationFn: ({ id, ...body }: { id: string; vehicle_model_id?: string | null; vehicle_model_ids?: string[]; transport_company_id?: string | null; locked?: boolean; allow_mix_categories?: boolean | null }) => apiClient.patch(`/tms/dispatch/trips/${id}`, body).then(r => r.data.data as DispatchTrip & { _plan?: DispatchPlanBits }),
+    mutationFn: ({ id, ...body }: { id: string; vehicle_model_id?: string | null; vehicle_model_ids?: string[]; transport_company_id?: string | null; locked?: boolean; allow_mix_categories?: boolean | null; allow_extra_drops?: boolean }) => apiClient.patch(`/tms/dispatch/trips/${id}`, body).then(r => r.data.data as DispatchTrip & { _plan?: DispatchPlanBits }),
     // 06/10: vá đúng xe vừa sửa (+ tổng kết, dấu) vào kế hoạch đang giữ — không tải lại cả kế hoạch
     onSuccess: ({ _plan, ...trip }) => patchDispatchPlanOf(qc, trip.id, p => applyDispatchTrip(p, trip, _plan)),
   })

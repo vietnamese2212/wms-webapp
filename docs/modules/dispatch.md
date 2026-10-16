@@ -540,6 +540,23 @@ phương án "Lô là một cách gom" (phương án kia: khối vàng thu / m�
     của khách"); bản trước nối đơn PM01 của An Sơn với xe #4 chở 4 khách khác cùng vùng. `routeKind` / `routeOff` kiểm trước mọi luật.
     Máy ghép (ké chuyến cùng PHƯỜNG khi không có chuyến của khách, 30/09) và cửa kéo tay vẫn cho đơn chỉ hàng đi kèm lên xe khách khác —
     **user chốt 15/10: KHÔNG siết** (chỉ nhận diện theo chính khách là đủ; đừng đề xuất lại). `fits` của fit-check theo cửa thả, `kind` = 'off'.
+- **16/10 — bàn ghép xe + PANEL XE** (user: "tình trạng SAP thể hiện qua biểu tượng, có màu và tooltip; Loại kho đưa lên vị trí đó · click
+  checkbox khó, sơ sẩy là mở detail · panel xe: bản đồ kẻ vạch kho → điểm giao, click vận tải hiện giá, phân định khu vực, action cho xe"):
+  - Cờ SAP trên dòng đơn = `SapFlagIcon` (hổ phách = tham chiếu: đã post / đã gắn xe · đỏ = thay / bỏ / sửa / đã vào KH xuất / họ hàng đã
+    đi; chữ đầy đủ ở tooltip + cột Lưu ý). Chip Loại kho đứng ngay sau số OD (bảng + thẻ); khung chờ bỏ cột Loại kho (khoá độ rộng `_v2`).
+  - Ô tick = `TickBox`: nhãn bọc ô đệm 6 px, bấm vùng đó là tick, không lọt xuống dòng (mở chi tiết) — dòng đơn · dòng xe · dòng nhóm · thẻ;
+    bảng Xem đơn: cả ô cột tick là vùng tick.
+  - Panel xe (Dispatch.tsx `TripPane`): nền xám, mỗi khu một khối `SettingsGroup` — Bản đồ tuyến (`TripRouteMap`: ghim kho + Đ1…Đn theo
+    `detail.route.order`, vạch THẲNG nối theo thứ tự giao, km tuyến nếu đã đo; toạ độ từ `useDispatchPlanGeo`) · Xe · ĐVVT · Cước (ĐVVT =
+    `DispatchCarrierPicker field` — danh sách ĐVVT xếp theo CƯỚC cho đúng xe) · Thao tác xe (công tắc khuôn AppSheet `SettingRow` + `Switch`:
+    Khoá xe — hỏi trước · Ghép Loại kho khác — in giá trị theo kế hoạch · Cho vượt số khách · Bỏ xe trống) · Cảnh báo · Đơn trên xe (Đx ·
+    biểu tượng SAP · chip loại).
+  - **Công tắc "Cho vượt số khách"** (user chốt 16/10 "thêm công tắc — switch tiêu chuẩn của AppSheet"): cột `dispatch_trip.allow_extra_drops`
+    (migration `20261016_dispatch_trip_allow_extra_drops`). Bật ⇒ `manualRuleBlocks({allowExtraDrops})` bỏ ĐÚNG luật số khách (kéo thả · xe
+    mới · chuyển từng OD · đổi dòng xe · Xác nhận) cho riêng xe đó; luật khác vẫn chặn; xe không mang câu "Vượt số khách cùng xe" mà mang nhãn
+    hổ phách "vượt khách" (bảng · thẻ · panel). Tắt khi xe đang quá trần ⇒ 409 DROPS_EXCEEDED (cùng khuôn switch Loại kho). Xe đã chốt ⇒ 409
+    (Mở lại). Hoàn tác dựng lại xe mang theo công tắc (`restore.allow_extra_drops`). Nhận diện xe cùng tuyến (`routeOff`) tôn trọng công tắc.
+    "Tối ưu lại" dựng lại xe chưa khoá ⇒ công tắc mất theo xe cũ. Gói 61 [21l] · test đơn vị `manualRuleBlocks` · mirror `dispatchRouteOff`.
 - **KHOÁ XE hỏi trước + xe khoá tô TÍM cả khối** (user 15/10 tối: "khoá xe để lần sau tối ưu — phải confirm trước khi khoá, và xe đã khoá
   tốt nhất cả xe nên có màu khác để nổi bật lên"): bấm ổ khoá ⇒ hộp thoại "Khoá xe #n?" (dòng xe · số OD · pallet · lần Tối ưu lại sau giữ
   nguyên xe, tay vẫn sửa được); mở khoá bấm là mở. Dạng Bảng: dòng xe `violet-100` + nhãn "Khoá", dòng đơn `violet-50`, khung tím, vạch trái

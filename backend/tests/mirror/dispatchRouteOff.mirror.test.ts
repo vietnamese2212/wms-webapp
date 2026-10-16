@@ -32,12 +32,12 @@ describe(`xe cùng tuyến FE routeOff ⇄ BE routeKind 'off' (seed ${SEED})`, (
       })
       const staying = Array.from({ length: r.int(1, 4) }, () => row(r.pick(custs)))
       const moving = row(r.bool(0.3) ? { code: 'K9', sep: r.bool(0.15), ch: r.pick(['GT', 'MT', null]), max: r.pick([null, 1, 3]), allowed: r.pick([null, ['M0']]) } : r.pick(custs))
-      const trip = { vehicle_model_id: r.pick([null, 'M0', 'M1', 'M2', 'M3', 'MX']), extra_vehicle_model_ids: r.bool(0.2) ? [r.pick(['M0', 'M1', 'M2', 'M3'])] : [], allow_mix_categories: r.pick([null, true, false]) }
+      const trip = { vehicle_model_id: r.pick([null, 'M0', 'M1', 'M2', 'M3', 'MX']), extra_vehicle_model_ids: r.bool(0.2) ? [r.pick(['M0', 'M1', 'M2', 'M3'])] : [], allow_mix_categories: r.pick([null, true, false]), allow_extra_drops: r.bool(0.2) }
       const mixChannels = r.bool(0.3), mixCategories = r.pick([undefined, true, false]), follow = ['POSM']
       // như `ruleBlocksFor` (cửa fit-check): dòng xe chính + xe phụ của kho; xe chưa có / dòng xe không dùng ở kho ⇒ không dòng xe
       const main = trip.vehicle_model_id ? models.find(m => m.id === trip.vehicle_model_id) ?? null : null
       const fleet = main ? [main, ...trip.extra_vehicle_model_ids.map(id => models.find(m => m.id === id)).filter((m): m is EngineModel => !!m)] : []
-      const blocks = manualRuleBlocks(fleet, staying, [moving], { allowMixCategories: trip.allow_mix_categories ?? mixCategories, allowMixChannels: mixChannels, follow, maxVehicles: 1, posmFollows: mixCategories === false })
+      const blocks = manualRuleBlocks(fleet, staying, [moving], { allowMixCategories: trip.allow_mix_categories ?? mixCategories, allowMixChannels: mixChannels, follow, maxVehicles: 1, posmFollows: mixCategories === false, allowExtraDrops: trip.allow_extra_drops })
       const be = routeKind(main, staying, [moving], blocks, { posmFollows: mixCategories === false, follow }) === 'off'
       const fe = routeOff(moving, { ...trip, ods: staying }, { models: new Map(models.map(m => [m.id, { id: m.id, max_drops: m.max_drops, storage_conditions: m.serve_conditions ?? [] }])), mixChannels, mixCategories, follow })
       expect(fe, JSON.stringify({ blocks: blocks.map(b => b.code), trip, main: main && [main.max_drops, main.serve_conditions], staying, moving, mixChannels, mixCategories })).toBe(be)

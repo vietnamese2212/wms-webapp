@@ -623,8 +623,10 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped, canAct =
               // bấm dòng = mở CHI TIẾT OD (user 27/09 khuya); chọn để chuyển trạng thái bằng ô tick
               <TableRow key={r.key} className={`cursor-pointer hover:bg-slate-50 ${sel.has(r.key) ? 'bg-sky-50' : ''}`} onClick={() => setDetail(r.key)}>
                 {selectableTab && (
-                  <TableCell className={`${TD} sticky left-0 z-10 text-center ${sel.has(r.key) ? 'bg-sky-50' : 'bg-white'}`} onClick={e => e.stopPropagation()}>
-                    {r.selectable && <input type="checkbox" className="h-3.5 w-3.5 accent-sky-600" checked={sel.has(r.key)} onChange={() => toggle(r.key)} aria-label={`Chọn ${r.od}`} />}
+                  // CẢ Ô là vùng tick (16/10, user: "click checkbox khó, sơ sẩy là mở detail") — bấm lệch khỏi ô vuông vẫn tick, không mở chi tiết
+                  <TableCell className={`${TD} sticky left-0 z-10 text-center ${r.selectable ? 'cursor-pointer' : ''} ${sel.has(r.key) ? 'bg-sky-50' : 'bg-white'}`}
+                    onClick={e => { e.stopPropagation(); if (r.selectable && (e.target as HTMLElement).tagName !== 'INPUT') toggle(r.key) }}>
+                    {r.selectable && <input type="checkbox" className="h-4 w-4 cursor-pointer accent-sky-600" checked={sel.has(r.key)} onChange={() => toggle(r.key)} aria-label={`Chọn ${r.od}`} />}
                   </TableCell>
                 )}
                 <TableCell className={`${TD} font-mono font-semibold ${selectableTab ? '' : `sticky left-0 z-10 ${sel.has(r.key) ? 'bg-sky-50' : 'bg-white'}`}`}>{r.od}{r.fresh && <span className="ml-1"><NewOdChip /></span>}<SapAgeChip at={i?.last_synced_at} /></TableCell>

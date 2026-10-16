@@ -2357,6 +2357,28 @@ try {
         `kéo=${em(kIn)} ${(kIn.j?.error?.message ?? '').slice(0, 80)} · tối ưu lại=${em(ro)} kênh OD1/OD2=${rowOf(pk, OD[0])?.channel}/${rowOf(pk, OD[1])?.channel} xe=${!!tripOfOd(pk, OD[0])}/${!!tripOfOd(pk, OD[1])} · bỏ qua dải=${em(ro2)} hai xe=${!!t1 && !!t2 && t1.id !== t2.id}`)
     } else check('21e. Fixture: 3 OD, mỗi OD một xe qua ô Xe mới', false, `plan=${s2.s} A=${s2.A?.id} B=${s2.B?.id} C=${s2.C?.id}`)
     await cleanupTrips()
+    // ── [21l] CÔNG TẮC "CHO VƯỢT SỐ KHÁCH" của xe (16/10, user chốt "thêm công tắc — switch tiêu chuẩn AppSheet"): mặc định luật 14/10 chặn;
+    //     bật cho MỘT xe ⇒ kéo thả + Xác nhận không chặn số khách xe đó; tắt khi xe đang quá trần ⇒ 409 ──
+    await Promise.all([setCust(0), setCust(1), setCust(2)])
+    const s3 = await build()
+    if (s3.ok) {
+      const { A, q: [, r2], mv } = s3
+      await restWrite('dispatch_trip', 'PATCH', `id=eq.${A.id}`, { vehicle_model_id: X7, updated_at: nowIso() })   // xe 1 điểm giao (ghi thẳng)
+      const d0 = await mv([r2.id], 'trip', A.id)
+      const on = await api(`/tms/dispatch/trips/${A.id}`, 'PATCH', { allow_extra_drops: true })
+      const d1 = await mv([r2.id], 'trip', A.id)
+      const off = await api(`/tms/dispatch/trips/${A.id}`, 'PATCH', { allow_extra_drops: false })
+      const aNow = (await restAll('dispatch_trip', `select=allow_extra_drops,stops&id=eq.${A.id}`))[0]
+      await restWrite('dispatch_trip', 'PATCH', `id=eq.${A.id}`, { allow_extra_drops: false, updated_at: nowIso() })   // ghi thẳng: xe vượt mà công tắc tắt
+      const cfNo = await api(`/tms/dispatch/plans/${s3.id}/confirm`, 'POST', {})
+      await restWrite('dispatch_trip', 'PATCH', `id=eq.${A.id}`, { allow_extra_drops: true, updated_at: nowIso() })
+      const cfYes = await api(`/tms/dispatch/plans/${s3.id}/confirm`, 'POST', {})
+      check('21l. CÔNG TẮC "Cho vượt số khách": xe 1 điểm nhận khách thứ hai ⇒ 409 DROPS_EXCEEDED · bật → 200, kéo → 200 (2 khách) · tắt khi đang quá trần → 409 DROPS_EXCEEDED · Xác nhận: công tắc tắt → 409 TRIP_RULE_VIOLATION, bật → 200',
+        vio(d0, 'DROPS_EXCEEDED') && on.s === 200 && on.j?.data?.allow_extra_drops === true && d1.s === 200 && vio(off, 'DROPS_EXCEEDED') && aNow?.allow_extra_drops === true && aNow?.stops === 2
+        && vio(cfNo, 'TRIP_RULE_VIOLATION') && cfYes.s === 200,
+        `kéo=${em(d0)} bật=${em(on)} kéo2=${em(d1)} ${(d1.j?.error?.message ?? '').slice(0, 80)} tắt=${em(off)} xe=${JSON.stringify(aNow)} xnTắt=${em(cfNo)} xnBật=${em(cfYes)} ${(cfYes.j?.error?.message ?? '').slice(0, 120)}`)
+    } else check('21l. Fixture: 3 OD, mỗi OD một xe qua ô Xe mới', false, `plan=${s3.s} A=${s3.A?.id} B=${s3.B?.id} C=${s3.C?.id}`)
+    await cleanupTrips()
     await Promise.all([0, 1, 2].map(i => setCust(i, { dispatch_vehicles: ALLV })))
     await restWrite('vehicle_model', 'DELETE', `sap_code=in.(QA61X05,QA61X06,QA61X07,QA61X08,QA61X04)`).catch(() => {})
     await restWrite('erp_outbound_orders', 'PATCH', `od_number=in.(${OD.join(',')})`, { sync_status: 'OBSOLETE', updated_at: nowIso() })

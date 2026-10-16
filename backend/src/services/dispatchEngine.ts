@@ -397,6 +397,8 @@ export function manualRuleBlocks(fleet: EngineModel[], staying: RuleRow[], movin
   allowMixCategories?: boolean | null; allowMixChannels: boolean; follow: string[]
   condLabel?: (c: string) => string
   maxVehicles?: number; modelOnly?: boolean; whole?: boolean
+  /** Công tắc "Cho vượt số khách" của XE (16/10, user chốt — `dispatch_trip.allow_extra_drops`): bỏ luật số khách cùng xe cho riêng xe đó */
+  allowExtraDrops?: boolean
   /** KẾ HOẠCH không trộn Loại kho ⇒ đơn CHỈ hàng đi kèm (POSM) theo xe của đơn chính, bỏ danh sách dòng xe riêng — cùng `followOnlyOd`
    *  của máy ghép và cảnh báo của `computeTripPatch`. Kho cho trộn thì đơn POSM cũng phải đúng danh sách của khách. */
   posmFollows?: boolean
@@ -417,7 +419,7 @@ export function manualRuleBlocks(fleet: EngineModel[], staying: RuleRow[], movin
   if (!o.modelOnly) {
     const mix = mixBlockReason(o.allowMixCategories, staying, moving, o.follow, o.whole)
     if (mix) out.push({ code: 'CATEGORY_MIX_BLOCKED', message: mix })
-    const drops = dropsBlockReason(m0, staying, moving, o.whole)
+    const drops = o.allowExtraDrops ? null : dropsBlockReason(m0, staying, moving, o.whole)
     if (drops) out.push({ code: 'DROPS_EXCEEDED', message: drops })
     // luật 1: khách bật "Đi xe riêng" không chung xe với khách nào khác
     const before = new Set(staying.map(keyOf)).size, after = new Set(all.map(keyOf)).size
@@ -434,7 +436,7 @@ export function manualRuleBlocks(fleet: EngineModel[], staying: RuleRow[], movin
         : o.whole ? `Xe chở lẫn kênh ${[...ca].sort(cmp).join(' + ')} — kho không cho trộn kênh khách trên một xe (Cài đặt WMS → Kho → XUẤT — Điều vận). Kéo đơn khác kênh sang xe khác.`
         : `Các OD đang chọn thuộc nhiều kênh (${[...ca].sort(cmp).join(', ')}) — kho không cho trộn kênh khách trên một xe.` })
     }
-  } else if (m0) {
+  } else if (m0 && !o.allowExtraDrops) {
     const stops = new Set(all.map(keyOf)).size
     if (stops > modelDrops(m0)) out.push({ code: 'DROPS_EXCEEDED', message: `Xe đang chở ${stops} khách — dòng xe ${m0.name} chỉ nhận ${modelDrops(m0)} khách (Cài đặt TMS → Mã dòng xe → Điểm giao tối đa). Chọn dòng xe nhận đủ số khách, hoặc kéo bớt khách sang xe khác.` })
   }

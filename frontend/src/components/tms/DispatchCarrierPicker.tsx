@@ -15,8 +15,9 @@ const money = (n: number | string | null | undefined) => {
   return a >= 1e6 ? `${nf(v / 1e6, 2)} tr` : `${nf(v)} ₫`
 }
 
-export function DispatchCarrierPicker({ trip, editable, busy, onPick }: {
-  trip: DispatchTrip; editable: boolean; busy: boolean; onPick: (carrierId: string) => void
+// `field` (16/10, panel xe — user: "khi click vào vận tải thì hiện giá"): nút dạng Ô CHỌN cao h-9 kèm cước hiện tại; cùng danh sách xếp theo cước
+export function DispatchCarrierPicker({ trip, editable, busy, onPick, field }: {
+  trip: DispatchTrip; editable: boolean; busy: boolean; onPick: (carrierId: string) => void; field?: boolean
 }) {
   const [open, setOpen] = useState(false)
   const btn = useRef<HTMLButtonElement>(null)
@@ -34,16 +35,26 @@ export function DispatchCarrierPicker({ trip, editable, busy, onPick }: {
   const c = trip.detail.carrier
   // chỉ TÊN (user 30/09: "đã có tên đầy đủ rồi lại còn tên dạng ngắn"); mã ĐVVT nằm trong tooltip
   const label = c ? <span className="break-words" title={`ĐVVT ${c.code}`}>{c.name}</span> : <span className="text-red-600">Chưa có ĐVVT</span>
-  if (!editable) return <div className="text-[10px] text-slate-600 leading-tight">{label}</div>
+  if (!editable) return <div className={field ? 'text-xs font-medium text-slate-800' : 'text-[10px] text-slate-600 leading-tight'}>{field && c ? `${c.code} · ${c.name}` : label}</div>
   const items = q.data?.items ?? []
   const cur = items.find(i => i.current)?.freight ?? null
   return (
     <>
-      <button ref={btn} type="button" disabled={busy} onClick={() => setOpen(o => !o)}
-        title="Đổi ĐVVT — danh sách xếp theo cước cho đúng xe này"
-        className="inline-flex max-w-full items-start gap-0.5 rounded px-1 -mx-1 text-left text-[10px] text-slate-600 leading-tight hover:bg-sky-50 hover:text-sky-800">
-        <span className="min-w-0">{label}</span><ChevronDown className="h-3 w-3 shrink-0 mt-px" />
-      </button>
+      {field ? (
+        <button ref={btn} type="button" disabled={busy} onClick={() => setOpen(o => !o)} aria-expanded={open}
+          title="Đổi ĐVVT — danh sách ĐVVT của kho xếp theo cước cho đúng xe này"
+          className="flex h-9 w-full items-center gap-2 rounded-md border border-input bg-white px-3 text-left text-sm hover:border-sky-400 disabled:opacity-50">
+          <span className="min-w-0 flex-1 truncate">{c ? `${c.code} · ${c.name}` : <span className="text-red-600">Chưa có ĐVVT — chọn</span>}</span>
+          {trip.freight_estimated != null && <span className="shrink-0 tabular-nums text-xs font-semibold text-slate-700">{money(trip.freight_estimated)}</span>}
+          <ChevronDown className="h-4 w-4 shrink-0 text-slate-400" />
+        </button>
+      ) : (
+        <button ref={btn} type="button" disabled={busy} onClick={() => setOpen(o => !o)}
+          title="Đổi ĐVVT — danh sách xếp theo cước cho đúng xe này"
+          className="inline-flex max-w-full items-start gap-0.5 rounded px-1 -mx-1 text-left text-[10px] text-slate-600 leading-tight hover:bg-sky-50 hover:text-sky-800">
+          <span className="min-w-0">{label}</span><ChevronDown className="h-3 w-3 shrink-0 mt-px" />
+        </button>
+      )}
       {open && anchor && createPortal(
         <div ref={panel} onPointerDown={e => e.stopPropagation()}
           style={{ ...anchor.style, width: Math.max(300, Number(anchor.style.width) || 0) }}

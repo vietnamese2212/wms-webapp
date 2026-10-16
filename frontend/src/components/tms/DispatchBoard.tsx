@@ -37,7 +37,8 @@ import {
   useHoldDispatchOds, useResyncDispatchOd, useDispatchPlanReview, useVehicleModels, useTransportCompanies, tripRestoreOf, useDispatchFitCheck,
   type DispatchPlan, type DispatchTrip, type DispatchTripOd, type DispatchOdFlag, type DispatchMoveTo, type DispatchMovePreview, type DispatchTripRestore,
 } from '@/api/hooks'
-import { DispatchBoardTable, RouteChip, TripRouteBadge, type BoardOps, type BoardDropAttrs, type BoardPoolGroup } from './DispatchBoardTable'
+import { DispatchBoardTable, RouteChip, TripRouteBadge, TickBox, ExtraDropsBadge, type BoardOps, type BoardDropAttrs, type BoardPoolGroup } from './DispatchBoardTable'
+import { SapFlagIcon } from './SapFlagIcon'
 import { DispatchOdDetailSheet, type OdSummary } from './DispatchOdDetailSheet'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { useWhTypeMetaMap } from '@/hooks/useWhTypeMeta'
@@ -48,7 +49,7 @@ import { DispatchLoadBandDialog, DispatchLoadBandChip, useLoadBandParents, fullB
 import { NewOdChip } from './DispatchReviewTable'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
-import { EDITABLE, tripStatus, issuesOf, needsWork, ISSUE_ORDER, ISSUE_SHORT, TODO_KEYS, RED_ISSUES, FLAG_VI, selectionAfterMove, poolLotGroups, lotTip, liveTripId, undoSteps, routeMatches, routeOff, fitPairs, routeTags, type IssueKey, type IssueCtx, type RouteMatch, type RouteRuleCtx } from './dispatchIssues'
+import { EDITABLE, tripStatus, issuesOf, needsWork, ISSUE_ORDER, ISSUE_SHORT, TODO_KEYS, RED_ISSUES, FLAG_VI, selectionAfterMove, poolLotGroups, lotTip, liveTripId, undoSteps, routeMatches, routeOff, fitPairs, routeTags, lockAsk, type IssueKey, type IssueCtx, type RouteMatch, type RouteRuleCtx } from './dispatchIssues'
 import { useScopeCatSet } from '@/hooks/useUserScope'
 
 const nf = (n: number | string | null | undefined, d = 0) => (n == null ? '—' : Number(n).toLocaleString('vi-VN', { maximumFractionDigits: d }))
@@ -457,17 +458,18 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
       <div key={o.id} draggable={dragOk} onDragStart={dragOk ? e => onDragStart(e, o) : undefined} onDragEnd={dragOk ? onDragEnd : undefined}
         className={`group flex items-start gap-1.5 rounded px-1.5 py-1 text-[11px] ${sel.has(o.id) ? 'bg-sky-100' : 'hover:bg-slate-50'} ${dragOk ? 'cursor-grab active:cursor-grabbing' : ''} ${fl ? 'ring-1 ring-red-200' : ''}`}>
         {editable && (!tr || editableTrip(tr)) && (
-          <input type="checkbox" className="mt-0.5 h-3.5 w-3.5 shrink-0 accent-sky-600" checked={sel.has(o.id)} onChange={() => toggle(o.id)} onClick={e => e.stopPropagation()} title="Chọn để chuyển / kéo nhiều OD một lượt" />
+          <TickBox checked={sel.has(o.id)} onChange={() => toggle(o.id)} label={`Chọn ${o.od_number} — chuyển / kéo nhiều OD một lượt`} />
         )}
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1 flex-wrap">
             <span className="font-mono font-semibold">{o.od_number}</span>
+            {/* 16/10: tình trạng SAP = biểu tượng + tooltip, Loại kho ngay sau số OD — cùng dạng Bảng */}
+            {fl && <SapFlagIcon flag={fl} />}
+            {catChips(catsByLoad([o.cat_load]))}
             {/* đơn khung chờ có xe đi cùng tuyến (15/10) — cùng ký hiệu dạng Bảng */}
             {!o.trip_id && routeRows.has(o.id) && <RouteChip info={routeRows.get(o.id)!} label={tripLabel} />}
             {o.part_of ? <span className="text-[9px] text-amber-700">phần {o.part_index}/{o.part_of}</span> : null}
             {!o.trip_id && fresh.has(o.od_number) && <NewOdChip />}
-            {fl && <span className="rounded bg-red-100 px-1 text-[9px] font-medium text-red-700" title={fl.info ?? undefined}>{FLAG_VI[fl.kind]}</span>}
-            {catChips(catsByLoad([o.cat_load]))}
             <span className="ml-auto tabular-nums text-slate-600 whitespace-nowrap">{nf(o.pallets, 1)} pl · {nf(o.tons, 1)} t</span>
           </div>
           {/* KHÔNG cắt "…" (user 25/09 tối: "nội dung trong thẻ đơn hàng bị che bằng dấu …") — tên khách xuống dòng */}
@@ -633,8 +635,7 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
   // KHOÁ XE (15/10 tối, user: "khoá xe để lần sau tối ưu — phải confirm trước khi khoá; xe đã khoá cả xe nên có màu khác để nổi bật"): hỏi
   // trước khi khoá — bấm nhầm ổ khoá là "Tối ưu lại" lặng lẽ bỏ qua xe; mở khoá bấm là mở. Xe khoá tô TÍM cả khối ở hai dạng bàn.
   const toggleLock = async (t: DispatchTrip) => {
-    if (!t.locked && await ask({ title: `Khoá xe #${t.seq}?`, confirmLabel: 'Khoá xe',
-      body: `${t.detail.vehicle_model?.name ?? 'Chưa chọn dòng xe'} · ${new Set(t.ods.map(o => o.od_number)).size} OD · ${nf(t.pallets, 1)} pallet.\nLần "Tối ưu lại" sau, máy GIỮ NGUYÊN xe này — đơn trên xe, dòng xe, ĐVVT. Kéo thả, đổi dòng xe / ĐVVT bằng tay vẫn làm được.\nXe khoá tô màu tím trên bàn; mở khoá: bấm lại ổ khoá.` }) === null) return
+    if (!t.locked && await ask(lockAsk(t)) === null) return
     patchTrip.mutateAsync({ id: t.id, locked: !t.locked }).catch(e => err(e, 'Không đổi được khoá'))
   }
 
@@ -655,8 +656,7 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
         <div className={`flex items-start gap-1.5 rounded-t-lg border-b px-2 py-1 ${lk ? 'border-violet-200 bg-violet-100' : 'border-slate-200 bg-slate-100'}`}>
           {/* 15/10: TICK CẢ XE (như ô dòng xe của dạng Bảng) thay nút ⊘ "Không điều cả xe" — thanh nổi có Không điều · Chuyển · Gán ĐVVT · Đổi dòng xe */}
           {ed && t.ods.length > 0 && (() => { const n = t.ods.filter(o => sel.has(o.id)).length; return (
-            <input type="checkbox" className="mt-0.5 h-3.5 w-3.5 shrink-0 accent-sky-600" checked={n === t.ods.length} ref={el => { if (el) el.indeterminate = n > 0 && n < t.ods.length }}
-              onChange={() => toggleMany(t.ods.map(o => o.id))} aria-label={`Chọn mọi đơn của xe #${t.seq}`} title="Chọn mọi đơn của xe — thanh nổi: Không điều · Chuyển tới xe · Gán ĐVVT · Đổi dòng xe" />
+            <TickBox checked={n === t.ods.length} indeterminate={n > 0} onChange={() => toggleMany(t.ods.map(o => o.id))} label={`Chọn mọi đơn của xe #${t.seq} — thanh nổi: Không điều · Chuyển tới xe · Gán ĐVVT · Đổi dòng xe`} />
           ) })()}
           <button type="button" className="min-w-0 flex-1 text-left leading-snug hover:text-sky-700" onClick={() => onOpenTrip(t.id)} title={`Số xe ${t.group_code} — mở chi tiết xe: đổi dòng xe, chuyển từng OD`}>
             {/* số xe tô nền như dạng Bảng (15/10, user: "tô màu số thứ tự xe") */}
@@ -676,6 +676,7 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
           <div className="flex items-center gap-0.5 shrink-0">
             {/* nhãn tiếp nhận khi khung chờ bật lọc "Có xe cùng tuyến" (15/10) — cùng nhãn dạng Bảng */}
             {tripTags?.has(t.id) && <TripRouteBadge tag={tripTags.get(t.id)!} odLabel={odLabel} />}
+            {t.allow_extra_drops && <ExtraDropsBadge />}
             {st !== 'DRAFT' && <StatusBadge tone={st === 'CONFIRMED' ? 'green' : st === 'DECLINED' ? 'red' : 'blue'}>{st === 'CONFIRMED' ? 'Đã vào KH' : st === 'DECLINED' ? 'Từ chối' : st === 'TENDERED' ? 'Chờ ĐVVT' : st}</StatusBadge>}
             {ed && (
               <button type="button" className={`rounded p-1 ${lk ? 'bg-violet-600 text-white hover:bg-violet-700' : 'text-slate-400 hover:bg-white hover:text-slate-700'}`} disabled={patchTrip.isPending}
@@ -954,7 +955,7 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
                   {g.lot?.kind === 'under' && editable && <button type="button" disabled={busy} onClick={() => void run(g.rows.map(o => o.id), 'new')}
                     title="Cả lô vào MỘT xe mới — máy chọn dòng xe + ĐVVT; xe báo Non tải vì dưới tối thiểu"
                     className="shrink-0 rounded border border-amber-300 bg-white px-1 text-[10px] font-medium text-amber-900 hover:bg-amber-50 disabled:opacity-50">Xe mới</button>}
-                  {editable && <input type="checkbox" className="h-3.5 w-3.5 accent-sky-600" checked={g.rows.every(o => sel.has(o.id))} onChange={() => toggleMany(g.rows.map(o => o.id))} title="Chọn cả nhóm để kéo một lượt" />}
+                  {editable && <TickBox checked={g.rows.every(o => sel.has(o.id))} indeterminate={g.rows.some(o => sel.has(o.id))} onChange={() => toggleMany(g.rows.map(o => o.id))} label="Chọn cả nhóm để kéo một lượt" />}
                 </div>
                 {open && <div className="p-0.5">{g.rows.map(o => odRow(o))}</div>}
               </div>

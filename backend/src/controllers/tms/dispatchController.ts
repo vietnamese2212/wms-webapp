@@ -37,7 +37,7 @@ import {
   runDispatch, buildCtx, priceFor, tripLoad, codePrefixOf, isTransferOd, sharePct, pickBookingCategory, sumLines, servesConditions, catLoadOf, bookingFromCatLoads, suggestVehicle,
   type EngineInput, type EngineOd, type EngineLine, type EngineModel, type EngineCarrier, type EngineTariff, type EngineSurcharge,
   type EngineAllocation, type EngineShareTarget, type ShareActual, type DispatchTrip, type TripFreight, type CarrierShare, type ShareBasis, type TripOd,
-  odStopsCap, modelDrops, condsOf, mainCatsOf, lineConditions, resolveAllowedModels, resolveMaxCustomers, type MaxCustomersCfg, mixBlockReason, manualRuleBlocks, type RuleBlock, routeKind, type RouteKind, priceCombo, comboModel, splitLoad, basisOf,
+  odStopsCap, modelDrops, condsOf, mainCatsOf, lineConditions, resolveAllowedModels, resolveMaxCustomers, type MaxCustomersCfg, mixBlockReason, dropsBlockReason, manualRuleBlocks, type RuleBlock, routeKind, type RouteKind, priceCombo, comboModel, splitLoad, basisOf,
   type TripVehicle, withLoadBands, type LoadBand, type EngineGeo, type UnderMin, type TooBig, routeOf,
 } from '../../services/dispatchEngine'
 import { splitPool, redoDispatchedOf, type ExcludedOd, type ExcludedDetail, type ExcludeKind, type PoolCandidateRow, type OtherDraft } from '../../services/dispatchPool'
@@ -139,6 +139,7 @@ export const zTripPatch = z.object({
   transport_company_id: zId.nullable().optional(),
   locked: zBool.optional(),            // khoá xe: "Tối ưu lại phần chưa khoá" không đụng vào
   allow_mix_categories: zBool.nullable().optional(),   // switch trên thẻ xe (27/09): cho thả OD khác Loại kho; null = theo kế hoạch
+  allow_extra_drops: zBool.optional(),   // công tắc "Cho vượt số khách" của xe (16/10): bỏ luật số khách cùng xe cho riêng xe này
 })
 // Bàn ghép xe (25/09): một cửa cho mọi lần thả — id là DÒNG OD của kế hoạch (một OD bị tách có nhiều dòng)
 export const zMove = z.object({
@@ -156,6 +157,7 @@ export const zMove = z.object({
     transport_company_id: zId.nullable(),
     locked: zBool,
     allow_mix_categories: zBool.nullable(),
+    allow_extra_drops: zBool.optional(),   // 16/10: công tắc "Cho vượt số khách" của xe cũ
   }).optional(),
 }).refine(v => !v.restore || v.to === 'new', { message: 'restore chỉ đi với to = new', path: ['restore'] })
 export const zPreview =z.object({ ids: z.array(zId).min(1).max(300), to_trip_id: zId })
@@ -1050,7 +1052,7 @@ function engineParams(plan: PlanRow): EngineInput['params'] {
     allow_mix_categories: params.allow_mix_categories, follow_categories: params.follow_categories ?? [], combo_conditions: params.combo_conditions ?? [], max_vehicles: params.max_vehicles ?? 1,
     load_bands: loadBandsOf(params.load_bands), load_bypass: params.load_bypass === true }
 }
-type RuleTrip = { vehicle_model_id: string | null; extra_vehicle_model_ids?: string[] | null; allow_mix_categories?: boolean | null }
+type RuleTrip = { vehicle_model_id: string | null; extra_vehicle_model_ids?: string[] | null; allow_mix_categories?: boolean | null; allow_extra_drops?: boolean | null }
 /** LUẬT GHÉP XE cho xe đích SAU một thao tác tay (14/10, user: "làm sai rule cần hiện popup và ngăn chặn — không chỉ số khách") —
  *  nạp dòng xe của kho (+ dải tải của kế hoạch) và nhãn điều kiện bảo quản rồi hỏi `manualRuleBlocks`. MỌI cửa làm tay + cửa Xác nhận đi
  *  qua đây — không cửa nào tự kiểm lẻ một luật (C80: cửa kéo tay từng khác luật máy). Kênh khách đọc BẢN CHỤP trên dòng OD (15/10 — trước
@@ -1065,6 +1067,7 @@ async function ruleBlocksFor(plan: PlanRow, trip: RuleTrip, staying: TripOdRow[]
     allowMixCategories: trip.allow_mix_categories ?? P.allow_mix_categories, allowMixChannels: P.allow_mix_channels, follow: P.follow_categories ?? [],
     condLabel: c => condLabels[c] ?? c, maxVehicles: P.max_vehicles, modelOnly: opts.modelOnly, whole: opts.whole,
     posmFollows: P.allow_mix_categories === false,
+    allowExtraDrops: trip.allow_extra_drops === true,   // 16/10: công tắc "Cho vượt số khách" của xe
   })
 }
 /** 409 với mã của luật ưu tiên nhất; nhiều luật thì liệt kê từng dòng (FE hiện HỘP THOẠI, không toast). */
@@ -1115,7 +1118,8 @@ function computeTripPatch(plan: PlanRow, trip: TripRow & { ods: TripOdRow[] }, m
   if (!model && trip.ods.length) warnings.push(`Chưa có dòng xe (xe đang chở ${sum.pallets ?? '?'} pallet / ${sum.tons ?? '?'} tấn) — bấm vào xe để chọn dòng xe, hoặc tách bớt OD`)
   // 02/10: trần = nhỏ nhất trong (dòng xe `max_drops` · khách/kênh khắt khe nhất trên xe); CHƯA KHAI = 1 (không còn số của kho)
   const maxDrops = Math.min(model ? modelDrops(model) : Infinity, odStopsCap(trip.ods))
-  if (trip.ods.length && Number.isFinite(maxDrops) && stops > maxDrops) warnings.push(`Vượt số khách cùng xe (${stops} > ${maxDrops})`)
+  // 16/10: xe bật "Cho vượt số khách" ⇒ không phải sai luật (người cho phép có chủ đích) — bàn in nhãn "vượt khách" thay câu đỏ
+  if (trip.ods.length && Number.isFinite(maxDrops) && stops > maxDrops && trip.allow_extra_drops !== true) warnings.push(`Vượt số khách cùng xe (${stops} > ${maxDrops})`)
   // Thẻ nhiều xe: MỖI xe phải qua đủ luật như xe chính — hỏi từng xe, câu cảnh báo nêu đúng tên xe
   for (const m of uniq(fleet)) {
     // Người tự chọn dòng xe thì KHÔNG chặn (đây là bản nháp, người quyết) — nhưng phải nói ra khi xe không phục vụ đủ
@@ -1203,7 +1207,7 @@ async function updateTripInner(req: Request, res: Response) {
       const perms = req.user?.module_permissions ?? {}
       if (!(req.user?.is_superadmin === true || perms.dispatch?.includes('confirm') || perms.external_khvc?.includes('edit')))
         return fail(res, 403, 'FORBIDDEN', 'Xe đã vào Kế hoạch xuất — cần quyền "Xác nhận" của Điều vận hoặc quyền sửa Kế hoạch xuất để đổi ĐVVT / dòng xe')
-      if (b.locked !== undefined || b.allow_mix_categories !== undefined) return fail(res, 409, 'TRIP_NOT_EDITABLE', `Xe ${trip.group_code} đã vào Kế hoạch xuất — ở đây chỉ đổi ĐVVT / dòng xe; khoá, chở lẫn, thêm bớt OD thì "Mở lại" xe.`)
+      if (b.locked !== undefined || b.allow_mix_categories !== undefined || b.allow_extra_drops !== undefined) return fail(res, 409, 'TRIP_NOT_EDITABLE', `Xe ${trip.group_code} đã vào Kế hoạch xuất — ở đây chỉ đổi ĐVVT / dòng xe; khoá, chở lẫn, vượt số khách, thêm bớt OD thì "Mở lại" xe.`)
       if (b.vehicle_model_id === undefined && b.vehicle_model_ids === undefined && b.transport_company_id === undefined) return fail(res, 'Không có gì để đổi', 400)
     }
     // TẮT "Ghép Loại kho khác" trên xe ĐANG chở lẫn ⇒ CHẶN (14/10 — trước đó cho tắt rồi xe mang cảnh báo "chở lẫn — switch tắt")
@@ -1212,11 +1216,20 @@ async function updateTripInner(req: Request, res: Response) {
       const cats = mainCatsOf(uniq(trip.ods.flatMap(o => Object.keys((o.cat_load ?? {}) as Record<string, unknown>))).map(c => ({ category: c })), follow)
       if (mixBlockReason(false, [], trip.ods, follow)) return fail(res, 409, 'CATEGORY_MIX_BLOCKED', `Xe ${trip.group_code} đang chở lẫn ${cats.join(' + ')} — kéo các OD khác loại ra khỏi xe trước khi tắt "Ghép Loại kho khác".`)
     }
-    if (b.locked !== undefined) {
-      const { error } = await db.from('dispatch_trip').update({ locked: b.locked, updated_at: now() }).eq('id', trip.id)
+    // TẮT "Cho vượt số khách" trên xe ĐANG chở quá trần ⇒ CHẶN (cùng khuôn switch Loại kho): tắt xong xe thành sai luật, Xác nhận chặn
+    if (b.allow_extra_drops === false && trip.allow_extra_drops && trip.ods.length) {
+      const models = await loadModels(plan.warehouse_id)
+      const m0 = trip.vehicle_model_id ? models.find(m => m.id === trip.vehicle_model_id) ?? null : null
+      const why = dropsBlockReason(m0, [], trip.ods, true)
+      if (why) return fail(res, 409, 'DROPS_EXCEEDED', `Xe ${trip.group_code}: ${why} Kéo bớt khách trước khi tắt "Cho vượt số khách".`)
+    }
+    if (b.locked !== undefined || b.allow_extra_drops !== undefined) {
+      const { error } = await db.from('dispatch_trip').update({ ...(b.locked !== undefined ? { locked: b.locked } : {}), ...(b.allow_extra_drops !== undefined ? { allow_extra_drops: b.allow_extra_drops } : {}), updated_at: now() }).eq('id', trip.id)
       if (error) throw error
-      // chỉ khoá / mở khoá ⇒ không đụng cước (khoá không đổi gì trên xe)
-      if (b.vehicle_model_id === undefined && b.vehicle_model_ids === undefined && b.transport_company_id === undefined && b.allow_mix_categories === undefined) return ok(res, { ...trip, locked: b.locked, _plan: await planAfterWrite(plan) })
+      if (b.locked !== undefined) trip.locked = b.locked
+      if (b.allow_extra_drops !== undefined) trip.allow_extra_drops = b.allow_extra_drops
+      // chỉ khoá / mở khoá ⇒ không đụng cước (khoá không đổi gì trên xe); công tắc vượt khách thì tính lại (câu cảnh báo số khách đổi theo)
+      if (b.allow_extra_drops === undefined && b.vehicle_model_id === undefined && b.vehicle_model_ids === undefined && b.transport_company_id === undefined && b.allow_mix_categories === undefined) return ok(res, { ...trip, _plan: await planAfterWrite(plan) })
     }
     if (b.allow_mix_categories !== undefined) {
       // switch trên thẻ xe — ghi cột rồi tính lại (cảnh báo "xe chở lẫn" đổi theo switch)
@@ -1243,7 +1256,7 @@ async function updateTripInner(req: Request, res: Response) {
     // khách được vào · sức chứa (trần dải tải) · ghép nhiều xe — cùng hàm với cửa kéo thả. Chỉ hỏi khi xe THẬT đổi (đổi ĐVVT thì không).
     const fleetChanged = modelId !== trip.vehicle_model_id || JSON.stringify(extras0) !== JSON.stringify(trip.extra_vehicle_model_ids ?? [])
     if (modelId && fleetChanged && trip.ods.length) {
-      const blocks = await ruleBlocksFor(plan, { vehicle_model_id: modelId, extra_vehicle_model_ids: trip.extra_vehicle_model_ids }, [], trip.ods, { modelOnly: true, models: refs.models, condLabels })
+      const blocks = await ruleBlocksFor(plan, { vehicle_model_id: modelId, extra_vehicle_model_ids: trip.extra_vehicle_model_ids, allow_extra_drops: trip.allow_extra_drops }, [], trip.ods, { modelOnly: true, models: refs.models, condLabels })
       if (blocks.length) return ruleFail(res, `Xe ${trip.group_code}: `, blocks)
     }
     if (carrierId && !refs.carriers.some(c => c.id === carrierId)) {
@@ -1352,7 +1365,7 @@ async function moveOdInner(req: Request, res: Response) {
     const t = now()
     let targetId = b.to_trip_id ?? null
     if (targetId) {
-      const tg = (await db.from('dispatch_trip').select('id, plan_id, status, group_code, allow_mix_categories, vehicle_model_id, extra_vehicle_model_ids').eq('id', targetId).maybeSingle()).data
+      const tg = (await db.from('dispatch_trip').select('id, plan_id, status, group_code, allow_mix_categories, allow_extra_drops, vehicle_model_id, extra_vehicle_model_ids').eq('id', targetId).maybeSingle()).data
       if (!tg || tg.plan_id !== plan.id) return fail(res, 'Chuyến đích không thuộc cùng kế hoạch', 400)
       if (tg.id === src.id) return fail(res, 'Chuyến đích trùng chuyến nguồn', 400)
       const tgSt = (tg.status as TripStatus) ?? 'DRAFT'
@@ -1549,7 +1562,7 @@ async function moveOdsInner(req: Request, res: Response) {
       const model = fleet.length ? refs.models.find(m => m.id === fleet[0]) ?? null : null
       const carrier = (r?.transport_company_id ? refs.carriers.find(c => c.id === r.transport_company_id) : undefined) ?? sug.carrier ?? null
       // xe mới cũng qua đủ luật ghép xe (14/10) — với dòng xe vừa chọn (không chọn được thì chỉ các luật không phụ thuộc xe)
-      const blocks = await ruleBlocksFor(plan, { vehicle_model_id: model?.id ?? null, extra_vehicle_model_ids: fleet.slice(1), allow_mix_categories: r?.allow_mix_categories ?? null }, [], rows, { models: refs.models })
+      const blocks = await ruleBlocksFor(plan, { vehicle_model_id: model?.id ?? null, extra_vehicle_model_ids: fleet.slice(1), allow_mix_categories: r?.allow_mix_categories ?? null, allow_extra_drops: r?.allow_extra_drops === true }, [], rows, { models: refs.models })
       if (blocks.length) return ruleFail(res, 'Xe mới: ', blocks)
       const prefix = engineParams(plan).code_prefix
       const taken = await takenSeqs(prefix)   // đếm cả kế hoạch mảng kia cùng kho×ngày (03/10 tối)
@@ -1562,7 +1575,7 @@ async function moveOdsInner(req: Request, res: Response) {
           carrier_reasons: carrier?.id === sug.carrier?.id ? sug.reasons : ['Người điều vận chọn'], warnings: sug.warnings, merge_hint: null,
           vehicle_model: model ? { id: model.id, sap_code: model.sap_code, name: model.name, parent_type_name: model.parent_type_name } : null,
           carrier: carrier ? carrierRef(carrier) : null }),
-        manual_edited: true, status: 'DRAFT', locked: r?.locked === true, allow_mix_categories: r?.allow_mix_categories ?? null, updated_at: t,
+        manual_edited: true, status: 'DRAFT', locked: r?.locked === true, allow_mix_categories: r?.allow_mix_categories ?? null, allow_extra_drops: r?.allow_extra_drops === true, updated_at: t,
       })
       if (error) throw error
     }

@@ -787,6 +787,14 @@ describe('manualRuleBlocks — MỌI luật ghép xe ở cửa làm tay (user 14
   it('tải chưa đo được (pallet null) ⇒ không đoán, không chặn', () => {
     expect(manualRuleBlocks([xe], [r('A', 'K1', { pallets: null })], [r('B', 'K2', { pallets: 9 })], opt)).toEqual([])
   })
+  it('xe bật "Cho vượt số khách" (16/10) ⇒ bỏ ĐÚNG luật số khách (kéo thả · xe mới · đổi dòng xe · Xác nhận); luật khác vẫn chặn', () => {
+    const xe1 = model({ id: 'X1', name: 'Xe 1 điểm', max_drops: 1, load_max_pct: 105 })
+    expect(codes(manualRuleBlocks([xe1], [r('A', 'K1')], [r('B', 'K2')], opt))).toEqual(['DROPS_EXCEEDED'])
+    expect(manualRuleBlocks([xe1], [r('A', 'K1')], [r('B', 'K2')], { ...opt, allowExtraDrops: true })).toEqual([])
+    expect(manualRuleBlocks([xe1], [r('A', 'K1'), r('B', 'K2')], [], { ...opt, modelOnly: true, allowExtraDrops: true })).toEqual([])
+    expect(manualRuleBlocks([xe1], [], [r('A', 'K1'), r('B', 'K2')], { ...opt, whole: true, allowExtraDrops: true })).toEqual([])
+    expect(codes(manualRuleBlocks([xe1], [r('A', 'K1')], [r('B', 'K2', { separate: true, pallets: 9 })], { ...opt, allowExtraDrops: true }))).toEqual(['SEPARATE_CUSTOMER', 'LOAD_EXCEEDED'])
+  })
   it('khách "đi xe riêng" ⇒ SEPARATE_CUSTOMER ở cả hai chiều; thêm đơn cùng khách thì cho', () => {
     expect(codes(manualRuleBlocks([xe], [r('A', 'K1', { separate: true })], [r('B', 'K2')], opt))).toEqual(['SEPARATE_CUSTOMER'])
     expect(codes(manualRuleBlocks([xe], [r('A', 'K1')], [r('B', 'K2', { separate: true })], opt))).toEqual(['SEPARATE_CUSTOMER'])

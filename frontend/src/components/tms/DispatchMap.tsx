@@ -19,7 +19,7 @@ import {
 } from '@/api/hooks'
 
 /** Ghim KHO: ô vuông tối chữ K — khác hẳn ghim tròn của khách */
-const depotIcon = L.divIcon({ className: '', html: '<div style="width:22px;height:22px;border-radius:4px;background:#0f172a;border:2px solid #fff;box-shadow:0 0 0 1px rgba(0,0,0,.4);color:#fff;font:700 11px/18px system-ui;text-align:center">K</div>', iconSize: [22, 22], iconAnchor: [11, 11], popupAnchor: [0, -11] })
+export const depotIcon = L.divIcon({ className: '', html: '<div style="width:22px;height:22px;border-radius:4px;background:#0f172a;border:2px solid #fff;box-shadow:0 0 0 1px rgba(0,0,0,.4);color:#fff;font:700 11px/18px system-ui;text-align:center">K</div>', iconSize: [22, 22], iconAnchor: [11, 11], popupAnchor: [0, -11] })
 const kmText = (d: GeoDist | null | undefined) => d ? `${d.km.toLocaleString('vi-VN', { maximumFractionDigits: 1 })} km${d.source === 'HAVERSINE' ? ' (ước lượng)' : d.minutes != null ? ` · ${Math.round(d.minutes)} phút` : ''}` : ''
 const apiMsg = (e: unknown) => (e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message ?? 'Lỗi không rõ'
 

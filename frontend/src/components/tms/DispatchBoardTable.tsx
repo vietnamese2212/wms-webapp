@@ -13,7 +13,7 @@
 //   • Bảng chuẩn ResizableTable (kéo giãn cột, đầu bảng + cột đầu dính, cột thao tác ghim phải trên PC) — cùng khuôn bảng Xem đơn.
 // Cửa ghi · Hoàn tác · xem trước · hộp thoại · thanh chọn-nhiều dùng CHUNG với bản thẻ (DispatchBoard) — file này chỉ VẼ.
 import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { ChevronDown, ChevronRight, Lock, Unlock, X, Truck, StickyNote, RotateCw, Replace, Route } from 'lucide-react'
+import { ChevronDown, ChevronRight, Lock, Unlock, X, Truck, StickyNote, RotateCw, Replace, Route, UserPlus } from 'lucide-react'
 import { TableBody, TableCell, TableRow } from '@/components/ui/table'
 import { Switch } from '@/components/ui/switch'
 import { ResizableTable, type RtColDef } from '@/components/shared/ResizableTable'
@@ -24,6 +24,7 @@ import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import type { DispatchPlan, DispatchTrip, DispatchTripOd, DispatchOdFlag, DispatchMoveTo, DispatchMovePreview } from '@/api/hooks'
 import { DispatchCarrierPicker } from './DispatchCarrierPicker'
 import { NewOdChip } from './DispatchReviewTable'
+import { SapFlagIcon } from './SapFlagIcon'
 import { tripStatus, issuesOf, ISSUE_ORDER, ISSUE_SHORT, TODO_KEYS, RED_ISSUES, FLAG_VI, SOFT_FLAG_KINDS, lotTip, ROUTE_LEVEL_VI, type IssueCtx, type PoolLot, type PoolRoute, type TripRouteTag } from './dispatchIssues'
 
 const nf = (n: number | string | null | undefined, d = 0) => (n == null ? '—' : Number(n).toLocaleString('vi-VN', { maximumFractionDigits: d }))
@@ -102,16 +103,16 @@ const tripCols = (desktop: boolean): RtColDef[] => [
   { id: 'act', label: '', w: 56, align: 'right', stickyRight: desktop },   // 15/10: bỏ ⊘ — còn khoá / bỏ xe trống / xe tải
 ]
 // Gom theo LÔ (15/10): thêm cột Tải (thanh % xe máy định, cùng dáng cột Tải của bảng xe) ngay sau cột đầu — khung chờ 400 px vẫn thấy
-// Lô · Tải · Pallet · nút Xe mới; cột thao tác rộng hơn cho nút chữ
+// Lô · Tải · Pallet · nút Xe mới; cột thao tác rộng hơn cho nút chữ. 16/10: Loại kho lên cột đầu cạnh số OD (user) ⇒ bỏ cột Loại kho,
+// cột đầu rộng thêm cho chip loại + biểu tượng SAP
 const poolCols = (desktop: boolean, lot: boolean): RtColDef[] => [
-  { id: 'x', label: lot ? 'Lô · OD' : 'OD', w: desktop ? 160 : 150 },
+  { id: 'x', label: lot ? 'Lô · OD' : 'OD · Loại kho', w: desktop ? 200 : 180 },
   ...(lot ? [{ id: 'load', label: 'Tải', w: 96 }] : []),
   { id: 'pal', label: 'Pallet', w: 60, align: 'right' },
   { id: 'ton', label: 'Tấn', w: 60, align: 'right' },
   { id: 'cust', label: 'Khách', w: 180 },
   { id: 'ward', label: 'Phường', w: 120 },
   { id: 'region', label: 'Vùng', w: 110 },
-  { id: 'cat', label: 'Loại kho', w: 100 },
   { id: 'note', label: 'Ghi chú giao hàng SAP', w: 220 },
   { id: 'warn', label: 'Lưu ý', w: 220 },
   { id: 'act', label: '', w: lot ? 64 : 60, align: 'right', stickyRight: desktop },
@@ -130,6 +131,22 @@ function RowCells({ cols, cells, bg }: { cols: RtColDef[]; cells: Cells; bg: str
         className={`${TD} ${c.align === 'right' ? 'text-right tabular-nums' : ''} ${pin} ${s?.cls ?? ''}`}>{s?.node}</TableCell>
     )
   })}</>
+}
+
+/** Xe bật "Cho vượt số khách" (16/10) — ngoại lệ người cho phép, nhãn để người soát thấy (bảng + thẻ + panel xe) */
+export function ExtraDropsBadge() {
+  return <span className="inline-flex shrink-0 items-center gap-0.5 rounded bg-amber-500 px-1 text-[9px] font-bold text-white" title='Xe bật "Cho vượt số khách" — người điều vận cho xe này chở quá số khách tối đa (dòng xe / khách / kênh); kéo thả và Xác nhận không chặn số khách cho riêng xe này. Tắt ở panel xe → Thao tác xe.'><UserPlus className="h-2.5 w-2.5" />vượt khách</span>
+}
+
+/** Ô tick có VÙNG BẤM RỘNG (16/10, user: "click checkbox khó, sơ sẩy là mở detail — click nhầm hoặc hitbox không đủ"): nhãn bọc ô tick đệm
+ *  quanh 6 px, bấm trong vùng đó là tick và KHÔNG lọt xuống dòng (dòng bấm = mở chi tiết). Dùng chung dòng xe · dòng đơn · dòng nhóm. */
+export function TickBox({ checked, indeterminate, onChange, label }: { checked: boolean; indeterminate?: boolean; onChange: () => void; label: string }) {
+  return (
+    <label className="-my-1.5 -ml-1.5 inline-flex shrink-0 cursor-pointer items-center rounded p-1.5 hover:bg-sky-100" title={label} onClick={e => e.stopPropagation()}>
+      <input type="checkbox" className="h-4 w-4 cursor-pointer accent-sky-600" checked={checked} aria-label={label} onChange={onChange}
+        ref={el => { if (el) el.indeterminate = !!indeterminate && !checked }} />
+    </label>
+  )
 }
 
 function IconBtn({ title, onClick, disabled, danger, children }: { title: string; onClick: () => void; disabled?: boolean; danger?: boolean; children: ReactNode }) {
@@ -264,14 +281,17 @@ function odCells(ops: BoardOps, o: DispatchTripOd, t: DispatchTrip | null, tree?
         <div className={`flex min-w-0 items-center gap-1 ${t ? 'pl-5' : ''}`}>
           {tree && <TreeBranch rail={tree.rail} last={tree.last} />}
           {can
-            ? <input type="checkbox" className="h-3.5 w-3.5 shrink-0 accent-sky-600" checked={ops.sel.has(o.id)} onChange={() => ops.toggle(o.id)} onClick={e => e.stopPropagation()} aria-label={`Chọn ${o.od_number}`} />
-            : <span className="w-3.5 shrink-0" />}
+            ? <TickBox checked={ops.sel.has(o.id)} onChange={() => ops.toggle(o.id)} label={`Chọn ${o.od_number}`} />
+            : <span className="w-4 shrink-0" />}
           <span className="font-mono font-semibold">{o.od_number}</span>
+          {/* 16/10 (user: "tình trạng SAP thể hiện qua biểu tượng, có màu và tooltip — Loại kho đưa lên vào vị trí chữ đó"): biểu tượng SAP +
+              chip Loại kho ngay sau số OD; chữ đầy đủ của cờ ở tooltip + cột Lưu ý */}
+          {fl && <SapFlagIcon flag={fl} />}
+          <span className="inline-flex shrink-0 gap-0.5">{ops.catChips(ops.catsByLoad([o.cat_load]))}</span>
           {/* đơn khung chờ có xe đi cùng tuyến (15/10) — đứng ngay sau số OD: khung chờ hẹp thì cột Lưu ý nằm ngoài màn */}
           {!t && route && <RouteChip info={route} label={ops.tripLabel} />}
           {o.part_of ? <span className="text-[9px] text-amber-700">phần {o.part_index}/{o.part_of}</span> : null}
           {!t && ops.fresh.has(o.od_number) && <NewOdChip />}
-          {fl && <span className={`rounded px-1 text-[9px] font-medium ${soft ? 'bg-amber-100 text-amber-800' : 'bg-red-100 text-red-700'}`}>{FLAG_VI[fl.kind]}</span>}
           {/* đơn dưới xe: tên khách ngay ở cột dính — khung chờ mở thì cột Khách nằm ngoài màn (đo 1280 px 06/10) */}
           {t && (t.detail.route?.order.length ?? 0) > 1 && stopNoOf(t, o.ship_to_code) != null && (
             <span className="shrink-0 rounded bg-sky-700 px-1 text-[9px] font-bold text-white" title="Điểm giao thứ mấy của xe (kho → điểm gần trước) — in lên Kế hoạch xuất / chuyến Xuất kho">Đ{stopNoOf(t, o.ship_to_code)}</span>
@@ -286,7 +306,7 @@ function odCells(ops: BoardOps, o: DispatchTripOd, t: DispatchTrip | null, tree?
     cust: { cls: 'truncate', title: [o.ship_to_name, o.ship_to_code].filter(Boolean).join(' · '), node: o.ship_to_name ?? o.ship_to_code ?? <span className="text-slate-300">—</span> },
     ward: { cls: 'truncate', title: o.ward_code ?? '', node: o.ward_code ?? <span className="text-slate-300">—</span> },
     region: { cls: 'truncate', title: o.region_name ?? o.region_code ?? '', node: o.region_name ?? o.region_code ?? <span className="text-slate-300">—</span> },
-    cat: { node: <span className="inline-flex gap-0.5">{ops.catChips(ops.catsByLoad([o.cat_load]))}</span> },
+    // Loại kho của đơn nằm ở cột đầu (16/10); cột Loại kho của bảng xe chỉ còn cho dòng xe (loại cả xe + switch ghép)
     // ghi chú giao hàng SAP — người đọc trước khi ghép ("GIAO 10/9", "NPP không nhận CN"…), máy KHÔNG đọc
     note: { cls: `truncate ${o.note ? 'text-amber-900' : ''}`, title: o.note ?? '', node: o.note || <span className="text-slate-300">—</span> },
     warn: {
@@ -358,9 +378,8 @@ function tripCells(ops: BoardOps, t: DispatchTrip, hv: BoardHover, open: boolean
             <button type="button" onClick={e => { e.stopPropagation(); onToggle() }} aria-expanded={open} title={open ? 'Thu các đơn của xe' : 'Mở các đơn của xe'}
               className="shrink-0 rounded p-0.5 text-slate-500 hover:bg-slate-200">{open ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}</button>
             {ed && ids.length > 0
-              ? <input type="checkbox" className="h-3.5 w-3.5 shrink-0 accent-sky-600" checked={nSel === ids.length} ref={el => { if (el) el.indeterminate = nSel > 0 && nSel < ids.length }}
-                  onChange={() => ops.toggleMany(ids)} onClick={e => e.stopPropagation()} aria-label={`Chọn mọi đơn của xe #${t.seq}`} />
-              : <span className="w-3.5 shrink-0" />}
+              ? <TickBox checked={nSel === ids.length} indeterminate={nSel > 0} onChange={() => ops.toggleMany(ids)} label={`Chọn mọi đơn của xe #${t.seq}`} />
+              : <span className="w-4 shrink-0" />}
             {/* SỐ XE tô nền (15/10, user: "tô màu số thứ tự xe") — mốc mắt của đầu mỗi xe */}
             <span className="shrink-0 rounded bg-sky-700 px-1.5 font-mono text-[11px] font-bold text-white">#{t.seq}</span>
             <span className="min-w-0 truncate text-[11px] font-semibold text-slate-800">
@@ -370,6 +389,7 @@ function tripCells(ops: BoardOps, t: DispatchTrip, hv: BoardHover, open: boolean
             </span>
             {st !== 'DRAFT' && <StatusBadge tone={st === 'CONFIRMED' ? 'green' : st === 'DECLINED' ? 'red' : 'blue'}>{st === 'CONFIRMED' ? 'Đã vào KH' : st === 'DECLINED' ? 'Từ chối' : st === 'TENDERED' ? 'Chờ ĐVVT' : st}</StatusBadge>}
             {t.locked && <span className="inline-flex shrink-0 items-center gap-0.5 rounded bg-violet-600 px-1 text-[9px] font-bold text-white" title="Đã khoá — lần Tối ưu lại sau giữ nguyên xe này (đơn, dòng xe, ĐVVT)"><Lock className="h-2.5 w-2.5" /><span className="hidden sm:inline">Khoá</span></span>}
+            {t.allow_extra_drops && <ExtraDropsBadge />}
             {/* nhãn tiếp nhận khi khung chờ bật lọc "Có xe cùng tuyến" (15/10) */}
             {rtag && <TripRouteBadge tag={rtag} odLabel={ops.odLabel} />}
           </div>
@@ -527,7 +547,7 @@ export function DispatchBoardTable({ ops, toolbar, rail, poolHeader, poolExtras 
   const lotMode = f.boardGroup === 'lot'
   const tcols = useMemo(() => tripCols(desktop), [desktop]), pcols = useMemo(() => poolCols(desktop, lotMode), [desktop, lotMode])
   // bộ cột đổi theo cách gom ⇒ khoá độ rộng riêng + remount (useColumnResize chỉ đọc độ rộng lúc mount)
-  const pkey = `dispatch_board_pool_v1${lotMode ? '_lot' : ''}${desktop ? '' : '_m'}`
+  const pkey = `dispatch_board_pool_v2${lotMode ? '_lot' : ''}${desktop ? '' : '_m'}`
   // bản ops MỚI NHẤT cho thao tác lúc bấm / kéo trong các dòng xe không vẽ lại (TripRows memo)
   const live = useRef(ops)
   live.current = ops
@@ -597,8 +617,7 @@ export function DispatchBoardTable({ ops, toolbar, rail, poolHeader, poolExtras 
                                 <div className="flex min-w-0 items-center gap-1">
                                   {open ? <ChevronDown className="h-3.5 w-3.5 shrink-0 text-slate-500" /> : <ChevronRight className="h-3.5 w-3.5 shrink-0 text-slate-500" />}
                                   {ops.editable
-                                    ? <input type="checkbox" className="h-3.5 w-3.5 shrink-0 accent-sky-600" checked={nSel === ids.length} ref={el => { if (el) el.indeterminate = nSel > 0 && nSel < ids.length }}
-                                        onChange={() => ops.toggleMany(ids)} onClick={e => e.stopPropagation()} aria-label={`Chọn cả nhóm ${label}`} />
+                                    ? <TickBox checked={nSel === ids.length} indeterminate={nSel > 0} onChange={() => ops.toggleMany(ids)} label={`Chọn cả nhóm ${label}`} />
                                     : null}
                                   <span className="min-w-0 truncate text-[11px] font-semibold text-slate-700">{label}</span>
                                 </div>

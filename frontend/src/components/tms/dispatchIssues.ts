@@ -168,7 +168,7 @@ export interface RouteRuleCtx {
   mixChannels: boolean; mixCategories: boolean | null | undefined; follow: string[]
 }
 type RuleOd = Pick<DispatchTripOd, 'od_number' | 'ship_to_code' | 'separate' | 'channel' | 'allowed_models' | 'conditions' | 'cat_load' | 'max_customers'>
-type RuleTrip = Pick<DispatchTrip, 'vehicle_model_id' | 'extra_vehicle_model_ids' | 'allow_mix_categories'> & { ods: RuleOd[] }
+type RuleTrip = Pick<DispatchTrip, 'vehicle_model_id' | 'extra_vehicle_model_ids' | 'allow_mix_categories' | 'allow_extra_drops'> & { ods: RuleOd[] }
 const mainCatKey = (load: RuleOd['cat_load'], follow: string[]) => [...new Set(Object.keys(load ?? {}).filter(c => !!c && !follow.includes(c)))].sort().join('+')
 /** Đơn khung chờ `r` KHÔNG thuộc xe `t` THEO CẤU HÌNH, bỏ qua sức chứa — MIRROR các luật "cấu hình" của `manualRuleBlocks` qua `routeKind`
  *  (BE, 'off'; `backend/tests/mirror/dispatchRouteOff.mirror.test.ts`): xe / khách chỉ MỘT khách (dòng xe "Điểm giao tối đa" 1 — xe pallet,
@@ -190,7 +190,8 @@ export function routeOff(r: RuleOd, t: RuleTrip, c: RouteRuleCtx): boolean {
   if ((t.allow_mix_categories ?? c.mixCategories) === false && new Set(all.map(o => mainCatKey(o.cat_load, c.follow)).filter(Boolean)).size > 1) return true
   if (after > before) {
     const cap = Math.min(...all.map(o => (typeof o.max_customers === 'number' && o.max_customers >= 1 ? o.max_customers : 1)), main ? main.max_drops ?? 1 : Infinity)
-    if (after > cap && cap < 2) return true
+    // xe bật "Cho vượt số khách" (16/10) ⇒ luật số khách không chặn xe này
+    if (after > cap && cap < 2 && t.allow_extra_drops !== true) return true
     if (after > 1 && all.some(o => o.separate === true)) return true
   }
   if (!c.mixChannels) {
@@ -277,6 +278,11 @@ export function routeTags(matches: Map<string, RouteMatch[]>, results: FitResult
   for (const t of trips.values()) if (t.fit.length) t.full = null
   return { rows, trips }
 }
+/** Hộp hỏi trước khi KHOÁ xe (15/10 tối, user: "khoá xe để lần sau tối ưu — phải confirm trước khi khoá") — bàn ghép xe và panel xe cùng câu */
+export const lockAsk = (t: Pick<DispatchTrip, 'seq' | 'pallets' | 'ods' | 'detail'>) => ({
+  title: `Khoá xe #${t.seq}?`, confirmLabel: 'Khoá xe',
+  body: `${t.detail.vehicle_model?.name ?? 'Chưa chọn dòng xe'} · ${new Set(t.ods.map(o => o.od_number)).size} OD · ${Number(t.pallets ?? 0).toLocaleString('vi-VN', { maximumFractionDigits: 1 })} pallet.\nLần "Tối ưu lại" sau, máy GIỮ NGUYÊN xe này — đơn trên xe, dòng xe, ĐVVT. Kéo thả, đổi dòng xe / ĐVVT bằng tay vẫn làm được.\nXe khoá tô màu tím trên bàn; mở khoá: bấm lại ổ khoá.`,
+})
 export const FLAG_VI: Record<DispatchOdFlag['kind'], string> = {
   // 03/10 tối: SHIPPED / SAP_ASSIGNED là cờ THAM CHIẾU (không loại đơn, không chặn Xác nhận) — chữ phải nói "SAP nói vậy", không khẳng định hàng đã đi
   REPLACED: 'SAP đã thay', GONE: 'SAP đã bỏ', SHIPPED: 'SAP đã post', SAP_ASSIGNED: 'SAP đã gắn xe', IN_PLAN: 'Đã vào KH xuất', CHANGED: 'SAP đã sửa',

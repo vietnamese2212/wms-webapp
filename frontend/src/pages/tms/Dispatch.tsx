@@ -17,14 +17,22 @@
 // làm lại từ đầu = Bỏ nháp rồi Xem đơn.
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { CheckCircle2, Trash2, Download, Waypoints, ArrowRightLeft, AlertTriangle, ThumbsUp, ThumbsDown, Send, LayoutGrid, ListChecks, RotateCcw, ChevronDown, ChevronUp, Map as MapIcon, FileText } from 'lucide-react'
+import { CheckCircle2, Trash2, Download, Waypoints, ArrowRightLeft, AlertTriangle, ThumbsUp, ThumbsDown, Send, LayoutGrid, ListChecks, RotateCcw, ChevronDown, ChevronUp, Map as MapIcon, FileText, Lock } from 'lucide-react'
 import { DispatchMap } from '@/components/tms/DispatchMap'
+import { TripRouteMap } from '@/components/tms/TripRouteMap'
+import { DispatchCarrierPicker } from '@/components/tms/DispatchCarrierPicker'
+import { SapFlagIcon } from '@/components/tms/SapFlagIcon'
+import { ExtraDropsBadge } from '@/components/tms/DispatchBoardTable'
+import { SettingsGroup, SettingRow } from '@/components/shared/SettingRow'
+import { Switch } from '@/components/ui/switch'
+import { useWhTypeMetaMap } from '@/hooks/useWhTypeMeta'
+import { whTypeBadgeCls } from '@/utils/cargoCategory'
 import { DispatchDraftsTable } from '@/components/tms/DispatchDraftsTable'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { DispatchBoard, RULE_BLOCK_CODES, apiCode, ruleDialog } from '@/components/tms/DispatchBoard'
 import { DispatchKpiBar } from '@/components/tms/DispatchKpiBar'
 import { DispatchReviewTable } from '@/components/tms/DispatchReviewTable'
-import { EDITABLE, tripStatus, ISSUES, issuesOf, needsWork, SOFT_FLAG_KINDS, boardPlanOf, outOfScopeCats, ruleWarnings, type IssueKey } from '@/components/tms/dispatchIssues'
+import { EDITABLE, tripStatus, ISSUES, issuesOf, needsWork, SOFT_FLAG_KINDS, boardPlanOf, outOfScopeCats, ruleWarnings, lockAsk, type IssueKey } from '@/components/tms/dispatchIssues'
 import { useMobileTabs } from '@/hooks/useMobileSurface'
 import type { AxiosError } from 'axios'
 import { Button } from '@/components/ui/button'
@@ -39,9 +47,10 @@ import { useConfirmDialog } from '@/components/shared/ConfirmDialog'
 import { toast } from '@/components/ui/use-toast'
 import {
   useDispatchPlans, useDispatchPlan, useCreateDispatchPlan, useUpdateDispatchTrip, useMoveDispatchOd, useConfirmDispatchPlan, useDiscardDispatchPlan, useReopenDispatchPlan,
-  useSettleDispatchTrip, useRespondDispatchTrip, useDispatchPlanSync, useRefreshDispatchPool,
+  useSettleDispatchTrip, useRespondDispatchTrip, useDispatchPlanSync, useRefreshDispatchPool, useDeleteDispatchTrip,
   useVehicleModels, useTransportCompanies, useStorageConditions, conditionLabel,
   type DispatchPlan, type DispatchPlanListItem, type DispatchTrip, type DispatchTripStatus, type StorageConditionRow, type DispatchSegment, SEGMENT_VI,
+  type VehicleModel, type DispatchOdFlag,
 } from '@/api/hooks'
 import { useScopedWarehouses, useScopeCatSet } from '@/hooks/useUserScope'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
@@ -193,7 +202,7 @@ export default function Dispatch() {
   const needsTender = (t: DispatchTrip) => t.transport_company_id ? (tenderBy.get(t.transport_company_id) ?? t.detail.carrier?.tender_required === true) : false
 
   const patchTrip = useUpdateDispatchTrip(), moveOd = useMoveDispatchOd(), confirm = useConfirmDispatchPlan(), discard = useDiscardDispatchPlan()
-  const settle = useSettleDispatchTrip(), respond = useRespondDispatchTrip(), reopen = useReopenDispatchPlan()
+  const settle = useSettleDispatchTrip(), respond = useRespondDispatchTrip(), reopen = useReopenDispatchPlan(), delTrip = useDeleteDispatchTrip()
   const [openTripId, setOpenTripId] = useState<string | null>(null)
   // xe vừa tạo ở Xem đơn ("Tạo kế hoạch") — bàn ghép xe mở nhóm của chúng một lần rồi trả về [] (07/10)
   const [focusTrips, setFocusTrips] = useState<string[]>([])
@@ -653,13 +662,18 @@ export default function Dispatch() {
               // cùng luật với BE: sửa xe đã chốt = sửa Kế hoạch xuất đã xác nhận ⇒ cần Xác nhận hoặc quyền sửa Kế hoạch xuất (C66: không in ô chọn rồi 403)
               editableVehicle={canPlan && (canConfirm || can(perms, 'external_khvc', 'edit')) && tripStatus(openTrip) === 'CONFIRMED' && plan.status !== 'DISCARDED'}
               models={models.map(m => ({ value: m.id, label: `${m.sap_code} · ${m.name}`, sub: m.capacity_mode === 'TON' ? `${m.max_tons ?? '?'} t` : `${m.max_pallets ?? '?'} pl` }))}
-              companies={companiesRaw.map(c => ({ value: c.id, label: `${c.code} · ${c.name}`, sub: c.tender_required ? 'cần phản hồi' : undefined }))}
+              vehModels={models} flags={flags}
               onModel={v => patchTrip.mutateAsync({ id: openTrip.id, vehicle_model_id: v || null }).catch(e => err(e, 'Không đổi được dòng xe'))}
               onModels={ids => patchTrip.mutateAsync({ id: openTrip.id, vehicle_model_ids: ids }).catch(e => err(e, 'Không đổi được các xe của thẻ'))}
               onCarrier={v => patchTrip.mutateAsync({ id: openTrip.id, transport_company_id: v || null }).catch(e => err(e, 'Không đổi được ĐVVT'))}
               onMove={(od, to) => moveOd.mutateAsync({ trip_id: openTrip.id, od_number: od, to_trip_id: to || undefined }).then(p => { if (!p.trips.some(t => t.id === openTrip.id)) setOpenTripId(null) }).catch(e => err(e, 'Không chuyển được OD'))}
               onSettle={() => doSettle(openTrip)} onRespond={a => doRespond(openTrip, a)}
-              busy={patchTrip.isPending || moveOd.isPending || settle.isPending || respond.isPending} />
+              // THAO TÁC XE (16/10): khoá hỏi trước như bàn ghép xe (`lockAsk`); vượt số khách = công tắc mới của xe
+              onLock={async on => { if (on && await ask(lockAsk(openTrip)) === null) return; patchTrip.mutateAsync({ id: openTrip.id, locked: on }).catch(e => err(e, 'Không đổi được khoá')) }}
+              onMix={on => patchTrip.mutateAsync({ id: openTrip.id, allow_mix_categories: on }).catch(e => err(e, 'Không đổi được "Ghép Loại kho khác"'))}
+              onExtraDrops={on => patchTrip.mutateAsync({ id: openTrip.id, allow_extra_drops: on }).catch(e => err(e, 'Không đổi được "Cho vượt số khách"'))}
+              onRemove={() => delTrip.mutateAsync(openTrip.id).then(() => setOpenTripId(null)).catch(e => err(e, 'Không bỏ được xe'))}
+              busy={patchTrip.isPending || moveOd.isPending || settle.isPending || respond.isPending || delTrip.isPending} />
           )}
         </SheetContent>
       </Sheet>
@@ -668,16 +682,24 @@ export default function Dispatch() {
   )
 }
 
-function Row({ k, v }: { k: string; v: React.ReactNode }) {
-  return <div className="flex gap-2 text-xs py-1 border-b border-slate-100 last:border-0"><span className="w-32 shrink-0 text-slate-400">{k}</span><span className="min-w-0 font-medium text-slate-700 break-words">{v}</span></div>
+/** Một dòng nhãn · giá trị trong khối của panel xe (khối tự kẻ vạch giữa các dòng) */
+function KV({ k, v }: { k: string; v: React.ReactNode }) {
+  return <div className="flex gap-2 py-1.5 text-xs"><span className="w-32 shrink-0 text-slate-500">{k}</span><span className="min-w-0 font-medium text-slate-800 break-words">{v}</span></div>
 }
 
-function TripPane({ trip: t, plan, editable, editableVehicle, canConfirm, needsTender, condBy, models, companies, onModel, onModels, onCarrier, onMove, onSettle, onRespond, busy }: {
+// PANEL XE (16/10, user: "cải tiến UI detail — chưa phân định được các khu vực thông tin; thêm bản đồ kẻ vạch từ kho tới điểm giao; click vào
+// vận tải thì hiện giá; chưa có action cho xe — khoá xe, cho thêm điểm (vượt số khách), ghép Loại kho…"): nền xám + mỗi khu một KHỐI có băng
+// tiêu đề (khuôn SettingsGroup của app) — Bản đồ tuyến · Xe · ĐVVT · Cước · Thao tác xe (công tắc khuôn AppSheet: tên đậm, diễn giải xám,
+// công tắc bên phải) · Cảnh báo · Đơn trên xe. ĐVVT là ô chọn xếp theo CƯỚC cho đúng xe (cùng danh sách của bàn ghép xe).
+function TripPane({ trip: t, plan, editable, editableVehicle, canConfirm, needsTender, condBy, models, vehModels, flags, onModel, onModels, onCarrier, onMove, onSettle, onRespond, onLock, onMix, onExtraDrops, onRemove, busy }: {
   trip: DispatchTrip; plan: DispatchPlan; editable: boolean; editableVehicle: boolean; canConfirm: boolean; needsTender: boolean
   condBy: Map<string, StorageConditionRow>
-  models: { value: string; label: string; sub?: string }[]; companies: { value: string; label: string; sub?: string }[]
+  models: { value: string; label: string; sub?: string }[]; vehModels: VehicleModel[]
+  flags: Map<string, DispatchOdFlag>
   onModel: (v: string) => void; onModels: (ids: string[]) => void; onCarrier: (v: string) => void; onMove: (od: string, toTripId: string) => void
-  onSettle: () => void; onRespond: (accept: boolean) => void; busy: boolean
+  onSettle: () => void; onRespond: (accept: boolean) => void
+  onLock: (on: boolean) => void; onMix: (on: boolean) => void; onExtraDrops: (on: boolean) => void; onRemove: () => void
+  busy: boolean
 }) {
   const d = t.detail
   const extras = t.extra_vehicle_model_ids ?? []
@@ -690,18 +712,38 @@ function TripPane({ trip: t, plan, editable, editableVehicle, canConfirm, needsT
   const others = plan.trips.filter(o => o.id !== t.id && EDITABLE.includes(tripStatus(o))).map(o => ({ value: o.id, label: `${o.group_code} · ${o.detail.vehicle_model?.name ?? 'chưa chọn xe'}`, sub: `${nf(o.pallets, 1)} pl · ${o.stops} điểm` }))
   const odNos = [...new Set(t.ods.map(o => o.od_number))]
   const vehEdit = editable || editableVehicle   // dòng xe · xe phụ · ĐVVT sửa được (nháp, hoặc xe đã chốt — 13/10)
+  const whMeta = useWhTypeMetaMap()
+  const follow = new Set(plan.params.follow_categories ?? [])
+  const chips = (cats: string[]) => cats.map(c => (
+    <span key={c} className={`rounded px-1 text-[9px] font-semibold ${whTypeBadgeCls(c, whMeta)} ${follow.has(c) ? 'border border-dashed border-current opacity-75' : ''}`}
+      title={follow.has(c) ? `${c} — đi kèm đơn, không quyết Loại kho của xe` : `Loại kho ${c}`}>{c}</span>
+  ))
+  // số khách: trần = nhỏ nhất (dòng xe "Điểm giao tối đa" · "Số khách tối đa cùng xe" khắt khe nhất của khách / kênh trên xe) — chưa khai = 1
+  const vm = t.vehicle_model_id ? vehModels.find(m => m.id === t.vehicle_model_id) ?? null : null
+  const capModel = vm ? vm.max_drops ?? 1 : null
+  const capOds = t.ods.length ? Math.min(...t.ods.map(o => (typeof o.max_customers === 'number' && o.max_customers >= 1 ? o.max_customers : 1))) : null
+  const cap = Math.min(capModel ?? Infinity, capOds ?? Infinity)
+  const planMix = plan.params.allow_mix_categories !== false
+  const mixOn = (t.allow_mix_categories ?? plan.params.allow_mix_categories) !== false
+  const offWhy = editable ? '' : st === 'CONFIRMED' ? ' — xe đã vào Kế hoạch xuất: "Mở lại" xe để đổi' : !planOpen ? ' — kế hoạch đã đóng' : ` — xe ${sv.label.toLowerCase()}`
   return (
     <>
-      <SheetHeader className="px-4 py-3 border-b bg-slate-50 shrink-0">
+      <SheetHeader className="px-4 py-3 border-b bg-white shrink-0">
         <div className="flex items-start justify-between gap-2 pr-6">
           <div className="min-w-0">
-            <SheetTitle className="text-sm font-mono break-all">{t.group_code} <StatusBadge tone={sv.tone} className="align-middle font-sans">{sv.label}</StatusBadge></SheetTitle>
-            <p className="text-xs text-slate-500 mt-0.5">{odNos.length} OD · {t.stops} điểm giao · {nf(t.pallets, 1)} pallet · {nf(t.tons, 2)} tấn · giao {formatDate(plan.plan_date)}</p>
+            <SheetTitle className="flex flex-wrap items-center gap-1.5 text-sm">
+              <span className="rounded bg-sky-700 px-1.5 font-mono text-xs font-bold text-white">#{t.seq}</span>
+              <span className="font-mono break-all">{t.group_code}</span>
+              <StatusBadge tone={sv.tone} className="font-sans">{sv.label}</StatusBadge>
+              {t.locked && <span className="inline-flex items-center gap-0.5 rounded bg-violet-600 px-1 text-[9px] font-bold text-white"><Lock className="h-2.5 w-2.5" />Khoá</span>}
+              {t.allow_extra_drops && <ExtraDropsBadge />}
+            </SheetTitle>
+            <p className="text-xs text-slate-500 mt-0.5">{d.vehicle_model?.name ?? 'Chưa chọn dòng xe'} · {odNos.length} OD · {t.stops} điểm giao · {nf(t.pallets, 1)} pallet · {nf(t.tons, 2)} tấn · giao {formatDate(plan.plan_date)}</p>
           </div>
           <LoadCell t={t} />
         </div>
       </SheetHeader>
-      <div className="flex-1 overflow-y-auto px-4 py-3 space-y-4">
+      <div className="flex-1 overflow-y-auto bg-slate-100 px-3 py-3 space-y-3">
         {(canRespond || canSettle || st === 'DECLINED' || st === 'TENDERED' || st === 'CONFIRMED') && (
           <div className={`rounded-md border p-2.5 space-y-2 text-xs ${st === 'DECLINED' ? 'border-red-200 bg-red-50' : st === 'TENDERED' ? 'border-sky-200 bg-sky-50' : st === 'CONFIRMED' ? 'border-green-200 bg-green-50' : 'border-amber-200 bg-amber-50'}`}>
             {st === 'TENDERED' && <p>Đã chào cho <b>{d.carrier?.name ?? 'ĐVVT'}</b>{t.tendered_at ? ` lúc ${formatTimestampDate(t.tendered_at)}` : ''} — chờ ĐVVT nhận / từ chối. Gọi hoặc Zalo cho ĐVVT rồi ghi lại câu trả lời ở đây.</p>}
@@ -717,78 +759,108 @@ function TripPane({ trip: t, plan, editable, editableVehicle, canConfirm, needsT
             </div>
           </div>
         )}
-        <div>
-          <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500 mb-1.5">Xe · ĐVVT · cước</p>
-          <div className="space-y-2">
-            <div>
-              <div className="text-[10px] text-slate-400 mb-0.5">Dòng xe con (mã SAP)</div>
-              {vehEdit ? <SingleSelect options={models} value={t.vehicle_model_id ?? ''} onChange={onModel} placeholder="Chọn dòng xe con…" disabled={busy} />
-                : <div className="text-xs font-medium">{d.vehicle_model ? `${d.vehicle_model.sap_code} · ${d.vehicle_model.name}` : '—'}</div>}
-            </div>
-            {/* THẺ NHIỀU XE (luật 11, 27/09): xe phụ cùng Số xe — máy chia tải xe lớn trước, cước = Σ từng xe cùng ĐVVT */}
-            {(extras.length > 0 || (vehEdit && t.vehicle_model_id)) && (
-              <div className="rounded border border-slate-200 p-2 space-y-1.5">
-                <div className="text-[10px] text-slate-400 flex items-center gap-1">Xe phụ trên thẻ ({extras.length})
-                  <InfoTip tip="Một Số xe có thể đi nhiều xe (vd 8 tấn + 2 tấn thay cho 15 tấn). Máy tự so tổ hợp khi lập; ở đây người thêm / bớt tay. Bước Xuất kho vẫn là MỘT chuyến một biển số — Kế hoạch xuất ghi đủ các xe để ĐVVT booking." /></div>
-                {extras.map((id, i) => (
-                  <div key={`${id}-${i}`} className="flex items-center gap-1">
-                    <div className="min-w-0 flex-1">{vehEdit
-                      ? <SingleSelect options={models} value={id} onChange={v => onModels([t.vehicle_model_id!, ...extras.map((x, j) => (j === i ? v : x)).filter(Boolean)])} disabled={busy} />
-                      : <div className="text-xs">{models.find(m => m.value === id)?.label ?? id}</div>}</div>
-                    {vehEdit && <Button size="sm" variant="outline" className="h-8 px-2" disabled={busy} title="Bỏ xe này khỏi thẻ" onClick={() => onModels([t.vehicle_model_id!, ...extras.filter((_, j) => j !== i)])}>✕</Button>}
-                  </div>
-                ))}
-                {vehEdit && extras.length < 4 && (
-                  <div className="w-full"><SingleSelect options={models} value="" placeholder="＋ Thêm xe vào thẻ…" disabled={busy} onChange={v => { if (v) onModels([t.vehicle_model_id!, ...extras, v]) }} /></div>
-                )}
-                {(d.vehicles?.length ?? 0) > 1 && d.vehicles!.map((v, i) => (
-                  <div key={`p-${v.id}-${i}`} className="flex gap-2 text-[11px] text-slate-600"><span className="min-w-0 flex-1 break-words">{v.name}</span><span className="tabular-nums">{nf(v.pallets, 1)} pl · {nf(v.tons, 1)} t</span><span className="tabular-nums font-medium">{v.freight == null ? '—' : vnd(v.freight)}</span></div>
-                ))}
-              </div>
-            )}
-            <div>
-              <div className="text-[10px] text-slate-400 mb-0.5 flex items-center gap-1">ĐVVT {d.carrier_reasons.length > 0 && <InfoTip tip={<ul className="list-disc pl-4 space-y-0.5">{d.carrier_reasons.map((r, i) => <li key={i}>{r}</li>)}</ul>} />}</div>
-              {vehEdit ? <SingleSelect options={companies} value={t.transport_company_id ?? ''} onChange={onCarrier} placeholder="Chọn ĐVVT…" disabled={busy} />
-                : <div className="text-xs font-medium">{d.carrier ? `${d.carrier.code} · ${d.carrier.name}` : '—'}</div>}
-              {d.carrier && st !== 'CONFIRMED' && <p className="text-[10px] text-slate-500 mt-0.5">{needsTender ? <><Send className="inline h-3 w-3 mr-0.5 text-sky-600" />ĐVVT này <b>cần phản hồi</b> — sau Xác nhận xe chờ ĐVVT nhận.</> : 'ĐVVT không cần phản hồi — Xác nhận là vào Kế hoạch xuất ngay; sau đó vẫn đổi ĐVVT được ngay tại đây.'}</p>}
-            </div>
-            <Row k="Cước dự tính" v={t.freight_estimated != null ? <span className="tabular-nums font-semibold">{vnd(t.freight_estimated)}</span> : <span className="text-amber-700">{d.freight.reason ?? 'Chưa có cước'}</span>} />
-            {d.freight.base != null && <Row k="Cước tuyến" v={<>{vnd(d.freight.base)}{d.freight.unit === 'PER_PALLET' && d.freight.billed_pallets != null ? <span className="text-slate-500 font-normal"> · {d.freight.billed_pallets} pallet (làm tròn lên)</span> : <span className="text-slate-500 font-normal"> · trọn chuyến</span>}</>} />}
-            {d.freight.surcharges.map((x, i) => <Row key={i} k={`Phụ phí ${x.kind}`} v={`${vnd(x.unit_amount)} × ${x.qty} = ${vnd(x.total)}`} />)}
-            {d.freight.ward && <Row k="Phường tính cước" v={d.freight.ward} />}
-            {d.booking_category && <Row k="Loại kho booking" v={<>{d.booking_category}{d.categories.length > 1 && <span className="text-slate-500 font-normal"> · chở lẫn {d.categories.join('+')}</span>}</>} />}
-            {!!d.conditions?.length && <Row k="Điều kiện bảo quản" v={<>{d.conditions.map(c => conditionLabel(condBy.get(c), c)).join(' + ')}<span className="text-slate-500 font-normal"> · dòng xe phải phục vụ đủ các mức này</span></>} />}
-            {d.warnings.map((w, i) => <div key={i} className="text-[11px] text-red-700 bg-red-50 border border-red-200 rounded px-2 py-1"><AlertTriangle className="inline h-3 w-3 mr-1" />{w}</div>)}
-            {d.merge_hint && <div className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded px-2 py-1">{d.merge_hint}</div>}
+
+        <SettingsGroup title={`Bản đồ tuyến · ${t.stops} điểm giao`}>
+          <TripRouteMap trip={t} planId={plan.id} />
+        </SettingsGroup>
+
+        <SettingsGroup title="Xe · ĐVVT · Cước">
+          <div className="py-2 space-y-1">
+            <div className="text-[11px] font-semibold text-slate-700">Dòng xe con (mã SAP)</div>
+            {vehEdit ? <SingleSelect options={models} value={t.vehicle_model_id ?? ''} onChange={onModel} placeholder="Chọn dòng xe con…" disabled={busy} />
+              : <div className="text-xs font-medium">{d.vehicle_model ? `${d.vehicle_model.sap_code} · ${d.vehicle_model.name}` : '—'}</div>}
           </div>
-        </div>
-        <div>
-          <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500 mb-1.5">OD trên xe ({odNos.length})</p>
-          <div className="space-y-2">
-            {odNos.map(od => {
-              const parts = t.ods.filter(o => o.od_number === od)
-              const o = parts[0]
-              return (
-                <div key={od} className="rounded border border-slate-200 p-2 text-xs">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0">
-                      <div className="font-mono font-semibold">{od}{o.part_of ? <span className="ml-1 text-[9px] text-amber-700 font-sans">phần {o.part_index}/{o.part_of} — OD bị tách, gom về một xe trước khi xác nhận</span> : null}</div>
-                      <div className="text-slate-600 truncate">{o.ship_to_name ?? o.ship_to_code}{o.ward_code ? <span className="text-slate-400"> · {o.ward_code}</span> : null}</div>
-                      <div className="text-slate-500 tabular-nums">{nf(parts.reduce((s, p) => s + Number(p.pallets ?? 0), 0), 2)} pallet · {nf(parts.reduce((s, p) => s + Number(p.tons ?? 0), 0), 2)} tấn · {parts.reduce((s, p) => s + p.lines, 0)} dòng hàng</div>
-                    </div>
-                  </div>
-                  {editable && (
-                    <div className="mt-1.5 flex items-center gap-1.5">
-                      <ArrowRightLeft className="h-3.5 w-3.5 text-slate-400 shrink-0" />
-                      <div className="flex-1 min-w-0"><SingleSelect options={[{ value: '__new__', label: 'Tách ra xe MỚI' }, ...others]} value="" onChange={v => onMove(od, v === '__new__' ? '' : v)} placeholder="Chuyển sang xe…" disabled={busy} /></div>
-                    </div>
-                  )}
+          {/* THẺ NHIỀU XE (luật 11, 27/09): xe phụ cùng Số xe — máy chia tải xe lớn trước, cước = Σ từng xe cùng ĐVVT */}
+          {(extras.length > 0 || (vehEdit && t.vehicle_model_id)) && (
+            <div className="py-2 space-y-1.5">
+              <div className="text-[11px] font-semibold text-slate-700 flex items-center gap-1">Xe phụ trên thẻ ({extras.length})
+                <InfoTip tip="Một Số xe có thể đi nhiều xe (vd 8 tấn + 2 tấn thay cho 15 tấn). Máy tự so tổ hợp khi lập; ở đây người thêm / bớt tay. Bước Xuất kho vẫn là MỘT chuyến một biển số — Kế hoạch xuất ghi đủ các xe để ĐVVT booking." /></div>
+              {extras.map((id, i) => (
+                <div key={`${id}-${i}`} className="flex items-center gap-1">
+                  <div className="min-w-0 flex-1">{vehEdit
+                    ? <SingleSelect options={models} value={id} onChange={v => onModels([t.vehicle_model_id!, ...extras.map((x, j) => (j === i ? v : x)).filter(Boolean)])} disabled={busy} />
+                    : <div className="text-xs">{models.find(m => m.value === id)?.label ?? id}</div>}</div>
+                  {vehEdit && <Button size="sm" variant="outline" className="h-8 px-2" disabled={busy} title="Bỏ xe này khỏi thẻ" onClick={() => onModels([t.vehicle_model_id!, ...extras.filter((_, j) => j !== i)])}>✕</Button>}
                 </div>
-              )
-            })}
+              ))}
+              {vehEdit && extras.length < 4 && (
+                <div className="w-full"><SingleSelect options={models} value="" placeholder="＋ Thêm xe vào thẻ…" disabled={busy} onChange={v => { if (v) onModels([t.vehicle_model_id!, ...extras, v]) }} /></div>
+              )}
+              {(d.vehicles?.length ?? 0) > 1 && d.vehicles!.map((v, i) => (
+                <div key={`p-${v.id}-${i}`} className="flex gap-2 text-[11px] text-slate-600"><span className="min-w-0 flex-1 break-words">{v.name}</span><span className="tabular-nums">{nf(v.pallets, 1)} pl · {nf(v.tons, 1)} t</span><span className="tabular-nums font-medium">{v.freight == null ? '—' : vnd(v.freight)}</span></div>
+              ))}
+            </div>
+          )}
+          <div className="py-2 space-y-1">
+            <div className="text-[11px] font-semibold text-slate-700 flex items-center gap-1">ĐVVT <span className="font-normal text-slate-500">— bấm để xem cước từng ĐVVT cho xe này</span>
+              {d.carrier_reasons.length > 0 && <InfoTip tip={<ul className="list-disc pl-4 space-y-0.5">{d.carrier_reasons.map((r, i) => <li key={i}>{r}</li>)}</ul>} />}</div>
+            <DispatchCarrierPicker trip={t} editable={vehEdit} busy={busy} onPick={onCarrier} field />
+            {d.carrier && st !== 'CONFIRMED' && <p className="text-[10px] text-slate-500">{needsTender ? <><Send className="inline h-3 w-3 mr-0.5 text-sky-600" />ĐVVT này <b>cần phản hồi</b> — sau Xác nhận xe chờ ĐVVT nhận.</> : 'ĐVVT không cần phản hồi — Xác nhận là vào Kế hoạch xuất ngay; sau đó vẫn đổi ĐVVT được ngay tại đây.'}</p>}
           </div>
-        </div>
-        {!editable && <p className="text-[11px] text-slate-400">{editableVehicle ? 'Xe đã chốt — ĐVVT / dòng xe đổi ngay tại đây; thêm bớt OD hay dời ngày thì "Mở lại" xe.' : planOpen && !EDITABLE.includes(st) ? `Xe ${sv.label.toLowerCase()} — không sửa dòng xe / ĐVVT / OD ở đây nữa.` : `Kế hoạch ${STATUS_VI[plan.status].label.toLowerCase()} — chỉ xem.`}</p>}
+          <KV k="Cước dự tính" v={t.freight_estimated != null ? <span className="tabular-nums font-semibold">{vnd(t.freight_estimated)}</span> : <span className="text-amber-700">{d.freight.reason ?? 'Chưa có cước'}</span>} />
+          {d.freight.base != null && <KV k="Cước tuyến" v={<>{vnd(d.freight.base)}{d.freight.unit === 'PER_PALLET' && d.freight.billed_pallets != null ? <span className="text-slate-500 font-normal"> · {d.freight.billed_pallets} pallet (làm tròn lên)</span> : <span className="text-slate-500 font-normal"> · trọn chuyến</span>}</>} />}
+          {d.freight.surcharges.map((x, i) => <KV key={i} k={`Phụ phí ${x.kind}`} v={`${vnd(x.unit_amount)} × ${x.qty} = ${vnd(x.total)}`} />)}
+          {d.freight.ward && <KV k="Phường tính cước" v={d.freight.ward} />}
+          {d.booking_category && <KV k="Loại kho booking" v={<span className="inline-flex flex-wrap items-center gap-1">{chips([d.booking_category])}{d.categories.length > 1 && <span className="text-slate-500 font-normal">chở lẫn</span>}{d.categories.length > 1 && chips(d.categories)}</span>} />}
+          {!!d.conditions?.length && <KV k="Điều kiện bảo quản" v={<>{d.conditions.map(c => conditionLabel(condBy.get(c), c)).join(' + ')}<span className="text-slate-500 font-normal"> · dòng xe phải phục vụ đủ các mức này</span></>} />}
+        </SettingsGroup>
+
+        {/* THAO TÁC XE — công tắc khuôn AppSheet (user 16/10: "switch tiêu chuẩn của appsheet"); xe đã chốt / kế hoạch đóng thì chỉ xem */}
+        <SettingsGroup title="Thao tác xe">
+          <SettingRow label="Khoá xe" htmlFor={`sw-lock-${t.id}`}
+            desc={(t.locked ? 'Đang khoá — "Tối ưu lại" giữ nguyên xe này (đơn, dòng xe, ĐVVT); kéo thả / đổi tay vẫn làm được.' : 'Khoá để lần "Tối ưu lại" sau máy giữ nguyên xe này. Hỏi lại trước khi khoá.') + offWhy}
+            control={<Switch id={`sw-lock-${t.id}`} checked={t.locked === true} disabled={!editable || busy} onCheckedChange={onLock} aria-label="Khoá xe" />} />
+          <SettingRow label="Ghép Loại kho khác" htmlFor={`sw-mix-${t.id}`}
+            desc={(t.allow_mix_categories == null ? `Theo kế hoạch: ${planMix ? 'cho ghép' : 'không ghép'} — ` : '') + (mixOn ? 'Cho thả OD khác Loại kho chính vào xe này.' : 'Chặn thả OD khác Loại kho chính vào xe này.') + offWhy}
+            control={<Switch id={`sw-mix-${t.id}`} checked={mixOn} disabled={!editable || busy} onCheckedChange={onMix} aria-label="Ghép Loại kho khác" />} />
+          <SettingRow label="Cho vượt số khách" htmlFor={`sw-drops-${t.id}`}
+            desc={`Xe đang chở ${t.stops} khách · trần ${Number.isFinite(cap) ? cap : '—'} (${capModel != null ? `dòng xe ${vm?.name ?? ''}: ${capModel}` : 'chưa có dòng xe'}${capOds != null ? ` · khách / kênh: ${capOds}` : ''}). Bật = kéo thả và Xác nhận không chặn số khách cho RIÊNG xe này; các luật khác vẫn chặn.${offWhy}`}
+            control={<Switch id={`sw-drops-${t.id}`} checked={t.allow_extra_drops === true} disabled={!editable || busy} onCheckedChange={onExtraDrops} aria-label="Cho vượt số khách" />} />
+          {editable && !t.ods.length && (
+            <SettingRow label="Bỏ xe trống" desc="Xe không còn đơn nào — bỏ khỏi kế hoạch."
+              control={<Button size="sm" variant="outline" className="h-7 border-red-200 text-red-700 hover:bg-red-50" disabled={busy} onClick={onRemove}><Trash2 className="h-3.5 w-3.5 mr-1" />Bỏ xe</Button>} />
+          )}
+        </SettingsGroup>
+
+        {(d.warnings.length > 0 || !!d.merge_hint) && (
+          <SettingsGroup title="Cảnh báo">
+            <div className="py-2 space-y-1.5">
+              {d.warnings.map((w, i) => <div key={i} className="text-[11px] text-red-700 bg-red-50 border border-red-200 rounded px-2 py-1"><AlertTriangle className="inline h-3 w-3 mr-1" />{w}</div>)}
+              {d.merge_hint && <div className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded px-2 py-1">{d.merge_hint}</div>}
+            </div>
+          </SettingsGroup>
+        )}
+
+        <SettingsGroup title={`Đơn trên xe (${odNos.length})`}>
+          {odNos.map(od => {
+            const parts = t.ods.filter(o => o.od_number === od)
+            const o = parts[0]
+            const fl = flags.get(od)
+            const stopNo = (d.route?.order.indexOf(o.ship_to_code ?? '') ?? -1) + 1
+            const cats = [...new Set(parts.flatMap(p => Object.keys(p.cat_load ?? {})))].sort((a, b) => Number(follow.has(a)) - Number(follow.has(b)) || a.localeCompare(b))
+            return (
+              <div key={od} className="py-2 text-xs space-y-0.5">
+                <div className="flex flex-wrap items-center gap-1">
+                  {stopNo > 0 && <span className="rounded bg-sky-700 px-1 text-[9px] font-bold text-white" title="Điểm giao thứ mấy của xe (kho → điểm gần trước)">Đ{stopNo}</span>}
+                  <span className="font-mono font-semibold">{od}</span>
+                  {fl && <SapFlagIcon flag={fl} />}
+                  {chips(cats)}
+                  {o.part_of ? <span className="text-[9px] text-amber-700">phần {o.part_index}/{o.part_of} — OD bị tách, gom về một xe trước khi xác nhận</span> : null}
+                </div>
+                <div className="text-slate-600 truncate">{o.ship_to_name ?? o.ship_to_code}{o.ward_code ? <span className="text-slate-400"> · {o.ward_code}</span> : null}</div>
+                <div className="text-slate-500 tabular-nums">{nf(parts.reduce((s, p) => s + Number(p.pallets ?? 0), 0), 2)} pallet · {nf(parts.reduce((s, p) => s + Number(p.tons ?? 0), 0), 2)} tấn · {parts.reduce((s, p) => s + p.lines, 0)} dòng hàng</div>
+                {editable && (
+                  <div className="pt-1 flex items-center gap-1.5">
+                    <ArrowRightLeft className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+                    <div className="flex-1 min-w-0"><SingleSelect options={[{ value: '__new__', label: 'Tách ra xe MỚI' }, ...others]} value="" onChange={v => onMove(od, v === '__new__' ? '' : v)} placeholder="Chuyển sang xe…" disabled={busy} /></div>
+                  </div>
+                )}
+              </div>
+            )
+          })}
+          {!odNos.length && <p className="py-2 text-[11px] text-slate-400">Xe trống — kéo đơn từ khung chờ vào, hoặc bỏ xe ở Thao tác xe.</p>}
+        </SettingsGroup>
+        {!editable && <p className="text-[11px] text-slate-500">{editableVehicle ? 'Xe đã chốt — ĐVVT / dòng xe đổi ngay tại đây; thêm bớt OD hay dời ngày thì "Mở lại" xe.' : planOpen && !EDITABLE.includes(st) ? `Xe ${sv.label.toLowerCase()} — không sửa dòng xe / ĐVVT / OD ở đây nữa.` : `Kế hoạch ${STATUS_VI[plan.status].label.toLowerCase()} — chỉ xem.`}</p>}
       </div>
     </>
   )

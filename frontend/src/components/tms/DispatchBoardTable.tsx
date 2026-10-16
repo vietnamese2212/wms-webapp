@@ -471,7 +471,7 @@ function tripCells(ops: BoardOps, t: DispatchTrip, hv: BoardHover, open: boolean
           {ed && <IconBtn title={t.locked ? 'Đang khoá — "Tối ưu lại" không đụng vào xe này. Bấm để mở khoá' : 'Khoá xe để "Tối ưu lại" giữ nguyên (hỏi lại trước khi khoá)'} disabled={ops.tripBusy} onClick={() => ops.toggleLock(t)}>
             {t.locked ? <Lock className="h-3.5 w-3.5 text-violet-700" /> : <Unlock className="h-3.5 w-3.5" />}</IconBtn>}
           {/* 16/10 (chế độ Sửa kế hoạch đã xác nhận): ổ khoá XANH = xe đã vào KH xuất — bấm để mở lại riêng xe này (khác ổ khoá tím = giữ khi Tối ưu lại) */}
-          {!ed && st === 'CONFIRMED' && ops.editable && ops.reopenTrip && <IconBtn title="Đã vào Kế hoạch xuất — bấm để MỞ LẠI riêng xe này về nháp (hỏi lại trước)" disabled={ops.tripBusy} onClick={() => ops.reopenTrip!(t)}>
+          {!ed && st === 'CONFIRMED' && ops.editable && ops.reopenTrip && <IconBtn title={`Mở lại xe #${t.seq} — đã vào Kế hoạch xuất; bấm để mở lại RIÊNG xe này về nháp (hỏi lại trước)`} disabled={ops.tripBusy} onClick={() => ops.reopenTrip!(t)}>
             <LockKeyhole className="h-3.5 w-3.5 text-green-700" /></IconBtn>}
           {ed && !t.ods.length && <IconBtn danger title="Bỏ xe trống" disabled={ops.tripBusy} onClick={() => ops.removeTrip(t)}><X className="h-3.5 w-3.5" /></IconBtn>}
         </span>

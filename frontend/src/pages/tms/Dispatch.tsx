@@ -418,7 +418,9 @@ export default function Dispatch() {
     }) === null) return
     setDiscardingId(p.id)
     try {
-      const r = n > 0 ? await reopen.mutateAsync({ plan_id: p.id }) : null
+      // luôn thử mở lại (số xe đã chốt trong summary có thể cũ vài giây sau khi Xác nhận) — không có xe nào để mở thì 422, bỏ qua
+      let r: Awaited<ReturnType<typeof reopen.mutateAsync>> | null = null
+      try { r = await reopen.mutateAsync({ plan_id: p.id }) } catch (e) { if (apiCode(e) !== 'NOTHING_TO_REOPEN') throw e }
       const d = await discard.mutateAsync(p.id)
       if (d.status === 'DISCARDED' && p.id === planId) setF({ planId: '' })
       const blocked = r?.reopened.blocked ?? []

@@ -69,6 +69,14 @@ type Tone = 'amber' | 'green' | 'slate' | 'blue' | 'red'
 const STATUS_VI: Record<DispatchPlan['status'], { label: string; tone: Tone }> = {
   DRAFT: { label: 'Bản nháp', tone: 'amber' }, TENDERED: { label: 'Chờ ĐVVT phản hồi', tone: 'blue' }, CONFIRMED: { label: 'Đã xác nhận', tone: 'green' }, DISCARDED: { label: 'Đã bỏ', tone: 'slate' },
 }
+/** 17/10 (user chốt): kế hoạch TENDERED mà KHÔNG xe nào chờ / bị ĐVVT từ chối = đang SỬA (vài xe mở lại giữa các xe đã chốt) — badge cũ
+ *  "Chờ ĐVVT phản hồi" làm người xem tưởng kẹt ở ĐVVT trong khi cả ba ĐVVT đều không cần phản hồi. */
+const planStatusView = (p: DispatchPlan): { label: string; tone: Tone } => {
+  if (p.status !== 'TENDERED') return STATUS_VI[p.status]
+  const live = p.trips.filter(t => tripStatus(t) !== 'DISCARDED')
+  if (live.some(t => tripStatus(t) === 'TENDERED' || tripStatus(t) === 'DECLINED')) return STATUS_VI.TENDERED
+  return { label: `Đang sửa · ${nf(live.filter(t => tripStatus(t) === 'DRAFT').length)}/${nf(live.length)} xe mở`, tone: 'amber' }
+}
 const TRIP_STATUS_VI: Record<DispatchTripStatus, { label: string; tone: Tone }> = {
   DRAFT: { label: 'Nháp', tone: 'amber' }, TENDERED: { label: 'Chờ ĐVVT', tone: 'blue' }, DECLINED: { label: 'ĐVVT từ chối', tone: 'red' },
   CONFIRMED: { label: 'Đã vào KH xuất', tone: 'green' }, DISCARDED: { label: 'Đã bỏ', tone: 'slate' },
@@ -426,32 +434,48 @@ export default function Dispatch() {
     }).catch(e => err(e, 'Không nạp được đơn chờ')).finally(() => setDiscardingId(null))
   }
   // MỞ LẠI MỘT XE (16/10, user: "tất cả các xe đều khoá lại, muốn sửa xe nào thì mở khoá xe đó") — cùng cửa với "Mở lại" cả kế hoạch, chỉ một id
+  // 17/10 (user chốt "bắt buộc phải mở ra thì mới gỡ được — hai bên cùng được cảnh báo"): xe có chuyến bên Xuất đã quét / đang xuất ⇒ server
+  // hỏi một lần (409 OUTBOUND_HOLD_CONFIRM nêu từng xe) — người bấm "Vẫn mở lại" ⇒ gửi lại với `force`; chuyến ngừng, thủ kho nhận việc Cần xử lý
+  const reopenWithHold = async (v: { plan_id: string; trip_ids?: string[] }) => {
+    try { return await reopen.mutateAsync(v) } catch (e) {
+      if (apiCode(e) !== 'OUTBOUND_HOLD_CONFIRM') throw e
+      if (await ask({ title: 'Chuyến bên Xuất kho đang có hàng — vẫn rút xe?', danger: true, confirmLabel: 'Vẫn mở lại', body: apiMsg(e) }) === null) return null
+      return reopen.mutateAsync({ ...v, force: true })
+    }
+  }
   const reopenTrip = async (t: DispatchTrip) => {
     if (!plan) return
     if (await ask({
       title: `Mở lại xe #${t.seq} (${t.group_code})?`, confirmLabel: 'Mở lại xe',
-      body: 'Xe về NHÁP để sửa trên bàn: dòng Kế hoạch xuất của xe bị gỡ, chuyến bên Xuất kho tạm NGỪNG, lệnh VC NHẢ khung giờ đã đặt. Sửa xong bấm Xác nhận — cùng Số xe sống lại, khung giờ phải đặt lại.\nChuyến đã bắt đầu / đang giữ hàng nhặt lẻ thì không mở được.',
+      body: 'Xe về NHÁP để sửa trên bàn: dòng Kế hoạch xuất của xe bị gỡ, chuyến bên Xuất kho NGỪNG, lệnh VC NHẢ khung giờ đã đặt. Sửa xong bấm Xác nhận — cùng Số xe sống lại, khung giờ phải đặt lại.\nChuyến đã quét / đang xuất: hỏi thêm một lần — hàng đã quét giữ nguyên, thủ kho nhận việc "Cần xử lý". Chuyến đã hoàn thành thì không mở được.',
     }) === null) return
     setEditDay(plan.plan_date)
-    reopen.mutateAsync({ plan_id: plan.id, trip_ids: [t.id] }).then(r => toast({
-      title: r.reopened.trips ? `Đã mở lại xe #${t.seq} — sửa rồi Xác nhận lại` : `Không mở lại được xe #${t.seq}`,
-      description: r.reopened.blocked[0]?.reason ?? r.reopened.replan_error ?? undefined,
-      variant: r.reopened.trips ? undefined : 'destructive',
-    })).catch(e => err(e, 'Không mở lại được xe'))
+    try {
+      const r = await reopenWithHold({ plan_id: plan.id, trip_ids: [t.id] })
+      if (!r) return
+      const warned = r.reopened.warned?.length ?? 0
+      toast({
+        title: r.reopened.trips ? `Đã mở lại xe #${t.seq} — sửa rồi Xác nhận lại` : `Không mở lại được xe #${t.seq}`,
+        description: r.reopened.blocked[0]?.reason ?? r.reopened.replan_error ?? (warned ? 'Chuyến bên Xuất đang có hàng đã quét — thủ kho nhận việc "Cần xử lý"; về đúng xe này rồi Xác nhận thì chuyến sống lại với hàng đã quét' : undefined),
+        variant: r.reopened.trips ? undefined : 'destructive',
+      })
+    } catch (e) { err(e, 'Không mở lại được xe') }
   }
   // HUỶ CẢ KẾ HOẠCH (16/10, user: "kế hoạch làm nhầm, xoá toàn bộ"): mở lại mọi xe mở được → bỏ nháp; xe không mở được liệt kê để xử bên Xuất kho
   type CancelTarget = Pick<DispatchPlanListItem, 'id' | 'plan_date' | 'segment' | 'summary'>
-  const cancelBody = (n: number) => `${nf(n)} xe đã vào Kế hoạch xuất sẽ được mở lại rồi bỏ cùng mọi xe nháp: đơn về Chờ điều, dòng Kế hoạch xuất gỡ, chuyến Xuất kho ngừng hoạt động (giữ lịch sử), lệnh VC nhả khung giờ.\nXe có chuyến đã bắt đầu / đã hoàn thành / đang giữ hàng nhặt lẻ KHÔNG huỷ được — giữ nguyên, xử bên Xuất kho (xoá QR đã quét → Bỏ bắt đầu) rồi huỷ lại.`
+  const cancelBody = (n: number) => `${nf(n)} xe đã vào Kế hoạch xuất sẽ được mở lại rồi bỏ cùng mọi xe nháp: đơn về Chờ điều, dòng Kế hoạch xuất gỡ, chuyến Xuất kho ngừng hoạt động (giữ lịch sử), lệnh VC nhả khung giờ.\nXe có chuyến đã quét / đang xuất: hỏi thêm một lần — hàng đã quét giữ nguyên trên chuyến, thủ kho nhận việc "Cần xử lý" để trả hàng. Chuyến đã hoàn thành KHÔNG huỷ được — giữ nguyên.`
   // một kế hoạch: luôn thử mở lại (số xe đã chốt trong summary có thể cũ vài giây sau khi Xác nhận) — không có xe nào để mở thì 422, bỏ qua
   const cancelInner = async (p: CancelTarget) => {
     let r: Awaited<ReturnType<typeof reopen.mutateAsync>> | null = null
-    try { r = await reopen.mutateAsync({ plan_id: p.id }) } catch (e) { if (apiCode(e) !== 'NOTHING_TO_REOPEN') throw e }
+    try { r = await reopenWithHold({ plan_id: p.id }); if (r === null) return { trips: 0, blocked: [], replan_error: null, discarded: false, aborted: true } }
+    catch (e) { if (apiCode(e) !== 'NOTHING_TO_REOPEN') throw e }
     const d = await discard.mutateAsync(p.id)
     if (d.status === 'DISCARDED' && p.id === planId) setF({ planId: '' })
-    return { trips: (r?.reopened.trips ?? 0) + d.discarded_trips, blocked: r?.reopened.blocked ?? [], replan_error: r?.reopened.replan_error ?? null, discarded: d.status === 'DISCARDED' }
+    return { trips: (r?.reopened.trips ?? 0) + d.discarded_trips, blocked: r?.reopened.blocked ?? [], replan_error: r?.reopened.replan_error ?? null, discarded: d.status === 'DISCARDED', aborted: false }
   }
   const cancelToast = (label: string, rs: Awaited<ReturnType<typeof cancelInner>>[]) => {
     const blocked = rs.flatMap(x => x.blocked), replan = rs.find(x => x.replan_error)?.replan_error ?? null
+    if (rs.some(x => x.aborted)) { toast({ title: `Chưa huỷ kế hoạch ${label} — bạn đã dừng ở bước rút xe đang có hàng` }); return }
     toast({
       title: rs.every(x => x.discarded) ? `Đã huỷ kế hoạch ${label} — ${nf(rs.reduce((a, x) => a + x.trips, 0))} xe` : `Đã huỷ phần mở được — ${nf(blocked.length)} xe giữ lại`,
       description: blocked.length ? blocked.slice(0, 3).map(b => `${b.group_code}: ${b.reason}`).join('; ') : replan ?? undefined,
@@ -553,7 +577,7 @@ export default function Dispatch() {
     return m
   }, [all, ictx])
   const sum = plan?.summary
-  const s = plan ? STATUS_VI[plan.status] : null
+  const s = plan ? planStatusView(plan) : null
   // 14/10 (user: "bố cục lộn xộn, không gian đọc hẹp — thu gọn action / filter lên trên, icon + tooltip"): dải Soát không còn là một
   // hàng riêng — đưa vào thanh công cụ của bàn (DispatchBoard nhận qua `soat`), chrome trước bảng từ 5 hàng còn 2.
   // Lựa chọn + số của từng lựa chọn vẫn NHÌN THẤY không cần bấm (user chốt 17/09); câu "không còn xe chờ người quyết" vào tooltip.
@@ -970,7 +994,7 @@ function TripPane({ trip: t, plan, editable, editableVehicle, canConfirm, needsT
           })}
           {!odNos.length && <p className="py-2 text-[11px] text-slate-400">Xe trống — kéo đơn từ khung chờ vào, hoặc bỏ xe ở Thao tác xe.</p>}
         </SettingsGroup>
-        {!editable && <p className="text-[11px] text-slate-500">{editableVehicle ? 'Xe đã chốt — ĐVVT / dòng xe đổi ngay tại đây; thêm bớt OD hay dời ngày thì "Mở lại" xe.' : planOpen && !EDITABLE.includes(st) ? `Xe ${sv.label.toLowerCase()} — không sửa dòng xe / ĐVVT / OD ở đây nữa.` : `Kế hoạch ${STATUS_VI[plan.status].label.toLowerCase()} — chỉ xem.`}</p>}
+        {!editable && <p className="text-[11px] text-slate-500">{editableVehicle ? 'Xe đã chốt — ĐVVT / dòng xe đổi ngay tại đây; thêm bớt OD hay dời ngày thì "Mở lại" xe.' : planOpen && !EDITABLE.includes(st) ? `Xe ${sv.label.toLowerCase()} — không sửa dòng xe / ĐVVT / OD ở đây nữa.` : `Kế hoạch ${planStatusView(plan).label.toLowerCase()} — chỉ xem.`}</p>}
       </div>
     </>
   )

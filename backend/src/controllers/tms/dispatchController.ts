@@ -43,7 +43,7 @@ import {
 import { splitPool, redoDispatchedOf, type ExcludedOd, type ExcludedDetail, type ExcludeKind, type PoolCandidateRow, type OtherDraft } from '../../services/dispatchPool'
 import { applyWarehouseOverrides, loadWarehouseOverrides, multiVehicleOf, detourPctOf } from '../../services/vehicleModelScope'
 import { replanKhvcGroups } from '../wms/outboundController'
-import { classifyKhvcDelete } from '../external/khvcController'
+import { classifyKhvcDelete, outboundHoldState } from '../external/khvcController'
 import { logOutboundEvents, actorOf, type OutboundEventInput } from '../../services/outboundEvents'
 import type { Database, Json } from '../../types/database'
 import type { LoadMat } from '../../utils/loadCalc'
@@ -1878,7 +1878,26 @@ async function updatePlanParamsInner(req: Request, res: Response) {
  *  SAP đã thay OD (sửa SO) · SAP đã bỏ OD · đã xuất kho · SAP đã điều cho ĐVVT khác · đã có người đưa vào Kế hoạch xuất. */
 // KIN_SHIPPED (03/10, user chốt (b)): OD mới cùng dòng SO với OD cũ ĐÃ ĐI (phả hệ AFTER_POST chưa giải quyết, OD cũ còn ở Kế hoạch xuất) —
 // rào DB không cho OD mới đi ngày khác tới khi người bấm "Xác nhận đơn bổ sung" (ghi resolved_* vào od_lineage). Cờ CỨNG: chặn Xác nhận.
-type OdFlag = { od_number: string; kind: 'REPLACED' | 'GONE' | 'SHIPPED' | 'SAP_ASSIGNED' | 'IN_PLAN' | 'CHANGED' | 'KIN_SHIPPED'; info: string | null; replaced_by?: string | null }
+type OdFlag = { od_number: string; kind: 'REPLACED' | 'GONE' | 'SHIPPED' | 'SAP_ASSIGNED' | 'IN_PLAN' | 'CHANGED' | 'KIN_SHIPPED' | 'WH_SCANNED'; info: string | null; replaced_by?: string | null }
+/** HÀNG ĐÃ QUÉT bên Xuất kho trên chuyến của xe mà bàn đã RÚT (17/10): od_number → Số xe cũ + số đã quét. Chuyến `plan_dropped` cùng kho ×
+ *  ngày xuất của kế hoạch (nhỏ — vài xe). Dùng cho cờ WH_SCANNED ở /sync (bàn tô đỏ xe mang đơn) và gác Xác nhận SCANNED_OD_REMOVED. */
+async function scannedOnDroppedTrips(full: Pick<FullPlan, 'warehouse_id' | 'plan_date'>): Promise<Map<string, { group_code: string; scanned: number }>> {
+  const out = new Map<string, { group_code: string; scanned: number }>()
+  const { data: dropped, error } = await db.from('GroupDeliveryOrder').select('id, group_code').eq('warehouse_id', full.warehouse_id).eq('plan_dropped', true).eq('delivery_date', full.plan_date).limit(500)
+  if (error) throw error
+  if (!dropped?.length) return out
+  const gcByGdo = new Map(dropped.map(g => [g.id, g.group_code]))
+  const dos = (await fetchAllByIdChunks([...gcByGdo.keys()], c => db.from('OutboundDelivery').select('id, gdo_id').in('gdo_id', c).order('id'))) as { id: string; gdo_id: string }[]
+  if (!dos.length) return out
+  const gcByDo = new Map(dos.map(d => [d.id, gcByGdo.get(d.gdo_id)!]))
+  const items = (await fetchAllByIdChunks(dos.map(d => d.id), c => db.from('OutboundItem').select('do_id, cartons_scanned, od_refs').in('do_id', c).gt('cartons_scanned', 0).order('id'))) as { do_id: string; cartons_scanned: number | string | null; od_refs: { od_number?: string | null }[] | null }[]
+  for (const it of items) for (const r of (Array.isArray(it.od_refs) ? it.od_refs : [])) {
+    if (!r?.od_number) continue
+    const cur = out.get(r.od_number)
+    out.set(r.od_number, { group_code: gcByDo.get(it.do_id)!, scanned: (cur?.scanned ?? 0) + (Number(it.cartons_scanned) || 0) })
+  }
+  return out
+}
 /** Bản chụp của OD trên kế hoạch (chữ ký dòng hàng + ghi chú) — để biết SAP đã SỬA cùng OD đó sau khi người xem. */
 // ship_to (08/10, user chốt "cờ Cần xử lý"): SAP đổi KHÁCH GIAO của cùng OD sau khi chụp ⇒ xe đang chở tới khách cũ
 type OdSnap = { sig: string | null; note: string | null; ship_to?: string | null }
@@ -1973,7 +1992,7 @@ export async function planSync(req: Request, res: Response) {
     // ZSD02 của plant (Ba Vì 9.094 dòng = 4 MB) về backend mỗi 120 s cho MỖI bàn đang mở, chỉ để lọc ra vài số OD.
     // Ba câu chạy song song ⇒ 503 ghi tên cả cụm; câu nặng duy nhất đo được là dispatch_new_ods (11/10: 6,8 s trước chỉ mục phủ 20261011b).
     step(res, 'cờ sống của OD + đếm OD mới (RPC dispatch_new_ods)')
-    const [flags, freshRaw, pulled] = await Promise.all([
+    const [flags, freshRaw, pulled, whScanned] = await Promise.all([
       odFlags(odNos, full.trips.filter(t => statusOf(t) === 'CONFIRMED').map(t => t.group_code), snapsOf(liveRows), slocsOf(wh)),
       wh?.sap_plant
         // ngày giao không quyết (05/10 khuya, 20261005f — cùng luật loadCandidates); p_from / p_to hàm không còn đọc
@@ -1981,7 +2000,11 @@ export async function planSync(req: Request, res: Response) {
             p_slocs: slocsOf(wh), p_warehouse_id: wh.id, p_plan_id: full.id, p_segment: full.segment }).then(r => { if (r.error) throw r.error; return (r.data ?? []) as unknown as string[] })
         : Promise.resolve([] as string[]),
       pulledAwayHeld(full),
+      scannedOnDroppedTrips(full),
     ])
+    // 17/10: đơn có hàng ĐÃ QUÉT trên chuyến của xe đã rút ⇒ cờ WH_SCANNED (bàn tô đỏ xe mang đơn; về đúng xe cũ thì Xác nhận sống lại chuyến)
+    const flagged = new Set(flags.map(f => f.od_number))
+    for (const od of odNos) { const s = whScanned.get(od); if (s && !flagged.has(od)) flags.push({ od_number: od, kind: 'WH_SCANNED', info: `kho đã quét ${s.scanned} (base) trên chuyến ${s.group_code} đã rút — về lại xe đó rồi Xác nhận, hoặc thủ kho trả hàng` }) }
     const inPlan = new Set([...full.trips.flatMap(t => t.ods), ...full.pool].map(o => o.od_number))
     for (const u of (full.unplanned ?? []) as { od_number?: string }[]) if (u?.od_number) inPlan.add(u.od_number)   // máy đã thấy, không đo được tải
     const fresh = freshRaw.filter(od => !inPlan.has(od) && !pulled.has(od))
@@ -2179,6 +2202,21 @@ async function tripGuards(req: Request, full: FullPlan, subset: FullTrip[]): Pro
   if (bad.length) {
     const odOf = new Map(subset.flatMap(t => t.ods.map(o => [o.od_number, t.group_code] as const)))
     return { err: [`${bad.length} OD đổi tình trạng ở SAP từ lúc lập nháp — ${bad.slice(0, 5).map(f => `${f.od_number} (${odOf.get(f.od_number) ?? '?'}): ${f.info}`).join('; ')}${bad.length > 5 ? '…' : ''}. Trên bàn ghép xe: "Cập nhật theo SAP" (OD bị sửa) · "Thay bằng OD mới" (OD bị thay) · gỡ OD đã điều / đã xuất · tab Xem đơn: "Xác nhận đơn bổ sung" (họ hàng đã đi) — rồi xác nhận lại.`, 409, 'OD_CHANGED_IN_SAP'] }
+  }
+  // HÀNG ĐÃ QUÉT bên Xuất trên chuyến của xe đã RÚT (17/10, user chốt "mở ra thì mới gỡ được — hai bên cùng xử lý"): đơn phải về ĐÚNG xe cũ
+  // (chuyến sống lại với hàng đã quét) hoặc kho trả hàng (xoá QR / gỡ nhặt lẻ) trước — không thì đơn chốt ở xe khác trong khi pallet của nó
+  // còn nằm trên chuyến cũ, và chuyến cũ sống lại thiếu đơn đã quét.
+  {
+    const held = await scannedOnDroppedTrips(full)
+    if (held.size) {
+      const bad: string[] = []
+      for (const t of subset) {
+        const ods = uniq(t.ods.map(o => o.od_number))
+        for (const od of ods) { const h = held.get(od); if (h && h.group_code !== t.group_code) bad.push(`${od} đã quét ${h.scanned} (base) trên chuyến ${h.group_code} đã rút, nay ở xe ${t.group_code}`) }
+        for (const [od, h] of held) if (h.group_code === t.group_code && !ods.includes(od)) bad.push(`${od} đã quét ${h.scanned} (base) trên chuyến ${t.group_code} nhưng không còn trên xe`)
+      }
+      if (bad.length) return { err: [`${bad.length} đơn có HÀNG ĐÃ QUÉT bên Xuất kho trên chuyến của xe đã rút: ${bad.slice(0, 5).join('; ')}${bad.length > 5 ? '…' : ''}. Kéo đơn về lại đúng xe cũ rồi Xác nhận (chuyến sống lại với hàng đã quét), hoặc thủ kho trả hàng (xoá QR đã quét / gỡ nhặt lẻ) trước.`, 409, 'SCANNED_OD_REMOVED'] }
+    }
   }
   // MÃ HÀNG PHẢI CÓ TRONG DANH MỤC — chặn TẠI ĐÂY thay vì để đường derive từ chối sau khi đã ghi.
   // Vì sao (đo 24/09): 5 % dòng OD của SAP trỏ tới mã chưa đồng bộ sang WMS (4 mã: 810000020 ·
@@ -2390,7 +2428,10 @@ async function respondTripInner(req: Request, res: Response) {
 // Chỉ xe mà chuyến bên Xuất CHƯA bắt đầu: gỡ dòng Kế hoạch xuất của xe (cùng luật xoá tab Kế hoạch xuất — chuyến đang
 // xuất / đã hoàn thành / đang giữ hàng nhặt lẻ thì KHÔNG gỡ) ⇒ chuyến NGỪNG HOẠT ĐỘNG + lệnh VC nhả khung giờ (đường
 // dội sẵn có, giữ id) ⇒ xe về NHÁP. Xác nhận lại ⇒ cùng Số xe sống lại; khung giờ phải đặt lại.
-export const zReopen = z.object({ trip_ids: z.array(zId).min(1).max(300).optional() })
+// 17/10 (user chốt "bắt buộc phải mở ra thì mới gỡ được, cả hai bên cùng được cảnh báo và xử lý"): xe có chuyến bên Xuất ĐANG XUẤT / đã quét /
+// giữ nhặt lẻ vẫn mở lại được — lần đầu 409 OUTBOUND_HOLD_CONFIRM nêu từng xe, người bấm "Vẫn mở lại" ⇒ `force` ⇒ chuyến ngừng + việc
+// "Cần xử lý" cho kho (replanKhvcGroups forceDrop). Chỉ chuyến ĐÃ HOÀN THÀNH mới bị chặn hẳn (chứng từ).
+export const zReopen = z.object({ trip_ids: z.array(zId).min(1).max(300).optional(), force: zBool.optional() })
 async function reopenPlanInner(req: Request, res: Response) {
   try {
     const b = req.body as z.infer<typeof zReopen>
@@ -2401,11 +2442,18 @@ async function reopenPlanInner(req: Request, res: Response) {
     const want = full.trips.filter(t => statusOf(t) === 'CONFIRMED' && (!b.trip_ids || b.trip_ids.includes(t.id)))
     if (!want.length) return fail(res, 422, 'NOTHING_TO_REOPEN', 'Không có xe nào đã vào Kế hoạch xuất để mở lại')
     const gcs = want.map(t => t.group_code)
-    step(res, 'đọc dòng Kế hoạch xuất của các xe')
-    const lines = (await fetchAllByIdChunks(gcs, c => db.from('khvc_lines').select('id, group_code, do_no').in('group_code', c).neq('sync_status', 'OBSOLETE').order('id'))) as { id: string; group_code: string; do_no: string }[]
-    step(res, 'phân loại xe (chuyến đang xuất / giữ hàng nhặt lẻ)')
-    const { blocked } = await classifyKhvcDelete(lines.map(l => ({ id: l.id, group_code: l.group_code })))
-    const blockedGc = new Map(blocked.map(x => [x.group_code, x.reason]))
+    step(res, 'tình trạng chuyến bên Xuất của các xe (đã hoàn thành / đang xuất / đã quét / giữ nhặt lẻ)')
+    const hold = await outboundHoldState(gcs)
+    const blockedGc = new Map<string, string>()
+    for (const t of want) if (hold.get(t.group_code)?.status === 'COMPLETED') blockedGc.set(t.group_code, 'Chuyến bên Xuất ĐÃ HOÀN THÀNH — chứng từ đã chốt, không mở lại được (muốn sửa số thì sửa DO ở tab DO SAP)')
+    const warned = want.filter(t => !blockedGc.has(t.group_code))
+      .map(t => ({ t, h: hold.get(t.group_code) }))
+      .filter((x): x is { t: FullTrip; h: NonNullable<typeof x.h> } => !!x.h && (x.h.status === 'IN_PROGRESS' || x.h.scanned > 0 || x.h.loose_held))
+      .map(x => ({ group_code: x.t.group_code, seq: x.t.seq, status: x.h.status, scanned: x.h.scanned, loose_held: x.h.loose_held }))
+    if (warned.length && !b.force) {
+      const what = (w: typeof warned[number]) => [w.status === 'IN_PROGRESS' ? 'đang xuất' : 'chưa bắt đầu', w.scanned > 0 ? `đã quét ${w.scanned} (base)` : null, w.loose_held ? 'đang giữ hàng nhặt lẻ' : null].filter(Boolean).join(', ')
+      return fail(res, 409, 'OUTBOUND_HOLD_CONFIRM', `${warned.length} xe có chuyến bên Xuất kho đang có hàng: ${warned.slice(0, 6).map(w => `#${w.seq} ${w.group_code} (${what(w)})`).join('; ')}${warned.length > 6 ? `; … và ${warned.length - 6} xe nữa` : ''}.\nRút xe thì chuyến bên Xuất NGỪNG và khoá quét; hàng đã quét giữ nguyên trên chuyến, thủ kho nhận việc "Cần xử lý" (trả hàng về tồn, hoặc chờ bạn xác nhận lại cùng Số xe thì chuyến sống lại với hàng đã quét). Đơn đã quét chỉ được xác nhận ở xe khác sau khi kho trả hàng.`)
+    }
     const open = want.filter(t => !blockedGc.has(t.group_code))
     const openGc = open.map(t => t.group_code)
     // MỘT giao dịch (11/10, RPC 20261011a): xoá dòng Kế hoạch xuất + xe về NHÁP. Bản cũ xoá dòng → dội chuyến → đổi trạng thái xe bằng
@@ -2426,11 +2474,11 @@ async function reopenPlanInner(req: Request, res: Response) {
       detail: `Mở lại kế hoạch điều vận — gỡ DO ${l.do_no} khỏi Số xe ${l.group_code} để sửa trên bàn ghép xe` })))
     let replan_error: string | null = null
     step(res, 'dội chuyến Xuất kho (ngừng chuyến + nhả khung giờ)')
-    if (openGc.length) { try { await replanKhvcGroups(req, openGc) } catch (e) { replan_error = String(e); console.error('[dispatch reopen] replan:', e) } }
+    if (openGc.length) { try { await replanKhvcGroups(req, openGc, 0, { forceDrop: true }) } catch (e) { replan_error = String(e); console.error('[dispatch reopen] replan:', e) } }
     step(res, 'trạng thái + tổng kết kế hoạch')
     const status = await syncPlanStatus(full as PlanRow, req.user?.name ?? null)
     await writeSummary(full as PlanRow)
-    return ok(res, { ...(await readPlan(full.id)), reopened: { trips: open.length, group_codes: openGc, blocked: want.filter(t => blockedGc.has(t.group_code)).map(t => ({ group_code: t.group_code, reason: blockedGc.get(t.group_code)! })), plan_status: status, replan_error } })
+    return ok(res, { ...(await readPlan(full.id)), reopened: { trips: open.length, group_codes: openGc, blocked: want.filter(t => blockedGc.has(t.group_code)).map(t => ({ group_code: t.group_code, reason: blockedGc.get(t.group_code)! })), warned, plan_status: status, replan_error } })
   } catch (e) { return failAny(res, e) }
 }
 

@@ -38,7 +38,7 @@ import { getSapDoSource } from '../../utils/settings'
 import { notLoadableDos, FLOW_LABEL } from '../../services/sapFlow'
 import { heldSlotsByVehicle, slotHeldBlockingCategory, slotHeldBlockingDate, deleteVehicleSlotsAndRecount } from '../../utils/bookingGuards'
 import { guardPutaway } from '../../services/putawayContext'
-import { notifyEmployees } from '../../services/pushService'
+import { notifyEmployees, sendPushToPerm } from '../../services/pushService'
 import {
   planGdoTasks, cancelGdoTasks, markTaskDoneByScan, skipOnePendingOfItem, skipTasksOnForeignScan,
   servesCategory, dateRuleOf, describeDateRule, checkDateRuleStock, resetUntouchedTasksOfItems, palletMeetsDateRule, MAX_DATE_CHECK, MAX_RULE_PARTS,
@@ -214,7 +214,7 @@ const workModeOf = (gdo: unknown): string | null =>
 type GdoInertState = { awaiting_sap?: boolean | null; awaiting_dos?: string[] | null; plan_dropped?: boolean | null }
 function inertError(gdo: GdoInertState | null | undefined): string | null {
   if (gdo?.plan_dropped)
-    return 'Chuyến đã NGỪNG HOẠT ĐỘNG vì Kế hoạch xuất không còn Số xe này — chỉ xem được thông tin và lịch sử. Muốn chạy lại thì thêm lại dòng kế hoạch ở tab "Kế hoạch xuất".'
+    return 'Chuyến đã NGỪNG HOẠT ĐỘNG vì kế hoạch không còn Số xe này (điều vận mở lại / huỷ xe, hoặc dòng Kế hoạch xuất bị gỡ) — chỉ xem thông tin và lịch sử. Hàng đã quét trên chuyến: xoá QR đã quét / gỡ nhặt lẻ để trả về tồn, hoặc chờ điều vận xác nhận lại Số xe này (bàn ghép xe) / thêm lại dòng ở tab "Kế hoạch xuất".'
   if (gdo?.awaiting_sap) {
     const dos = (gdo.awaiting_dos ?? []).filter(Boolean)
     return `Chuyến đang CHỜ DỮ LIỆU SAP${dos.length ? ` (DO: ${dos.join(', ')})` : ''} — chưa có dòng hàng nên chưa xuất được. Up VL06O có các DO này là chuyến tự hoạt động trở lại.`
@@ -3054,11 +3054,13 @@ export async function startGDO(req: Request, res: Response) {
     if ((cur as { started_at?: string | null } | null)?.started_at || curStatus === 'COMPLETED' || curStatus === 'CANCELLED') {
       return fail(res, 'Chuyến đã bắt đầu hoặc đã kết thúc — dùng "Sửa thông tin xe" nếu cần đổi biển số', 400)
     }
+    // chuyến NGỪNG (kế hoạch đã rút xe) nói trước ngày tương lai (17/10): kế hoạch ngày mai bị huỷ, thủ kho bấm Bắt đầu từng được bảo
+    // "đổi Ngày xuất ở nguồn" trong khi dòng nguồn đã không còn
+    { const inertErr = inertError(cur as GdoInertState | null)
+      if (inertErr) return fail(res, 422, 'TRIP_INERT', inertErr) }
     { const sapErr = await sapIssueError(req.params.id, 'Bắt đầu chuyến'); if (sapErr) return fail(res, 409, 'SAP_ISSUE_OPEN', sapErr) }
     const startFutErr = futureDateError((cur as { delivery_date?: string | null } | null)?.delivery_date)
     if (startFutErr) return fail(res, 422, 'FUTURE_DATE', startFutErr)
-    { const inertErr = inertError(cur as GdoInertState | null)
-      if (inertErr) return fail(res, 422, 'TRIP_INERT', inertErr) }
     const curMode = (cur as { warehouse?: { inventory_mode?: string | null } | null } | null)?.warehouse?.inventory_mode ?? null
     const autoAssign = !(cur as { assigned_at?: string | null } | null)?.assigned_at && curMode !== 'QR'
 
@@ -3891,6 +3893,10 @@ async function applyAwaitingState(
       await supabase.from('GroupDeliveryOrder')
         .update({ awaiting_sap: false, awaiting_dos: null, plan_dropped: false, plan_dropped_at: null, updated_at: t })
         .eq('id', g.id)
+      // 17/10: bàn xác nhận lại cùng Số xe ⇒ việc "Điều vận rút xe" tự đóng — chuyến sống lại với hàng đã quét, kho quét tiếp
+      if (g.plan_dropped) await supabase.from('reconcile_tasks')
+        .update({ status: 'RESOLVED', resolution: 'Kế hoạch có lại Số xe — chuyến hoạt động trở lại, hàng đã quét giữ nguyên', resolved_by: actor, resolved_at: t, updated_at: t })
+        .eq('gdo_id', g.id).eq('change_type', 'PLAN_PULLED').eq('status', 'OPEN')
     }
     if (was?.awaiting) {
       events.push({ group_code: gc, gdo_id: g?.id ?? null, event_type: 'AWAITING_CLEARED', source: 'SAP', actor,
@@ -4940,7 +4946,7 @@ async function buildKhvcByVehicle(khvcRows: KhvcPlanRow[]): Promise<{ byVehicle:
 //   PENDING/PAUSED chưa quét → ghi đè/merge như re-upload · ĐANG XUẤT/ĐÃ HT → skip + reconcile_task
 //   (không tự đụng chuyến đang chạy — luật "auto chỉ khi chưa đụng") · group hết dòng → xóa chuyến
 //   PENDING chưa quét, còn lại → task. Lỗi replan KHÔNG làm hỏng thao tác CRUD gốc (caller bọc try/catch).
-export async function replanKhvcGroups(req: Request, groupCodes: string[], healDepth = 0): Promise<Record<string, unknown>> {
+export async function replanKhvcGroups(req: Request, groupCodes: string[], healDepth = 0, opts: { forceDrop?: boolean } = {}): Promise<Record<string, unknown>> {
   const gcs = [...new Set(groupCodes.map(g => String(g ?? '').trim()).filter(Boolean))]
   if (!gcs.length) return { replanned: 0 }
   const actor = req.user?.name || 'KHVC-EDIT'
@@ -4969,12 +4975,18 @@ export async function replanKhvcGroups(req: Request, groupCodes: string[], healD
   const emptyGcs = gcs.filter(gc => !gcWithLines.has(gc))
   if (emptyGcs.length) {
     const gdos = await fetchAllByIdChunks(emptyGcs, c => supabase.from('GroupDeliveryOrder')
-      .select('id, group_code, status, started_at, plan_dropped').in('group_code', c).order('id')) as { id: string; group_code: string; status: string; started_at: string | null; plan_dropped: boolean }[]
+      .select('id, group_code, status, started_at, plan_dropped, warehouse_id').in('group_code', c).order('id')) as { id: string; group_code: string; status: string; started_at: string | null; plan_dropped: boolean; warehouse_id: string | null }[]
     // GOM TRUY VẤN theo LÔ, không lặp từng xe: điều vận bỏ cả ngày là chuyện thật (đo 03/08 —
     // bản lặp từng xe tốn ~0,23s/xe ⇒ 250 xe là chạm trần 60s của Vercel, chết giữa chừng).
-    const openOnes = gdos.filter(g => (g.status === 'PENDING' || g.status === 'PAUSED') && !g.plan_dropped)
+    // 17/10 (user chốt "bắt buộc phải mở ra thì mới gỡ được — cả hai bên cùng được cảnh báo và xử lý"): BÀN GHÉP XE rút xe (`forceDrop`,
+    // cửa Mở lại / Huỷ đã hỏi người một lần) ⇒ chuyến ĐANG XUẤT / đã quét / đang giữ nhặt lẻ cũng NGỪNG — giữ nguyên trạng thái và hàng đã
+    // quét (không tự trả tồn: pallet thật có thể đã ở cửa xuất) + việc "Cần xử lý" PLAN_PULLED cho kho (chuông). Xác nhận lại cùng Số xe ⇒
+    // chuyến sống lại với hàng đã quét, việc tự đóng (applyAwaitingState). Chỉ chuyến ĐÃ HOÀN THÀNH là chứng từ, không đụng. Đường khác
+    // (tab Kế hoạch xuất) giữ luật cũ: chuyến không tự ngừng, chỉ việc — cửa xoá ở đó đã chặn từ trước (classifyKhvcDelete).
+    const force = opts.forceDrop === true
+    const openOnes = gdos.filter(g => (g.status === 'PENDING' || g.status === 'PAUSED' || (force && g.status === 'IN_PROGRESS')) && !g.plan_dropped)
     for (const g of gdos) {
-      if (g.status !== 'PENDING' && g.status !== 'PAUSED') {
+      if (g.status === 'COMPLETED' || (g.status === 'IN_PROGRESS' && !force)) {
         mkTask(g, `Kế hoạch xuất đã XÓA HẾT dòng của chuyến nhưng chuyến đang ${g.status === 'COMPLETED' ? 'ĐÃ HOÀN THÀNH' : 'ĐANG XUẤT'} — chỉ đối soát/xử tay.`)
         report.push({ group_code: g.group_code, action: 'task', reason: g.status })
       } else if (g.plan_dropped) report.push({ group_code: g.group_code, action: 'already_dropped' })
@@ -4988,20 +5000,50 @@ export async function replanKhvcGroups(req: Request, groupCodes: string[], healD
             .select('do_id, cartons_scanned').in('do_id', c).order('id')) as { do_id: string; cartons_scanned: number }[]
         : []
       const scannedGdos = new Set<string>()
+      const scannedBy = new Map<string, number>()
       for (const it of (allItems ?? [])) if (Number(it.cartons_scanned) > 0) {
-        const gid = gdoByDo.get(it.do_id); if (gid) scannedGdos.add(gid)
+        const gid = gdoByDo.get(it.do_id); if (gid) { scannedGdos.add(gid); scannedBy.set(gid, (scannedBy.get(gid) ?? 0) + Number(it.cartons_scanned)) }
       }
       // Đang GIỮ HÀNG NHẶT LẺ (soạn chưa xác nhận — cartons_scanned chưa tăng nên lọt lưới trên):
       // hàng vật lý đã ở vị trí chờ, KHÔNG tự ngừng + tự nhả (user chốt 05/08) — task để gỡ trả tay.
       const looseHeld = await looseHeldGdoIds(openOnes.map(g => g.id))
-      const toDrop = openOnes.filter(g => !scannedGdos.has(g.id) && !looseHeld.has(g.id))
-      for (const g of openOnes.filter(g => scannedGdos.has(g.id))) {
+      const holding = (g: { id: string; status: string }) => scannedGdos.has(g.id) || looseHeld.has(g.id) || g.status === 'IN_PROGRESS'
+      const toDrop = openOnes.filter(g => !holding(g))
+      const toPull = force ? openOnes.filter(holding) : []
+      for (const g of openOnes.filter(g => !force && scannedGdos.has(g.id))) {
         mkTask(g, 'Kế hoạch xuất đã XÓA HẾT dòng của chuyến nhưng chuyến ĐÃ CÓ HÀNG QUÉT — xác nhận trả hàng rồi xử tay (chuyến không tự xóa).')
         report.push({ group_code: g.group_code, action: 'task', reason: 'đã quét' })
       }
-      for (const g of openOnes.filter(g => looseHeld.has(g.id) && !scannedGdos.has(g.id))) {
+      for (const g of openOnes.filter(g => !force && looseHeld.has(g.id) && !scannedGdos.has(g.id))) {
         mkTask(g, 'Kế hoạch xuất đã XÓA HẾT dòng của chuyến nhưng chuyến ĐANG GIỮ HÀNG NHẶT LẺ ở vị trí chờ — gỡ trả hàng nhặt lẻ trên chuyến rồi xử tay (chuyến không tự ngừng).')
         report.push({ group_code: g.group_code, action: 'task', reason: 'đang giữ nhặt lẻ' })
+      }
+      if (toPull.length) {
+        // bàn rút xe đang có hàng: chuyến NGỪNG (khoá Bắt đầu / quét / Hoàn thành qua inertError) nhưng GIỮ hàng đã quét + hàng nhặt lẻ
+        for (let i = 0; i < toPull.length; i += 300) {
+          await supabase.from('GroupDeliveryOrder')
+            .update({ plan_dropped: true, plan_dropped_at: t, updated_by: actor, updated_at: t })
+            .in('id', toPull.slice(i, i + 300).map(g => g.id))
+        }
+        const byWh = new Map<string | null, number>()
+        for (const g of toPull) {
+          const sc = scannedBy.get(g.id) ?? 0
+          const what = [g.status === 'IN_PROGRESS' ? 'chuyến ĐANG XUẤT' : 'chuyến chưa bắt đầu', sc > 0 ? `đã quét ${sc} (base)` : null, looseHeld.has(g.id) ? 'đang giữ hàng nhặt lẻ ở vị trí chờ' : null].filter(Boolean).join(' · ')
+          tasks.push({
+            id: randomUUID(), item_id: null, gdo_id: g.id, group_code: g.group_code, material_code: null, material_name: null, od_number: null, od_item: null,
+            change_type: 'PLAN_PULLED', zone: sc > 0 ? 'Z3' : g.status === 'IN_PROGRESS' ? 'Z2' : 'Z1', old_ordered: null, new_ordered: null, scanned: sc,
+            action: 'NEEDS_REVIEW', status: 'OPEN', actor, created_at: t, updated_at: t,
+            detail: `Điều vận đã RÚT Số xe ${g.group_code} khỏi kế hoạch (mở lại / huỷ) — ${what}. Chuyến NGỪNG, không quét tiếp. Trả hàng về tồn (xoá QR đã quét / gỡ nhặt lẻ trên chuyến) rồi "Đã xử lý tay"; hoặc chờ điều vận xác nhận lại Số xe này — việc tự đóng, hàng đã quét đi tiếp.`,
+          })
+          events.push({ group_code: g.group_code, gdo_id: g.id, event_type: 'PLAN_VEHICLE_DROPPED', source: 'PLAN', actor,
+            detail: `Điều vận rút xe khỏi kế hoạch khi ${what} — chuyến ngừng hoạt động, hàng đã quét GIỮ NGUYÊN chờ kho xử lý (việc "Cần xử lý")` })
+          report.push({ group_code: g.group_code, action: 'plan_dropped_hold', reason: what })
+          byWh.set(g.warehouse_id, (byWh.get(g.warehouse_id) ?? 0) + 1)
+        }
+        try {
+          for (const [wh, n] of byWh)
+            await sendPushToPerm('outbound', 'reconcile', wh, { title: 'Điều vận rút xe đang có hàng — cần xử lý', body: `${n} chuyến bị rút khỏi kế hoạch khi đã quét / đang xuất — trả hàng hoặc chờ xác nhận lại (tab "Cần xử lý")`, url: '/external?tab=reconcile', tag: `reconcile-${wh ?? 'all'}` }, 'reconcile')
+        } catch (e) { console.error('[push] plan pulled notify:', e) }
       }
       if (toDrop.length) {
         const dropIds = new Set(toDrop.map(g => g.id))

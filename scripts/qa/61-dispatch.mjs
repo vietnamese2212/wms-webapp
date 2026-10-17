@@ -2435,6 +2435,54 @@ try {
         && roAll.s === 200 && roAll.j?.data?.reopened?.trips === 2 && dc2.s === 200 && p6?.status === 'DISCARDED' && await kh(A.group_code) === 0 && await kh(B.group_code) === 0,
         `xn=${em(cf1)}/${p1?.status} nạp=${em(rp)} mởC=${em(ro1)}/${ro1.j?.data?.reopened?.trips} C=${tripSt(p2, C.id)} A=${tripSt(p2, A.id)} B=${tripSt(p2, B.id)} kh=${p2?.status} khC=${await kh(C.group_code)} khA=${khA2} · về chờ=${em(mvP)} nạp0=${em(rp0)}/rv=${rv0} ẩn=${em(hd)} nạpẨn=${em(rpH)}/rv=${rvH} bỏẩn=${em(uh)} nạpAll=${em(rp1)}/${rp1.j?.data?.refreshed?.reviewed}/rv=${rv1 ? 'có' : 'null'} xn2=${em(cf2)} · xe mới=${em(mvN)} D=${D?.status} kh=${p3?.status} · xn3=${em(cf3)}/${cf3.j?.data?.trips} kh=${p4?.status} mốcA=${p4?.trips.find(t => t.id === A.id)?.confirmed_at === p1?.trips.find(t => t.id === A.id)?.confirmed_at} · mởD=${em(ro2)} bỏ=${em(dc1)}/${dc1.j?.data?.discarded_trips} kh=${p5?.status} A=${tripSt(p5, A.id)} khA=${khA5} · huỷ=${em(roAll)}/${roAll.j?.data?.reopened?.trips} ${em(dc2)} kh=${p6?.status} khA=${await kh(A.group_code)} khB=${await kh(B.group_code)}`)
     } else check('21m. Fixture: 3 OD, mỗi OD một xe qua ô Xe mới', false, `plan=${s4.s}`)
+    // ── [21n] BÀN RÚT XE KHI CHUYẾN BÊN XUẤT ĐÃ QUÉT (17/10, user chốt "bắt buộc phải mở ra thì mới gỡ được — cả hai bên cùng được cảnh báo và
+    //     xử lý"): Mở lại xe C đã quét ⇒ 409 OUTBOUND_HOLD_CONFIRM (xe giữ CONFIRMED) → force ⇒ C nháp, chuyến NGỪNG (plan_dropped, trạng thái +
+    //     hàng quét giữ nguyên), việc Cần xử lý PLAN_PULLED OPEN Z3, /sync cờ WH_SCANNED · đơn sang xe KHÁC ⇒ Xác nhận 409 SCANNED_OD_REMOVED ·
+    //     về đúng xe C (restore) ⇒ Xác nhận 200, chuyến sống lại CÙNG id, việc RESOLVED · kho trả hàng (quét = 0) ⇒ Mở lại không hỏi ──
+    await Promise.all([setCust(0), setCust(1), setCust(2)])
+    const s5 = await build()
+    if (s5.ok) {
+      const { A, B, C, q: [, , r3], mv } = s5
+      const P5 = async () => (await api(`/tms/dispatch/plans/${s5.id}`)).j?.data
+      const st5 = (pl, id) => pl?.trips?.find(t => t.id === id)?.status
+      for (const t of [A, B, C]) await restWrite('dispatch_trip', 'PATCH', `id=eq.${t.id}`, { transport_company_id: DA.id, updated_at: nowIso() })
+      const cf0 = await api(`/tms/dispatch/plans/${s5.id}/confirm`, 'POST', {})
+      const gdo = async () => (await restAll('GroupDeliveryOrder', `select=id,status,plan_dropped&group_code=eq.${C.group_code}`))[0] ?? null
+      const g0 = await gdo()
+      const doC = g0 ? (await restAll('OutboundDelivery', `select=id&gdo_id=eq.${g0.id}`))[0] : null
+      const itC = doC ? (await restAll('OutboundItem', `select=id&do_id=eq.${doC.id}`))[0] : null
+      if (itC) await restWrite('OutboundItem', 'PATCH', `id=eq.${itC.id}`, { cartons_scanned: 2, updated_at: nowIso() })   // giả lập kho đã quét 2 (base)
+      const task = async () => (await restAll('reconcile_tasks', `select=id,status,zone,scanned&gdo_id=eq.${g0?.id}&change_type=eq.PLAN_PULLED&order=created_at.desc`))[0] ?? null
+      const ro0 = await api(`/tms/dispatch/plans/${s5.id}/reopen`, 'POST', { trip_ids: [C.id] })                 // hỏi một lần
+      const stC0 = st5(await P5(), C.id)
+      const ro1 = await api(`/tms/dispatch/plans/${s5.id}/reopen`, 'POST', { trip_ids: [C.id], force: true })    // vẫn mở lại
+      const g1 = await gdo(), tk1 = await task()
+      const sy = await api(`/tms/dispatch/plans/${s5.id}/sync`)
+      const fl = (sy.j?.data?.flags ?? []).find(f => f.od_number === OD[2])
+      const mvP = await mv([r3.id], 'pool'), mvN = await mv([r3.id], 'new')                                        // đơn sang xe KHÁC
+      const D = tripOfOd(await P5(), OD[2])
+      const cfD = await api(`/tms/dispatch/plans/${s5.id}/confirm`, 'POST', {})                                      // 409 SCANNED_OD_REMOVED
+      await mv([r3.id], 'pool')
+      const mvC = await api(`/tms/dispatch/plans/${s5.id}/move`, 'POST', { ids: [r3.id], to: 'new', restore: { seq: C.seq, vehicle_model_ids: [C.vehicle_model_id], transport_company_id: DA.id, locked: false, allow_mix_categories: null } })
+      const C2 = tripOfOd(await P5(), OD[2])
+      const cf2 = await api(`/tms/dispatch/plans/${s5.id}/confirm`, 'POST', {})                                      // về đúng xe ⇒ sống lại
+      const g2 = await gdo(), tk2 = await task()
+      if (itC) await restWrite('OutboundItem', 'PATCH', `id=eq.${itC.id}`, { cartons_scanned: 0, updated_at: nowIso() })   // kho trả hàng
+      const ro2 = C2 ? await api(`/tms/dispatch/plans/${s5.id}/reopen`, 'POST', { trip_ids: [C2.id] }) : { s: 0 }   // không còn hàng ⇒ không hỏi
+      const g3 = await gdo()
+      check('21n. BÀN RÚT XE ĐÃ QUÉT: Mở lại ⇒ 409 OUTBOUND_HOLD_CONFIRM, xe giữ CONFIRMED · force ⇒ C nháp, chuyến NGỪNG giữ trạng thái + hàng quét, việc PLAN_PULLED OPEN Z3 (2), /sync WH_SCANNED · đơn sang xe khác ⇒ Xác nhận 409 SCANNED_OD_REMOVED · về đúng xe C ⇒ 200, chuyến sống lại CÙNG id, việc RESOLVED · kho trả hàng ⇒ Mở lại 200 không hỏi, chuyến ngừng thường',
+        cf0.s === 200 && !!g0 && !!itC
+        && ro0.s === 409 && ro0.j?.error?.code === 'OUTBOUND_HOLD_CONFIRM' && stC0 === 'CONFIRMED'
+        && ro1.s === 200 && ro1.j?.data?.reopened?.trips === 1 && (ro1.j?.data?.reopened?.warned ?? []).length === 1 && g1?.plan_dropped === true && g1?.status === g0.status && tk1?.status === 'OPEN' && tk1?.zone === 'Z3' && Number(tk1?.scanned) === 2
+        && fl?.kind === 'WH_SCANNED'
+        && mvP.s === 200 && mvN.s === 200 && !!D && D.group_code !== C.group_code && cfD.s === 409 && cfD.j?.error?.code === 'SCANNED_OD_REMOVED'
+        && mvC.s === 200 && C2?.group_code === C.group_code && cf2.s === 200 && g2?.id === g0.id && g2?.plan_dropped === false && tk2?.status === 'RESOLVED'
+        && ro2.s === 200 && (ro2.j?.data?.reopened?.warned ?? []).length === 0 && g3?.plan_dropped === true,
+        `xn=${em(cf0)} gdo=${g0?.status} quét=${!!itC} · mở=${em(ro0)} C=${stC0} · force=${em(ro1)}/${ro1.j?.data?.reopened?.trips}/warned=${(ro1.j?.data?.reopened?.warned ?? []).length} gdo=${g1?.plan_dropped}/${g1?.status} việc=${tk1?.status}/${tk1?.zone}/${tk1?.scanned} cờ=${fl?.kind} · sang xe khác=${em(mvP)}/${em(mvN)} D=${D?.group_code} xn=${em(cfD)} · về C=${em(mvC)} ${C2?.group_code} xn=${em(cf2)} gdo=${g2?.id === g0?.id}/${g2?.plan_dropped} việc=${tk2?.status} · trả hàng mở=${em(ro2)}/warned=${(ro2.j?.data?.reopened?.warned ?? []).length} gdo=${g3?.plan_dropped}`)
+      if (g0) await restWrite('reconcile_tasks', 'DELETE', `gdo_id=eq.${g0.id}`).catch(() => {})
+      await api(`/tms/dispatch/plans/${s5.id}/reopen`, 'POST', { force: true })
+      await api(`/tms/dispatch/plans/${s5.id}`, 'DELETE')
+    } else check('21n. Fixture: 3 OD, mỗi OD một xe qua ô Xe mới', false, `plan=${s5.s}`)
     await cleanupTrips()
     await Promise.all([0, 1, 2].map(i => setCust(i, { dispatch_vehicles: ALLV })))
     await restWrite('vehicle_model', 'DELETE', `sap_code=in.(QA61X05,QA61X06,QA61X07,QA61X08,QA61X04)`).catch(() => {})

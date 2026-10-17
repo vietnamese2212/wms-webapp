@@ -6105,7 +6105,7 @@ export function useDispatchTripCarriers(tripId: string | null, enabled = true) {
   })
 }
 /** Cờ sống của OD so với ZSD02 hiện tại — phát sinh SAU khi lập nháp (pool lũy tiến, 25/09). */
-export interface DispatchOdFlag { od_number: string; kind: 'REPLACED' | 'GONE' | 'SHIPPED' | 'SAP_ASSIGNED' | 'IN_PLAN' | 'CHANGED' | 'KIN_SHIPPED'; info: string | null; replaced_by?: string | null }
+export interface DispatchOdFlag { od_number: string; kind: 'REPLACED' | 'GONE' | 'SHIPPED' | 'SAP_ASSIGNED' | 'IN_PLAN' | 'CHANGED' | 'KIN_SHIPPED' | 'WH_SCANNED'; info: string | null; replaced_by?: string | null }
 export interface DispatchExcludedDetail { ship_to_code: string | null; ship_to_name: string | null; ward_code: string | null; region_code: string | null; region_name: string | null; pallets: number | null; tons: number | null; delivery_date: string | null; note: string | null }
 /** OD KHÔNG nằm trên kế hoạch — HELD mang `until` (có ngày = Không điều ngày này · null = Không điều) + `reason`; `d` để bảng Xem đơn in dòng. */
 // NO_MATERIAL (03/10): OD có mã chưa khai trong Mã hàng — máy không ghép, nằm ở tab Điều dạng "Không lên xe" cho tới khi khai mã
@@ -6475,7 +6475,8 @@ export function useResyncDispatchOd() {
 export function useReopenDispatchPlan() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ plan_id, trip_ids }: { plan_id: string; trip_ids?: string[] }) => apiClient.post(`/tms/dispatch/plans/${plan_id}/reopen`, trip_ids ? { trip_ids } : {}, { timeout: 120_000 }).then(r => r.data.data as DispatchPlan & { reopened: { trips: number; group_codes: string[]; blocked: { group_code: string; reason: string }[]; plan_status: DispatchPlan['status']; replan_error: string | null } }),
+    // 17/10: `force` = người đã xác nhận rút cả xe có chuyến đang xuất / đã quét (server hỏi một lần bằng 409 OUTBOUND_HOLD_CONFIRM)
+    mutationFn: ({ plan_id, trip_ids, force }: { plan_id: string; trip_ids?: string[]; force?: boolean }) => apiClient.post(`/tms/dispatch/plans/${plan_id}/reopen`, { ...(trip_ids ? { trip_ids } : {}), ...(force ? { force: true } : {}) }, { timeout: 120_000 }).then(r => r.data.data as DispatchPlan & { reopened: { trips: number; group_codes: string[]; blocked: { group_code: string; reason: string }[]; warned: { group_code: string; seq: number; status: string; scanned: number; loose_held: boolean }[]; plan_status: DispatchPlan['status']; replan_error: string | null } }),
     onSuccess: p => { putDispatchPlan(qc, p); for (const k of [['khvc'], ['do-sap'], ['gdos'], ['gdos-paged']]) qc.invalidateQueries({ queryKey: k }) },
   })
 }

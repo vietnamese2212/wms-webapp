@@ -28,7 +28,7 @@ export const planHoldsOrders = (s: { trips?: number; pool_ods?: number; unreview
 
 export const EDITABLE: DispatchTripStatus[] = ['DRAFT', 'DECLINED']
 export const tripStatus = (t: DispatchTrip): DispatchTripStatus => t.status ?? 'DRAFT'
-export type IssueKey = 'declined' | 'sapflag' | 'scope' | 'nomodel' | 'nocarrier' | 'nofreight' | 'over' | 'rule' | 'under' | 'warn'
+export type IssueKey = 'declined' | 'sapflag' | 'whhold' | 'scope' | 'nomodel' | 'nocarrier' | 'nofreight' | 'over' | 'rule' | 'under' | 'warn'
 /** Câu cảnh báo server ghi khi xe SAI LUẬT GHÉP XE (`computeTripPatch`, BE): vượt số khách · dòng xe không chở được điều kiện bảo quản ·
  *  khách không được vào dòng xe · chở lẫn Loại kho khi switch tắt. 14/10 (user: "làm sai rule cần popup và ngăn chặn") mọi cửa làm tay đã
  *  CHẶN — xe còn mang câu này là xe vượt từ trước (lập trước luật / cấu hình đổi sau) ⇒ việc ĐỎ, và cửa Xác nhận cũng chặn (409
@@ -59,10 +59,13 @@ export const outOfScopeCats = (cats: string[] | null | undefined, scope: Set<str
 /** Cờ SAP chỉ THAM CHIẾU (user chốt 03/10 tối): "SAP đã post" / "SAP đã gắn xe" không loại đơn, không chặn Xác nhận — nên cũng
  *  KHÔNG là việc "OD đổi ở SAP" (06/10: Bàu Bàng 695/709 xe "cần xử lý" chỉ vì cờ này; cửa Xác nhận + bảng Xem đơn đã đọc đúng). */
 export const SOFT_FLAG_KINDS = new Set<DispatchOdFlag['kind']>(['SHIPPED', 'SAP_ASSIGNED'])
-const hardFlag = (c: IssueCtx, od: string) => { const k = c.flags.get(od)?.kind; return !!k && !SOFT_FLAG_KINDS.has(k) }
+const hardFlag = (c: IssueCtx, od: string) => { const k = c.flags.get(od)?.kind; return !!k && !SOFT_FLAG_KINDS.has(k) && k !== 'WH_SCANNED' }
+/** 17/10: đơn có hàng ĐÃ QUÉT bên Xuất trên chuyến của xe đã rút — xe mang đơn tô đỏ, Xác nhận chặn nếu đơn không về đúng xe cũ */
+const whHeld = (c: IssueCtx, od: string) => c.flags.get(od)?.kind === 'WH_SCANNED'
 export const ISSUES: { key: IssueKey; label: string; tip: string; todo: boolean; test: (t: DispatchTrip, c: IssueCtx) => boolean }[] = [
   { key: 'declined',  label: 'ĐVVT từ chối',   todo: true,  tip: 'Đổi ĐVVT trong panel xe rồi "Chốt xe này"',                     test: t => tripStatus(t) === 'DECLINED' },
   { key: 'sapflag',   label: 'OD đổi ở SAP',   todo: true,  tip: 'OD trên xe bị SAP thay (sửa SO) / bỏ / sửa / đã vào Kế hoạch xuất sau khi lập nháp — thay OD, cập nhật theo SAP hoặc kéo OD ra khỏi xe. Cờ "SAP đã post / đã gắn xe" chỉ là tham chiếu, không tính ở đây', test: (t, c) => t.ods.some(o => hardFlag(c, o.od_number)) },
+  { key: 'whhold',    label: 'Kho đã quét',    todo: true,  tip: 'Đơn trên xe có hàng ĐÃ QUÉT bên Xuất kho trên chuyến của xe đã rút (mở lại / huỷ). Về lại đúng xe cũ rồi Xác nhận thì chuyến sống lại với hàng đã quét; đưa sang xe khác thì thủ kho phải trả hàng (xoá QR / gỡ nhặt lẻ) trước — Xác nhận chặn', test: (t, c) => t.ods.some(o => whHeld(c, o.od_number)) },
   { key: 'scope',     label: 'Ngoài phạm vi',  todo: true,  tip: 'Xe chở Loại kho NGOÀI phạm vi bạn được giao — Xác nhận sẽ bị chặn. Kéo các OD loại đó ra khỏi xe / Trả về Chờ điều, hoặc nhờ người được giao loại đó xác nhận', test: (t, c) => outOfScopeCats(t.detail.categories, c.scope).length > 0 },
   { key: 'nomodel',   label: 'Chưa có dòng xe', todo: true, tip: 'Máy không tìm được dòng xe vừa tải / đủ điều kiện bảo quản',    test: t => t.ods.length > 0 && !t.vehicle_model_id },
   { key: 'nocarrier', label: 'Chưa có ĐVVT',   todo: true,  tip: 'Không ĐVVT nào có cước cho tuyến + dòng xe này — chọn tay',      test: t => t.ods.length > 0 && !t.transport_company_id },
@@ -78,12 +81,12 @@ export const issuesOf = (t: DispatchTrip, c: IssueCtx): IssueKey[] =>
 export const needsWork = (t: DispatchTrip, c: IssueCtx) => issuesOf(t, c).some(k => TODO_KEYS.has(k))
 // Nhãn NGẮN, xếp theo mức KHẨN — in ngay dưới Số xe (bảng) / trên thẻ xe (bàn ghép)
 export const ISSUE_SHORT: Record<IssueKey, string> = {
-  declined: 'ĐVVT từ chối', sapflag: 'OD đổi ở SAP', scope: 'ngoài phạm vi của bạn', over: 'vượt tải', rule: 'sai quy định', nomodel: 'chưa có dòng xe', nocarrier: 'chưa có ĐVVT',
+  declined: 'ĐVVT từ chối', sapflag: 'OD đổi ở SAP', whhold: 'kho đã quét', scope: 'ngoài phạm vi của bạn', over: 'vượt tải', rule: 'sai quy định', nomodel: 'chưa có dòng xe', nocarrier: 'chưa có ĐVVT',
   nofreight: 'chưa có cước', under: 'Non tải', warn: 'có cảnh báo',
 }
-export const ISSUE_ORDER: IssueKey[] = ['declined', 'sapflag', 'scope', 'over', 'rule', 'nomodel', 'nocarrier', 'nofreight', 'under', 'warn']
+export const ISSUE_ORDER: IssueKey[] = ['declined', 'sapflag', 'whhold', 'scope', 'over', 'rule', 'nomodel', 'nocarrier', 'nofreight', 'under', 'warn']
 /** Vấn đề tô ĐỎ (chặn Xác nhận / xe không đi được) — còn lại hổ phách (việc) hoặc xám (tin) */
-export const RED_ISSUES = new Set<IssueKey>(['declined', 'over', 'rule', 'sapflag', 'scope'])
+export const RED_ISSUES = new Set<IssueKey>(['declined', 'over', 'rule', 'sapflag', 'whhold', 'scope'])
 /** Lựa chọn trên bàn ghép xe SAU một lần chuyển: chỉ bỏ các đơn VỪA chuyển — kế hoạch lớn trả lời chậm (709 xe ~8 s), ô người tick
  *  trong lúc chờ phải còn (06/10: Hoàn tác xong xoá sạch lựa chọn ⇒ lần kéo sau chỉ mang một đơn). Không đổi gì thì trả CHÍNH tập cũ. */
 export const selectionAfterMove = (sel: Set<string>, moved: string[]): Set<string> => {
@@ -287,4 +290,5 @@ export const FLAG_VI: Record<DispatchOdFlag['kind'], string> = {
   // 03/10 tối: SHIPPED / SAP_ASSIGNED là cờ THAM CHIẾU (không loại đơn, không chặn Xác nhận) — chữ phải nói "SAP nói vậy", không khẳng định hàng đã đi
   REPLACED: 'SAP đã thay', GONE: 'SAP đã bỏ', SHIPPED: 'SAP đã post', SAP_ASSIGNED: 'SAP đã gắn xe', IN_PLAN: 'Đã vào KH xuất', CHANGED: 'SAP đã sửa',
   KIN_SHIPPED: 'Họ hàng đã đi',   // 03/10: OD cùng dòng SO với OD đã đi — cờ CỨNG, người bấm "Xác nhận đơn bổ sung" ở tab Xem đơn mới đi được
+  WH_SCANNED: 'Kho đã quét',      // 17/10: hàng đã quét bên Xuất trên chuyến của xe đã rút — về đúng xe cũ hoặc kho trả hàng
 }

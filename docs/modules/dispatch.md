@@ -596,6 +596,31 @@ nào thì mở khoá xe đó. Cần 1 hướng nữa: kế hoạch làm nhầm, 
   lạnh FG02 vào xe nóng đang chở FG01 kênh KA, bản cũ mở đầu bằng "Bật Ghép Loại kho khác" — bật xong kéo lại vẫn chặn vì xe không chở được
   2–8 °C. Mã HTTP của hộp = luật đầu (`ruleFail`) nên nay là `CONDITION_MISMATCH`. Test `dispatchEngine.test.ts` "luật không qua được
   bằng công tắc đứng trước" (đỏ trên bản cũ).
+- **Nhãn kế hoạch đang sửa (17/10, user chốt):** trạng thái máy `TENDERED` dùng chung cho "xe chờ ĐVVT" và "mở một phần"; mở lại một xe
+  của kế hoạch 02/10 từng in "Chờ ĐVVT phản hồi" dù cả ba ĐVVT không cần phản hồi. Nay `planStatusView` (Dispatch.tsx) và ô mảng ở tab Kế
+  hoạch: không xe nào TENDERED / DECLINED ⇒ "Đang sửa · k/N xe mở" (hổ phách); có xe chờ ⇒ giữ "Chờ ĐVVT phản hồi".
+
+## 17/10 — BÀN RÚT XE KHI CHUYẾN BÊN XUẤT ĐÃ QUÉT / ĐANG XUẤT (user chốt sau test trên kế hoạch 02/10 thật)
+
+- **Vì sao:** test 17/10 đo được hai dòng ngược chiều nguồn — chuyến chưa bắt đầu nhưng đã có pallet quét / đang giữ hàng nhặt lẻ, và chuyến
+  đang xuất: cửa Mở lại / Huỷ ở bàn bị CHẶN (`classifyKhvcDelete` của tab Kế hoạch xuất), bên Xuất không biết gì. User: *"Việc huỷ ở bên kế
+  hoạch điều vận mà không khiến đơn hàng bên xuất phản ứng thì không hợp lý — dù đơn có thể đã được quét (soạn lẻ chẳng hạn)"* → *"Bắt buộc
+  phải mở ra thì mới gỡ được, cả hai bên cùng phải được cảnh báo và xử lý."*
+- **Luật:** bàn rút xe là rút được, trừ chuyến **ĐÃ HOÀN THÀNH** (chứng từ, `blocked` như cũ). Xe có chuyến đang xuất / đã quét / giữ nhặt lẻ
+  ⇒ `POST /plans/:id/reopen` trả **409 `OUTBOUND_HOLD_CONFIRM`** nêu từng xe (trạng thái · số đã quét · nhặt lẻ); người bấm "Vẫn mở lại" ⇒
+  gửi lại `{ force: true }`. Cửa Huỷ (FE `cancelInner` = reopen + DELETE) đi cùng hộp hỏi; từ chối ⇒ chưa huỷ.
+- **Bên Xuất phản ứng:** `replanKhvcGroups(…, { forceDrop: true })` ⇒ chuyến `plan_dropped` (NGỪNG — `inertError` khoá Bắt đầu · quét · Lưu
+  thủ công · Hoàn thành) nhưng **giữ nguyên trạng thái và hàng đã quét / đang soạn** (không tự trả tồn — pallet thật có thể đã ở cửa) +
+  việc **"Cần xử lý" `PLAN_PULLED`** (zone Z3 nếu đã quét · Z2 đang xuất · Z1) + chuông `outbound.reconcile` của kho + sự kiện
+  `PLAN_VEHICLE_DROPPED`. Thủ kho: xoá QR đã quét / gỡ nhặt lẻ (cửa `deleteScanEntry` không bị inert chặn) rồi "Đã xử lý tay"; hoặc chờ.
+  `startGDO` kiểm `inertError` TRƯỚC `futureDateError` (kế hoạch ngày mai bị huỷ, câu cũ bảo "đổi Ngày xuất ở nguồn").
+- **Bên bàn phản ứng:** `/sync` thêm cờ **`WH_SCANNED`** (`scannedOnDroppedTrips`: chuyến `plan_dropped` cùng kho × ngày xuất có `cartons_scanned
+  > 0`, tra `od_refs`) ⇒ chip đỏ "Kho đã quét" (`whhold`) trên xe mang đơn, tab Xem đơn in "Kho đã quét". **Gác Xác nhận `SCANNED_OD_REMOVED`**
+  (`tripGuards`): đơn đã quét trên chuyến X mà nay ở xe khác, hoặc chuyến X sống lại thiếu đơn đã quét ⇒ 409 tới khi kho trả hàng. Về đúng xe
+  cũ rồi Xác nhận ⇒ `applyAwaitingState` gỡ `plan_dropped`, **tự đóng việc PLAN_PULLED** (`resolution` ghi "Kế hoạch có lại Số xe"), kho quét
+  tiếp. Tab Kế hoạch xuất giữ luật cũ (dòng DISPATCH đã 409 ở cửa đó; `classifyKhvcDelete` nay đọc chung `outboundHoldState`).
+- Gói QA 61 **[21n]** đi trọn vòng (giả lập quét bằng `cartons_scanned`); test đơn vị `reconcileActions` thêm PLAN_PULLED (chỉ "Đã xử lý tay").
+  Lớp C86 (MỚI) ở `docs/qa/BUG_CLASSES.md`.
 - **Sửa (cách a):** `refresh-pool { review_all: true }` trên chính kế hoạch đã xác nhận — nạp đơn chờ MỚI NHẤT từ ZSD02 rồi đưa MỌI dòng Chờ điều
   của kế hoạch (cũ + vừa nạp) vào khung chờ (ghi `reviewed_at` theo bộ lọc kế hoạch, không theo danh sách id; đơn "Không liên quan" của CHÍNH
   người bấm ở lại Chờ điều — gỡ mốc vừa ghi theo lô 300, tự soi 16/10 tối) — rồi về bàn ở **chế độ sửa** (FE

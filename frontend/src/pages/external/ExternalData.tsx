@@ -2095,6 +2095,7 @@ const CHANGE_LABEL: Record<string, { label: string; cls: string }> = {
   MATERIAL_CHANGED: { label: 'SAP đổi mã',      cls: 'bg-red-100 text-red-700' },
   ATTR_CHANGED:     { label: 'Đổi batch/%Date', cls: 'bg-slate-100 text-slate-600' },
   SHIPTO_CHANGED:   { label: 'SAP đổi khách',   cls: 'bg-red-100 text-red-700' },
+  PLAN_PULLED:      { label: 'Điều vận rút xe', cls: 'bg-red-100 text-red-700' },   // 17/10: bàn mở lại / huỷ xe khi chuyến đã quét / đang xuất
 }
 const ZONE_LABEL: Record<string, string> = { Z1: 'Chưa BĐ · chưa quét', Z2: 'Đang xuất · chưa quét', Z3: 'ĐÃ QUÉT', Z4: 'Đã đóng (GI)' }
 const ACTION_BADGE: Record<string, { label: string; cls: string }> = {

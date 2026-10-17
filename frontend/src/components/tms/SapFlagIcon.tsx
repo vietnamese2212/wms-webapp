@@ -1,12 +1,13 @@
 // TÌNH TRẠNG SAP của một OD trên bàn ghép xe = MỘT BIỂU TƯỢNG có màu + tooltip (16/10, user: "tình trạng SAP thể hiện qua biểu tượng, có màu
 // và tooltip — không ghi ra tốn không gian như hiện tại"). Hổ phách = cờ THAM CHIẾU (SAP đã post / đã gắn xe — không chặn gì, user chốt 03/10);
 // đỏ = cờ CỨNG phải xử lý (SAP thay / bỏ / sửa · đã vào KH xuất · họ hàng đã đi). Chữ đầy đủ + chi tiết nằm ở tooltip và cột "Lưu ý".
-import { PackageCheck, Link2, Replace, XCircle, PencilLine, CalendarCheck, GitBranch, type LucideIcon } from 'lucide-react'
+import { PackageCheck, Link2, Replace, XCircle, PencilLine, CalendarCheck, GitBranch, Warehouse, type LucideIcon } from 'lucide-react'
 import type { DispatchOdFlag } from '@/api/hooks'
 import { FLAG_VI, SOFT_FLAG_KINDS } from './dispatchIssues'
 
 const ICON: Record<DispatchOdFlag['kind'], LucideIcon> = {
   SHIPPED: PackageCheck, SAP_ASSIGNED: Link2, REPLACED: Replace, GONE: XCircle, CHANGED: PencilLine, IN_PLAN: CalendarCheck, KIN_SHIPPED: GitBranch,
+  WH_SCANNED: Warehouse,   // 17/10: kho đã quét trên chuyến của xe đã rút — cờ CỨNG (đỏ)
 }
 
 export function SapFlagIcon({ flag }: { flag: DispatchOdFlag }) {

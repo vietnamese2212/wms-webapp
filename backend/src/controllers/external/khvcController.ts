@@ -95,47 +95,47 @@ const DOSAP_FILTER_CAP = 800
 
 // v2.2 — luật XÓA an toàn: dòng Kế hoạch mà chuyến đã sinh CÓ HÀNG ĐÃ QUÉT → CHẶN xóa cứng.
 type KDelRow = { id: string; group_code: string }
-export async function classifyKhvcDelete(rows: KDelRow[]): Promise<{ deletable: KDelRow[]; blocked: (KDelRow & { reason: string })[] }> {
-  const gcs = [...new Set(rows.map(r => r.group_code))]
-  const scannedGcs = new Set<string>()
-  // CẤM xóa kế hoạch của chuyến ĐÃ HOÀN THÀNH / ĐANG XUẤT (user chốt 03/08: "user xóa đi các đơn hàng
-  // Kế hoạch xuất mà bên Xuất đã hoàn thành — việc này là không được phép"). Chuyến đã xuất là CHỨNG TỪ:
-  // xóa nguồn của nó làm mất đường đối chiếu SAP↔thực xuất. Chặn theo TRẠNG THÁI, không chỉ theo "đã quét"
-  // (chuyến hoàn thành với 0 thùng quét vẫn là chuyến đã chốt).
-  const lockedGcs = new Map<string, string>()
-  for (let i = 0; i < gcs.length; i += 300) {
-    const { data } = await supabase.from('GroupDeliveryOrder').select('group_code, status')
-      .in('group_code', gcs.slice(i, i + 300)).in('status', ['IN_PROGRESS', 'COMPLETED'])
-    for (const g of ((data ?? []) as { group_code: string; status: string }[]))
-      lockedGcs.set(g.group_code, g.status === 'COMPLETED'
-        ? 'Chuyến bên Xuất ĐÃ HOÀN THÀNH — không xóa được kế hoạch của chuyến đã xuất (muốn sửa số thì sửa DO ở tab DO SAP)'
-        : 'Chuyến bên Xuất ĐANG XUẤT HÀNG — chờ hoàn thành hoặc Tạm dừng chuyến rồi mới sửa kế hoạch')
-  }
-  // Chuyến đang GIỮ HÀNG NHẶT LẺ (soạn — hàng vật lý đã rời pallet xuống vị trí chờ, user chốt
-  // 05/08): chặn xóa kế hoạch, user gỡ trả hàng nhặt lẻ trên chuyến trước rồi mới được xóa.
-  const looseGcs = new Set<string>()
+/** Tình trạng chuyến bên Xuất của từng Số xe — dùng chung cho gác xoá ở tab Kế hoạch xuất (`classifyKhvcDelete`) và cửa "Mở lại" / Huỷ của
+ *  bàn ghép xe (17/10: bàn rút xe được kể cả chuyến đã quét / đang xuất — nhưng phải HỎI một lần và báo kho). Số xe chưa có chuyến ⇒ không có mục. */
+export type OutboundHold = { gdo_id: string; status: string; scanned: number; loose_held: boolean }
+export async function outboundHoldState(gcs0: string[]): Promise<Map<string, OutboundHold>> {
+  const gcs = [...new Set(gcs0)]
+  const out = new Map<string, OutboundHold>()
   for (let i = 0; i < gcs.length; i += 100) {
-    const { data: gdos } = await supabase.from('GroupDeliveryOrder').select('id, group_code').in('group_code', gcs.slice(i, i + 100))
-    const gcByGdoId = new Map((gdos ?? []).map((g: { id: string; group_code: string }) => [g.id, g.group_code]))
-    const gdoIds = (gdos ?? []).map((g: { id: string }) => g.id)
+    const { data: gdos } = await supabase.from('GroupDeliveryOrder').select('id, group_code, status').in('group_code', gcs.slice(i, i + 100))
+    const gcByGdoId = new Map<string, string>()
+    for (const g of ((gdos ?? []) as { id: string; group_code: string; status: string }[])) { gcByGdoId.set(g.id, g.group_code); out.set(g.group_code, { gdo_id: g.id, status: g.status, scanned: 0, loose_held: false }) }
+    const gdoIds = [...gcByGdoId.keys()]
     if (!gdoIds.length) continue
     const { data: dvs } = await supabase.from('OutboundDelivery').select('id, gdo_id').in('gdo_id', gdoIds)
     const gcByDo = new Map<string, string>()
     for (const d of ((dvs ?? []) as { id: string; gdo_id: string }[])) { const gc = gcByGdoId.get(d.gdo_id); if (gc) gcByDo.set(d.id, gc) }
-    const doIds = (dvs ?? []).map((d: { id: string }) => d.id)
+    const doIds = [...gcByDo.keys()]
     if (doIds.length) {
       const its = await fetchAllByIdChunks(doIds, c => supabase.from('OutboundItem').select('do_id, cartons_scanned').in('do_id', c).order('id')) as { do_id: string; cartons_scanned: number }[]
-      for (const it of (its ?? [])) if (Number(it.cartons_scanned) > 0) { const gc = gcByDo.get(it.do_id); if (gc) scannedGcs.add(gc) }
+      for (const it of (its ?? [])) { const h = out.get(gcByDo.get(it.do_id) ?? ''); if (h) h.scanned += Number(it.cartons_scanned) || 0 }
     }
     const held = await looseHeldGdoIds(gdoIds)
-    for (const gid of held) { const gc = gcByGdoId.get(gid); if (gc) looseGcs.add(gc) }
+    for (const gid of held) { const h = out.get(gcByGdoId.get(gid) ?? ''); if (h) h.loose_held = true }
   }
+  return out
+}
+
+export async function classifyKhvcDelete(rows: KDelRow[]): Promise<{ deletable: KDelRow[]; blocked: (KDelRow & { reason: string })[] }> {
+  // CẤM xóa kế hoạch của chuyến ĐÃ HOÀN THÀNH / ĐANG XUẤT (user chốt 03/08: "user xóa đi các đơn hàng
+  // Kế hoạch xuất mà bên Xuất đã hoàn thành — việc này là không được phép"). Chuyến đã xuất là CHỨNG TỪ:
+  // xóa nguồn của nó làm mất đường đối chiếu SAP↔thực xuất. Chặn theo TRẠNG THÁI, không chỉ theo "đã quét"
+  // (chuyến hoàn thành với 0 thùng quét vẫn là chuyến đã chốt).
+  // Chuyến đang GIỮ HÀNG NHẶT LẺ (soạn — hàng vật lý đã rời pallet xuống vị trí chờ, user chốt
+  // 05/08): chặn xóa kế hoạch, user gỡ trả hàng nhặt lẻ trên chuyến trước rồi mới được xóa.
+  const hold = await outboundHoldState(rows.map(r => r.group_code))
   const deletable: KDelRow[] = [], blocked: (KDelRow & { reason: string })[] = []
   for (const r of rows) {
-    const lockMsg = lockedGcs.get(r.group_code)
-    if (lockMsg) blocked.push({ ...r, reason: lockMsg })
-    else if (looseGcs.has(r.group_code)) blocked.push({ ...r, reason: 'Chuyến đang GIỮ HÀNG NHẶT LẺ ở vị trí chờ — gỡ trả hàng nhặt lẻ trên chuyến rồi mới xóa kế hoạch' })
-    else if (scannedGcs.has(r.group_code)) blocked.push({ ...r, reason: 'Chuyến đã có hàng đã quét — không xóa cứng' })
+    const h = hold.get(r.group_code)
+    if (h?.status === 'COMPLETED') blocked.push({ ...r, reason: 'Chuyến bên Xuất ĐÃ HOÀN THÀNH — không xóa được kế hoạch của chuyến đã xuất (muốn sửa số thì sửa DO ở tab DO SAP)' })
+    else if (h?.status === 'IN_PROGRESS') blocked.push({ ...r, reason: 'Chuyến bên Xuất ĐANG XUẤT HÀNG — chờ hoàn thành hoặc Tạm dừng chuyến rồi mới sửa kế hoạch' })
+    else if (h?.loose_held) blocked.push({ ...r, reason: 'Chuyến đang GIỮ HÀNG NHẶT LẺ ở vị trí chờ — gỡ trả hàng nhặt lẻ trên chuyến rồi mới xóa kế hoạch' })
+    else if (h && h.scanned > 0) blocked.push({ ...r, reason: 'Chuyến đã có hàng đã quét — không xóa cứng' })
     else deletable.push(r)
   }
   return { deletable, blocked }

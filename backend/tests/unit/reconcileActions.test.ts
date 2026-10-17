@@ -13,6 +13,8 @@ describe('reconcileButtons', () => {
   })
   it('đổi KHÁCH GIAO (08/10): không Áp SAP (dù new_ordered rỗng ⇒ Number = 0 ≥ 0), có Đã xử lý tay', () => {
     expect(t({ change_type: 'SHIPTO_CHANGED', new_ordered: null, scanned: 0 })).toEqual({ apply: false, manual: true, keep: true })
+    // 17/10: điều vận rút xe khi chuyến đã quét — không có gì để "Áp SAP", kho trả hàng rồi "Đã xử lý tay"
+    expect(t({ change_type: 'PLAN_PULLED', new_ordered: null, scanned: 2 })).toEqual({ apply: false, manual: true, keep: true })
   })
   it('đổi SL chưa quét: Áp SAP được, không cần Đã xử lý tay', () => {
     expect(t({ change_type: 'QTY_DECREASE', new_ordered: 8, scanned: 0 })).toEqual({ apply: true, manual: false, keep: true })

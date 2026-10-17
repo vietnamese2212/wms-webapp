@@ -71,7 +71,10 @@ function useIsDesktop() {
 /** Ô một mảng: trạng thái + xe · đơn; nháp quá ngày ⚠; nháp chỉ chứa Chờ điều in mờ "chưa giữ đơn". */
 function SegCell({ p, today }: { p: DispatchPlanListItem | null; today: string }) {
   if (!p) return <span className="text-slate-300">—</span>
-  const st = STATUS[p.status]
+  // 17/10 (user chốt): TENDERED mà không xe nào chờ ĐVVT = kế hoạch đang SỬA (vài xe mở lại) — không in "Chờ ĐVVT" gây hiểu là kẹt ở ĐVVT
+  const st = p.status === 'TENDERED' && !(p.summary?.tendered ?? 0)
+    ? { label: `Đang sửa · ${nf(Math.max(0, (p.summary?.trips ?? 0) - (p.summary?.confirmed ?? 0)))} xe mở`, tone: 'amber' as const }
+    : STATUS[p.status]
   const holds = p.status === 'DISCARDED' ? true : planHoldsOrders(p.summary)
   const overdue = isOpenSt(p) && p.plan_date < today
   return (

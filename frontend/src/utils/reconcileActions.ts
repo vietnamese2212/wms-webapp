@@ -3,7 +3,9 @@
 // Đổi MÃ hàng / đổi KHÁCH GIAO: BE không áp thẳng (resolve 'apply' trả 422) — xử ở nguồn rồi "Đã xử lý tay". Bản cũ viết tại chỗ
 // `r.action === 'MATERIAL_CHANGED'` — giá trị của `change_type`, `action` không bao giờ mang ⇒ việc đổi mã chỉ có "Áp SAP" (luôn
 // 422) + "Giữ WMS", không có lối "Đã xử lý tay" mà chính câu lỗi bảo người dùng bấm (08/10).
-export const HAND_ONLY_CHANGES: ReadonlySet<string> = new Set(['MATERIAL_CHANGED', 'SHIPTO_CHANGED'])
+// PLAN_PULLED (17/10): điều vận rút xe khi chuyến đã quét / đang xuất — kho trả hàng (xoá QR / gỡ nhặt lẻ) rồi "Đã xử lý tay"; bàn xác nhận lại
+// cùng Số xe thì việc tự đóng. Không có gì để "Áp SAP".
+export const HAND_ONLY_CHANGES: ReadonlySet<string> = new Set(['MATERIAL_CHANGED', 'SHIPTO_CHANGED', 'PLAN_PULLED'])
 
 export interface ReconcileTaskLike {
   status: string; action: string; change_type: string

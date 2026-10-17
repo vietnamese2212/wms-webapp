@@ -986,24 +986,34 @@ try {
   let PR = await planOf(pR.j?.data?.id)
   const gcR = (PR?.trips ?? []).map(t => t.group_code)
   const gdoBefore = await restAll('GroupDeliveryOrder', `select=id,group_code&group_code=like.${PREFIX}*`)
-  // chuyến của xe đầu ĐANG XUẤT ⇒ không được mở lại (chứng từ đã chạy), xe còn lại mở được
+  // chuyến của xe đầu ĐANG XUẤT ⇒ 17/10 (user chốt "bắt buộc phải mở ra thì mới gỡ được — hai bên cùng được cảnh báo"): Mở lại HỎI một lần
+  // (409 OUTBOUND_HOLD_CONFIRM, mọi xe giữ nguyên), force ⇒ rút CẢ xe đang xuất: chuyến ngừng (plan_dropped) giữ trạng thái IN_PROGRESS,
+  // việc PLAN_PULLED OPEN (Z2 — đang xuất, chưa quét). Bản trước 17/10: xe đang xuất bị chặn hẳn, bên Xuất không biết gì.
   const busyGc = gcR[0]
   await restWrite('GroupDeliveryOrder', 'PATCH', `group_code=eq.${busyGc}`, { status: 'IN_PROGRESS', updated_at: nowIso() })
-  const rop = await api(`/tms/dispatch/plans/${PR.id}/reopen`, 'POST', {})
+  const rop0 = await api(`/tms/dispatch/plans/${PR.id}/reopen`, 'POST', {})
+  const PR0 = await planOf(PR.id)
+  const rop = await api(`/tms/dispatch/plans/${PR.id}/reopen`, 'POST', { force: true })
   PR = await planOf(PR.id)
   const khAfter = await restAll('khvc_lines', `select=group_code&group_code=like.${PREFIX}*`)
-  check('11g. Mở lại kế hoạch đã xác nhận: xe có chuyến ĐANG XUẤT giữ nguyên (nêu lý do), xe còn lại về NHÁP và dòng Kế hoạch xuất của nó được gỡ',
-    cR.s === 200 && rop.s === 200 && rop.j?.data?.reopened?.blocked?.some(b => b.group_code === busyGc) && rop.j?.data?.reopened?.trips === gcR.length - 1
-    && PR?.trips?.find(t => t.group_code === busyGc)?.status === 'CONFIRMED' && PR?.trips?.filter(t => t.group_code !== busyGc).every(t => t.status === 'DRAFT')
-    && khAfter.every(k => k.group_code === busyGc) && khAfter.length > 0,
-    `cf=${cR.s} reopen=${rop.s} ${JSON.stringify(rop.j?.data?.reopened ?? rop.j?.error)} kh=${khAfter.map(k => k.group_code).join(',')}`)
+  const busyG = (await restAll('GroupDeliveryOrder', `select=id,status,plan_dropped&group_code=eq.${busyGc}`))[0]
+  const busyTask = busyG ? (await restAll('reconcile_tasks', `select=status,zone&gdo_id=eq.${busyG.id}&change_type=eq.PLAN_PULLED&order=created_at.desc`))[0] : null
+  check('11g. Mở lại kế hoạch có xe ĐANG XUẤT: lần đầu 409 OUTBOUND_HOLD_CONFIRM (mọi xe giữ CONFIRMED) · force ⇒ mở CẢ xe đang xuất: mọi xe NHÁP, dòng KH xuất gỡ hết, chuyến đang xuất NGỪNG giữ IN_PROGRESS, việc PLAN_PULLED OPEN Z2',
+    cR.s === 200 && rop0.s === 409 && rop0.j?.error?.code === 'OUTBOUND_HOLD_CONFIRM' && (PR0?.trips ?? []).every(t => t.status === 'CONFIRMED')
+    && rop.s === 200 && rop.j?.data?.reopened?.trips === gcR.length && rop.j?.data?.reopened?.warned?.some(w => w.group_code === busyGc)
+    && (PR?.trips ?? []).every(t => t.status === 'DRAFT') && khAfter.length === 0
+    && busyG?.plan_dropped === true && busyG?.status === 'IN_PROGRESS' && busyTask?.status === 'OPEN' && busyTask?.zone === 'Z2',
+    `cf=${cR.s} hỏi=${rop0.s}/${rop0.j?.error?.code} xe=${(PR0?.trips ?? []).map(t => t.status).join(',')} · force=${rop.s} ${JSON.stringify(rop.j?.data?.reopened ?? rop.j?.error).slice(0, 200)} xe=${(PR?.trips ?? []).map(t => t.status).join(',')} kh=${khAfter.length} gdo=${busyG?.plan_dropped}/${busyG?.status} việc=${busyTask?.status}/${busyTask?.zone}`)
   const cR2 = await api(`/tms/dispatch/plans/${PR.id}/confirm`, 'POST', {})
   PR = await planOf(PR.id)
-  const gdoAfter = await restAll('GroupDeliveryOrder', `select=id,group_code&group_code=like.${PREFIX}*`)
+  const gdoAfter = await restAll('GroupDeliveryOrder', `select=id,group_code,plan_dropped&group_code=like.${PREFIX}*`)
   const sameIds = gdoBefore.every(g => gdoAfter.some(a => a.id === g.id && a.group_code === g.group_code))
-  check('11h. Xác nhận lại sau khi mở lại (kế hoạch mở một phần) → 200, mọi xe CONFIRMED, chuyến bên Xuất GIỮ NGUYÊN id (không đẻ chuyến mới)',
-    cR2.s === 200 && PR?.status === 'CONFIRMED' && (PR?.trips ?? []).every(t => t.status === 'CONFIRMED') && sameIds && gdoAfter.length === gdoBefore.length,
-    `http=${cR2.s} ${cR2.j?.error?.message ?? ''} plan=${PR?.status} gdo ${gdoBefore.length}→${gdoAfter.length} same=${sameIds}`)
+  const busyTask2 = busyG ? (await restAll('reconcile_tasks', `select=status&gdo_id=eq.${busyG.id}&change_type=eq.PLAN_PULLED&order=created_at.desc`))[0] : null
+  check('11h. Xác nhận lại sau khi mở lại → 200, mọi xe CONFIRMED, chuyến bên Xuất GIỮ NGUYÊN id (không đẻ chuyến mới), chuyến đang xuất hết ngừng, việc PLAN_PULLED tự RESOLVED',
+    cR2.s === 200 && PR?.status === 'CONFIRMED' && (PR?.trips ?? []).every(t => t.status === 'CONFIRMED') && sameIds && gdoAfter.length === gdoBefore.length
+    && gdoAfter.every(g => g.plan_dropped === false) && busyTask2?.status === 'RESOLVED',
+    `http=${cR2.s} ${cR2.j?.error?.message ?? ''} plan=${PR?.status} gdo ${gdoBefore.length}→${gdoAfter.length} same=${sameIds} ngừng=${gdoAfter.filter(g => g.plan_dropped).length} việc=${busyTask2?.status}`)
+  if (busyG) await restWrite('reconcile_tasks', 'DELETE', `gdo_id=eq.${busyG.id}`).catch(() => {})
   // DO TẠO LẠI – ĐÃ ĐIỀU (user chốt 28/09): SO sửa ⇒ OD mới thay OD đã nằm Kế hoạch xuất ⇒ OD mới KHÔNG vào đợt ghép, sang tab Đã điều
   const khR = (await restAll('khvc_lines', `select=do_no,group_code&group_code=like.${PREFIX}*&order=do_no`))[0]
   const ODR = 'QA61ODR1'
@@ -2459,7 +2469,9 @@ try {
       const g1 = await gdo(), tk1 = await task()
       const sy = await api(`/tms/dispatch/plans/${s5.id}/sync`)
       const fl = (sy.j?.data?.flags ?? []).find(f => f.od_number === OD[2])
-      const mvP = await mv([r3.id], 'pool'), mvN = await mv([r3.id], 'new')                                        // đơn sang xe KHÁC
+      // đơn sang xe KHÁC: C hết đơn bị bỏ ⇒ "Xe mới" trần sẽ lấy lại đúng số của C (= về xe cũ) — ép Số xe khác bằng restore seq 90
+      const mvP = await mv([r3.id], 'pool')
+      const mvN = await api(`/tms/dispatch/plans/${s5.id}/move`, 'POST', { ids: [r3.id], to: 'new', restore: { seq: 90, vehicle_model_ids: [], transport_company_id: null, locked: false, allow_mix_categories: null } })
       const D = tripOfOd(await P5(), OD[2])
       const cfD = await api(`/tms/dispatch/plans/${s5.id}/confirm`, 'POST', {})                                      // 409 SCANNED_OD_REMOVED
       await mv([r3.id], 'pool')

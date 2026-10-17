@@ -121,7 +121,7 @@ function LegendNum({ dot, label, value, to }: { dot: string; label: string; valu
       <span className="text-base italic font-semibold tabular-nums text-slate-800 dark:text-slate-100">{typeof value === 'number' ? nf.format(value) : value}</span>
     </span>
   )
-  return to ? <Link to={to} className="hover:opacity-80">{inner}</Link> : inner
+  return to ? <Link to={to} className="hover:opacity-80 min-w-0">{inner}</Link> : inner   // min-w-0: để nhãn co được khi hàng không wrap (C81)
 }
 
 // Card từng KHÂU (hàng DEPARTMENTS) — donut % + vài dòng số + link mở trang
@@ -254,12 +254,13 @@ function OutboundPanel({ data }: { data: ControlTowerData }) {
     <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/60">
       <div className="px-2.5 py-1.5 border-b border-slate-200 dark:border-slate-700 text-[10px] font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-300 text-center">Outbound — chuyến xuất</div>
       <div className="px-3 py-2 space-y-1.5">
-        <div className="flex items-center gap-4 flex-wrap">
+        {/* 17/10 (C81): ≥ 1280 một hàng — nhãn co / cắt "…", số và "n chuyến" không cắt; dưới 1280 vẫn wrap */}
+        <div className="flex items-center gap-4 flex-wrap xl:flex-nowrap xl:gap-2.5 min-w-0">
           <LegendNum dot="bg-slate-400" label="Chờ soạn" value={o.pending} to="/wms/outbound" />
           <LegendNum dot="bg-sky-500" label="Đang soạn" value={o.in_progress} to="/wms/outbound" />
           {o.paused > 0 && <LegendNum dot="bg-red-500" label="Tạm dừng" value={o.paused} to="/wms/outbound" />}
           <LegendNum dot="bg-green-500" label="Hoàn thành" value={o.completed} to="/wms/outbound" />
-          <span className="ml-auto text-[10px] text-slate-500">{nf.format(o.total)} chuyến</span>
+          <span className="ml-auto text-[10px] text-slate-500 shrink-0 whitespace-nowrap">{nf.format(o.total)} chuyến</span>
         </div>
         <StackBar segs={[
           { v: o.pending, cls: 'bg-slate-400', label: 'Chờ soạn' },
@@ -279,7 +280,7 @@ function InboundPanel({ data }: { data: ControlTowerData }) {
     <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/60">
       <div className="px-2.5 py-1.5 border-b border-slate-200 dark:border-slate-700 text-[10px] font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-300 text-center">Inbound — nhận hàng</div>
       <div className="px-3 py-2 space-y-1.5">
-        <div className="flex items-center gap-4 flex-wrap">
+        <div className="flex items-center gap-4 flex-wrap xl:flex-nowrap xl:gap-2.5 min-w-0">
           <LegendNum dot="bg-violet-500" label="Phiếu nhập" value={i.orders} to="/wms/inbound" />
           <LegendNum dot="bg-green-500" label="Pallet đã nhận" value={i.pallets} to="/wms/inbound" />
           <span className="text-[10px] text-slate-500 dark:text-slate-400" title={QTY_CONVERTED_TIP}>{QTY_CONVERTED_LABEL}
@@ -594,8 +595,9 @@ function ConsoleBody({ data, now, tv = false }: { data: ControlTowerData; now: D
             <InboundPanel data={data} />
           </div>
           {/* Hàng DEPARTMENTS — mỗi khâu một card, bấm là mở trang khâu đó.
-              5 cột chỉ từ 2xl — ở 1280 (trừ sidebar + rail) 5 cột làm nhãn cắt cụt */}
-          <div className="grid grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5 gap-2">
+              17/10 (C81, đo ui-layout-sync: 3 cột/2 hàng ở 1280 nhưng 5 cột/1 hàng từ 1536 ⇒ đỉnh khối dưới lệch 82 px): 5 cột từ xl —
+              bố cục máy tính giống nhau ở mọi cỡ ≥ 1280; nhãn trong card đã `truncate` + title, số không cắt. Bản cũ để 2xl vì sợ nhãn cụt. */}
+          <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-2">
             <DeptCard title="Cổng" to="/tms/gate" color="#38bdf8"
               pct={pctOf(data.gate.completed, gateTotal)}
               rows={[

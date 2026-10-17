@@ -49,10 +49,11 @@ export function bandSummary(parents: { id: string; name: string }[], bands: Disp
   return custom.map(p => `${p.name} ${full[p.id].min}–${full[p.id].max} %`).join(' · ') + (rest > 0 ? ` · còn lại ${Object.values(dflt)[0]?.min ?? DEFAULT_BAND.min}–100 %` : '')
 }
 
-export function DispatchLoadBandDialog({ open, onClose, title, confirmLabel, intro, parents, initial, busy, onConfirm }: {
+export function DispatchLoadBandDialog({ open, onClose, title, confirmLabel, intro, parents, initial, busy, onConfirm, readOnly = false }: {
   open: boolean; onClose: () => void; title: string; confirmLabel: string; intro?: React.ReactNode
   parents: { id: string; name: string }[]; initial: LoadBandDraft; busy?: boolean
   onConfirm: (d: LoadBandDraft) => unknown
+  readOnly?: boolean   // 17/10: kế hoạch chỉ xem — mở để ĐỌC quy tắc đang áp, không sửa, không nút áp
 }) {
   const [bands, setBands] = useState<Record<string, { min: string; max: string }>>({})
   const [bypass, setBypass] = useState(false)
@@ -90,30 +91,32 @@ export function DispatchLoadBandDialog({ open, onClose, title, confirmLabel, int
             {parents.map(p => (
               <div key={p.id} className={`grid grid-cols-[1fr_84px_84px] items-center gap-1 px-2 py-1 border-b last:border-0 ${bypass ? 'opacity-50' : ''}`}>
                 <span className="min-w-0 break-words font-medium text-slate-700">{p.name}</span>
-                <input type="number" inputMode="decimal" min={0} max={100} step={1} value={bands[p.id]?.min ?? ''} disabled={bypass || busy} onChange={e => set(p.id, 'min', e.target.value)}
+                <input type="number" inputMode="decimal" min={0} max={100} step={1} value={bands[p.id]?.min ?? ''} disabled={bypass || busy || readOnly} onChange={e => set(p.id, 'min', e.target.value)}
                   className="h-8 w-full rounded border border-slate-300 px-2 text-right tabular-nums" aria-label={`${p.name} tối thiểu %`} />
-                <input type="number" inputMode="decimal" min={50} max={130} step={1} value={bands[p.id]?.max ?? ''} disabled={bypass || busy} onChange={e => set(p.id, 'max', e.target.value)}
+                <input type="number" inputMode="decimal" min={50} max={130} step={1} value={bands[p.id]?.max ?? ''} disabled={bypass || busy || readOnly} onChange={e => set(p.id, 'max', e.target.value)}
                   className="h-8 w-full rounded border border-slate-300 px-2 text-right tabular-nums" aria-label={`${p.name} tối đa %`} />
               </div>
             ))}
           </div>
           <p className="text-[11px] text-slate-500">Dưới <b>tối thiểu</b> máy <b>không tạo xe</b> — đơn nằm ở khung chờ (chip "Dưới tối thiểu"), bạn kéo lên xe hoặc Trả về Chờ điều · máy được xếp tới <b>tối đa</b> (105 = cho vượt 5 % sức chứa danh định, % tải vẫn in theo danh định). Dải vừa chọn được nhớ làm mặc định cho kho.</p>
           <label className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-2 py-1.5 cursor-pointer">
-            <input type="checkbox" className="mt-0.5 h-3.5 w-3.5 accent-amber-600" checked={bypass} disabled={busy} onChange={e => setBypass(e.target.checked)} />
+            <input type="checkbox" className="mt-0.5 h-3.5 w-3.5 accent-amber-600" checked={bypass} disabled={busy || readOnly} onChange={e => setBypass(e.target.checked)} />
             <span className="text-amber-900"><b>Bỏ qua dải %</b> — xếp theo sức chứa danh định (100 %), tạo xe cho mọi đơn kể cả rất ít tải, không báo Non tải. Máy sẽ chọn xe rẻ nhất kể cả xe to cho đơn nhỏ.</span>
           </label>
           {!bypass && parsed.errs.length > 0 && <ul className="list-disc pl-4 text-red-600">{parsed.errs.slice(0, 4).map(e => <li key={e}>{e}</li>)}</ul>}
         </div>
         <DialogFooter>
-          <Button size="sm" variant="outline" className="h-8" disabled={busy} onClick={onClose}>Huỷ</Button>
-          <Button size="sm" className="h-8" disabled={busy || !ok} onClick={() => void onConfirm({ bands: bypass ? fullBands(parents, initial.bands, null) : parsed.out, bypass })}>{busy ? 'Đang chạy…' : confirmLabel}</Button>
+          <Button size="sm" variant="outline" className="h-8" disabled={busy} onClick={onClose}>{readOnly ? 'Đóng' : 'Huỷ'}</Button>
+          {!readOnly && <Button size="sm" className="h-8" disabled={busy || !ok} onClick={() => void onConfirm({ bands: bypass ? fullBands(parents, initial.bands, null) : parsed.out, bypass })}>{busy ? 'Đang chạy…' : confirmLabel}</Button>}
         </DialogFooter>
       </DialogContent>
     </Dialog>
   )
 }
 
-/** Chip trên bàn ghép xe: dải đang áp cho kế hoạch — bấm để đổi ngay (xe nháp tính lại, không ghép lại). */
+/** Nút "Quy tắc" trên bàn ghép xe (17/10, user: "phần này chỉ đơn giản là rule — làm gọn thành Rule, bật lên là thấy, đừng đẻ dài dòng"):
+ *  bản cũ in cả câu "XE 4 PALLET 95–105 % · …" cắt cụt trên thanh công cụ. Nay chỉ icon + "Quy tắc" (hổ phách khi đang Bỏ qua dải %), câu
+ *  đầy đủ ở tooltip; bấm mở hộp dải % tải — kế hoạch đang sửa thì đổi được ngay (xe nháp tính lại, không ghép lại), chỉ xem thì mở đọc. */
 export function DispatchLoadBandChip({ plan, editable }: { plan: DispatchPlan; editable: boolean }) {
   const parents = useLoadBandParents(plan.warehouse_id)
   const [open, setOpen] = useState(false)
@@ -121,13 +124,13 @@ export function DispatchLoadBandChip({ plan, editable }: { plan: DispatchPlan; e
   const text = bandSummary(parents, plan.params.load_bands, plan.params.load_bypass, plan.params.underload_pct)
   return (
     <>
-      <button type="button" onClick={() => editable && setOpen(true)} disabled={!editable}
-        title={editable ? `Dải % tải đang áp: ${text} — bấm để đổi (xe nháp tính lại Non tải / vượt theo dải mới)` : `Dải % tải đang áp: ${text}`}
-        className={`inline-flex items-center gap-1 rounded-md px-2 h-9 sm:h-7 text-[11px] shrink-0 max-w-[150px] 2xl:max-w-[320px] ${plan.params.load_bypass ? 'bg-amber-100 text-amber-900' : 'bg-sky-50 text-sky-800'} ${editable ? 'hover:bg-sky-100' : ''}`}>
-        <Gauge className="h-3.5 w-3.5 shrink-0" /><span className="truncate">{text}</span>
+      <button type="button" onClick={() => setOpen(true)} aria-label="Quy tắc"
+        title={`Quy tắc dải % tải đang áp: ${text}${editable ? ' — bấm để xem / đổi (xe nháp tính lại Non tải / vượt theo dải mới)' : ' — bấm để xem'}`}
+        className={`inline-flex items-center gap-1 rounded-md px-2 h-9 sm:h-7 text-[11px] font-medium shrink-0 whitespace-nowrap ${plan.params.load_bypass ? 'bg-amber-100 text-amber-900 hover:bg-amber-200' : 'bg-sky-50 text-sky-800 hover:bg-sky-100'}`}>
+        <Gauge className="h-3.5 w-3.5 shrink-0" />Quy tắc
       </button>
-      <DispatchLoadBandDialog open={open} onClose={() => setOpen(false)} title="Dải % tải theo dòng xe cha" confirmLabel="Áp cho kế hoạch này"
-        intro="Đổi dải cho kế hoạch đang mở: mọi xe nháp tính lại Non tải / vượt theo dải mới, máy KHÔNG ghép lại (bấm Tối ưu lại nếu muốn máy xếp lại theo dải)."
+      <DispatchLoadBandDialog open={open} onClose={() => setOpen(false)} title="Quy tắc dải % tải theo dòng xe cha" confirmLabel="Áp cho kế hoạch này" readOnly={!editable}
+        intro={editable ? 'Đổi dải cho kế hoạch đang mở: mọi xe nháp tính lại Non tải / vượt theo dải mới, máy KHÔNG ghép lại (bấm Tối ưu lại nếu muốn máy xếp lại theo dải).' : 'Kế hoạch đang chỉ xem — dải đang áp lúc lập. Muốn đổi: bấm "Sửa" ở tab Kế hoạch.'}
         parents={parents} initial={{ bands: fullBands(parents, plan.params.load_bands, plan.params.underload_pct), bypass: plan.params.load_bypass === true }} busy={update.isPending}
         onConfirm={d => update.mutateAsync({ plan_id: plan.id, load_bands: d.bands, load_bypass: d.bypass })
           .then(p => { setOpen(false); toast({ title: 'Đã áp dải % tải', description: `${p.summary.underload ?? 0} xe Non tải · ${p.summary.oversize ?? 0} xe vượt theo dải mới.` }) })

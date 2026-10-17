@@ -588,6 +588,9 @@ nào thì mở khoá xe đó. Cần 1 hướng nữa: kế hoạch làm nhầm, 
   `20261016b`, `hooks/useDispatchPresence.ts`): mỗi bàn đang mở kế hoạch track { id, name, mode sửa / xem }; chip hổ phách cạnh trạng thái
   "A đang sửa · B xem" (người khác, gộp theo người). Không ghi DB, không qua PostgREST. Cửa ghi vẫn thuê kế hoạch 90 s (`leasePlan`, 409
   PLAN_BUSY, không thử lại); Tối ưu lại chỉ sắp xe CHƯA khoá ⇒ muốn giữ việc tay thì khoá xe.
+- **Nút "Quy tắc" trên thanh công cụ bàn (17/10, user: "phần này chỉ đơn giản là rule — làm gọn thành Rule, bật lên là thấy"):** thay chip in cả
+  câu dải % tải ("XE 4 PALLET 95–105 % · …" cắt cụt). Chỉ icon + chữ, hổ phách khi đang Bỏ qua dải %; tooltip = câu đầy đủ; bấm mở hộp dải %
+  tải — kế hoạch đang sửa thì đổi ngay như cũ, chỉ xem thì mở ĐỌC (`readOnly`: ô khoá, chỉ nút Đóng).
 - **Sửa (cách a):** `refresh-pool { review_all: true }` trên chính kế hoạch đã xác nhận — nạp đơn chờ MỚI NHẤT từ ZSD02 rồi đưa MỌI dòng Chờ điều
   của kế hoạch (cũ + vừa nạp) vào khung chờ (ghi `reviewed_at` theo bộ lọc kế hoạch, không theo danh sách id; đơn "Không liên quan" của CHÍNH
   người bấm ở lại Chờ điều — gỡ mốc vừa ghi theo lô 300, tự soi 16/10 tối) — rồi về bàn ở **chế độ sửa** (FE

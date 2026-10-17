@@ -416,6 +416,20 @@ export function manualRuleBlocks(fleet: EngineModel[], staying: RuleRow[], movin
     if (no.length) out.push({ code: 'MULTI_VEHICLE_BLOCKED', message: `Dòng xe ${few(no.map(m => m.name))} không được ghép nhiều xe trên một thẻ (Cài đặt TMS → Mã dòng xe / Loại xe → Ghép nhiều xe).` })
     if (o.maxVehicles && fleet.length > o.maxVehicles) out.push({ code: 'MULTI_VEHICLE_BLOCKED', message: `Thẻ ${fleet.length} xe — kho chỉ cho tối đa ${o.maxVehicles} xe một thẻ (Cài đặt WMS → Kho → XUẤT — Điều vận).` })
   }
+  // 17/10 (user chốt sau khi test trên kế hoạch 02/10): hai luật KHÔNG qua được bằng công tắc nào trên thẻ xe — điều kiện bảo quản ·
+  // dòng xe khách được vào — đứng TRƯỚC trộn Loại kho / số khách / kênh. Bản cũ in "Bật Ghép Loại kho khác" lên đầu cho ca kéo OD lạnh
+  // vào xe nóng: người bật switch, kéo lại, vẫn bị chặn vì xe không chở được hàng lạnh. Mã lỗi HTTP = luật ĐẦU (ruleFail) nên thứ tự là luật.
+  const asked = o.modelOnly ? all : moving
+  // hàng chỉ "đi kèm đơn" (POSM) theo xe của đơn chính — không mang điều kiện / danh sách dòng xe riêng (cùng luật `followOnlyOd`)
+  const posmOnly = (r: RuleRow) => o.posmFollows === true && followOnlyRow(r, o.follow)
+  for (const m of models) {
+    const conds = uniq(asked.flatMap(r => r.conditions ?? []).filter(Boolean)).sort(cmp)
+    if (conds.length && !servesConditions(m, conds))
+      out.push({ code: 'CONDITION_MISMATCH', message: `Dòng xe ${m.name} không chở được điều kiện bảo quản ${conds.map(c => o.condLabel?.(c) ?? c).join(' + ')} của đơn${o.modelOnly || o.whole ? ' trên xe' : ' đưa lên'}.` })
+    const outList = asked.filter(r => Array.isArray(r.allowed_models) && r.allowed_models.length > 0 && !r.allowed_models.includes(m.id) && !posmOnly(r))
+    // 15/10: lối ra cho RIÊNG một xe = icon xe tải trên dòng đơn (ngoại lệ trên bản chụp dòng OD); đổi hẳn = trang Khách hàng
+    if (outList.length) out.push({ code: 'VEHICLE_NOT_ALLOWED', message: `Khách ${few(uniq(outList.map(who)))} không được vào dòng xe ${m.name}. Cho riêng xe này: bấm icon xe tải trên dòng đơn của khách · đổi hẳn: Khách hàng → Dòng xe được vào.` })
+  }
   if (!o.modelOnly) {
     const mix = mixBlockReason(o.allowMixCategories, staying, moving, o.follow, o.whole)
     if (mix) out.push({ code: 'CATEGORY_MIX_BLOCKED', message: mix })
@@ -439,17 +453,6 @@ export function manualRuleBlocks(fleet: EngineModel[], staying: RuleRow[], movin
   } else if (m0 && !o.allowExtraDrops) {
     const stops = new Set(all.map(keyOf)).size
     if (stops > modelDrops(m0)) out.push({ code: 'DROPS_EXCEEDED', message: `Xe đang chở ${stops} khách — dòng xe ${m0.name} chỉ nhận ${modelDrops(m0)} khách (Cài đặt TMS → Mã dòng xe → Điểm giao tối đa). Chọn dòng xe nhận đủ số khách, hoặc kéo bớt khách sang xe khác.` })
-  }
-  const asked = o.modelOnly ? all : moving
-  // hàng chỉ "đi kèm đơn" (POSM) theo xe của đơn chính — không mang điều kiện / danh sách dòng xe riêng (cùng luật `followOnlyOd`)
-  const posmOnly = (r: RuleRow) => o.posmFollows === true && followOnlyRow(r, o.follow)
-  for (const m of models) {
-    const conds = uniq(asked.flatMap(r => r.conditions ?? []).filter(Boolean)).sort(cmp)
-    if (conds.length && !servesConditions(m, conds))
-      out.push({ code: 'CONDITION_MISMATCH', message: `Dòng xe ${m.name} không chở được điều kiện bảo quản ${conds.map(c => o.condLabel?.(c) ?? c).join(' + ')} của đơn${o.modelOnly || o.whole ? ' trên xe' : ' đưa lên'}.` })
-    const outList = asked.filter(r => Array.isArray(r.allowed_models) && r.allowed_models.length > 0 && !r.allowed_models.includes(m.id) && !posmOnly(r))
-    // 15/10: lối ra cho RIÊNG một xe = icon xe tải trên dòng đơn (ngoại lệ trên bản chụp dòng OD); đổi hẳn = trang Khách hàng
-    if (outList.length) out.push({ code: 'VEHICLE_NOT_ALLOWED', message: `Khách ${few(uniq(outList.map(who)))} không được vào dòng xe ${m.name}. Cho riêng xe này: bấm icon xe tải trên dòng đơn của khách · đổi hẳn: Khách hàng → Dòng xe được vào.` })
   }
   // luật 3: tải SAU thao tác không quá trần dải tải (01/10: trần của dòng xe cha, vd 105 %) — chỉ khi lần này THÊM tải hoặc đổi xe
   if (m0 && asked.length) {

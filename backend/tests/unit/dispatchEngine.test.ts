@@ -830,13 +830,22 @@ describe('manualRuleBlocks — MỌI luật ghép xe ở cửa làm tay (user 14
     const b = manualRuleBlocks([model({ id: 'X1', max_drops: 1 })], [r('A', 'K1')], [r('B', 'K2', { cat_load: { FG02: 1 } })], { ...opt, allowMixCategories: false })
     expect(codes(b)).toEqual(['CATEGORY_MIX_BLOCKED', 'DROPS_EXCEEDED'])
   })
+  it('luật KHÔNG qua được bằng công tắc (điều kiện bảo quản · dòng xe được vào) đứng TRƯỚC trộn Loại kho / số khách / kênh (17/10, user chốt: ca kéo OD lạnh vào xe nóng từng mở đầu bằng "Bật Ghép Loại kho khác")', () => {
+    const cold = r('B', 'K2', { conditions: ['COLD'], cat_load: { FG02: 1 }, channel: 'GT', allowed_models: ['X9'] })
+    const b = manualRuleBlocks([xeThuong], [r('A', 'K1', { channel: 'KA' })], [cold], { ...opt, allowMixCategories: false, allowMixChannels: false })
+    expect(codes(b).slice(0, 2)).toEqual(['CONDITION_MISMATCH', 'VEHICLE_NOT_ALLOWED'])
+    expect(codes(b).slice(2)).toEqual(['CATEGORY_MIX_BLOCKED', 'CHANNEL_MIX_BLOCKED'])
+    // đổi dòng xe (modelOnly) cũng vậy: điều kiện trước số khách
+    const m = manualRuleBlocks([model({ id: 'X1', name: 'Xe 1 điểm', max_drops: 1, serve_conditions: ['AMB'] })], [], [r('A', 'K1', { conditions: ['COLD'] }), r('B', 'K2')], { ...opt, modelOnly: true })
+    expect(codes(m)[0]).toBe('CONDITION_MISMATCH')
+  })
   it('xe vượt từ trước vẫn KÉO RA được (cửa làm tay chỉ hỏi phần lần này đưa lên)', () => {
     expect(manualRuleBlocks([xe], [r('A', 'K1', { pallets: 20, separate: true }), r('B', 'K2')], [], opt)).toEqual([])
   })
   it('đổi dòng xe (modelOnly): hỏi MỌI đơn trên xe với xe mới — số điểm · điều kiện · tải · ghép nhiều xe; không hỏi kênh / đi xe riêng', () => {
     const rows = [r('A', 'K1', { pallets: 6, conditions: ['COLD'] }), r('B', 'K2', { pallets: 4, separate: true })]
     const b = manualRuleBlocks([model({ id: 'X1', name: 'Xe 1 điểm', max_drops: 1, serve_conditions: ['AMB'] })], [], rows, { ...opt, modelOnly: true })
-    expect(codes(b)).toEqual(['DROPS_EXCEEDED', 'CONDITION_MISMATCH', 'LOAD_EXCEEDED'])
+    expect(codes(b)).toEqual(['CONDITION_MISMATCH', 'DROPS_EXCEEDED', 'LOAD_EXCEEDED'])   // 17/10: điều kiện bảo quản đứng trước số khách
     const multi = manualRuleBlocks([xe, model({ id: 'NM', multi_vehicle: false }), xe, xe], [], [r('A', 'K1')], { ...opt, modelOnly: true, maxVehicles: 3 })
     expect(codes(multi)).toEqual(['MULTI_VEHICLE_BLOCKED', 'MULTI_VEHICLE_BLOCKED'])
   })

@@ -591,6 +591,11 @@ nào thì mở khoá xe đó. Cần 1 hướng nữa: kế hoạch làm nhầm, 
 - **Nút "Quy tắc" trên thanh công cụ bàn (17/10, user: "phần này chỉ đơn giản là rule — làm gọn thành Rule, bật lên là thấy"):** thay chip in cả
   câu dải % tải ("XE 4 PALLET 95–105 % · …" cắt cụt). Chỉ icon + chữ, hổ phách khi đang Bỏ qua dải %; tooltip = câu đầy đủ; bấm mở hộp dải %
   tải — kế hoạch đang sửa thì đổi ngay như cũ, chỉ xem thì mở ĐỌC (`readOnly`: ô khoá, chỉ nút Đóng).
+- **Thứ tự luật trong hộp chặn (17/10, user chốt sau test trên kế hoạch 02/10):** `manualRuleBlocks` in luật KHÔNG qua được bằng công tắc
+  trên thẻ xe TRƯỚC — điều kiện bảo quản · dòng xe khách được vào — rồi mới trộn Loại kho · số khách · đi xe riêng · kênh · tải. Ca đo: kéo OD
+  lạnh FG02 vào xe nóng đang chở FG01 kênh KA, bản cũ mở đầu bằng "Bật Ghép Loại kho khác" — bật xong kéo lại vẫn chặn vì xe không chở được
+  2–8 °C. Mã HTTP của hộp = luật đầu (`ruleFail`) nên nay là `CONDITION_MISMATCH`. Test `dispatchEngine.test.ts` "luật không qua được
+  bằng công tắc đứng trước" (đỏ trên bản cũ).
 - **Sửa (cách a):** `refresh-pool { review_all: true }` trên chính kế hoạch đã xác nhận — nạp đơn chờ MỚI NHẤT từ ZSD02 rồi đưa MỌI dòng Chờ điều
   của kế hoạch (cũ + vừa nạp) vào khung chờ (ghi `reviewed_at` theo bộ lọc kế hoạch, không theo danh sách id; đơn "Không liên quan" của CHÍNH
   người bấm ở lại Chờ điều — gỡ mốc vừa ghi theo lô 300, tự soi 16/10 tối) — rồi về bàn ở **chế độ sửa** (FE

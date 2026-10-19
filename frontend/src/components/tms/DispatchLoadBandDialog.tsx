@@ -49,11 +49,13 @@ export function bandSummary(parents: { id: string; name: string }[], bands: Disp
   return custom.map(p => `${p.name} ${full[p.id].min}–${full[p.id].max} %`).join(' · ') + (rest > 0 ? ` · còn lại ${Object.values(dflt)[0]?.min ?? DEFAULT_BAND.min}–100 %` : '')
 }
 
-export function DispatchLoadBandDialog({ open, onClose, title, confirmLabel, intro, parents, initial, busy, onConfirm, readOnly = false }: {
+export function DispatchLoadBandDialog({ open, onClose, title, confirmLabel, intro, parents, initial, busy, onConfirm, readOnly = false, secondary }: {
   open: boolean; onClose: () => void; title: string; confirmLabel: string; intro?: React.ReactNode
   parents: { id: string; name: string }[]; initial: LoadBandDraft; busy?: boolean
   onConfirm: (d: LoadBandDraft) => unknown
   readOnly?: boolean   // 17/10: kế hoạch chỉ xem — mở để ĐỌC quy tắc đang áp, không sửa, không nút áp
+  /** 19/10 (user: "xem % và tối ưu lại — chỉ 1 nút"): nút phụ trong cùng hộp, vd "Chỉ áp dải %" (xe nháp tính lại, không ghép lại) */
+  secondary?: { label: string; onClick: (d: LoadBandDraft) => unknown; busy?: boolean }
 }) {
   const [bands, setBands] = useState<Record<string, { min: string; max: string }>>({})
   const [bypass, setBypass] = useState(false)
@@ -106,8 +108,10 @@ export function DispatchLoadBandDialog({ open, onClose, title, confirmLabel, int
           {!bypass && parsed.errs.length > 0 && <ul className="list-disc pl-4 text-red-600">{parsed.errs.slice(0, 4).map(e => <li key={e}>{e}</li>)}</ul>}
         </div>
         <DialogFooter>
-          <Button size="sm" variant="outline" className="h-8" disabled={busy} onClick={onClose}>{readOnly ? 'Đóng' : 'Huỷ'}</Button>
-          {!readOnly && <Button size="sm" className="h-8" disabled={busy || !ok} onClick={() => void onConfirm({ bands: bypass ? fullBands(parents, initial.bands, null) : parsed.out, bypass })}>{busy ? 'Đang chạy…' : confirmLabel}</Button>}
+          <Button size="sm" variant="outline" className="h-8" disabled={busy || secondary?.busy} onClick={onClose}>{readOnly ? 'Đóng' : 'Huỷ'}</Button>
+          {!readOnly && secondary && <Button size="sm" variant="outline" className="h-8" disabled={busy || secondary.busy || !ok} title="Chỉ đổi dải % cho kế hoạch đang mở — xe nháp tính lại Non tải / vượt, máy KHÔNG ghép lại"
+            onClick={() => void secondary.onClick({ bands: bypass ? fullBands(parents, initial.bands, null) : parsed.out, bypass })}>{secondary.busy ? 'Đang áp…' : secondary.label}</Button>}
+          {!readOnly && <Button size="sm" className="h-8" disabled={busy || secondary?.busy || !ok} onClick={() => void onConfirm({ bands: bypass ? fullBands(parents, initial.bands, null) : parsed.out, bypass })}>{busy ? 'Đang chạy…' : confirmLabel}</Button>}
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -116,7 +120,9 @@ export function DispatchLoadBandDialog({ open, onClose, title, confirmLabel, int
 
 /** Nút "Quy tắc" trên bàn ghép xe (17/10, user: "phần này chỉ đơn giản là rule — làm gọn thành Rule, bật lên là thấy, đừng đẻ dài dòng"):
  *  bản cũ in cả câu "XE 4 PALLET 95–105 % · …" cắt cụt trên thanh công cụ. Nay chỉ icon + "Quy tắc" (hổ phách khi đang Bỏ qua dải %), câu
- *  đầy đủ ở tooltip; bấm mở hộp dải % tải — kế hoạch đang sửa thì đổi được ngay (xe nháp tính lại, không ghép lại), chỉ xem thì mở đọc. */
+ *  đầy đủ ở tooltip; bấm mở hộp dải % tải.
+ *  19/10 (user: "bản chất là xem % và tối ưu lại — chỉ 1 nút"): nút này CHỈ còn ở kế hoạch chỉ xem (mở đọc quy tắc đang áp); kế hoạch
+ *  đang sửa thì một nút "Tối ưu lại" mở cùng hộp này với nút phụ "Chỉ áp dải %" (xe nháp tính lại, không ghép lại). */
 export function DispatchLoadBandChip({ plan, editable }: { plan: DispatchPlan; editable: boolean }) {
   const parents = useLoadBandParents(plan.warehouse_id)
   const [open, setOpen] = useState(false)

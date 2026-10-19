@@ -35,7 +35,7 @@ import { useEdgeFade } from '@/hooks/useEdgeFade'
 import { toast } from '@/components/ui/use-toast'
 import {
   useVehicleTypes, useMoveDispatchOds, previewDispatchMove, useUpdateDispatchTrip, useDeleteDispatchTrip, useReplaceDispatchOd, useReoptimizeDispatchPlan,
-  useHoldDispatchOds, useResyncDispatchOd, useDispatchPlanReview, useVehicleModels, useTransportCompanies, tripRestoreOf, useDispatchFitCheck,
+  useHoldDispatchOds, useResyncDispatchOd, useDispatchPlanReview, useVehicleModels, useTransportCompanies, tripRestoreOf, useDispatchFitCheck, useUpdateDispatchPlanParams,
   type DispatchPlan, type DispatchTrip, type DispatchTripOd, type DispatchOdFlag, type DispatchMoveTo, type DispatchMovePreview, type DispatchTripRestore,
 } from '@/api/hooks'
 import { DispatchBoardTable, RouteChip, TripRouteBadge, TickBox, ExtraDropsBadge, type BoardOps, type BoardDropAttrs, type BoardPoolGroup } from './DispatchBoardTable'
@@ -46,7 +46,7 @@ import { useWhTypeMetaMap } from '@/hooks/useWhTypeMeta'
 import { whTypeBadgeCls } from '@/utils/cargoCategory'
 import { DispatchCarrierPicker } from './DispatchCarrierPicker'
 import { DispatchCustomerVehiclesSheet } from './DispatchCustomerVehiclesSheet'
-import { DispatchLoadBandDialog, DispatchLoadBandChip, useLoadBandParents, fullBands, type LoadBandDraft } from './DispatchLoadBandDialog'
+import { DispatchLoadBandDialog, DispatchLoadBandChip, useLoadBandParents, fullBands, bandSummary, type LoadBandDraft } from './DispatchLoadBandDialog'
 import { NewOdChip } from './DispatchReviewTable'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
@@ -373,6 +373,7 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
   // TỐI ƯU LẠI — hộp thoại DẢI % TẢI theo dòng xe cha (01/10) đứng trước lượt ghép; dải chọn ở đây ghi vào kế hoạch + nhớ cho kho
   const bandParents = useLoadBandParents(plan.warehouse_id)
   const [reoptDlg, setReoptDlg] = useState(false)
+  const bandUpdate = useUpdateDispatchPlanParams()   // 19/10: "Chỉ áp dải %" trong hộp Tối ưu lại (thay nút Quy tắc riêng khi đang sửa)
   const lockedN = trips.filter(t => t.locked).length
   const doReopt = () => setReoptDlg(true)
   const doReoptWith = (d: LoadBandDraft) =>
@@ -403,7 +404,7 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
     actions.push({ key: 'undo', icon: Undo2, label: 'Hoàn tác', tip: `Hoàn tác lần chuyển OD gần nhất (Ctrl+Z)${undoStack.length ? ` — còn ${undoStack.length} bước` : ''}`, onClick: () => void undo(), disabled: !undoStack.length || busy })
     actions.push({ key: 'redo', icon: Redo2, label: 'Làm lại', tip: 'Làm lại (Ctrl+Y)', onClick: () => void redo(), disabled: !redoStack.length || busy })
     // nút CHÍNH của cụm — hiện chữ (01/10, user: "nút tối ưu lại là nút nào vậy" — bản cũ chỉ là icon ✦ không chữ)
-    actions.push({ key: 'reopt', icon: Sparkles, label: 'Tối ưu lại', tip: 'Máy ghép lại các OD ở khung chờ + các xe chưa khoá theo dải % tải; xe đã khoá giữ nguyên', primary: true, variant: 'default', onClick: doReopt, disabled: reopt.isPending || busy, busy: reopt.isPending })  }
+    actions.push({ key: 'reopt', icon: Sparkles, label: 'Tối ưu lại', tip: 'Mở quy tắc dải % tải rồi máy ghép lại các OD ở khung chờ + các xe chưa khoá; xe đã khoá giữ nguyên. Trong hộp có "Chỉ áp dải %" nếu chỉ muốn đổi quy tắc', primary: true, variant: 'default', onClick: doReopt, disabled: reopt.isPending || busy, busy: reopt.isPending })  }
 
   // CHỌN NHIỀU XE (06/10 — tab "Danh sách xe" gộp vào đây): tick ô dòng xe = chọn trọn xe ⇒ Gán ĐVVT / Đổi dòng xe cho mọi xe được
   // chọn TRỌN (12/61 xe cùng thiếu ĐVVT thì mở 12 panel là 36 thao tác cho một quyết định duy nhất — lý do có thao tác này từ 24/09)
@@ -867,8 +868,8 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
             title={grp === 'region' ? 'Đang nhóm xe theo VÙNG (xe cùng khách nằm cạnh nhau) — bấm để nhóm theo loại xe' : 'Đang nhóm xe theo LOẠI XE — bấm để nhóm theo vùng'}>
             {grp === 'region' ? <MapPin className="h-3.5 w-3.5" /> : <Truck className="h-3.5 w-3.5" />}
           </button>
-          {/* DẢI % TẢI đang áp (01/10, user: "config chọn xong hiện lên trên bàn") — bấm để đổi ngay trên kế hoạch */}
-          <DispatchLoadBandChip plan={plan} editable={editable} />
+          {/* 19/10 (user: "xem % và tối ưu lại — chỉ 1 nút"): kế hoạch đang sửa thì quy tắc nằm trong hộp "Tối ưu lại" (cụm phải); chỉ xem mới còn nút Quy tắc đọc */}
+          {!editable && <DispatchLoadBandChip plan={plan} editable={false} />}
           <div className="w-28 shrink-0" title="Sắp xếp xe trong nhóm — sắp lại ngay sau mỗi lần thả; xe vừa nhận OD được tô viền xanh">
             <SingleSelect value={f.boardSort} onChange={v => setF({ boardSort: v || 'region' })} searchable={false}
               options={[
@@ -1109,9 +1110,13 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
           </DialogFooter>
         </DialogContent>
       </Dialog>
-      <DispatchLoadBandDialog open={reoptDlg} onClose={() => setReoptDlg(false)} title="Tối ưu lại phần chưa khoá" confirmLabel="Tối ưu lại"
-        intro={`Máy ghép lại các OD ở khung chờ (${nf(plan.summary.pool_ods ?? 0)} OD) + mọi xe CHƯA KHOÁ còn sửa được theo dải % tải dưới đây.\n${lockedN ? `${lockedN} xe đã khoá giữ nguyên.` : 'Chưa khoá xe nào — khoá (🔒) những xe đã ưng trước khi bấm để máy không đụng vào.'}\nThao tác này KHÔNG hoàn tác được bằng Ctrl+Z.`}
+      {/* 19/10 (user: "xem % và tối ưu lại — chỉ 1 nút"): quy tắc dải % và Tối ưu lại chung MỘT hộp — "Chỉ áp dải %" = đổi quy tắc, xe nháp tính lại, không ghép */}
+      <DispatchLoadBandDialog open={reoptDlg} onClose={() => setReoptDlg(false)} title="Quy tắc dải % tải · Tối ưu lại" confirmLabel="Tối ưu lại"
+        intro={`Đang áp: ${bandSummary(bandParents, plan.params.load_bands, plan.params.load_bypass, plan.params.underload_pct)}.\n"Tối ưu lại": máy ghép lại các OD ở khung chờ (${nf(plan.summary.pool_ods ?? 0)} OD) + mọi xe CHƯA KHOÁ còn sửa được theo dải dưới đây. ${lockedN ? `${lockedN} xe đã khoá giữ nguyên.` : 'Chưa khoá xe nào — khoá (🔒) những xe đã ưng trước khi bấm để máy không đụng vào.'} Không hoàn tác được bằng Ctrl+Z.\n"Chỉ áp dải %": đổi quy tắc cho kế hoạch này, xe nháp tính lại Non tải / vượt, máy không ghép lại.`}
         parents={bandParents} initial={{ bands: fullBands(bandParents, plan.params.load_bands, plan.params.underload_pct), bypass: plan.params.load_bypass === true }} busy={reopt.isPending}
+        secondary={{ label: 'Chỉ áp dải %', busy: bandUpdate.isPending, onClick: d => bandUpdate.mutateAsync({ plan_id: plan.id, load_bands: d.bands, load_bypass: d.bypass })
+          .then(p => { setReoptDlg(false); toast({ title: 'Đã áp dải % tải', description: `${p.summary.underload ?? 0} xe Non tải · ${p.summary.oversize ?? 0} xe vượt theo dải mới.` }) })
+          .catch(e => err(e, 'Không áp được dải tải')) }}
         onConfirm={doReoptWith} />
       <DispatchCustomerVehiclesSheet planId={plan.id} rowId={vehRow} canEdit={canCustVeh && editable} onClose={() => setVehRow(null)} />
       <DispatchOdDetailSheet planId={plan.id} info={odDetail ? odInfo.data?.ods[odDetail.od_number] : undefined} onClose={() => setOdDetail(null)}

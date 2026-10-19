@@ -391,8 +391,6 @@ function tripCells(ops: BoardOps, t: DispatchTrip, hv: BoardHover, open: boolean
                 : t.detail.vehicle_model?.name ?? <span className="text-red-600">Chưa chọn dòng xe</span>}
             </span>
             {st !== 'DRAFT' && <StatusBadge tone={st === 'CONFIRMED' ? 'green' : st === 'DECLINED' ? 'red' : 'blue'}>{st === 'CONFIRMED' ? 'Đã vào KH' : st === 'DECLINED' ? 'Từ chối' : st === 'TENDERED' ? 'Chờ ĐVVT' : st}</StatusBadge>}
-            {/* 18/10: xe đã chốt ⇒ chuỗi tình trạng xe (cùng chip với dạng Thẻ) */}
-            {st === 'CONFIRMED' && <TripFlow code={t.group_code} className="shrink-0" />}
             {t.locked && <span className="inline-flex shrink-0 items-center gap-0.5 rounded bg-violet-600 px-1 text-[9px] font-bold text-white" title="Đã khoá — lần Tối ưu lại sau giữ nguyên xe này (đơn, dòng xe, ĐVVT)"><Lock className="h-2.5 w-2.5" /><span className="hidden sm:inline">Khoá</span></span>}
             {t.allow_extra_drops && <ExtraDropsBadge />}
             {/* nhãn tiếp nhận khi khung chờ bật lọc "Có xe cùng tuyến" (15/10) */}
@@ -407,6 +405,8 @@ function tripCells(ops: BoardOps, t: DispatchTrip, hv: BoardHover, open: boolean
               <span className={`tabular-nums ${t.freight_estimated == null ? 'text-amber-700' : 'font-medium text-slate-600'}`}>{t.freight_estimated == null ? 'chưa có cước' : money(t.freight_estimated)}</span>
             </div>
           )}
+          {/* 18/10: xe đã chốt ⇒ chuỗi tình trạng xe (cùng chip với dạng Thẻ) — dòng phụ riêng, không ép tên dòng xe (19/10) */}
+          {st === 'CONFIRMED' && <div className="pl-10 pt-0.5 overflow-x-auto no-scrollbar"><TripFlow code={t.group_code} /></div>}
         </div>
       ),
     },

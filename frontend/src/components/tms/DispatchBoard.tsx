@@ -681,8 +681,6 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
             {tripTags?.has(t.id) && <TripRouteBadge tag={tripTags.get(t.id)!} odLabel={odLabel} />}
             {t.allow_extra_drops && <ExtraDropsBadge />}
             {st !== 'DRAFT' && <StatusBadge tone={st === 'CONFIRMED' ? 'green' : st === 'DECLINED' ? 'red' : 'blue'}>{st === 'CONFIRMED' ? 'Đã vào KH' : st === 'DECLINED' ? 'Từ chối' : st === 'TENDERED' ? 'Chờ ĐVVT' : st}</StatusBadge>}
-            {/* 18/10: xe đã chốt ⇒ CHUỖI TÌNH TRẠNG (khung giờ · cổng · cân · xuất · ra cổng · giao) ngay trên thẻ — bấm chấm là mở sổ đó */}
-            {st === 'CONFIRMED' && <TripFlow code={t.group_code} />}
             {ed && (
               <button type="button" className={`rounded p-1 ${lk ? 'bg-violet-600 text-white hover:bg-violet-700' : 'text-slate-400 hover:bg-white hover:text-slate-700'}`} disabled={patchTrip.isPending}
                 title={lk ? 'Đang khoá — "Tối ưu lại" không đụng vào xe này. Bấm để mở khoá' : 'Khoá xe để "Tối ưu lại" giữ nguyên (hỏi lại trước khi khoá)'}
@@ -702,6 +700,9 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
             )}
           </div>
         </div>
+        {/* 18/10: xe đã chốt ⇒ CHUỖI TÌNH TRẠNG (khung giờ · cổng · cân · xuất · ra cổng · giao) — HÀNG RIÊNG dưới tiêu đề (đặt trong thanh
+            tiêu đề thì chuỗi 8 chấm ép tên dòng xe thành cột dọc từng ký tự, đo 19/10); bấm chấm là mở sổ đó */}
+        {st === 'CONFIRMED' && <div className="px-2 pt-1 overflow-x-auto no-scrollbar"><TripFlow code={t.group_code} /></div>}
         {/* thẻ NHIỀU XE (luật 11, 27/09): phần tải + cước của từng xe — một Số xe, ĐVVT booking đủ số xe */}
         {(t.detail.vehicles?.length ?? 0) > 1 && (
           <div className="mx-2 mt-0.5 rounded border border-sky-100 bg-sky-50/60 px-1.5 py-0.5 space-y-0.5">

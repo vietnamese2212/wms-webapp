@@ -20,6 +20,7 @@ import { ResizableTable, type RtColDef } from '@/components/shared/ResizableTabl
 import { TableEmptyRow } from '@/components/shared/TableEmptyRow'
 import { ListFooter } from '@/components/shared/ListPager'
 import { StatusBadge } from '@/components/shared/StatusBadge'
+import { TripFlow } from './TripFlow'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import type { DispatchPlan, DispatchTrip, DispatchTripOd, DispatchOdFlag, DispatchMoveTo, DispatchMovePreview } from '@/api/hooks'
 import { DispatchCarrierPicker } from './DispatchCarrierPicker'
@@ -390,6 +391,8 @@ function tripCells(ops: BoardOps, t: DispatchTrip, hv: BoardHover, open: boolean
                 : t.detail.vehicle_model?.name ?? <span className="text-red-600">Chưa chọn dòng xe</span>}
             </span>
             {st !== 'DRAFT' && <StatusBadge tone={st === 'CONFIRMED' ? 'green' : st === 'DECLINED' ? 'red' : 'blue'}>{st === 'CONFIRMED' ? 'Đã vào KH' : st === 'DECLINED' ? 'Từ chối' : st === 'TENDERED' ? 'Chờ ĐVVT' : st}</StatusBadge>}
+            {/* 18/10: xe đã chốt ⇒ chuỗi tình trạng xe (cùng chip với dạng Thẻ) */}
+            {st === 'CONFIRMED' && <TripFlow code={t.group_code} className="shrink-0" />}
             {t.locked && <span className="inline-flex shrink-0 items-center gap-0.5 rounded bg-violet-600 px-1 text-[9px] font-bold text-white" title="Đã khoá — lần Tối ưu lại sau giữ nguyên xe này (đơn, dòng xe, ĐVVT)"><Lock className="h-2.5 w-2.5" /><span className="hidden sm:inline">Khoá</span></span>}
             {t.allow_extra_drops && <ExtraDropsBadge />}
             {/* nhãn tiếp nhận khi khung chờ bật lọc "Có xe cùng tuyến" (15/10) */}

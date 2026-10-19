@@ -53,6 +53,7 @@ import { useAuthStore } from '@/stores/authStore'
 import { useActiveVehiclesStore } from '@/stores/activeVehiclesStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import type { OutboundItem, OutboundDelivery, GDO, DockStatus } from '@/types'
+import { TripFlow } from '@/components/tms/TripFlow'
 
 // ─── Cửa xuất có sức chứa xe (09/09) ───────────────────────────
 // Dòng phụ của một cửa trong ô chọn: "1/1 xe · ĐẦY (29S03092B)" — người bấm biết cửa nào còn trống mà không
@@ -2370,6 +2371,8 @@ export default function OutboundDetail() {
               {/* Mã đơn = ĐỊNH DANH — mobile XUỐNG DÒNG hiện đủ, không che "…" (user bắt 24/08) */}
               <span className={`font-mono font-semibold text-xs sm:text-sm leading-tight break-all whitespace-normal sm:truncate min-w-0 ${statusText(gdoKey(gdo))}`}>{gdo.group_code}</span>
               <OutboundStatusBadge status={gdo.status} />
+              {/* 18/10: chuỗi tình trạng xe (kế hoạch → giao hàng) — thủ kho thấy xe đã đặt khung / vào cổng / ra cổng / đã giao chưa, mở sổ đó từ đây */}
+              <TripFlow code={gdo.group_code} className="shrink-0" />
               <button
                 onClick={() => pinned
                   ? unpin(gdo.id)

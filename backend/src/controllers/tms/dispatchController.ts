@@ -631,11 +631,11 @@ async function readTrips(planId: string, tripIds: string[]): Promise<(TripRow & 
   return trips.sort((a, b) => a.seq - b.seq).map(t => ({ ...t, ods: by.get(t.id) ?? [] }))
 }
 /** Dòng xe / dòng OD rút gọn — đủ cho tổng kết + tỷ trọng ĐVVT, không kéo `detail` lớn / mảng mã hàng / ghi chú (~0,4 MB thay ~4 MB). */
-type SumTrip = Pick<TripRow, 'id' | 'status' | 'transport_company_id' | 'pallets' | 'tons' | 'load_pct' | 'freight_estimated' | 'underload' | 'oversize' | 'locked' | 'detail'> & { ods: Pick<TripOdRow, 'od_number'>[] }
+type SumTrip = Pick<TripRow, 'id' | 'group_code' | 'status' | 'transport_company_id' | 'pallets' | 'tons' | 'load_pct' | 'freight_estimated' | 'underload' | 'oversize' | 'locked' | 'detail'> & { ods: Pick<TripOdRow, 'od_number'>[] }
 type SumPool = Pick<TripOdRow, 'od_number' | 'pallets' | 'reviewed_at'>
 async function readPlanLight(planId: string): Promise<{ trips: SumTrip[]; pool: SumPool[] }> {
   const [trips, ods] = await Promise.all([
-    fetchAllRowsParallel(() => db.from('dispatch_trip').select('id, status, transport_company_id, pallets, tons, load_pct, freight_estimated, underload, oversize, locked, vm:detail->vehicle_model').eq('plan_id', planId).order('seq')) as Promise<(Omit<SumTrip, 'detail' | 'ods'> & { vm: Json | null })[]>,
+    fetchAllRowsParallel(() => db.from('dispatch_trip').select('id, group_code, status, transport_company_id, pallets, tons, load_pct, freight_estimated, underload, oversize, locked, vm:detail->vehicle_model').eq('plan_id', planId).order('seq')) as Promise<(Omit<SumTrip, 'detail' | 'ods'> & { vm: Json | null })[]>,
     fetchAllRowsParallel(() => db.from('dispatch_trip_od').select('id, trip_id, od_number, pallets, reviewed_at').eq('plan_id', planId).order('od_number').order('id')) as Promise<(SumPool & { id: string; trip_id: string | null })[]>,
   ])
   const by = new Map<string, Pick<TripOdRow, 'od_number'>[]>()
@@ -712,6 +712,8 @@ function summarizeRows(plan: PlanRow, allTrips: SumTrip[], pool: SumPool[] = [])
     tendered: trips.filter(t => statusOf(t) === 'TENDERED').length,
     declined: trips.filter(t => statusOf(t) === 'DECLINED').length,
     confirmed: trips.filter(t => statusOf(t) === 'CONFIRMED').length,
+    // 18/10: Số xe đã chốt — tab Kế hoạch hỏi chuỗi tình trạng (GET /tms/trip-flow) để in "k/N đã xuất · j đã giao" cho ngày gần
+    confirmed_group_codes: trips.filter(t => statusOf(t) === 'CONFIRMED').map(t => t.group_code),
     shares,
   }
 }

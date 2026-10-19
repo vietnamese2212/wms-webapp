@@ -13,6 +13,8 @@ import { ResizableTable, type RtColDef } from '@/components/shared/ResizableTabl
 import { TableEmptyRow } from '@/components/shared/TableEmptyRow'
 import { ListFooter } from '@/components/shared/ListPager'
 import { StatusBadge } from '@/components/shared/StatusBadge'
+import { useTripFlows } from '@/api/hooks'
+import { TripFlowProgressText } from './TripFlow'
 import { type DispatchPlanListItem } from '@/api/hooks'
 import { formatDate, formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 import { planHoldsOrders } from './dispatchIssues'
@@ -56,6 +58,18 @@ export function groupPlanDays(plans: DispatchPlanListItem[]): DispatchPlanDay[] 
 const dayOpen = (d: DispatchPlanDay) => !d.discarded && d.plans.some(isOpenSt)
 const dayConfirmed = (d: DispatchPlanDay) => !d.discarded && !dayOpen(d) && d.plans.some(p => p.status === 'CONFIRMED')
 const sum = (d: DispatchPlanDay, f: (p: DispatchPlanListItem) => number | null | undefined) => d.plans.reduce((a, p) => a + (Number(f(p)) || 0), 0)
+
+/** TIẾN ĐỘ XE của một ngày (18/10): "k/N đã xuất · j đã giao" từ chuỗi tình trạng các xe đã chốt — chỉ hỏi cho ngày GẦN (±7 ngày quanh hôm
+ *  nay; lịch sử xa không hỏi, tránh 200 ngày × 20 xe mỗi lần mở tab). */
+function DayProgress({ d, today }: { d: DispatchPlanDay; today: string }) {
+  const codes = d.discarded ? [] : d.plans.flatMap(p => p.summary?.confirmed_group_codes ?? [])
+  const near = Math.abs((Date.parse(d.plan_date) - Date.parse(today)) / 86_400_000) <= 7
+  const q = useTripFlows(codes, near && codes.length > 0)
+  if (!codes.length) return <span className="text-slate-300">—</span>
+  if (!near) return <span className="text-[10px] text-slate-400" title="Ngày xa hôm nay — mở ngày để xem từng xe">{nf(codes.length)} xe đã chốt</span>
+  if (!q.data) return <span className="text-[10px] text-slate-400">{q.isError ? 'không tải được' : '…'}</span>
+  return <TripFlowProgressText flows={q.data} />
+}
 
 function useIsDesktop() {
   const [d, setD] = useState(() => typeof window !== 'undefined' && window.matchMedia('(min-width: 1024px)').matches)
@@ -105,6 +119,7 @@ export function DispatchPlansTable({ plans, loading, error, currentPlanId, canPl
     { id: 'transfer', label: 'Trung chuyển', w: 230 },
     { id: 'trips', label: 'Xe', w: 52, align: 'right' },
     { id: 'ods', label: 'Đơn trên xe', w: 84, align: 'right' },
+    { id: 'flow', label: 'Tiến độ xe', w: 200 },   // 18/10: k/N đã xuất · j đã giao (chuỗi tình trạng xe)
     { id: 'pool', label: 'Khung chờ', w: 80, align: 'right' },
     { id: 'pal', label: 'Pallet', w: 70, align: 'right' },
     { id: 'freight', label: 'Σ cước', w: 80, align: 'right' },
@@ -160,6 +175,7 @@ export function DispatchPlansTable({ plans, loading, error, currentPlanId, canPl
                   <TableCell className={TD}><SegCell p={d.transfer} today={today} /></TableCell>
                   <TableCell className={`${TD} text-right tabular-nums`}>{nf(sum(d, p => p.summary?.trips))}</TableCell>
                   <TableCell className={`${TD} text-right tabular-nums`}>{nf(sum(d, p => p.summary?.ods))}</TableCell>
+                  <TableCell className={TD}><DayProgress d={d} today={today} /></TableCell>
                   <TableCell className={`${TD} text-right tabular-nums`} title="Đơn đã vào kế hoạch nhưng chưa lên xe (cả hai mảng)">{nf(pool)}</TableCell>
                   <TableCell className={`${TD} text-right tabular-nums`}>{nf(sum(d, p => p.summary?.pallets), 1)}</TableCell>
                   <TableCell className={`${TD} text-right tabular-nums`} title={freight != null ? `${freight.toLocaleString('vi-VN')} ₫` : ''}>{money(freight)}</TableCell>

@@ -60,6 +60,7 @@ import { parseVnNumber as parseVnNumberShared } from '@/utils/vnNumber'
 import { splitCategories } from '@/utils/categoryScope'
 import type { TmsOrder, TmsVehicleSlot, DeliverySlot, TmsVehicleType, TmsVehicle, TransportCompany } from '@/types'
 import { TableEmptyRow } from '@/components/shared/TableEmptyRow'
+import { TripFlow } from '@/components/tms/TripFlow'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -3720,6 +3721,12 @@ function OrderDetailDialog({ order, onClose, warehouses, canUploadInbound, canEd
 
         {/* Body cuộn — Xe đặt khung giờ + Hàng hóa */}
         <div className="flex-1 min-h-0 overflow-auto p-4 space-y-5 text-xs">
+          {/* 18/10: HÀNH TRÌNH XE đầy đủ (kế hoạch → KH xuất → khung giờ → cổng → cân → xuất → ra cổng → giao) + nút "Đã giao" cho tài xế / ĐVVT */}
+          {order.origin === 'KHVC' && !!order.order_code && (
+            <section>
+              <TripFlow code={order.order_code} mode="full" />
+            </section>
+          )}
           {/* Vehicle slots */}
           <section>
             <p className="text-[9px] font-semibold uppercase tracking-wide text-slate-400 mb-2">Xe đặt khung giờ ({order.vehicle_slots.length})</p>
@@ -4527,6 +4534,8 @@ export default function TMSBookings() {
                             Lệnh TỪ Kế hoạch xuất = mặc định, KHÔNG badge; chỉ nguồn khác "(Excel)" + "KH đã bỏ". */}
                         <div className="flex items-center gap-1 min-w-0" title={order.order_code || undefined}>
                           <span className="truncate">{order.order_code || <span className="text-slate-400 font-normal">—</span>}</span>
+                          {/* 18/10: chuỗi tình trạng xe (kế hoạch → giao hàng) ngay cạnh mã lệnh — ĐVVT / tài xế thấy xe mình đang ở bước nào */}
+                          {order.origin === 'KHVC' && !!order.order_code && <TripFlow code={order.order_code} className="shrink-0" />}
                           {order.plan_dropped ? (
                             <span className="shrink-0 px-1 py-0.5 rounded-full bg-slate-200 text-slate-600 font-sans font-semibold text-[9px] whitespace-nowrap"
                               title="Kế hoạch xuất đã bỏ Số xe này — lệnh ngừng hiệu lực, khung giờ đã nhả cho xe khác">KH đã bỏ</span>

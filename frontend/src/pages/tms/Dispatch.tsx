@@ -41,6 +41,7 @@ import { Input } from '@/components/ui/input'
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { StatusBadge } from '@/components/shared/StatusBadge'
+import { TripFlow } from '@/components/tms/TripFlow'
 import { SingleSelect } from '@/components/shared/SingleSelect'
 import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
 import { InfoTip } from '@/components/shared/InfoTip'
@@ -893,6 +894,8 @@ function TripPane({ trip: t, plan, editable, editableVehicle, canConfirm, needsT
             </div>
           </div>
         )}
+        {/* 18/10 (user: "xe đó đang ở tình trạng nào — bao gồm cả giao hàng"): hành trình đầy đủ của xe đã chốt, số chứng từ + nút Mở từng sổ */}
+        {st === 'CONFIRMED' && <TripFlow code={t.group_code} mode="full" />}
 
         <SettingsGroup title={`Bản đồ tuyến · ${t.stops} điểm giao`}>
           <TripRouteMap trip={t} planId={plan.id} />

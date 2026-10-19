@@ -28,3 +28,11 @@ view, create, edit, delete, add_vehicle, release, change_date, book, revoke, upl
 
 Kho đích của lệnh chuyển kho sinh lúc Hoàn thành = khách trỏ kho (`services/transferDest`), không còn dò theo mã kho / tên. Ship-to chưa trỏ ⇒ lệnh OTHER nằm dưới **kho xuất** (`warehouse_id` = kho xuất, `destination_warehouse_id` null) — migration 20260929 đưa 62 lệnh PENDING/SELF của các kho NPP vừa ngừng về đúng chỗ này. Trỏ kho sau khi chuyến đã hoàn thành ⇒ kho xuất bấm "Đẩy lại cho kho nhận" (module `outbound`), lệnh cũ được đồng bộ tại chỗ (giữ id, kế hoạch nhập sinh lại). Upload Kế hoạch VC tra kho theo mã/tên kho + `shiptos` (khách trỏ kho), không còn `shipto_codes`.
 **29/09:** khoá duy nhất dòng Kế hoạch nhập nay theo LỆNH (`20260929b`: `(date, warehouse_id, ncc_id, material_id, tms_order_id)`) — hai lệnh chuyển kho cùng ngày/kho/mã từng đụng khoá và mất dòng âm thầm (gói 28 [12c]). Ghi dòng thất bại ⇒ `error_logs` `TRANSFER_PLAN_LINES_FAILED`; nút Đẩy lại trả 409 `PLAN_LINES_FAILED`. **09/10:** dòng Kế hoạch nhập của lệnh được THAY TRỌN trong MỘT giao dịch (RPC `transfer_plan_lines_replace`, 20261009a) — bản "chèn mới rồi xoá cũ" bằng hai request đụng chính khoá trên khi Bỏ hoàn thành → sửa SL → Hoàn thành lại TRONG NGÀY, kho nhận giữ số cũ (gói 28 [3b]/[3c] đo dòng).
+
+## 18/10 — "Đã giao" do tài xế xác nhận + chuỗi tình trạng xe
+
+Dòng xe (`TmsVehicleSlot`) có `delivered_at / delivered_by / delivery_note` (migration `20261019_trip_delivered.sql`): tài xế / ĐVVT / điều
+vận bấm "Đã giao" (hoặc "Hoàn tác") ngay trên hành trình xe trong chi tiết lệnh — `POST /tms/vehicle-slots/:id/delivered`, quyền
+`tms_plan.confirm_delivery`, chỉ khi chuyến bên Xuất kho ĐÃ HOÀN THÀNH (409 `OUTBOUND_NOT_COMPLETED`). Chuyển kho KHÔNG dùng cột này — bước
+"đã giao" của chuyển kho là `transfer_status` do kho nhận xác nhận. Chuỗi 8 bước hiện cạnh mã lệnh ở danh sách và đầy đủ trong chi tiết
+(`components/tms/TripFlow.tsx`, nguồn `services/tripFlow.ts` — xem docs/modules/dispatch.md mục 18/10). Gói QA 14 [5h–5l].

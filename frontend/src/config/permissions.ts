@@ -170,6 +170,7 @@ export const MODULES = {
       upload_outbound: 'Upload kế hoạch xuất',
       upload_inbound:  'Upload + thêm/sửa/xóa dòng kế hoạch nhập',
       confirm_receipt: 'Nhận hàng chuyển kho: xác nhận / hủy nhận / quét / hoàn thành [Chuyển kho]',
+      confirm_delivery: 'Xác nhận xe "Đã giao" hàng cho khách (Lái xe / ĐVVT / điều vận ghi hộ) — bước cuối chuỗi tình trạng xe',
       export:          'Xuất Excel Báo cáo nhập (menu Báo cáo TMS)',
     },
   },

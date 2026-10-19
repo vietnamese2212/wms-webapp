@@ -156,6 +156,34 @@ if (o1d) {
   // od_refs trong DB là mảng OBJECT — API phải bóc SỐ DO thành chuỗi, không thì FE in "[object Object]"
   const badRef = (goods.j?.data?.lines ?? []).flatMap(l => l.do_refs ?? []).find(r => typeof r !== 'string')
   check('5g. Cột DO là CHUỖI số DO (không phải object)', badRef === undefined, JSON.stringify(badRef))
+
+  // ── 5h–5l. CHUỖI TÌNH TRẠNG XE + "ĐÃ GIAO" do tài xế (18/10, user chốt) ──────────────────────────────────
+  // GET /tms/trip-flow = một câu cho cả lô Số xe, 8 bước mỗi xe; POST /tms/vehicle-slots/:id/delivered chỉ nhận khi chuyến ĐÃ HOÀN THÀNH.
+  const stepOf = (flow, k) => (flow?.steps ?? []).find(s => s.key === k)
+  const fl = await api(`/tms/trip-flow?codes=${GC(1)},${GC(1)}`, 'GET')
+  const flow = fl.j?.data?.flows?.[0]
+  check('5h. GET trip-flow: 8 bước · KH xuất đã vào · chuyến chờ xuất · khung giờ chưa đặt · Đã giao chưa (mã lặp chỉ trả một)',
+    fl.s === 200 && (fl.j?.data?.flows ?? []).length === 1 && flow?.steps?.length === 8 && stepOf(flow, 'KHVC')?.state === 'done' && stepOf(flow, 'OUTBOUND')?.state === 'pending'
+      && stepOf(flow, 'BOOKING')?.state === 'active' && stepOf(flow, 'DELIVERED')?.state === 'pending' && flow?.delivery?.kind === 'SALES' && flow?.delivery?.ready === false,
+    `http=${fl.s} n=${(fl.j?.data?.flows ?? []).length} ${JSON.stringify((flow?.steps ?? []).map(s => `${s.key}:${s.state}`))}`)
+  const sl5 = (await slotsOf(o1d.id))[0]
+  const dv1 = sl5 ? await api(`/tms/vehicle-slots/${sl5.id}/delivered`, 'POST', {}) : { s: 0, j: null }
+  check('5i. "Đã giao" khi chuyến CHƯA xuất ⇒ 409 OUTBOUND_NOT_COMPLETED (hàng chưa rời kho)', dv1.s === 409 && dv1.j?.error?.code === 'OUTBOUND_NOT_COMPLETED', `http=${dv1.s} code=${dv1.j?.error?.code}`)
+  // fixture: chuyến hoàn thành (không đi cửa Bắt đầu / quét — gói này chỉ gác luật "đã giao")
+  const g5 = (await restAll('GroupDeliveryOrder', `select=id&group_code=eq.${GC(1)}`))[0]
+  if (g5) await restWrite('GroupDeliveryOrder', 'PATCH', `id=eq.${g5.id}`, { status: 'COMPLETED', started_at: t(), completed_at: t(), updated_at: t() })
+  const dv2 = sl5 ? await api(`/tms/vehicle-slots/${sl5.id}/delivered`, 'POST', { note: 'QA giao xong' }) : { s: 0, j: null }
+  const fl2 = dv2.j?.data?.flow
+  check('5j. Chuyến đã xuất ⇒ "Đã giao" 200 · chuỗi: Xuất kho done · Đã giao done kèm người ghi + ghi chú',
+    dv2.s === 200 && !!dv2.j?.data?.delivered_at && stepOf(fl2, 'OUTBOUND')?.state === 'done' && stepOf(fl2, 'DELIVERED')?.state === 'done' && stepOf(fl2, 'DELIVERED')?.note === 'QA giao xong' && !!stepOf(fl2, 'DELIVERED')?.by,
+    `http=${dv2.s} ${dv2.j?.error?.message ?? JSON.stringify((fl2?.steps ?? []).map(s => `${s.key}:${s.state}`))}`)
+  const dv3 = sl5 ? await api(`/tms/vehicle-slots/${sl5.id}/delivered`, 'POST', { undo: true }) : { s: 0, j: null }
+  const slAfter = sl5 ? (await restAll('TmsVehicleSlot', `select=delivered_at,delivered_by&id=eq.${sl5.id}`))[0] : null
+  check('5k. Hoàn tác "Đã giao" ⇒ 200, mốc xoá khỏi dòng xe, chuỗi về "chờ tài xế xác nhận"',
+    dv3.s === 200 && slAfter?.delivered_at == null && stepOf(dv3.j?.data?.flow, 'DELIVERED')?.state === 'active', `http=${dv3.s} at=${slAfter?.delivered_at}`)
+  const ev5 = new Set((await restAll('outbound_events', `select=event_type&group_code=eq.${GC(1)}`)).map(e => e.event_type))
+  check('5l. Lịch sử chuyến có vết DELIVERED + DELIVERY_UNDONE', ev5.has('DELIVERED') && ev5.has('DELIVERY_UNDONE'), [...ev5].join(','))
+  if (g5) await restWrite('GroupDeliveryOrder', 'PATCH', `id=eq.${g5.id}`, { status: 'PENDING', started_at: null, completed_at: null, updated_at: t() })
 }
 // Số xe ĐÃ CÓ lệnh tạo tay từ trước → nhận nuôi, KHÔNG tạo trùng
 await restWrite('TmsOrder', 'POST', null, {

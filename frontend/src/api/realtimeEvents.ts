@@ -43,17 +43,19 @@ const TABLE_QUERY_MAP: Record<string, string[][]> = {
   TransportCompany:    [['tms-transport-companies'], ['tms-vehicles']],                // vehicle embed ncc
   Vehicle:             [['tms-vehicles']],
   // transfer-goods/inbound-by-gdo/plan-vs-actual: BE cập nhật TmsOrder khi nhận chuyển kho (receiving_started_at, status DONE…) — user khác xem tiến độ nhận phải thấy ngay
-  TmsOrder:            [['tms-orders-paged'], ['tms-orders-summary'], ['tms-orders-facets'], ['tms-orders-transfer'], ['transfer-goods'], ['inbound-by-gdo'], ['plan-vs-actual'], ['tms-material-summary'], ['work-inbox']],
+  // trip-flow (18/10): CHUỖI TÌNH TRẠNG XE vẽ ở mọi màn cầm Số xe — đổi ở sổ nào cũng phải đổi chip ngay (đặt khung · vào/ra cổng · cân ·
+  // bắt đầu/hoàn thành chuyến · tài xế xác nhận đã giao · rút xe)
+  TmsOrder:            [['tms-orders-paged'], ['tms-orders-summary'], ['tms-orders-facets'], ['tms-orders-transfer'], ['transfer-goods'], ['inbound-by-gdo'], ['plan-vs-actual'], ['tms-material-summary'], ['work-inbox'], ['trip-flow']],
   // booking-sequence: STT chuẩn bị theo booking (list Xuất kho + board Chuẩn bị hàng) — đặt/hủy/đổi khung giờ là số tự nhảy
-  TmsVehicleSlot:      [['tms-orders-paged'], ['tms-orders-summary'], ['tms-consolidatable'], ['gate-registrations'], ['gate-suggest'], ['booking-sequence']],
+  TmsVehicleSlot:      [['tms-orders-paged'], ['tms-orders-summary'], ['tms-consolidatable'], ['gate-registrations'], ['gate-suggest'], ['booking-sequence'], ['trip-flow']],
   DeliverySlot:        [['tms-delivery-slots'], ['booking-sequence']],
-  gate_registrations:  [['gate-registrations'], ['gate-tree'], ['gate-leaves'], ['control-tower']],
+  gate_registrations:  [['gate-registrations'], ['gate-tree'], ['gate-leaves'], ['control-tower'], ['trip-flow']],
   alert_events:        [['alerts-list']],
   user_notifications:  [['notify-feed']],   // chuông Header nhảy badge ngay khi được giao việc
   inbound_plan_lines:  [['inbound-plan-lines-by-order'], ['plan-vs-actual'], ['inbound-plan-lines'], ['inbound-report'], ['tms-material-summary'], ['outbound-shortages']],
   // fill-demand: "Cần" của tab Đề xuất fill = đơn nhặt lẻ theo NGÀY XUẤT — đơn phát sinh/đổi ngày
   // phải làm số nhảy ngay với người đang mở tab (user chốt 05/08), không chờ F5.
-  GroupDeliveryOrder:  [['gdos'], ['gdos-paged'], ['outbound-summary'], ['outbound-facets'], ['gdo'], ['tms-orders-transfer'], ['loosepicking'], ['dashboard'], ['outbound-shortages'], ['control-tower'], ['tms-plan-goods'], ['fill-demand'], ['outbound-docks'], ['directed-board'], ['work-inbox'], ['directed-supervision']],
+  GroupDeliveryOrder:  [['gdos'], ['gdos-paged'], ['outbound-summary'], ['outbound-facets'], ['gdo'], ['tms-orders-transfer'], ['loosepicking'], ['dashboard'], ['outbound-shortages'], ['control-tower'], ['tms-plan-goods'], ['fill-demand'], ['outbound-docks'], ['directed-board'], ['work-inbox'], ['directed-supervision'], ['trip-flow']],
   // list Xuất phân trang: tổng SummaryBand + phân bổ NPP tính từ DO/Item → đổi dòng hàng
   // phải refetch cả summary, không thì số đứng im cho tới lần poll sau.
   // Việc cần làm (1c): 3 vai nhìn 3 bảng khác nhau trên CÙNG kế hoạch — một người bấm '✓ Xong'
@@ -96,8 +98,8 @@ const TABLE_QUERY_MAP: Record<string, string[][]> = {
   dispatch_od_outside:   [['zsd02-coverage']],   // dấu Ngoài app (03/10 tối) — đổi cả "ngày tạo cần phủ" của màn upload
   od_lineage:            [],   // phả hệ DO (thay · tách · gộp) — cờ họ hàng trên bàn
   outbound_events:     [['gdo-events']],
-  khvc_lines:          [['khvc'], ['khvc-facets'], ['do-sap']],
-  WeighTicket:         [['weigh-tickets'], ['weigh-ticket-warehouses'], ['control-tower']],
+  khvc_lines:          [['khvc'], ['khvc-facets'], ['do-sap'], ['trip-flow']],
+  WeighTicket:         [['weigh-tickets'], ['weigh-ticket-warehouses'], ['control-tower'], ['trip-flow']],
   SlottingPlan:        [['slotting-plans'], ['slotting-plan'], ['work-inbox']],
   SlottingPlanLine:    [['slotting-plans'], ['slotting-plan']],
   forklift_vehicles:        [['forklifts'], ['forklift-board'], ['forklift-report']],

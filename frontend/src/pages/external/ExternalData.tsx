@@ -44,6 +44,7 @@ import { SapLineDetailSheet } from './SapLineDetailSheet'
 import { FLOW_VI, DISPATCH_VI, SOURCE_VI, SO_STATUS_VI } from './sapLabels'
 import { qtyLabel, hasEntry, qtyFromEntryBase } from '@/utils/qtyUnits'
 import { reconcileButtons } from '@/utils/reconcileActions'
+import { TripFlow } from '@/components/tms/TripFlow'
 
 // ─── Tabs (mỗi nguồn dữ liệu raw = 1 tab, 1 module quyền riêng) ───────────────
 type TabKey = 'dosap' | 'solines' | 'khvc' | 'reconcile'
@@ -1500,7 +1501,13 @@ function KhvcTab({ tabBar }: { tabBar: ReactNode }) {
                         ? <span className="text-green-500">✓</span>
                         : <span className="text-[9px] px-1.5 py-0.5 rounded-full font-semibold bg-amber-100 text-amber-700" title="DO chưa có trong VL06O (raw) — up VL06O trước">DO chưa có</span>}
                     </TableCell>
-                    <TableCell className={`px-2 ${cellPad} whitespace-nowrap`}><TripBadge materialized={r.materialized} gdoStatus={r.gdo_status} gdoDate={r.gdo_date} exportDate={r.export_date} /></TableCell>
+                    <TableCell className={`px-2 ${cellPad} whitespace-nowrap`}>
+                      <span className="inline-flex items-center gap-1.5">
+                        <TripBadge materialized={r.materialized} gdoStatus={r.gdo_status} gdoDate={r.gdo_date} exportDate={r.export_date} />
+                        {/* 18/10: chuỗi tình trạng xe (kế hoạch → giao hàng) — mở sổ nào cũng từ đây */}
+                        <TripFlow code={r.group_code} />
+                      </span>
+                    </TableCell>
                     <TableCell className={`px-2 ${cellPad} whitespace-nowrap`}><SourceBadge source={r.source} /></TableCell>
                     <TableCell className={`px-2 ${cellPad} whitespace-nowrap`}>
                       <div className="leading-tight">

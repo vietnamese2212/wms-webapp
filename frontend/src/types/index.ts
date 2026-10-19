@@ -437,6 +437,10 @@ export interface TmsVehicleSlot {
   gate_registered_at:        string | null
   gate_entry_at:             string | null
   gate_exit_at:              string | null
+  // 18/10: tài xế / ĐVVT xác nhận ĐÃ GIAO (bước cuối chuỗi tình trạng xe) — null = chưa
+  delivered_at?:             string | null
+  delivered_by?:             string | null
+  delivery_note?:            string | null
   created_at:    string
   updated_at:    string
   /** STT xe trong TOÀN phạm vi ngày+kho (server tính — không đổi khi lọc/lật trang) */

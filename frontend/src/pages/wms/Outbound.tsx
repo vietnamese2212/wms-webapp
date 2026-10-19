@@ -45,6 +45,7 @@ import { QtyInput } from '@/components/shared/QtyInput'
 import type { GDO } from '@/types'
 import { tripInert } from '@/utils/outboundInert'
 import { TripHistoryDialog } from '@/components/shared/TripHistoryDialog'
+import { TripFlow } from '@/components/tms/TripFlow'
 
 const TODAY = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })   // 00:00–07:00 sáng VN: UTC vẫn là hôm qua → filter/min lệch ngày
 // So sánh không phân biệt hoa thường và dấu ("xe container"→"Xe Container", "xe xa"→"Xe Xá")
@@ -242,6 +243,8 @@ function OutboundPane({ gdo, onClose }: { gdo: GDO; onClose: () => void }) {
           <button onClick={onClose} className="text-slate-400 hover:text-slate-600" title="Đóng"><X className="h-3.5 w-3.5" /></button>
         </div>
         <div className={`mt-1 text-sm font-mono font-semibold leading-tight ${gdoRowText(gdo)}`}>{gdo.group_code}</div>
+        {/* 18/10: chuỗi tình trạng xe — kế hoạch · KH xuất · khung giờ · cổng · cân · xuất · ra cổng · giao; bấm chấm mở sổ đó */}
+        <TripFlow code={gdo.group_code} className="mt-1" />
         <div className="text-[11px] text-slate-500 mt-1 truncate" title={npp}>NPP: <span className="font-medium text-slate-700">{npp}</span></div>
       </div>
 

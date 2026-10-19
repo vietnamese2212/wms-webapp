@@ -33,6 +33,7 @@ import { useColumnResize } from '@/components/shared/useColumnResize'
 import { Rows3, AlignJustify } from 'lucide-react'
 import { useSavedViewsStore } from '@/stores/savedViewsStore'
 import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
+import { TripFlow } from '@/components/tms/TripFlow'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -1139,6 +1140,8 @@ export default function GateRegistration() {
       {/* ④ chứng từ */}
       <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap align-top">
         {renderOrderField(reg.booking_order_code, true)}
+        {/* 18/10: chuỗi tình trạng xe của lệnh (lệnh đầu nếu xe chở nhiều lệnh) */}
+        {reg.booking_order_code && <TripFlow code={reg.booking_order_code.split(',')[0]?.trim()} className="mt-0.5" />}
       </TableCell>
       <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap align-top">
         {renderOrderField(reg.booking_npp_names)}
@@ -1375,6 +1378,8 @@ export default function GateRegistration() {
                 <div className="border-t pt-2 space-y-1.5">
                   <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wide">Booking</p>
                   <div><span className="text-slate-400">Mã đơn:</span> <span className="font-mono font-semibold text-[10px] break-all">{selected.booking_order_code}</span></div>
+                  {/* 18/10: hành trình của xe (lệnh đầu tiên khi xe chở nhiều lệnh) — bảo vệ thấy xe đã xuất xong chưa trước khi cho ra */}
+                  <TripFlow code={selected.booking_order_code.split(',')[0]?.trim()} mode="full" />
                   {(selected.booking_slot_from || selected.booking_slot_to) && (
                     <div><span className="text-slate-400">Khung giờ:</span> <span className="font-semibold">{selected.booking_slot_from}–{selected.booking_slot_to}</span></div>
                   )}

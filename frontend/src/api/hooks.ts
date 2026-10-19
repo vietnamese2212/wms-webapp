@@ -6142,6 +6142,7 @@ export interface DispatchTrip {
 export interface DispatchShare { transport_company_id: string; code: string; name: string; trips: number; pallets: number; tons: number; pct: number | null; target_pct: number | null; basis: 'TRIPS' | 'PALLETS' | 'TONS' }
 export interface DispatchSummary {
   trips: number; ods: number; pallets: number; tons: number; freight_total: number; unpriced: number; underload: number; oversize: number; tendered?: number; declined?: number; confirmed?: number; shares: DispatchShare[]
+  confirmed_group_codes?: string[]   // 18/10: Số xe đã chốt — tab Kế hoạch hỏi chuỗi tình trạng xe (trip-flow) cho ngày gần
   // dải chỉ số bàn ghép xe (25/09)
   by_model?: { key: string; sap_code: string | null; name: string; parent: string | null; trips: number; pallets: number }[]
   avg_load_pct?: number | null; freight_per_pallet?: number | null; overload?: number; pool_ods?: number; unreviewed_ods?: number; pool_pallets?: number; empty_trips?: number; locked?: number
@@ -8263,5 +8264,66 @@ export function useCancelPackingRun() {
     mutationFn: ({ id, note }: { id: string; note?: string }) =>
       apiClient.post(`/wms/packing-runs/${id}/cancel`, { note }).then(r => r.data.data),
     onSettled: () => invalidatePacking(qc),
+  })
+}
+
+// ── CHUỖI TÌNH TRẠNG XE (18/10, user: "tình trạng xe xem được ở mọi nơi liên quan như workflow SAP — có số chứng từ, mở ra được") ──
+// Một Số xe đi qua 8 sổ (bàn → KH xuất → khung giờ → cổng → cân → chuyến → ra cổng → đã giao); BE `services/tripFlow` là nguồn duy nhất.
+// Các màn chỉ cầm Số xe ⇒ `useTripFlow(code)` — mọi lời hỏi trong cùng ~25 ms được GOM thành MỘT request (≤ 100 mã), không N+1 request
+// khi bảng 50 dòng mỗi dòng một chip. Realtime: mọi bảng của 8 sổ đều kéo ['trip-flow'] (realtimeEvents) ⇒ chip đổi ngay.
+export type TripFlowKey = 'PLAN' | 'KHVC' | 'BOOKING' | 'GATE_IN' | 'WEIGH' | 'OUTBOUND' | 'GATE_OUT' | 'DELIVERED'
+export type TripFlowState = 'done' | 'active' | 'pending' | 'off' | 'blocked'
+export type TripFlowStep = {
+  key: TripFlowKey; state: TripFlowState; label: string; doc: string | null; at: string | null; by: string | null
+  ref: { kind: 'plan' | 'khvc' | 'order' | 'gate' | 'weigh' | 'gdo' | 'transfer'; id: string; date?: string | null } | null; note: string | null
+}
+export type TripFlow = {
+  group_code: string; warehouse_id: string | null; ncc_id: string | null; steps: TripFlowStep[]; current: TripFlowKey | null
+  delivery: { kind: 'TRANSFER' | 'SALES'; slot_id: string | null; delivered_at: string | null; delivered_by: string | null; note: string | null; ready: boolean }
+}
+type FlowWaiter = { resolve: (f: TripFlow | null) => void; reject: (e: unknown) => void }
+const flowQueue = new Map<string, FlowWaiter[]>()
+let flowTimer: ReturnType<typeof setTimeout> | null = null
+async function flushTripFlowQueue() {
+  const pending = [...flowQueue.entries()]
+  flowQueue.clear(); flowTimer = null
+  for (let i = 0; i < pending.length; i += 100) {
+    const chunk = pending.slice(i, i + 100)
+    try {
+      const d = (await apiClient.get('/tms/trip-flow', { params: { codes: chunk.map(([c]) => c).join(',') } })).data.data as { flows: TripFlow[] }
+      const by = new Map(d.flows.map(f => [f.group_code, f]))
+      for (const [code, ws] of chunk) for (const w of ws) w.resolve(by.get(code) ?? null)
+    } catch (e) { for (const [, ws] of chunk) for (const w of ws) w.reject(e) }
+  }
+}
+function loadTripFlow(code: string): Promise<TripFlow | null> {
+  return new Promise((resolve, reject) => {
+    const l = flowQueue.get(code) ?? []; l.push({ resolve, reject }); flowQueue.set(code, l)
+    if (!flowTimer) flowTimer = setTimeout(() => void flushTripFlowQueue(), 25)
+  })
+}
+export function useTripFlow(code: string | null | undefined, enabled = true) {
+  return useQuery({ queryKey: ['trip-flow', code ?? ''], enabled: !!code && enabled, staleTime: 60_000, queryFn: () => loadTripFlow(code!) })
+}
+/** Nhiều Số xe một lần (tab Kế hoạch: tiến độ cả ngày) — một request cho cả danh sách. */
+export function useTripFlows(codes: string[], enabled = true) {
+  const key = [...new Set(codes)].sort().join(',')
+  return useQuery({
+    queryKey: ['trip-flow', 'batch', key], enabled: enabled && key.length > 0, staleTime: 60_000,
+    queryFn: async () => {
+      const list = key.split(',')
+      const out: TripFlow[] = []
+      for (let i = 0; i < list.length; i += 200) out.push(...((await apiClient.get('/tms/trip-flow', { params: { codes: list.slice(i, i + 200).join(',') } })).data.data as { flows: TripFlow[] }).flows)
+      return out
+    },
+  })
+}
+/** Tài xế / ĐVVT / điều vận xác nhận xe ĐÃ GIAO (undo = hoàn tác) — quyền tms_plan.confirm_delivery. */
+export function useConfirmDelivery() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ slot_id, note, undo }: { slot_id: string; note?: string; undo?: boolean }) =>
+      apiClient.post(`/tms/vehicle-slots/${slot_id}/delivered`, { ...(note ? { note } : {}), ...(undo ? { undo: true } : {}) }).then(r => r.data.data as { slot_id: string; delivered_at: string | null; delivered_by: string | null; flow: TripFlow | null }),
+    onSuccess: d => { if (d.flow) qc.setQueryData(['trip-flow', d.flow.group_code], d.flow); qc.invalidateQueries({ queryKey: ['trip-flow'] }); qc.invalidateQueries({ queryKey: ['tms-orders-paged'] }); qc.invalidateQueries({ queryKey: ['gdo-events'] }) },
   })
 }

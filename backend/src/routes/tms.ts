@@ -12,6 +12,7 @@ import * as vehicleSlot      from '../controllers/tms/vehicleSlotController'
 import * as transportCompany from '../controllers/tms/transportCompanyController'
 import * as vehicle          from '../controllers/tms/vehicleController'
 import * as gateReg          from '../controllers/tms/gateRegistrationController'
+import * as tripFlow         from '../controllers/tms/tripFlowController'
 import { requirePerm, requireAnyPerm } from '../middlewares/auth'
 
 const router = Router()
@@ -174,6 +175,11 @@ router.delete('/orders/:id',             requirePerm('tms_plan', 'delete'),     
 // TmsVehicleSlot (xe thực tế bốc đơn — ĐVVT book)
 router.post('/orders/:orderId/vehicle-slots',    requirePerm('tms_plan', 'add_vehicle'), vehicleSlot.addVehicleSlot)
 router.patch('/vehicle-slots/:id',               requirePerm('tms_plan', 'book'),        vehicleSlot.updateVehicleSlot)
+// 18/10 — "ĐÃ GIAO" do tài xế / ĐVVT / điều vận xác nhận trên dòng xe (bước cuối chuỗi tình trạng xe); undo = hoàn tác
+router.post('/vehicle-slots/:id/delivered',      requirePerm('tms_plan', 'confirm_delivery'), validate({ params: zIdParam, body: tripFlow.zDeliveredBody }), tripFlow.confirmDelivered)
+// 18/10 — CHUỖI TÌNH TRẠNG XE (document flow): mọi màn cầm Số xe hỏi một câu cho cả lô — bàn · Kế hoạch · Xem đơn · KH xuất · Đặt lịch · Xuất kho · Cổng · Cân
+router.get('/trip-flow', requireAnyPerm(['dispatch', 'view'], ['tms_plan', 'view'], ['outbound', 'view'], ['gate_registration', 'view'], ['external_khvc', 'view'], ['weigh_station', 'view']),
+  validate({ query: tripFlow.zFlowQuery }), tripFlow.getTripFlow)
 router.patch('/vehicle-slots/:id/release',       requirePerm('tms_plan', 'release'),     vehicleSlot.releaseVehicleSlot)
 router.patch('/vehicle-slots/:id/revoke',        requirePerm('tms_plan', 'revoke'),      vehicleSlot.revokeVehicleSlot)
 router.delete('/vehicle-slots/:id',              requirePerm('tms_plan', 'add_vehicle'), vehicleSlot.deleteVehicleSlot)

@@ -24,6 +24,7 @@ import { ResizableTable, type RtColDef } from '@/components/shared/ResizableTabl
 import { TableEmptyRow } from '@/components/shared/TableEmptyRow'
 import { WindowedRows } from '@/components/shared/WindowedRows'
 import { StatusBadge } from '@/components/shared/StatusBadge'
+import { TripFlow } from './TripFlow'
 import { ListFooter } from '@/components/shared/ListPager'
 import { SearchInput } from '@/components/shared/SearchInput'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
@@ -641,6 +642,8 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped, canAct =
                     <span className="ml-1.5 inline-flex items-center gap-1.5">
                       <StatusBadge tone={g.tone} title={`Số xe ${i.khvc.group_code} · ngày xuất ${i.khvc.export_date ? dmy(i.khvc.export_date) : '—'}`}>{i.khvc.plan_dropped ? 'Chuyến ngừng' : g.label}</StatusBadge>
                       {i.khvc.gdo_id && <a href={`/wms/outbound/${i.khvc.gdo_id}`} className="text-[10px] font-medium text-sky-700 hover:underline">Mở chuyến</a>}
+                      {/* 18/10: chuỗi tình trạng của XE mang đơn này (khung giờ · cổng · cân · xuất · ra cổng · giao) */}
+                      <TripFlow code={i.khvc.group_code} />
                       {canAct && g.col === 'B' && !i.khvc.plan_dropped && <button type="button" className="text-[10px] font-medium text-red-700 hover:underline" disabled={removeKhvc.isPending} onClick={() => void doRemoveKhvc(r.od, i.khvc!.group_code)}>Gỡ khỏi KH xuất</button>}
                     </span>) })()}
                   {r.ref && (

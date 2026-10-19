@@ -641,3 +641,32 @@ nào thì mở khoá xe đó. Cần 1 hướng nữa: kế hoạch làm nhầm, 
 - Gói QA 61 **[21m]** đi trọn vòng: xác nhận → nạp khung chờ trên kế hoạch đã chốt → mở lại riêng xe C (A·B vẫn chốt, kế hoạch mở một phần) → không
   xe nháp ⇒ Xác nhận 409 → xe mới từ khung chờ trên kế hoạch CONFIRMED → Xác nhận chỉ ghi xe mới (A·B giữ `confirmed_at`) → Bỏ nháp chỉ bỏ xe
   nháp → Huỷ (mở lại hết + bỏ) ⇒ DISCARDED, dòng KH xuất 0.
+
+## 18/10 — CHUỖI TÌNH TRẠNG XE (document flow) + "Đã giao" do tài xế
+
+**Vì sao:** giả lập vòng đời một xe 17/10 (chốt → khung giờ → vào cổng → cân → bắt đầu → hoàn thành → ra cổng) cho thấy app đúng 9/9 bước nhưng
+KHÔNG màn nào gom tình trạng một xe: bàn / tab Kế hoạch nói "Đã vào KH" mãi, khung giờ · cổng chỉ ở Đặt lịch, tiến độ kho chỉ ở Xem đơn (theo
+đơn), "đang xuất" ở Đặt lịch là trạng thái CỔNG. Đơn bán hàng không có bước "đã giao". User chốt: *"tình trạng này xem được ở mọi nơi có liên
+quan (như nút workflow trong SAP), bao gồm số chứng từ để đi search, mở ra được từ đó — không chỉ tab kế hoạch mà cả xuất, booking…"* và
+*"Đã giao = khi đơn được tài xế xác nhận"*.
+
+**Luật:**
+- `backend/src/services/tripFlow.ts` = NGUỒN DUY NHẤT dựng chuỗi 8 bước cho một Số xe: `PLAN` (dispatch_trip) → `KHVC` (khvc_lines) →
+  `BOOKING` (TmsVehicleSlot + DeliverySlot) → `GATE_IN` (gate_registrations.entry_at) → `WEIGH` (WeighTicket theo gdo_id) → `OUTBOUND`
+  (GroupDeliveryOrder.status) → `GATE_OUT` (exit_at) → `DELIVERED` (chuyển kho: `transfer_status`; bán hàng: `TmsVehicleSlot.delivered_at`).
+  Mỗi bước: `state` done · active · pending · off (kho không bắt cổng / cân) · blocked (rút xe / huỷ), `doc` (số chứng từ), `at`, `by`, `ref`
+  (kind + id + ngày) để mở trang đích. 8 câu cho cả lô ≤ 300 mã, không N+1.
+- `GET /tms/trip-flow?codes=a,b` (≤ 200 mã; quyền view của BẤT KỲ màn nào trong 8 sổ; cắt theo phạm vi kho / ĐVVT). FE `useTripFlow(code)`
+  GOM mọi lời hỏi trong ~25 ms thành MỘT request; mọi bảng của 8 sổ kéo key `['trip-flow']` ở `TABLE_QUERY_MAP` ⇒ chip đổi realtime.
+- Component `components/tms/TripFlow.tsx` hai dạng: `compact` (một hàng 8 chấm, bước đang đứng in chữ; bấm chấm = đặt bộ lọc trang đích rồi
+  điều hướng — chỉ khi `useCanSeePath` cho phép) và `full` (bảng dọc: bước · tình trạng · số chứng từ · lúc · ai · ghi chú · Mở). Đã gắn: thẻ
+  xe + dòng xe dạng Bảng (xe đã chốt) · panel xe (full) · Xem đơn (dòng Đã điều) · tab Kế hoạch (cột "Tiến độ xe": k/N đã xuất · j đã giao,
+  chỉ hỏi ngày ±7) · Kế hoạch xuất (cạnh "Đã sinh") · Đặt lịch (cạnh mã lệnh + full trong chi tiết) · Xuất kho (pane phải + đầu trang chi
+  tiết) · Đăng ký cổng (cột Mã đơn + chi tiết full) · Phiếu cân (cột Chuyến gắn). Thêm sổ mới vào chuỗi ⇒ sửa `tripFlow.ts`, KHÔNG vẽ chip
+  riêng ở một màn.
+- **"Đã giao" (bán hàng):** `POST /tms/vehicle-slots/:id/delivered { note?, undo? }` — quyền `tms_plan.confirm_delivery` (migration
+  `20261019_trip_delivered.sql` cấp theo năng lực: chức danh `is_driver` được view + confirm_delivery; ai có `tms_plan.book` hoặc
+  `dispatch.confirm` được confirm_delivery). Chặn 409 `OUTBOUND_NOT_COMPLETED` khi chuyến chưa Hoàn thành (hàng chưa rời kho), 409
+  `TMS_PLAN_DROPPED` khi lệnh ngừng; tài khoản ĐVVT / tài xế chỉ xe của ĐVVT mình. Ghi `outbound_events` `DELIVERED` / `DELIVERY_UNDONE`.
+  Nút nằm trong chính component (dạng full) ⇒ tài xế bấm ở chi tiết lệnh Đặt lịch, điều vận ghi hộ ở panel xe.
+- Gói QA 14 [5h–5l] gác: 8 bước · 409 khi chưa xuất · 200 sau khi hoàn thành · hoàn tác · vết sự kiện.

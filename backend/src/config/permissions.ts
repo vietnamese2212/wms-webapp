@@ -12,7 +12,7 @@ export const ALL_PERMISSIONS: Record<string, string[]> = {
   employees:    ['view'],
   user_admin:   ['view', 'create', 'edit', 'set_password', 'unlock', 'delete', 'manage_roles', 'audit_log'],
   wms_settings: ['view', 'manage_warehouse', 'manage_type', 'manage_unit', 'manage_zone', 'manage_shift', 'manage_qa', 'manage_machine', 'manage_system'],
-  tms_plan:          ['view', 'create', 'edit', 'delete', 'add_vehicle', 'release', 'change_date', 'book', 'revoke', 'upload_outbound', 'upload_inbound', 'confirm_receipt', 'export'],
+  tms_plan:          ['view', 'create', 'edit', 'delete', 'add_vehicle', 'release', 'change_date', 'book', 'revoke', 'upload_outbound', 'upload_inbound', 'confirm_receipt', 'confirm_delivery', 'export'],
   tms_vehicle_types: ['view', 'create', 'edit', 'delete'],
   freight:           ['view', 'manage', 'export'],   // Cước vận chuyển: bảng cước · phụ phí · phân tuyến ĐVVT (20260923)
   dispatch:          ['view', 'plan', 'confirm', 'export', 'customer_vehicles'],   // Điều vận: kế hoạch ghép chuyến nháp → Xác nhận ghi Kế hoạch xuất (20260924)

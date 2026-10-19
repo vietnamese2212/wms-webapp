@@ -28,6 +28,7 @@ import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { SearchInput } from '@/components/shared/SearchInput'
 import { SingleSelect } from '@/components/shared/SingleSelect'
 import { StatusBadge } from '@/components/shared/StatusBadge'
+import { TripFlow } from './TripFlow'
 import { FloatingActionBar, FLOATING_BTN, FLOATING_BTN_DANGER } from '@/components/shared/FloatingActionBar'
 import { useConfirmDialog } from '@/components/shared/ConfirmDialog'
 import { useEdgeFade } from '@/hooks/useEdgeFade'
@@ -680,6 +681,8 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
             {tripTags?.has(t.id) && <TripRouteBadge tag={tripTags.get(t.id)!} odLabel={odLabel} />}
             {t.allow_extra_drops && <ExtraDropsBadge />}
             {st !== 'DRAFT' && <StatusBadge tone={st === 'CONFIRMED' ? 'green' : st === 'DECLINED' ? 'red' : 'blue'}>{st === 'CONFIRMED' ? 'Đã vào KH' : st === 'DECLINED' ? 'Từ chối' : st === 'TENDERED' ? 'Chờ ĐVVT' : st}</StatusBadge>}
+            {/* 18/10: xe đã chốt ⇒ CHUỖI TÌNH TRẠNG (khung giờ · cổng · cân · xuất · ra cổng · giao) ngay trên thẻ — bấm chấm là mở sổ đó */}
+            {st === 'CONFIRMED' && <TripFlow code={t.group_code} />}
             {ed && (
               <button type="button" className={`rounded p-1 ${lk ? 'bg-violet-600 text-white hover:bg-violet-700' : 'text-slate-400 hover:bg-white hover:text-slate-700'}`} disabled={patchTrip.isPending}
                 title={lk ? 'Đang khoá — "Tối ưu lại" không đụng vào xe này. Bấm để mở khoá' : 'Khoá xe để "Tối ưu lại" giữ nguyên (hỏi lại trước khi khoá)'}

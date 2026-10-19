@@ -20,6 +20,7 @@ import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { formatDate, formatTimestampTime, normalizeLicensePlate } from '@/utils/formatters'
+import { TripFlow } from '@/components/tms/TripFlow'
 
 /**
  * Biển số HIỂN THỊ — dạng dùng chung toàn app: IN HOA, không gạch/space (user chốt 30/07).
@@ -213,6 +214,8 @@ export default function WeighTickets() {
                         </button>
                       ) : <span className="text-slate-300">—</span>}
                       {r.gdo_id && (r.matched_by === 'auto' || r.matched_by === 'auto-start') && <span className="ml-1 text-[8px] text-slate-400">auto</span>}
+                      {/* 18/10: chuỗi tình trạng xe của chuyến gắn */}
+                      {r.gdo_group_code && <TripFlow code={r.gdo_group_code} className="ml-1" />}
                     </TableCell>
                     <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{r.trans_company || <span className="text-slate-300">—</span>}</TableCell>
                     <TableCell className="px-1 py-1 whitespace-nowrap sticky right-0 z-10 bg-white border-l border-slate-200">

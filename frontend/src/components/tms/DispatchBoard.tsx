@@ -680,9 +680,9 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
             {/* nhãn tiếp nhận khi khung chờ bật lọc "Có xe cùng tuyến" (15/10) — cùng nhãn dạng Bảng */}
             {tripTags?.has(t.id) && <TripRouteBadge tag={tripTags.get(t.id)!} odLabel={odLabel} />}
             {t.allow_extra_drops && <ExtraDropsBadge />}
-            {st !== 'DRAFT' && <StatusBadge tone={st === 'CONFIRMED' ? 'green' : st === 'DECLINED' ? 'red' : 'blue'}>{st === 'CONFIRMED' ? 'Đã vào KH' : st === 'DECLINED' ? 'Từ chối' : st === 'TENDERED' ? 'Chờ ĐVVT' : st}</StatusBadge>}
-            {/* 18/10 → 19/10 (user chốt): xe đã chốt ⇒ MỘT nút workflow nhỏ, bấm mở popup bảng tình trạng (khung giờ · cổng · cân · xuất · ra cổng · giao) */}
-            {st === 'CONFIRMED' && <TripFlow code={t.group_code} />}
+            {/* 19/10 (user: gọn row): xe ĐÃ CHỐT không còn badge chữ "Đã vào KH" — nút workflow xanh lá là dấu đã chốt, bấm mở popup tình trạng xe (cùng dạng Bảng) */}
+            {st === 'CONFIRMED' && <TripFlow code={t.group_code} tone="done" title={`Xe đã chốt (đã vào Kế hoạch xuất) — bấm xem tình trạng xe ${t.group_code}`} />}
+            {(st === 'DECLINED' || st === 'TENDERED') && <StatusBadge tone={st === 'DECLINED' ? 'red' : 'blue'}>{st === 'DECLINED' ? 'Từ chối' : 'Chờ ĐVVT'}</StatusBadge>}
             {ed && (
               <button type="button" className={`rounded p-1 ${lk ? 'bg-violet-600 text-white hover:bg-violet-700' : 'text-slate-400 hover:bg-white hover:text-slate-700'}`} disabled={patchTrip.isPending}
                 title={lk ? 'Đang khoá — "Tối ưu lại" không đụng vào xe này. Bấm để mở khoá' : 'Khoá xe để "Tối ưu lại" giữ nguyên (hỏi lại trước khi khoá)'}

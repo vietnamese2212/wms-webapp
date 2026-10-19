@@ -91,8 +91,9 @@ export interface BoardOps {
 // Hai bảng chung MỘT bộ cột (khung chờ bỏ ba cột chỉ xe mới có: Tải · Cước · ĐVVT). Điện thoại: cột đầu hẹp hơn, cột thao tác không
 // ghim (ghim hai mép ở 360 px chỉ còn ~50 px cho phần cuộn) — khoá lưu độ rộng riêng cho từng cỡ.
 const tripCols = (desktop: boolean): RtColDef[] => [
-  { id: 'x', label: 'Xe · OD', w: desktop ? 210 : 170 },
-  { id: 'load', label: 'Tải', w: 104 },
+  // 19/10 (user: "dòng xe bị mất chữ"): cột đầu rộng hơn, Tải chỉ còn con số nên hẹp lại — khoá lưu đổi v2 để độ rộng cũ không bóp
+  { id: 'x', label: 'Xe · OD', w: desktop ? 260 : 190 },
+  { id: 'load', label: 'Tải', w: 64, align: 'right' },
   { id: 'pal', label: 'Pallet', w: 64, align: 'right' },
   { id: 'ton', label: 'Tấn', w: 64, align: 'right' },
   { id: 'cust', label: 'Khách', w: 210 },
@@ -110,7 +111,7 @@ const tripCols = (desktop: boolean): RtColDef[] => [
 // cột đầu rộng thêm cho chip loại + biểu tượng SAP
 const poolCols = (desktop: boolean, lot: boolean): RtColDef[] => [
   { id: 'x', label: lot ? 'Lô · OD' : 'OD · Loại kho', w: desktop ? 200 : 180 },
-  ...(lot ? [{ id: 'load', label: 'Tải', w: 96 }] : []),
+  ...(lot ? [{ id: 'load', label: 'Tải', w: 60, align: 'right' as const }] : []),
   { id: 'pal', label: 'Pallet', w: 60, align: 'right' },
   { id: 'ton', label: 'Tấn', w: 60, align: 'right' },
   { id: 'cust', label: 'Khách', w: 180 },
@@ -159,44 +160,28 @@ function IconBtn({ title, onClick, disabled, danger, children }: { title: string
   )
 }
 
-/** Thanh % tải gọn trong ô — đang rê đơn qua xe thì vẽ số SAU khi thả (xanh trời, có mũi tên) */
+/** % tải = CON SỐ có màu (19/10 user: "% là con số, có màu sắc — không dùng bar"): xanh lá = trong dải · hổ phách = Non tải · đỏ = vượt;
+ *  đang rê đơn qua xe thì vẽ số SAU khi thả (xanh trời, có mũi tên). Chi tiết dải / số đo nằm ở tooltip của ô. */
 function LoadMini({ t, pv, loading }: { t: DispatchTrip; pv: DispatchMovePreview | null; loading: boolean }) {
   const l = t.detail.load
   const mx = l.max_pct ?? 100
   if (loading) return <span className="text-sky-700">Đang tính…</span>
   if (pv?.blocked) return <span className="font-semibold text-red-600">⛔ Xe không nhận</span>
   if (!t.ods.length && !pv) return <span className="text-slate-400">—</span>
-  const p = pv ? pv.load_pct : (t.load_pct == null ? l.pct : Number(t.load_pct))
-  if (p == null) return <span className="text-slate-400">— chưa đo được</span>
+  const p = pv ? pv.load_pct : (t.load_pct == null ? l.pct : Number(l.pct))
+  if (p == null) return <span className="text-slate-400">—</span>
   const over = pv ? pv.oversize : p > mx
   const under = pv ? pv.underload : t.underload
-  const color = over ? 'bg-red-500' : under ? 'bg-amber-500' : 'bg-green-500'
-  return (
-    <div className="flex items-center gap-1.5">
-      <div className="relative h-1.5 min-w-[36px] flex-1 overflow-hidden rounded-full bg-slate-200">
-        <div className={`absolute inset-y-0 left-0 ${color}`} style={{ width: `${Math.min(100, p)}%` }} />
-        <div className="absolute inset-y-0 w-px bg-slate-500/60" style={{ left: `${l.underload_pct}%` }} />
-      </div>
-      <span className={`w-12 shrink-0 text-right tabular-nums ${pv ? 'font-semibold text-sky-700' : over ? 'font-semibold text-red-600' : under ? 'font-medium text-amber-700' : 'text-slate-700'}`}>
-        {pv ? '→ ' : ''}{nf(p, 0)}%
-      </span>
-    </div>
-  )
+  return <LoadPct pct={p} tone={pv ? 'preview' : over ? 'over' : under ? 'under' : 'ok'} />
+}
+function LoadPct({ pct, tone }: { pct: number; tone: 'ok' | 'under' | 'over' | 'preview' }) {
+  const cls = tone === 'preview' ? 'text-sky-700' : tone === 'over' ? 'text-red-600' : tone === 'under' ? 'text-amber-600' : 'text-green-700'
+  return <span className={`block text-right text-[12px] font-bold tabular-nums ${cls}`}>{tone === 'preview' ? '→ ' : ''}{nf(pct, 0)}%</span>
 }
 
-/** Tải của một LÔ máy định xếp mà không tạo xe (15/10) — cùng dáng thanh của dòng xe: hổ phách = dưới Tối thiểu (vạch = mức tối thiểu),
- *  đỏ = lớn hơn xe (vạch = trần) */
+/** Tải của một LÔ máy định xếp mà không tạo xe (15/10) — cùng dáng con số của dòng xe: hổ phách = dưới Tối thiểu, đỏ = lớn hơn xe */
 function LotLoad({ lot }: { lot: PoolLot }) {
-  const big = lot.kind === 'big'
-  return (
-    <div className="flex items-center gap-1.5">
-      <div className="relative h-1.5 min-w-[36px] flex-1 overflow-hidden rounded-full bg-slate-200">
-        <div className={`absolute inset-y-0 left-0 ${big ? 'bg-red-500' : 'bg-amber-500'}`} style={{ width: `${Math.min(100, lot.pct)}%` }} />
-        <div className="absolute inset-y-0 w-px bg-slate-500/60" style={{ left: `${Math.min(100, lot.bound)}%` }} />
-      </div>
-      <span className={`w-10 shrink-0 text-right font-medium tabular-nums ${big ? 'text-red-600' : 'text-amber-700'}`}>{nf(lot.pct, 0)}%</span>
-    </div>
-  )
+  return <LoadPct pct={lot.pct} tone={lot.kind === 'big' ? 'over' : 'under'} />
 }
 
 /** Phần sức chứa xe mà một đơn chiếm — đo theo thước của dòng xe (pallet hoặc tấn) */
@@ -390,9 +375,10 @@ function tripCells(ops: BoardOps, t: DispatchTrip, hv: BoardHover, open: boolean
                 ? <><span className="mr-1 rounded bg-sky-600 px-1 text-[9px] font-bold text-white">{t.detail.vehicles!.length} XE</span>{t.detail.vehicles!.map(v => v.name).join(' + ')}</>
                 : t.detail.vehicle_model?.name ?? <span className="text-red-600">Chưa chọn dòng xe</span>}
             </span>
-            {st !== 'DRAFT' && <StatusBadge tone={st === 'CONFIRMED' ? 'green' : st === 'DECLINED' ? 'red' : 'blue'}>{st === 'CONFIRMED' ? 'Đã vào KH' : st === 'DECLINED' ? 'Từ chối' : st === 'TENDERED' ? 'Chờ ĐVVT' : st}</StatusBadge>}
-            {/* 19/10 (user chốt): xe đã chốt ⇒ nút workflow nhỏ, bấm mở popup bảng tình trạng xe (cùng nút với dạng Thẻ) */}
-            {st === 'CONFIRMED' && <TripFlow code={t.group_code} />}
+            {/* 19/10 (user: "Đã vào kế hoạch là gì? gọn gàng row này"): xe ĐÃ CHỐT (Xác nhận ⇒ đã có dòng Kế hoạch xuất) không còn badge chữ —
+                chính nút workflow (xanh lá) là dấu đã chốt, bấm mở popup tình trạng xe; chỉ hai trạng thái bất thường còn badge */}
+            {st === 'CONFIRMED' && <TripFlow code={t.group_code} tone="done" title={`Xe đã chốt (đã vào Kế hoạch xuất) — bấm xem tình trạng xe ${t.group_code}`} />}
+            {(st === 'DECLINED' || st === 'TENDERED') && <StatusBadge tone={st === 'DECLINED' ? 'red' : 'blue'}>{st === 'DECLINED' ? 'Từ chối' : 'Chờ ĐVVT'}</StatusBadge>}
             {t.locked && <span className="inline-flex shrink-0 items-center gap-0.5 rounded bg-violet-600 px-1 text-[9px] font-bold text-white" title="Đã khoá — lần Tối ưu lại sau giữ nguyên xe này (đơn, dòng xe, ĐVVT)"><Lock className="h-2.5 w-2.5" /><span className="hidden sm:inline">Khoá</span></span>}
             {t.allow_extra_drops && <ExtraDropsBadge />}
             {/* nhãn tiếp nhận khi khung chờ bật lọc "Có xe cùng tuyến" (15/10) */}
@@ -556,7 +542,7 @@ export function DispatchBoardTable({ ops, toolbar, rail, poolHeader, poolExtras 
   const lotMode = f.boardGroup === 'lot'
   const tcols = useMemo(() => tripCols(desktop), [desktop]), pcols = useMemo(() => poolCols(desktop, lotMode), [desktop, lotMode])
   // bộ cột đổi theo cách gom ⇒ khoá độ rộng riêng + remount (useColumnResize chỉ đọc độ rộng lúc mount)
-  const pkey = `dispatch_board_pool_v2${lotMode ? '_lot' : ''}${desktop ? '' : '_m'}`
+  const pkey = `dispatch_board_pool_v3${lotMode ? '_lot' : ''}${desktop ? '' : '_m'}`
   // bản ops MỚI NHẤT cho thao tác lúc bấm / kéo trong các dòng xe không vẽ lại (TripRows memo)
   const live = useRef(ops)
   live.current = ops
@@ -675,7 +661,7 @@ export function DispatchBoardTable({ ops, toolbar, rail, poolHeader, poolExtras 
             40 % thì còn 0 px, bảng nằm đó mà không thấy, không bấm được (đo 390 px 06/10) */}
         <section className="flex min-w-0 flex-col lg:min-h-0 lg:flex-1">
           <div className="h-[75vh] overflow-auto lg:h-auto lg:min-h-0 lg:flex-1" onDragOver={ops.canDrag ? edgeScroll : undefined}>
-            <ResizableTable storageKey={`dispatch_board_trips_v1${desktop ? '' : '_m'}`} cols={tcols}>
+            <ResizableTable storageKey={`dispatch_board_trips_v2${desktop ? '' : '_m'}`} cols={tcols}>
               <TableBody>
                 {!ops.tripGroups.length && <TableEmptyRow colSpan={tcols.length}>{ops.tripsTotal
                   ? <>Không xe nào khớp bộ lọc. <button type="button" className="text-sky-700 underline" onClick={ops.clearFilter}>Xem tất cả {ops.tripsTotal} xe</button></>

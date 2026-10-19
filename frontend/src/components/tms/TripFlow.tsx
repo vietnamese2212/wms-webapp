@@ -146,15 +146,15 @@ function FlowDialog({ code, open, onOpenChange }: { code: string; open: boolean;
 }
 
 /** NÚT WORKFLOW nhỏ (mặc định: chỉ icon 20 px đứng cạnh Số xe; `label` = nút có chữ cho panel / trang chi tiết). Bấm = mở popup bảng. */
-export function TripFlow({ code, label, className }: { code: string | null | undefined; label?: boolean; className?: string }) {
+export function TripFlow({ code, label, className, title, tone = 'info' }: { code: string | null | undefined; label?: boolean; className?: string; title?: string; tone?: 'info' | 'done' }) {
   const [open, setOpen] = useState(false)
   if (!code) return null
   const cls = label
     ? `inline-flex h-7 items-center gap-1 rounded-md border border-slate-300 bg-white px-2 text-xs font-medium text-slate-700 hover:bg-slate-50 ${className ?? ''}`
-    : `inline-flex h-5 w-5 shrink-0 items-center justify-center rounded text-sky-700 hover:bg-sky-100 align-middle ${className ?? ''}`
+    : `inline-flex h-5 w-5 shrink-0 items-center justify-center rounded align-middle ${tone === 'done' ? 'text-green-700 hover:bg-green-100' : 'text-sky-700 hover:bg-sky-100'} ${className ?? ''}`
   return (
     <>
-      <button type="button" className={cls} title="Tình trạng xe — hành trình chứng từ (kế hoạch → KH xuất → khung giờ → cổng → cân → xuất kho → ra cổng → giao)" aria-label={`Tình trạng xe ${code}`} data-trip-flow={code}
+      <button type="button" className={cls} title={title ?? 'Tình trạng xe — hành trình chứng từ (kế hoạch → KH xuất → khung giờ → cổng → cân → xuất kho → ra cổng → giao)'} aria-label={`Tình trạng xe ${code}`} data-trip-flow={code}
         onClick={e => { e.stopPropagation(); e.preventDefault(); setOpen(true) }}>
         <Workflow className="h-3.5 w-3.5" />{label && 'Tình trạng xe'}
       </button>

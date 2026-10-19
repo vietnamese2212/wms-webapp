@@ -2743,6 +2743,10 @@ async function holdOdsInner(req: Request, res: Response) {
     if (emptied.length) {
       const { error } = await db.from('dispatch_trip').delete().in('id', emptied.slice(0, 300)).eq('plan_id', plan.id)
       if (error) throw error
+      // 19/10 (đổi ngày từng đơn trên xe đã chốt: mở lại → hoãn → xe hết đơn bị bỏ, KHÔNG còn bước xác nhận lại): xe vừa bỏ có thể là xe nháp
+      // duy nhất của kế hoạch đã xác nhận ⇒ trạng thái kế hoạch phải chốt lại theo các xe còn lại (chụp 19/10: tab Kế hoạch in "1 nháp",
+      // bàn "Đang sửa · 0/1 xe mở" dù mọi xe còn lại đã CONFIRMED)
+      await syncPlanStatus(plan, actor)
     }
     await writeSummary({ ...plan, params: asJson(p2) })
     return ok(res, { ...(await readPlan(plan.id)), held: { ods: ods.length, until: b.until, trips_removed: emptied.length } })

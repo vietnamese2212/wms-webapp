@@ -8,7 +8,7 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import type { AxiosError } from 'axios'
 import { ClipboardList, FileCheck2, CalendarClock, LogIn, Scale, PackageMinus, LogOut, PackageCheck, ExternalLink, Undo2, Workflow, type LucideIcon } from 'lucide-react'
-import { useTripFlow, useConfirmDelivery, type TripFlow as Flow, type TripFlowStep, type TripFlowKey, type TripFlowState } from '@/api/hooks'
+import { useTripFlowDetail, useConfirmDelivery, type TripFlow as Flow, type TripFlowStep, type TripFlowKey, type TripFlowState, type TripFlowEvent } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { useCanSeePath } from '@/hooks/useCanSeePath'
@@ -120,9 +120,40 @@ function FlowTable({ flow, onNavigate }: { flow: Flow; onNavigate: () => void })
   )
 }
 
-/** Popup "Tình trạng xe": tải chuỗi KHI MỞ; realtime cập nhật khi bất kỳ sổ nào đổi. */
+// Lịch sử thao tác (19/10, user: "ghi nhận ai làm gì, giờ nào — đi theo dòng"): nhãn việc theo event_type; loại chưa khai in mã thô
+const EVENT_VI: Record<string, string> = {
+  PLAN_DATE_CHANGED: 'Đổi ngày', PLAN_OD_HELD: 'Hoãn đơn', PLAN_DO_REMOVED: 'Gỡ DO khỏi xe', PLAN_DO_ADDED: 'Thêm DO vào xe',
+  PLAN_VEHICLE_MODEL_CHANGED: 'Đổi dòng xe', PLAN_BOOKING_CATEGORY_CHANGED: 'Đổi cửa đặt lịch', TMS_PLAN_CREATED: 'Sinh lệnh VC', TMS_PLAN_DROPPED: 'Lệnh VC ngừng',
+  TMS_PLAN_REOPENED: 'Lệnh VC sống lại', DELIVERED: 'Đã giao', DELIVERY_UNDONE: 'Hoàn tác đã giao', KHVC_CHANGED: 'KH xuất đổi', PLAN_PULLED: 'Bàn rút xe',
+}
+const EV_COLS: RtColDef[] = [{ id: 'at', label: 'Thời gian', w: 125 }, { id: 'by', label: 'Ai', w: 150 }, { id: 'what', label: 'Việc', w: 130 }, { id: 'do', label: 'DO', w: 100 }, { id: 'detail', label: 'Chi tiết', w: 360 }]
+function FlowHistory({ events }: { events: TripFlowEvent[] }) {
+  if (!events.length) return null
+  return (
+    <div className="border-t">
+      <div className="bg-slate-50 px-4 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500">Lịch sử thao tác · ai làm gì, lúc nào ({events.length})</div>
+      <div className="max-h-56 overflow-auto">
+        <ResizableTable storageKey="trip_flow_events_v1" cols={EV_COLS}>
+          <TableBody>
+            {events.map(e => (
+              <TableRow key={e.id} className="bg-white">
+                <TableCell className={`${TD} sticky left-0 z-10 bg-white font-mono text-[10px]`}>{formatDateTime(e.created_at)}</TableCell>
+                <TableCell className={TD} title={e.actor ?? undefined}>{e.actor ?? <span className="text-slate-300">—</span>}</TableCell>
+                <TableCell className={`${TD} font-medium text-slate-700`} title={e.event_type}>{EVENT_VI[e.event_type] ?? e.event_type}</TableCell>
+                <TableCell className={`${TD} font-mono`}>{e.do_number ?? <span className="text-slate-300">—</span>}</TableCell>
+                <TableCell className={`${TD} text-slate-600`} title={e.detail ?? undefined}>{e.detail ?? <span className="text-slate-300">—</span>}</TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </ResizableTable>
+      </div>
+    </div>
+  )
+}
+
+/** Popup "Tình trạng xe": tải chuỗi + lịch sử KHI MỞ; realtime cập nhật khi bất kỳ sổ nào đổi. */
 function FlowDialog({ code, open, onOpenChange }: { code: string; open: boolean; onOpenChange: (v: boolean) => void }) {
-  const q = useTripFlow(code, open)
+  const q = useTripFlowDetail(code, open)
   const f = q.data
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -136,6 +167,7 @@ function FlowDialog({ code, open, onOpenChange }: { code: string; open: boolean;
           {!q.isError && !f && (q.isLoading ? <p className="px-4 py-3 text-xs text-slate-500">Đang tải…</p> : <p className="px-4 py-3 text-xs text-slate-500">Không có hành trình cho Số xe này (chưa vào kế hoạch hoặc ngoài phạm vi của bạn).</p>)}
           {f && <FlowTable flow={f} onNavigate={() => onOpenChange(false)} />}
         </div>
+        {f?.events && <FlowHistory events={f.events} />}
         <div className="flex items-center justify-end gap-2 px-4 py-2 border-t bg-slate-50 rounded-b-xl">
           {f && <DeliverButton flow={f} />}
           <Button type="button" size="sm" variant="outline" className="h-8 text-xs" onClick={() => onOpenChange(false)}>Đóng</Button>

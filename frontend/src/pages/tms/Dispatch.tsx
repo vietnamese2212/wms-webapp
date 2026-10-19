@@ -17,7 +17,8 @@
 // làm lại từ đầu = Bỏ nháp rồi Xem đơn.
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { CheckCircle2, Trash2, Download, Waypoints, ArrowRightLeft, AlertTriangle, ThumbsUp, ThumbsDown, Send, LayoutGrid, ListChecks, RotateCcw, ChevronDown, ChevronUp, Map as MapIcon, FileText, Lock, Unlock, Ban, Users } from 'lucide-react'
+import { CheckCircle2, Trash2, Download, Waypoints, ArrowRightLeft, AlertTriangle, ThumbsUp, ThumbsDown, Send, LayoutGrid, ListChecks, RotateCcw, ChevronDown, ChevronUp, Map as MapIcon, FileText, Lock, Unlock, Ban, Users, CalendarClock } from 'lucide-react'
+import { DispatchMoveDateDialog, type MoveDateTarget } from '@/components/tms/DispatchMoveDateDialog'
 import { DispatchMap } from '@/components/tms/DispatchMap'
 import { TripRouteMap } from '@/components/tms/TripRouteMap'
 import { DispatchCarrierPicker } from '@/components/tms/DispatchCarrierPicker'
@@ -49,7 +50,7 @@ import { useConfirmDialog } from '@/components/shared/ConfirmDialog'
 import { toast } from '@/components/ui/use-toast'
 import {
   useDispatchPlans, useDispatchPlan, useCreateDispatchPlan, useUpdateDispatchTrip, useMoveDispatchOd, useConfirmDispatchPlan, useDiscardDispatchPlan, useReopenDispatchPlan,
-  useSettleDispatchTrip, useRespondDispatchTrip, useDispatchPlanSync, useRefreshDispatchPool, useDeleteDispatchTrip,
+  useSettleDispatchTrip, useRespondDispatchTrip, useDispatchPlanSync, useRefreshDispatchPool, useDeleteDispatchTrip, useHoldDispatchOds,
   useVehicleModels, useTransportCompanies, useStorageConditions, conditionLabel,
   type DispatchPlan, type DispatchPlanListItem, type DispatchTrip, type DispatchTripStatus, type StorageConditionRow, type DispatchSegment, SEGMENT_VI,
   type VehicleModel, type DispatchOdFlag,
@@ -225,6 +226,8 @@ export default function Dispatch() {
 
   const patchTrip = useUpdateDispatchTrip(), moveOd = useMoveDispatchOd(), confirm = useConfirmDispatchPlan(), discard = useDiscardDispatchPlan()
   const settle = useSettleDispatchTrip(), respond = useRespondDispatchTrip(), reopen = useReopenDispatchPlan(), delTrip = useDeleteDispatchTrip()
+  const holdOds = useHoldDispatchOds()
+  const [moveDate, setMoveDate] = useState<MoveDateTarget | null>(null)   // 19/10: hộp "Đổi ngày" (cả xe / từng đơn)
   const [openTripId, setOpenTripId] = useState<string | null>(null)
   // xe vừa tạo ở Xem đơn ("Tạo kế hoạch") — bàn ghép xe mở nhóm của chúng một lần rồi trả về [] (07/10)
   const [focusTrips, setFocusTrips] = useState<string[]>([])
@@ -443,6 +446,28 @@ export default function Dispatch() {
       if (await ask({ title: 'Chuyến bên Xuất kho đang có hàng — vẫn rút xe?', danger: true, confirmLabel: 'Vẫn mở lại', body: apiMsg(e) }) === null) return null
       return reopen.mutateAsync({ ...v, force: true })
     }
+  }
+  // ĐỔI NGÀY TỪNG ĐƠN (19/10, ca "đơn rớt không bốc" — user: "đổi ngày dễ như bên Kế hoạch xuất"): ba bước sẵn có nối liền —
+  // mở lại xe (hỏi thêm nếu chuyến đang có hàng) → hoãn đơn tới ngày chọn (rời xe, dấu hoãn + lý do) → xác nhận lại xe với phần còn lại
+  // (cùng Số xe sống lại, khung giờ giữ). Hỏng giữa chừng: xe đang ở nháp, báo rõ để người bấm Xác nhận tay.
+  const moveOdsDate = async (t: DispatchTrip, odNumbers: string[], date: string, reason?: string) => {
+    if (!plan) return
+    setEditDay(plan.plan_date)
+    const r = await reopenWithHold({ plan_id: plan.id, trip_ids: [t.id] })
+    if (!r) throw new Error('Đã huỷ')
+    if (!r.reopened.trips) throw new Error(r.reopened.blocked[0]?.reason ?? 'Không mở lại được xe')
+    const ids = (r.trips.find(x => x.id === t.id)?.ods ?? []).filter(o => odNumbers.includes(o.od_number)).map(o => o.id)
+    if (!ids.length) throw new Error('Không thấy các đơn này trên xe sau khi mở lại — tải lại trang')
+    let h: Awaited<ReturnType<typeof holdOds.mutateAsync>>
+    try { h = await holdOds.mutateAsync({ plan_id: plan.id, ids, until: date, reason }) }
+    catch (e) { throw new Error(`Xe #${t.seq} đã mở lại nhưng chưa hoãn được đơn: ${apiMsg(e)} — sửa trên bàn rồi Xác nhận lại xe.`) }
+    const still = h.trips.find(x => x.id === t.id)
+    if (still && still.ods.length) {
+      try { await settle.mutateAsync(t.id) }
+      catch (e) { throw new Error(`Đã hoãn ${odNumbers.length} đơn nhưng chưa xác nhận lại được xe #${t.seq}: ${apiMsg(e)} — bấm Xác nhận trên bàn.`) }
+    }
+    toast({ title: `Đã dời ${odNumbers.length} đơn sang ${formatDate(date)}`, description: `${odNumbers.join(', ')} rời xe #${t.seq} ${t.group_code} (dấu hoãn, lập kế hoạch ngày đó thì về Chờ điều)${still && still.ods.length ? ` · xe xác nhận lại với ${new Set(still.ods.map(o => o.od_number)).size} đơn còn lại, khung giờ giữ` : ' · xe hết đơn nên đã bỏ'}.` })
+    if (openTrip?.id === t.id && !(still && still.ods.length)) setOpenTripId(null)
   }
   const reopenTrip = async (t: DispatchTrip) => {
     if (!plan) return
@@ -778,7 +803,8 @@ export default function Dispatch() {
             </div>
           ) : tab === 'board' ? (
             <DispatchBoard plan={planView ?? plan} editable={editing && canPlan} flags={flags} onOpenTrip={setOpenTripId} focusTripIds={focusTrips} onFocused={() => setFocusTrips([])} soat={soatNode}
-              onReopenTrip={canConfirm ? t => void reopenTrip(t) : undefined} />
+              onReopenTrip={canConfirm ? t => void reopenTrip(t) : undefined}
+              onMoveDateTrip={canConfirm && plan.status !== 'DISCARDED' ? t => setMoveDate({ kind: 'trips', trips: [t] }) : undefined} />
           ) : (
             <div className="h-full min-h-0 overflow-y-auto lg:overflow-hidden pb-20 lg:pb-0"><DispatchMap plan={planView ?? plan} warehouseId={f.warehouseId} canPlan={canPlan} onOpenTrip={setOpenTripId} /></div>
           )}
@@ -790,6 +816,8 @@ export default function Dispatch() {
           {openTrip && plan && (
             <TripPane trip={openTrip} plan={plan} editable={editing && canPlan && EDITABLE.includes(tripStatus(openTrip))} canConfirm={canConfirm} needsTender={needsTender(openTrip)} condBy={condBy}
               onReopen={canConfirm && tripStatus(openTrip) === 'CONFIRMED' && plan.status !== 'DISCARDED' ? () => void reopenTrip(openTrip) : undefined}
+              onMoveDate={canConfirm && plan.status !== 'DISCARDED' && tripStatus(openTrip) !== 'DISCARDED' ? () => setMoveDate({ kind: 'trips', trips: [openTrip] }) : undefined}
+              onMoveOdDate={canConfirm && plan.status !== 'DISCARDED' && tripStatus(openTrip) === 'CONFIRMED' ? od => setMoveDate({ kind: 'ods', trip: openTrip, odNumbers: [od] }) : undefined}
               // 13/10 (user: "sửa trên bàn, không sửa trên Kế hoạch xuất"): xe ĐÃ CHỐT vẫn đổi ĐVVT / dòng xe tại đây — ghi thẳng xuống Kế hoạch xuất · chuyến · lệnh VC
               // cùng luật với BE: sửa xe đã chốt = sửa Kế hoạch xuất đã xác nhận ⇒ cần Xác nhận hoặc quyền sửa Kế hoạch xuất (C66: không in ô chọn rồi 403)
               editableVehicle={canPlan && (canConfirm || can(perms, 'external_khvc', 'edit')) && tripStatus(openTrip) === 'CONFIRMED' && plan.status !== 'DISCARDED'}
@@ -809,6 +837,7 @@ export default function Dispatch() {
           )}
         </SheetContent>
       </Sheet>
+      {plan && <DispatchMoveDateDialog plan={plan} target={moveDate} onClose={() => setMoveDate(null)} onMoveOds={moveOdsDate} />}
       {confirmNode}
     </div>
   )
@@ -823,9 +852,11 @@ function KV({ k, v }: { k: string; v: React.ReactNode }) {
 // vận tải thì hiện giá; chưa có action cho xe — khoá xe, cho thêm điểm (vượt số khách), ghép Loại kho…"): nền xám + mỗi khu một KHỐI có băng
 // tiêu đề (khuôn SettingsGroup của app) — Bản đồ tuyến · Xe · ĐVVT · Cước · Thao tác xe (công tắc khuôn AppSheet: tên đậm, diễn giải xám,
 // công tắc bên phải) · Cảnh báo · Đơn trên xe. ĐVVT là ô chọn xếp theo CƯỚC cho đúng xe (cùng danh sách của bàn ghép xe).
-function TripPane({ trip: t, plan, editable, editableVehicle, canConfirm, needsTender, condBy, models, vehModels, flags, onModel, onModels, onCarrier, onMove, onSettle, onRespond, onLock, onMix, onExtraDrops, onRemove, onReopen, busy }: {
+function TripPane({ trip: t, plan, editable, editableVehicle, canConfirm, needsTender, condBy, models, vehModels, flags, onModel, onModels, onCarrier, onMove, onSettle, onRespond, onLock, onMix, onExtraDrops, onRemove, onReopen, onMoveDate, onMoveOdDate, busy }: {
   trip: DispatchTrip; plan: DispatchPlan; editable: boolean; editableVehicle: boolean; canConfirm: boolean; needsTender: boolean
   onReopen?: () => void   // 16/10: "Mở lại xe này" — xe đã vào Kế hoạch xuất về nháp để sửa (chỉ xe này)
+  onMoveDate?: () => void               // 19/10: đổi ngày cả xe (giữ Số xe, nhả khung giờ)
+  onMoveOdDate?: (od: string) => void   // 19/10: đổi ngày từng đơn trên xe đã chốt (đơn rớt) — mở lại → hoãn → xác nhận lại
   condBy: Map<string, StorageConditionRow>
   models: { value: string; label: string; sub?: string }[]; vehModels: VehicleModel[]
   flags: Map<string, DispatchOdFlag>
@@ -954,6 +985,10 @@ function TripPane({ trip: t, plan, editable, editableVehicle, canConfirm, needsT
           <SettingRow label="Cho vượt số khách" htmlFor={`sw-drops-${t.id}`}
             desc={`Xe đang chở ${t.stops} khách · trần ${Number.isFinite(cap) ? cap : '—'} (${capModel != null ? `dòng xe ${vm?.name ?? ''}: ${capModel}` : 'chưa có dòng xe'}${capOds != null ? ` · khách / kênh: ${capOds}` : ''}). Bật = kéo thả và Xác nhận không chặn số khách cho RIÊNG xe này; các luật khác vẫn chặn.${offWhy}`}
             control={<Switch id={`sw-drops-${t.id}`} checked={t.allow_extra_drops === true} disabled={!editable || busy} onCheckedChange={onExtraDrops} aria-label="Cho vượt số khách" />} />
+          {onMoveDate && (
+            <SettingRow label="Đổi ngày cả xe" desc={`Dời nguyên xe (đơn · ĐVVT · dòng xe) sang kế hoạch ngày khác — Số xe giữ nguyên; khung giờ đã đặt bị nhả; chuyến Xuất kho + lệnh VC đổi ngày theo.${st === 'CONFIRMED' ? ' Chuyến đang xuất / đã quét / đã hoàn thành thì không dời được cả xe — đổi ngày từng đơn ở khối Đơn trên xe.' : ''}`}
+              control={<Button size="sm" variant="outline" className="h-7 border-sky-300 text-sky-800 hover:bg-sky-50" disabled={busy} onClick={onMoveDate}><CalendarClock className="h-3.5 w-3.5 mr-1" />Đổi ngày</Button>} />
+          )}
           {editable && !t.ods.length && (
             <SettingRow label="Bỏ xe trống" desc="Xe không còn đơn nào — bỏ khỏi kế hoạch."
               control={<Button size="sm" variant="outline" className="h-7 border-red-200 text-red-700 hover:bg-red-50" disabled={busy} onClick={onRemove}><Trash2 className="h-3.5 w-3.5 mr-1" />Bỏ xe</Button>} />
@@ -992,6 +1027,12 @@ function TripPane({ trip: t, plan, editable, editableVehicle, canConfirm, needsT
                     <ArrowRightLeft className="h-3.5 w-3.5 text-slate-400 shrink-0" />
                     <div className="flex-1 min-w-0"><SingleSelect options={[{ value: '__new__', label: 'Tách ra xe MỚI' }, ...others]} value="" onChange={v => onMove(od, v === '__new__' ? '' : v)} placeholder="Chuyển sang xe…" disabled={busy} /></div>
                   </div>
+                )}
+                {/* 19/10: đơn rớt không bốc — đổi ngày RIÊNG đơn này (mở lại xe → hoãn → xác nhận lại, cùng Số xe) */}
+                {onMoveOdDate && (
+                  <button type="button" className="inline-flex items-center gap-1 pt-1 text-[11px] font-medium text-sky-700 hover:underline disabled:opacity-50" disabled={busy} onClick={() => onMoveOdDate(od)} title="Đơn này không đi ngày này (rớt, khách hẹn lại…) — dời sang ngày khác; xe giữ nguyên các đơn còn lại">
+                    <CalendarClock className="h-3 w-3" />Đổi ngày đơn này
+                  </button>
                 )}
               </div>
             )

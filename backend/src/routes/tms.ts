@@ -139,6 +139,7 @@ router.post('/dispatch/plans/:id/refresh-pool', requirePerm('dispatch', 'plan'),
 router.post('/dispatch/plans/:id/replace-od', requirePerm('dispatch', 'plan'),    validate({ params: zIdParam, body: dispatch.zReplaceOd }),     dispatch.replaceOd)
 router.post('/dispatch/plans/:id/resync-od', requirePerm('dispatch', 'plan'),     validate({ params: zIdParam, body: dispatch.zReplaceOd }),     dispatch.resyncOd)   // OD bị SAP sửa (SL / dòng / ghi chú) ⇒ chụp lại, ở nguyên chỗ
 router.post('/dispatch/plans/:id/reopen',     requirePerm('dispatch', 'confirm'), validate({ params: zIdParam, body: dispatch.zReopen }),        dispatch.reopenPlan)    // mở lại xe đã vào KH xuất (chuyến chưa bắt đầu)
+router.post('/dispatch/plans/:id/move-date',  requirePerm('dispatch', 'confirm'), validate({ params: zIdParam, body: dispatch.zMoveDate }),      dispatch.moveTripsDate) // 19/10: dời cả xe sang ngày khác (giữ Số xe, nhả khung giờ, dội chuyến + lệnh VC)
 router.delete('/dispatch/trips/:id',          requirePerm('dispatch', 'plan'),    validate({ params: zIdParam }),                                dispatch.deleteTrip)
 router.post('/dispatch/trips/:id/settle',     requirePerm('dispatch', 'confirm'), validate({ params: zIdParam }),                                dispatch.settleTrip)    // chốt MỘT xe (kế hoạch đang chờ ĐVVT)
 router.post('/dispatch/trips/:id/respond',    requirePerm('dispatch', 'confirm'), validate({ params: zIdParam, body: dispatch.zRespond }),       dispatch.respondTrip)   // ghi ĐVVT nhận / từ chối

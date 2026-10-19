@@ -6508,6 +6508,18 @@ export function useDispatchPlans(p: { warehouse_id?: string; date_from?: string;
     queryFn: async () => (await apiClient.get('/tms/dispatch/plans', { params: freightParams(p) })).data.data as { items: DispatchPlanListItem[] },
   })
 }
+/** 19/10 (user: "đổi ngày dễ như bên Kế hoạch xuất"): dời CẢ XE sang ngày khác — giữ Số xe, nhả khung giờ đã đặt, dội chuyến + lệnh VC.
+ *  Trả kế hoạch NGUỒN (đã bớt xe) + `moved` (xe đã dời, xe bị chừa kèm lý do, kế hoạch đích). Quyền dispatch.confirm. */
+export function useMoveDispatchTripsDate() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ plan_id, ...body }: { plan_id: string; trip_ids: string[]; new_date: string; reason?: string }) =>
+      apiClient.post(`/tms/dispatch/plans/${plan_id}/move-date`, body, { timeout: 120_000 }).then(r => r.data.data as DispatchPlan & {
+        moved: { trips: number; group_codes: string[]; lines: number; slots_released: number; blocked: { group_code: string; seq: number; reason: string }[]; target_plan_id: string; target_created: boolean; target_status: string; plan_status: string; replan_error: string | null }
+      }),
+    onSuccess: p => { putDispatchPlan(qc, p); invalidateDispatch(qc); for (const k of [['khvc'], ['do-sap'], ['gdos'], ['gdos-paged'], ['tms-orders-paged'], ['trip-flow']]) qc.invalidateQueries({ queryKey: k }) },
+  })
+}
 export function useDispatchPlan(id: string | null) {
   return useQuery({
     queryKey: ['dispatch-plan', id], enabled: !!id, staleTime: 15_000,
@@ -8316,6 +8328,15 @@ export function useTripFlows(codes: string[], enabled = true) {
       for (let i = 0; i < list.length; i += 200) out.push(...((await apiClient.get('/tms/trip-flow', { params: { codes: list.slice(i, i + 200).join(',') } })).data.data as { flows: TripFlow[] }).flows)
       return out
     },
+  })
+}
+/** Lịch sử thao tác của Số xe (outbound_events: ai · lúc nào · việc gì) — 19/10, user: "ghi nhận ai làm gì, giờ nào — đi theo dòng". */
+export type TripFlowEvent = { id: string; created_at: string; actor: string | null; event_type: string; source: string | null; do_number: string | null; detail: string | null; old_value: string | null; new_value: string | null }
+/** MỘT Số xe kèm lịch sử — cho popup tình trạng xe (không gom lô; key vẫn dưới ['trip-flow'] để realtime làm mới). */
+export function useTripFlowDetail(code: string | null | undefined, enabled = true) {
+  return useQuery({
+    queryKey: ['trip-flow', 'detail', code ?? ''], enabled: !!code && enabled, staleTime: 30_000,
+    queryFn: async () => (((await apiClient.get('/tms/trip-flow', { params: { codes: code, events: '1' } })).data.data as { flows: (TripFlow & { events?: TripFlowEvent[] })[] }).flows[0] ?? null),
   })
 }
 /** Tài xế / ĐVVT / điều vận xác nhận xe ĐÃ GIAO (undo = hoàn tác) — quyền tms_plan.confirm_delivery. */

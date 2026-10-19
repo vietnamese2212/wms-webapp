@@ -96,7 +96,8 @@ const groupKeyOf = (o: DispatchTripOd, g: string) =>
 const matches = (o: DispatchTripOd, q: string) =>
   !q || [o.od_number, o.ship_to_code, o.ship_to_name, o.ward_code, o.region_code, o.region_name, o.note].some(v => (v ?? '').toLowerCase().includes(q))
 
-export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds, onFocused, soat, onReopenTrip }: {
+export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds, onFocused, soat, onReopenTrip, onMoveDateTrip }: {
+  onMoveDateTrip?: (t: DispatchTrip) => void   // 19/10: đổi ngày cả xe (giữ Số xe, nhả khung giờ) — quyền xác nhận
   plan: DispatchPlan; editable: boolean; flags: Map<string, DispatchOdFlag>; onOpenTrip: (id: string) => void
   onReopenTrip?: (t: DispatchTrip) => void   // 16/10: ổ khoá xanh trên xe ĐÃ VÀO KH XUẤT — mở lại riêng xe đó (quyền xác nhận)
   focusTripIds?: string[]; onFocused?: () => void   // xe vừa tạo ở bảng Xem đơn ("Tạo kế hoạch") — bàn mở nhóm của chúng (07/10)
@@ -697,6 +698,11 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
               ? <button type="button" className="rounded p-1 bg-violet-600 text-white hover:bg-violet-700" title={`Xe #${t.seq} đã chốt — khoá. Bấm để MỞ LẠI riêng xe này về nháp (hỏi lại trước)`} aria-label={`Mở lại xe #${t.seq}`}
                   onClick={() => onReopenTrip(t)}><Lock className="h-3.5 w-3.5" /></button>
               : !ed && lk && <Lock className="h-3.5 w-3.5 text-violet-700" aria-label={st === 'CONFIRMED' ? 'Xe đã chốt — khoá' : 'Xe đã khoá'} />}
+            {/* 19/10: đổi ngày cả xe (giữ Số xe, nhả khung giờ, chuyến + lệnh VC theo) — cùng nút với dạng Bảng */}
+            {onMoveDateTrip && st !== 'DISCARDED' && (
+              <button type="button" className="rounded p-1 text-sky-700 hover:bg-sky-100" disabled={patchTrip.isPending} title={`Đổi ngày cả xe #${t.seq} — giữ Số xe; khung giờ đã đặt bị nhả; chuyến Xuất kho + lệnh VC đổi ngày theo`} aria-label={`Đổi ngày xe #${t.seq}`}
+                onClick={() => onMoveDateTrip(t)}><CalendarClock className="h-3.5 w-3.5" /></button>
+            )}
             {ed && !t.ods.length && (
               <button type="button" className="rounded p-1 text-slate-400 hover:text-red-600" title="Bỏ xe trống" disabled={delTrip.isPending}
                 onClick={() => delTrip.mutateAsync(t.id).catch(e => err(e, 'Không bỏ được xe'))}><X className="h-3.5 w-3.5" /></button>
@@ -930,6 +936,7 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
     resync: od => { void doResync(od) }, replace: od => { void doReplace(od) }, sapBusy: resync.isPending || replace.isPending,
     toggleLock: t => { void toggleLock(t) },
     reopenTrip: onReopenTrip,
+    moveDate: onMoveDateTrip,
     removeTrip: t => { void delTrip.mutateAsync(t.id).catch(e => err(e, 'Không bỏ được xe')) },
     mixOn, setMix: (t, v) => { void patchTrip.mutateAsync({ id: t.id, allow_mix_categories: v }).then(() => setJustHit(t.id)).catch(e => err(e, 'Không đổi được switch ghép loại')) },
     setCarrier: (t, id) => { void patchTrip.mutateAsync({ id: t.id, transport_company_id: id }).then(() => setJustHit(t.id)).catch(e => err(e, 'Không đổi được ĐVVT')) },

@@ -2484,6 +2484,119 @@ async function reopenPlanInner(req: Request, res: Response) {
   } catch (e) { return failAny(res, e) }
 }
 
+// ── POST /tms/dispatch/plans/:id/move-date — ĐỔI NGÀY CẢ XE (19/10, user: "đổi ngày dễ như bên Kế hoạch xuất; giữ Số xe; xe đã đặt
+// khung giờ thì cho đổi và nhả khung") ──────────────────────────────────────────────────────────────────────────────────────────
+// Dời NGUYÊN xe (đơn · ĐVVT · dòng xe · Số xe giữ nguyên như Excel bulk-date, mã mang ngày cũ — chấp nhận) sang kế hoạch cùng kho / mảng
+// của ngày mới (đang mở hoặc đã xác nhận đều nhận; chưa có thì lập — toàn xe đã chốt ⇒ kế hoạch mới ở trạng thái đã xác nhận).
+// Xe ĐÃ CHỐT: dòng Kế hoạch xuất đổi ngày xuất ⇒ dội chuyến Xuất kho (ngày giao) + lệnh VC (ngày); khung giờ đã đặt bị NHẢ vì khung gắn
+// ngày (RPC nguyên tử, ĐVVT đặt lại) — ghi sự kiện PLAN_DATE_CHANGED (ai · lúc nào · lý do) lên chuỗi tình trạng xe.
+// Chặn PER-XE (cùng luật đổi ngày của tab Kế hoạch xuất, KHÔNG có force — dời ngày một xe đang bốc hàng không có nghĩa): chuyến đã
+// hoàn thành / đang xuất / đã quét / giữ nhặt lẻ ⇒ đơn rớt lẻ thì đổi ngày TỪNG ĐƠN (FE: mở lại xe → hoãn đơn → xác nhận lại).
+// Xe nháp / chờ ĐVVT / từ chối: chỉ chuyển dòng kế hoạch. Quyền dispatch.confirm (đụng xe đã chốt).
+export const zMoveDate = z.object({ trip_ids: z.array(zId).min(1).max(300), new_date: zDay, reason: zText(1, 500).optional() })
+async function moveTripsDateInner(req: Request, res: Response) {
+  try {
+    const b = req.body as z.infer<typeof zMoveDate>
+    const full = await readPlan(String(req.params.id))
+    if (!full) return fail(res, 'Không tìm thấy kế hoạch', 404)
+    if (!whAllowed(req, full.warehouse_id)) return fail(res, 'Kho này ngoài phạm vi được giao', 403)
+    if (full.status === 'DISCARDED') return fail(res, 409, 'PLAN_NOT_DRAFT', 'Kế hoạch đã bỏ')
+    if (b.new_date === full.plan_date) return fail(res, 400, 'SAME_DATE', `Xe đang ở ngày ${dmyOf(full.plan_date)} rồi — chọn ngày khác`)
+    const want = full.trips.filter(t => b.trip_ids.includes(t.id) && statusOf(t) !== 'DISCARDED')
+    if (!want.length) return fail(res, 404, 'TRIP_NOT_FOUND', 'Không có xe nào như đã chọn trong kế hoạch này (tải lại trang)')
+    const confirmed = want.filter(t => statusOf(t) === 'CONFIRMED')
+    step(res, 'tình trạng chuyến bên Xuất của các xe (đã hoàn thành / đang xuất / đã quét / giữ nhặt lẻ)')
+    const hold = await outboundHoldState(confirmed.map(t => t.group_code))
+    const blocked: { group_code: string; seq: number; reason: string }[] = []
+    for (const t of confirmed) {
+      const h = hold.get(t.group_code)
+      if (!h) continue
+      const why = h.status === 'COMPLETED' ? 'Chuyến bên Xuất ĐÃ HOÀN THÀNH — ngày không đổi được nữa'
+        : h.status === 'IN_PROGRESS' ? 'Chuyến bên Xuất ĐANG XUẤT HÀNG — chờ hoàn thành hoặc Tạm dừng rồi mới đổi ngày'
+        : h.scanned > 0 ? `Chuyến đã quét ${h.scanned} (base) — hàng đã lên xe thì không dời cả xe; đơn rớt lẻ: đổi ngày TỪNG ĐƠN (chưa quét)`
+        : h.loose_held ? 'Chuyến đang GIỮ HÀNG NHẶT LẺ ở vị trí chờ — gỡ trả hàng trên chuyến rồi mới đổi ngày' : null
+      if (why) blocked.push({ group_code: t.group_code, seq: t.seq, reason: why })
+    }
+    const blockedGc = new Set(blocked.map(x => x.group_code))
+    const moving = want.filter(t => !blockedGc.has(t.group_code))
+    if (!moving.length) return fail(res, 409, 'ALL_BLOCKED', blocked.map(x => `#${x.seq} ${x.group_code}: ${x.reason}`).join('\n'))
+    const t = now()
+    const actor = actorOf(req)
+    // kế hoạch đích: cùng kho + mảng, ngày mới — ưu tiên bản đang mở, không có thì bản đã xác nhận, không có nữa thì lập
+    step(res, `kế hoạch đích ngày ${dmyOf(b.new_date)}`)
+    const seg = full.segment ?? 'SALES'
+    const { data: cands, error: cErr } = await db.from('dispatch_plan').select('*').eq('warehouse_id', full.warehouse_id).eq('plan_date', b.new_date).eq('segment', seg).neq('status', 'DISCARDED').order('created_at', { ascending: false })
+    if (cErr) throw cErr
+    const candRows = (cands ?? []) as PlanRow[]
+    let target: PlanRow | null = candRows.find(p => p.status === 'DRAFT' || p.status === 'TENDERED') ?? candRows[0] ?? null
+    let targetCreated = false
+    if (!target) {
+      const allConfirmed = moving.every(x => statusOf(x) === 'CONFIRMED')
+      const { data: np, error: iErr } = await db.from('dispatch_plan').insert({
+        id: randomUUID(), warehouse_id: full.warehouse_id, plan_date: b.new_date, segment: seg, status: allConfirmed ? 'CONFIRMED' : 'DRAFT', engine_version: ENGINE_VERSION,
+        params: asJson({ ...((full.params ?? {}) as Record<string, unknown>), pool_ods: 0, in_plan: 0, excluded: [], baseline: null, moved_from: full.plan_date }),
+        summary: asJson({}), unplanned: asJson([]), created_by: actor, updated_at: t,
+        ...(allConfirmed ? { confirmed_at: t, confirmed_by: actor } : {}),
+      }).select('*').single()
+      if (iErr) throw iErr
+      target = np as PlanRow
+      targetCreated = true
+    }
+    // số thứ tự nối tiếp trong kế hoạch đích (Số xe giữ nguyên)
+    const { data: tgTop, error: tErr } = await db.from('dispatch_trip').select('seq').eq('plan_id', target.id).order('seq', { ascending: false }).limit(1)
+    if (tErr) throw tErr
+    let seq = Number((tgTop ?? [])[0]?.seq ?? 0)
+    step(res, `chuyển ${moving.length} xe sang kế hoạch ${dmyOf(b.new_date)}`)
+    for (const tr of moving) {
+      seq += 1
+      const { error: e1 } = await db.from('dispatch_trip').update({ plan_id: target.id, seq, updated_at: t }).eq('id', tr.id)
+      if (e1) throw e1
+      const { error: e2 } = await db.from('dispatch_trip_od').update({ plan_id: target.id }).eq('trip_id', tr.id)
+      if (e2) throw e2
+    }
+    const gcs = moving.filter(x => statusOf(x) === 'CONFIRMED').map(x => x.group_code)   // ≤ 300 (trip_ids tối đa 300)
+    let lines = 0, released = 0, replan_error: string | null = null
+    if (gcs.length) {
+      step(res, 'Kế hoạch xuất đổi ngày xuất')
+      for (let i = 0; i < gcs.length; i += 300) {
+        const { data: upd, error: kErr } = await db.from('khvc_lines').update({ export_date: b.new_date, uploaded_by: actor, updated_at: t })
+          .in('group_code', gcs.slice(i, i + 300)).neq('sync_status', 'OBSOLETE').select('id')
+        if (kErr) throw kErr
+        lines += (upd ?? []).length
+      }
+      // khung giờ gắn NGÀY ⇒ nhả chỗ đã đặt qua RPC nguyên tử (đếm chỗ không ghi tay); ĐVVT đặt lại ở ngày mới
+      step(res, 'nhả khung giờ đã đặt của các xe')
+      const ords = (await fetchAllByIdChunks(gcs, c => db.from('TmsOrder').select('id, order_code').in('order_code', c).or('plan_dropped.is.null,plan_dropped.eq.false').order('id'))) as { id: string; order_code: string }[]
+      const gcOfOrder = new Map(ords.map(o => [o.id, o.order_code]))
+      const relByGc = new Map<string, number>()
+      if (gcOfOrder.size) {
+        const { data: slots, error: sErr } = await db.from('TmsVehicleSlot').select('id, order_id').in('order_id', [...gcOfOrder.keys()]).not('slot_id', 'is', null)
+        if (sErr) throw sErr
+        for (const s of slots ?? []) {
+          const { error } = await db.rpc('book_vehicle_slot', { p_vslot_id: s.id, p_new_slot_id: null, p_plate: null, p_status: 'PENDING', p_actor: actor })
+          if (error) throw error
+          released++
+          const gc = gcOfOrder.get(s.order_id) ?? ''
+          relByGc.set(gc, (relByGc.get(gc) ?? 0) + 1)
+        }
+      }
+      await logOutboundEvents(moving.filter(x => statusOf(x) === 'CONFIRMED').map(x => ({
+        group_code: x.group_code, event_type: 'PLAN_DATE_CHANGED', source: 'PLAN' as const, actor, old_value: full.plan_date, new_value: b.new_date,
+        detail: `Bàn ghép xe dời xe #${x.seq} ${x.group_code} từ ${dmyOf(full.plan_date)} sang ${dmyOf(b.new_date)}${b.reason ? ` — ${b.reason}` : ''}${relByGc.get(x.group_code) ? ` · đã nhả ${relByGc.get(x.group_code)} khung giờ, ĐVVT đặt lại` : ''}`,
+      })))
+      step(res, 'dội chuyến Xuất kho + lệnh VC theo ngày mới')
+      try { await replanKhvcGroups(req, gcs) } catch (e) { replan_error = String(e); console.error('[dispatch move-date] replan:', e) }
+    }
+    step(res, 'trạng thái + tổng kết hai kế hoạch')
+    const plan_status = await syncPlanStatus(full as PlanRow, actor)
+    await writeSummary(full as PlanRow)
+    const target_status = await syncPlanStatus(target, actor)
+    await writeSummary(target)
+    return ok(res, { ...(await readPlan(full.id)), moved: { trips: moving.length, group_codes: moving.map(x => x.group_code), lines, slots_released: released, blocked, target_plan_id: target.id, target_created: targetCreated, target_status, plan_status, replan_error } })
+  } catch (e) { return failAny(res, e) }
+}
+export const moveTripsDate = withPlanLease(moveTripsDateInner)
+
 // ── DELETE /tms/dispatch/plans/:id — bỏ bản nháp; kế hoạch đang chờ ĐVVT ⇒ bỏ các xe CHƯA vào Kế hoạch xuất ─────
 async function discardPlanInner(req: Request, res: Response) {
   try {
@@ -2616,6 +2729,12 @@ async function holdOdsInner(req: Request, res: Response) {
     const { error: pErr } = await db.from('dispatch_plan').update({ params: asJson(p2), updated_at: t }).eq('id', plan.id)
     if (pErr) throw pErr
     const touched = uniq(leaving.filter(o => o.trip_id).map(o => o.trip_id!))
+    // 19/10 (user: "ghi nhận ai làm gì, giờ nào — đi theo dòng"): đơn rút khỏi XE để hoãn ⇒ vết trên chuỗi tình trạng của Số xe đó
+    await logOutboundEvents(uniq(leaving.filter(o => o.trip_id && tripBy.get(o.trip_id)).map(o => `${o.trip_id}|${o.od_number}`)).map(k => {
+      const [tid, od] = k.split('|'); const tr = tripBy.get(tid)!
+      return { group_code: tr.group_code, event_type: 'PLAN_OD_HELD', source: 'PLAN' as const, actor: actorOf(req), do_number: od,
+        detail: `${b.until ? `Hoãn tới ${dmyOf(b.until)}` : 'Không điều'} — rút DO ${od} khỏi xe #${tr.seq} ${tr.group_code}${b.reason ? ` · ${b.reason}` : ''}` }
+    }))
     const after = (await readPlan(plan.id))!
     await repriceMany(plan, after.trips.filter(x => touched.includes(x.id) && x.ods.length))
     // xe bị rút HẾT đơn ⇒ bỏ luôn (01/10: Ba Vì xe #2 / #10 trống mà vẫn ghi 3,3 pallet · 812 k, đếm vào Non tải) — từ 15/10 kéo thả

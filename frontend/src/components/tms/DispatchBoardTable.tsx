@@ -13,7 +13,7 @@
 //   • Bảng chuẩn ResizableTable (kéo giãn cột, đầu bảng + cột đầu dính, cột thao tác ghim phải trên PC) — cùng khuôn bảng Xem đơn.
 // Cửa ghi · Hoàn tác · xem trước · hộp thoại · thanh chọn-nhiều dùng CHUNG với bản thẻ (DispatchBoard) — file này chỉ VẼ.
 import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { ChevronDown, ChevronRight, Lock, Unlock, X, Truck, StickyNote, RotateCw, Replace, Route, UserPlus } from 'lucide-react'
+import { ChevronDown, ChevronRight, Lock, Unlock, X, CalendarClock, Truck, StickyNote, RotateCw, Replace, Route, UserPlus } from 'lucide-react'
 import { TableBody, TableCell, TableRow } from '@/components/ui/table'
 import { Switch } from '@/components/ui/switch'
 import { ResizableTable, type RtColDef } from '@/components/shared/ResizableTable'
@@ -82,6 +82,8 @@ export interface BoardOps {
   toggleLock: (t: DispatchTrip) => void; removeTrip: (t: DispatchTrip) => void
   /** 16/10 (Sửa kế hoạch đã xác nhận): mở lại RIÊNG một xe đã vào KH xuất — có khi người xem có quyền xác nhận */
   reopenTrip?: (t: DispatchTrip) => void
+  /** 19/10: đổi ngày CẢ XE (giữ Số xe, nhả khung giờ) — có khi người xem có quyền xác nhận */
+  moveDate?: (t: DispatchTrip) => void
   mixOn: (t: DispatchTrip) => boolean; setMix: (t: DispatchTrip, on: boolean) => void
   setCarrier: (t: DispatchTrip, carrierId: string) => void; tripBusy: boolean
   catChips: (cats: string[]) => ReactNode
@@ -466,6 +468,8 @@ function tripCells(ops: BoardOps, t: DispatchTrip, hv: BoardHover, open: boolean
             ? <IconBtn title={`Xe #${t.seq} đã chốt — khoá. Bấm để MỞ LẠI riêng xe này về nháp (hỏi lại trước)`} disabled={ops.tripBusy} onClick={() => ops.reopenTrip!(t)}><Lock className="h-3.5 w-3.5 text-violet-700" /></IconBtn>
             : <Lock className="h-3.5 w-3.5 text-violet-700" aria-label="Xe đã chốt — khoá" />)}
           {!ed && st !== 'CONFIRMED' && t.locked && <Lock className="h-3.5 w-3.5 text-violet-700" aria-label="Xe đã khoá" />}
+          {/* 19/10 (user: "đổi ngày dễ như bên Kế hoạch xuất"): dời cả xe sang ngày khác — giữ Số xe, nhả khung giờ, chuyến + lệnh VC theo */}
+          {ops.moveDate && st !== 'DISCARDED' && <IconBtn title={`Đổi ngày cả xe #${t.seq} — giữ Số xe; khung giờ đã đặt bị nhả; chuyến Xuất kho + lệnh VC đổi ngày theo`} disabled={ops.tripBusy} onClick={() => ops.moveDate!(t)}><CalendarClock className="h-3.5 w-3.5 text-sky-700" /></IconBtn>}
           {ed && !t.ods.length && <IconBtn danger title="Bỏ xe trống" disabled={ops.tripBusy} onClick={() => ops.removeTrip(t)}><X className="h-3.5 w-3.5" /></IconBtn>}
         </span>
       ),

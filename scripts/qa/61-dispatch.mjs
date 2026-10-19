@@ -45,6 +45,7 @@ const WH = QAWH.id
 const PREFIX = `${QAWH.code}_X_160327_`
 const PLAN_BODY = { warehouse_id: WH, plan_date: DAY }
 const DAY2 = '2027-03-17'   // [17] (03/10 tối) kế hoạch ngày THỨ HAI cùng kho — rào "một đơn một ngày", khung chờ tự do, Kéo về đây
+const DAY3 = '2027-03-18'   // [11j] (19/10) đổi ngày CẢ XE trên bàn — kế hoạch đích tự lập ở ngày này rồi dời về
 // ĐVVT RIÊNG CỦA GÓI (08/10, C49 lặp). Bản cũ dùng Đông Á / Hải An THẬT và bật/tắt "cần phản hồi" của Hải An 5 lần mỗi lượt: lượt bị
 // ngắt giữa chừng là Hải An kẹt "cần phản hồi" ⇒ mọi xe Hải An của người dùng đứng Chờ ĐVVT. Hai ĐVVT QA tạo qua cửa app trong
 // fixture (sau bước dọn đầu gói), xoá ở cleanup. `DA` = ĐVVT không cần phản hồi, `HA` = ĐVVT bật/tắt cờ.
@@ -114,6 +115,7 @@ async function cleanupTrips() {
   await restWrite('khvc_lines', 'DELETE', `group_code=like.${PREFIX}*`).catch(() => {})
   await restWrite('dispatch_plan', 'DELETE', `warehouse_id=eq.${WH}&plan_date=eq.${DAY}`).catch(() => {})   // cascade trip + trip_od
   await restWrite('dispatch_plan', 'DELETE', `warehouse_id=eq.${WH}&plan_date=eq.${DAY2}`).catch(() => {})  // [17] nháp ngày thứ hai
+  await restWrite('dispatch_plan', 'DELETE', `warehouse_id=eq.${WH}&plan_date=eq.${DAY3}`).catch(() => {})  // [11j] kế hoạch đích đổi ngày (rỗng sau khi dời về)
   await restWrite('dispatch_od_hold', 'DELETE', `warehouse_id=eq.${WH}&od_number=like.QA61*`).catch(() => {})
   await restWrite('dispatch_od_outside', 'DELETE', `warehouse_id=eq.${WH}&od_number=like.QA61*`).catch(() => {})
   await restWrite('od_lineage', 'DELETE', `old_od=like.QA61*`).catch(() => {})
@@ -1014,6 +1016,30 @@ try {
     && gdoAfter.every(g => g.plan_dropped === false) && busyTask2?.status === 'RESOLVED',
     `http=${cR2.s} ${cR2.j?.error?.message ?? ''} plan=${PR?.status} gdo ${gdoBefore.length}→${gdoAfter.length} same=${sameIds} ngừng=${gdoAfter.filter(g => g.plan_dropped).length} việc=${busyTask2?.status}`)
   if (busyG) await restWrite('reconcile_tasks', 'DELETE', `gdo_id=eq.${busyG.id}`).catch(() => {})
+  // ── [11j] (19/10, user: "đổi ngày dễ như bên Kế hoạch xuất — giữ Số xe, xe đã đặt khung giờ vẫn cho đổi") ĐỔI NGÀY CẢ XE trên bàn:
+  // xe đã chốt (chuyến chưa bắt đầu — xe busyGc đang IN_PROGRESS phải bị CHỪA) sang DAY3 GIỮ Số xe ⇒ KH xuất đổi ngày xuất, chuyến + lệnh VC
+  // đổi ngày theo, kế hoạch đích TỰ LẬP ở trạng thái đã xác nhận, vết PLAN_DATE_CHANGED (ai · lúc nào); dời về DAY ⇒ về lại kế hoạch cũ ──
+  {
+    const tM = (PR?.trips ?? []).find(t => t.group_code !== busyGc && t.status === 'CONFIRMED')
+    const tBusy = (PR?.trips ?? []).find(t => t.group_code === busyGc)
+    const mvBusy = tBusy ? await api(`/tms/dispatch/plans/${PR.id}/move-date`, 'POST', { trip_ids: [tBusy.id], new_date: DAY3 }) : { s: 0, j: {} }
+    const mv = tM ? await api(`/tms/dispatch/plans/${PR.id}/move-date`, 'POST', { trip_ids: [tM.id], new_date: DAY3, reason: 'QA61 khách hẹn lại' }) : { s: 0, j: {} }
+    const M = mv.j?.data?.moved
+    const khM = tM ? await restAll('khvc_lines', `select=export_date&group_code=eq.${tM.group_code}`) : []
+    const gM = tM ? (await restAll('GroupDeliveryOrder', `select=delivery_date,plan_dropped&group_code=eq.${tM.group_code}`))[0] : null
+    const oM = tM ? (await restAll('TmsOrder', `select=date,plan_dropped&order_code=eq.${tM.group_code}`))[0] : null
+    const PT = M?.target_plan_id ? await planOf(M.target_plan_id) : null
+    const evM = tM ? await restAll('outbound_events', `select=event_type,actor,detail&group_code=eq.${tM.group_code}&event_type=eq.PLAN_DATE_CHANGED`) : []
+    const back = tM && M?.target_plan_id ? await api(`/tms/dispatch/plans/${M.target_plan_id}/move-date`, 'POST', { trip_ids: [tM.id], new_date: DAY }) : { s: 0, j: {} }
+    PR = await planOf(PR.id)
+    check('11j. Đổi ngày CẢ XE (19/10): xe đang xuất bị chừa 409 · xe chưa bắt đầu sang ngày khác GIỮ Số xe → 200, KH xuất / chuyến / lệnh VC đổi ngày, kế hoạch đích tự lập CONFIRMED, vết PLAN_DATE_CHANGED có người làm; dời về ⇒ về kế hoạch cũ',
+      mvBusy.s === 409 && mvBusy.j?.error?.code === 'ALL_BLOCKED'
+      && mv.s === 200 && M?.trips === 1 && M?.target_created === true && M?.target_status === 'CONFIRMED'
+      && khM.length > 0 && khM.every(l => String(l.export_date).slice(0, 10) === DAY3) && String(gM?.delivery_date ?? '').slice(0, 10) === DAY3 && gM?.plan_dropped === false
+      && String(oM?.date ?? '').slice(0, 10) === DAY3 && (PT?.trips ?? []).some(t => t.id === tM.id && t.group_code === tM.group_code && t.status === 'CONFIRMED')
+      && evM.length >= 1 && !!evM[0]?.actor && back.s === 200 && (PR?.trips ?? []).some(t => t.id === tM?.id && t.status === 'CONFIRMED') && PR?.status === 'CONFIRMED',
+      `busy=${mvBusy.s}/${mvBusy.j?.error?.code} · http=${mv.s} ${mv.j?.error?.message ?? ''} moved=${JSON.stringify(M ?? {}).slice(0, 160)} kh=${khM.map(l => l.export_date).join(',')} gdo=${gM?.delivery_date}/${gM?.plan_dropped} tms=${oM?.date} đích=${(PT?.trips ?? []).length} xe ev=${evM.length} về=${back.s} plan=${PR?.status}`)
+  }
   // DO TẠO LẠI – ĐÃ ĐIỀU (user chốt 28/09): SO sửa ⇒ OD mới thay OD đã nằm Kế hoạch xuất ⇒ OD mới KHÔNG vào đợt ghép, sang tab Đã điều
   const khR = (await restAll('khvc_lines', `select=do_no,group_code&group_code=like.${PREFIX}*&order=do_no`))[0]
   const ODR = 'QA61ODR1'

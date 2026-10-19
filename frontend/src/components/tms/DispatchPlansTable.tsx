@@ -112,7 +112,7 @@ export function DispatchPlansTable({ plans, loading, error, currentPlanId, canPl
 }) {
   const desktop = useIsDesktop()
   const today = todayVN()
-  const [show, setShow] = useState<Show>('open')
+  const [show, setShow] = useState<Show>('all')   // 19/10 (user: "Đang mở" ra bảng trống khi mọi kế hoạch đã xác nhận — khó thao tác) ⇒ mặc định Tất cả
   const cols = useMemo<RtColDef[]>(() => [
     { id: 'date', label: 'Ngày giao', w: 96 },
     { id: 'sales', label: 'Bán hàng', w: 230 },

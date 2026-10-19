@@ -7,7 +7,9 @@ import { parseListParam } from '../../utils/httpQuery'
 import { tripFlowOf, type TripFlow } from '../../services/tripFlow'
 import { logOutboundEvents, actorOf } from '../../services/outboundEvents'
 
-export const zFlowQuery = z.object({ codes: z.string().trim().min(1).max(12_000) })
+// events=1 (19/10, user: "ghi nhận ai làm gì, giờ nào"): kèm lịch sử thao tác (outbound_events) của Số xe — chỉ khi hỏi MỘT mã (popup)
+export const zFlowQuery = z.object({ codes: z.string().trim().min(1).max(12_000), events: z.enum(['1']).optional() })
+export type TripFlowEvent = { id: string; created_at: string; actor: string | null; event_type: string; source: string | null; do_number: string | null; detail: string | null; old_value: string | null; new_value: string | null }
 export const zDeliveredBody = z.object({ note: zText(1, 500).optional(), undo: z.boolean().optional() })
 
 /** Phạm vi: người theo KHO chỉ thấy xe của kho mình (null-inclusive); tài khoản ĐVVT / tài xế chỉ thấy xe của ĐVVT mình. */
@@ -27,6 +29,12 @@ export async function getTripFlow(req: Request, res: Response) {
     if (codes.length > 200) return fail(res, 400, 'TOO_MANY', 'Tối đa 200 Số xe mỗi lần hỏi')
     if (codes.some(c => c.length > 60)) return fail(res, 400, 'BAD_ID', 'Số xe không hợp lệ')
     const flows = (await tripFlowOf(codes)).filter(f => visible(req, f))
+    if (req.query.events === '1' && flows.length === 1) {
+      const { data, error } = await db.from('outbound_events').select('id, created_at, actor, event_type, source, do_number, detail, old_value, new_value')
+        .eq('group_code', flows[0].group_code).order('created_at', { ascending: false }).limit(200)   // limit khai rõ — popup một xe, vết mới nhất trước
+      if (error) throw error
+      return ok(res, { flows: [{ ...flows[0], events: (data ?? []) as TripFlowEvent[] }] })
+    }
     return ok(res, { flows })
   } catch (e) { return failAny(res, e) }
 }

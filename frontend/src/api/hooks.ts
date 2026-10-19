@@ -8339,6 +8339,15 @@ export function useTripFlowDetail(code: string | null | undefined, enabled = tru
     queryFn: async () => (((await apiClient.get('/tms/trip-flow', { params: { codes: code, events: '1' } })).data.data as { flows: (TripFlow & { events?: TripFlowEvent[] })[] }).flows[0] ?? null),
   })
 }
+/** LỊCH SỬ NGÀY của kế hoạch (19/10, user hỏi "lịch sử với xoá chuyến, xoá kế hoạch"): vết mức kế hoạch + mọi Số xe cùng tiền tố kho×ngày,
+ *  kể cả xe đã bỏ / đã xoá — tải KHI MỞ hộp thoại; key dưới ['trip-flow'] để realtime outbound_events làm mới. */
+export type PlanDayEvent = TripFlowEvent & { group_code: string }
+export function usePlanEvents(planId: string | null | undefined, enabled = true) {
+  return useQuery({
+    queryKey: ['trip-flow', 'plan-events', planId ?? ''], enabled: !!planId && enabled, staleTime: 30_000,
+    queryFn: async () => (await apiClient.get(`/tms/dispatch/plans/${planId}/events`)).data.data as { code: string; events: PlanDayEvent[]; truncated: boolean },
+  })
+}
 /** Tài xế / ĐVVT / điều vận xác nhận xe ĐÃ GIAO (undo = hoàn tác) — quyền tms_plan.confirm_delivery. */
 export function useConfirmDelivery() {
   const qc = useQueryClient()

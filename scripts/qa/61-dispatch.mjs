@@ -107,7 +107,7 @@ async function cleanupTrips() {
     await restWrite('GroupDeliveryOrder', 'DELETE', `id=in.${csv}`).catch(() => {})
   }
   await restWrite('reconcile_tasks', 'DELETE', `group_code=like.${PREFIX}*`).catch(() => {})
-  await restWrite('outbound_events', 'DELETE', `group_code=like.${PREFIX}*`).catch(() => {})
+  await restWrite('outbound_events', 'DELETE', `group_code=like.${PREFIX.replace(/_$/, '')}*`).catch(() => {})   // cả vết mức kế hoạch (tiền tố KHÔNG có `_` cuối — 19/10)
   for (const o of await restAll('TmsOrder', `select=id&order_code=like.${PREFIX}*`)) {
     await restWrite('TmsVehicleSlot', 'DELETE', `order_id=eq.${o.id}`).catch(() => {})
     await restWrite('TmsOrder', 'DELETE', `id=eq.${o.id}`).catch(() => {})
@@ -465,6 +465,20 @@ try {
   check('4b. Bỏ nháp → DISCARDED', dc.s === 200 && dc.j?.data?.status === 'DISCARDED', `http=${dc.s}`)
   const dc2 = await api(`/tms/dispatch/plans/${p3.j?.data?.id}`, 'DELETE')
   check('4c. Bỏ lần hai → 409', dc2.s === 409, `http=${dc2.s}`)
+  // [4d] (19/10, user hỏi "lịch sử với xoá chuyến, xoá kế hoạch thì sao"): vết MỨC KẾ HOẠCH trên tiền tố Số xe (không STT) — lập [2] · xác nhận [3]
+  //      · bỏ nháp [4b]; xe hết đơn bị bỏ khi kéo [2e] có PLAN_TRIP_DISCARDED; cửa GET /plans/:id/events trả cả vết kế hoạch lẫn vết từng xe
+  {
+    const planCode = PREFIX.replace(/_$/, '')
+    const evP = await restAll('outbound_events', `select=event_type,actor,detail&group_code=eq.${planCode}&order=created_at.desc`)
+    const evX = await restAll('outbound_events', `select=event_type,group_code&group_code=like.${PREFIX}*&event_type=eq.PLAN_TRIP_DISCARDED`)
+    const p3id = p3.j?.data?.id   // biến trần: thước độ phủ cắt đường dẫn từ dấu `?` (coverage-surface PREFIX_RE) nên `${a?.b}` giữa đường làm mất đuôi `/events`
+    const hist = await api(`/tms/dispatch/plans/${p3id}/events`)
+    const hv = hist.j?.data?.events ?? []
+    check('4d. Lịch sử NGÀY (19/10): tiền tố có DISPATCH_PLAN_CREATED + CONFIRMED + DISCARDED (có người làm) · xe hết đơn khi kéo có PLAN_TRIP_DISCARDED · GET /plans/:id/events 200 gộp vết kế hoạch + vết từng Số xe, code = tiền tố',
+      ['DISPATCH_PLAN_CREATED', 'DISPATCH_PLAN_CONFIRMED', 'DISPATCH_PLAN_DISCARDED'].every(k => evP.some(e => e.event_type === k && !!e.actor)) && evX.length >= 1
+      && hist.s === 200 && hist.j?.data?.code === planCode && hv.some(e => e.event_type === 'DISPATCH_PLAN_DISCARDED') && hv.some(e => e.group_code !== planCode) && hist.j?.data?.truncated === false,
+      `plan=${evP.map(e => e.event_type).join(',')} xeBỏ=${evX.length} http=${hist.s} ${hist.j?.error?.message ?? ''} n=${hv.length} code=${hist.j?.data?.code}`)
+  }
 
   // ── [7] ĐIỀU KIỆN BẢO QUẢN (user chốt 24/09: lạnh âm · 2–8 · 15–25 · thường) ──
   // Hàng lấy điều kiện theo LOẠI KHO (Cài đặt WMS), xe khai chở được mức nào (Cài đặt TMS) → engine khớp hai bên.
@@ -721,6 +735,9 @@ try {
   const dg = await api(`/tms/dispatch/trips/${TN.id}`, 'DELETE')
   check('10f. Bỏ xe còn OD → 409 TRIP_NOT_EMPTY · bỏ xe trống sót từ trước → 200 · xe đã bị bỏ → 404', dne.s === 409 && dne.j?.error?.code === 'TRIP_NOT_EMPTY' && de.s === 200 && dg.s === 404,
     `nonempty=${dne.s}/${dne.j?.error?.code} empty=${de.s} gone=${dg.s}`)
+  const evDel = await restAll('outbound_events', `select=event_type,actor,detail&group_code=eq.${PREFIX}77&event_type=eq.PLAN_TRIP_DELETED`)
+  check('10f1. Xoá xe trống ghi vết PLAN_TRIP_DELETED (ai · lúc nào · Số xe) — 19/10, xe không còn trên bàn nên vết đọc ở Lịch sử ngày', evDel.length === 1 && !!evDel[0]?.actor && (evDel[0]?.detail ?? '').includes(`${PREFIX}77`),
+    `n=${evDel.length} actor=${evDel[0]?.actor} detail=${evDel[0]?.detail}`)
   B = await planOf(B.id)
   // [10f2] (15/10, "xe cùng tuyến còn nhận đơn không" — nhãn tiếp nhận trên bàn) `fit-check` hỏi ĐÚNG hàm luật của cửa thả cho từng cặp
   //        (dòng OD, xe), không ghi gì: kết luận phải TRÙNG lời xem trước của cửa thả (`preview-move.blocked`) trên cùng cặp; OD3 → xe OD1+OD2
@@ -1557,6 +1574,8 @@ try {
     check('15d2. Không điều OD duy nhất của một xe → xe đó bị BỎ (held.trips_removed = 1, 0 xe, summary.empty_trips = 0), OD vào sổ hoãn',
       hT.s === 200 && hT.j?.data?.held?.trips_removed === 1 && (PH?.trips ?? []).length === 0 && (PH?.summary?.empty_trips ?? 0) === 0 && holdT?.hold_until === next,
       `http=${hT.s} ${hT.j?.error?.message ?? ''} removed=${hT.j?.data?.held?.trips_removed} trips=${(PH?.trips ?? []).length} empty=${PH?.summary?.empty_trips}`)
+    const evHold = await restAll('outbound_events', `select=event_type,actor,detail&group_code=like.${PREFIX}*&event_type=eq.PLAN_TRIP_DISCARDED&detail=like.*hoãn*`)
+    check('15d3. Xe bị bỏ vì hết đơn sau khi hoãn ghi vết PLAN_TRIP_DISCARDED nêu lý do "hoãn" (19/10)', evHold.length >= 1 && !!evHold[0]?.actor, `n=${evHold.length} ${evHold[0]?.detail ?? ''}`)
     // trả về trạng thái sau 15d cho các phép sau: bỏ hoãn OD1 → về khung chờ → ghép riêng OD1 lên xe
     await api(`/tms/dispatch/plans/${pid(PR)}/unhold`, 'POST', { od_numbers: [OD[0]] })
     const prBack = await api(`/tms/dispatch/plans/${pid(PR)}`)

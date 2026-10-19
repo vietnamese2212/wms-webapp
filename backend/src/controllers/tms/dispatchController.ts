@@ -853,6 +853,7 @@ export async function createPlan(req: Request, res: Response) {
     await insertOdRows(ods.filter(o => !unplannedSet.has(o.od_number)).map(o => odRow(planId, null, wholeOd(o), meta.get(o.od_number), t, null)))
     const full = await readPlan(planId)
     if (full) await writeSummary(full as PlanRow)
+    if (full) await logPlanEvent(full as PlanRow, actorOf(req), 'DISPATCH_PLAN_CREATED', `lập${b.force ? ' (ghi đè nháp người khác đang làm)' : ''}${(oldDrafts ?? []).length ? ' · thay nháp cũ' : ''} · ${ods.length} đơn vào Chờ điều`)
     return ok(res, { ...(await readPlan(planId)), in_plan }, 201)
   } catch (e) { return failAny(res, e) }
 }
@@ -1056,6 +1057,17 @@ function engineParams(plan: PlanRow): EngineInput['params'] {
   return { day: plan.plan_date, allow_mix_channels: params.allow_mix_channels ?? false, underload_pct: params.underload_pct ?? null, code_prefix: params.code_prefix ?? '', start_seq: params.start_seq ?? 1,
     allow_mix_categories: params.allow_mix_categories, follow_categories: params.follow_categories ?? [], combo_conditions: params.combo_conditions ?? [], max_vehicles: params.max_vehicles ?? 1,
     load_bands: loadBandsOf(params.load_bands), load_bypass: params.load_bypass === true }
+}
+/** VẾT MỨC KẾ HOẠCH (19/10, user hỏi "lịch sử với xoá chuyến, xoá kế hoạch thì sao"): lập · xác nhận · mở lại · bỏ / huỷ ghi lên
+ *  `outbound_events` với group_code = TIỀN TỐ Số xe của kho×ngày KHÔNG có STT (vd `20000016_X_191026`). Cửa "Lịch sử ngày" ở tab Kế hoạch
+ *  đọc mọi vết `tiền tố%` ⇒ gom cả vết của từng Số xe — KỂ CẢ xe đã bỏ / đã xoá (popup tình trạng xe chỉ mở được khi xe còn trên bàn),
+ *  cả hai mảng Bán hàng / Trung chuyển (cùng tiền tố). Vết mức xe bị bỏ / xoá: `PLAN_TRIP_DISCARDED` / `PLAN_TRIP_DELETED` ở từng cửa. */
+const planCode = (plan: PlanRow) => engineParams(plan).code_prefix.replace(/_$/, '')
+const planLabel = (plan: PlanRow) => `Kế hoạch ${SEGMENT_VI[(plan.segment ?? 'SALES') as Segment]} ${dmyOf(plan.plan_date)}`
+async function logPlanEvent(plan: PlanRow, actor: string | null, event_type: string, detail: string) {
+  const code = planCode(plan)
+  if (!code) return
+  await logOutboundEvents([{ group_code: code, event_type, source: 'PLAN', actor, detail: `${planLabel(plan)} — ${detail}` }])
 }
 type RuleTrip = { vehicle_model_id: string | null; extra_vehicle_model_ids?: string[] | null; allow_mix_categories?: boolean | null; allow_extra_drops?: boolean | null }
 /** LUẬT GHÉP XE cho xe đích SAU một thao tác tay (14/10, user: "làm sai rule cần hiện popup và ngăn chặn — không chỉ số khách") —
@@ -1620,6 +1632,11 @@ async function moveOdsInner(req: Request, res: Response) {
       const { error } = await db.from('dispatch_trip').delete().in('id', emptied.slice(i, i + 300)).eq('plan_id', plan.id)
       if (error) throw error
     }
+    // 19/10: xe bị bỏ vì hết đơn cũng là "xoá chuyến" — ghi ai · lúc nào lên tiền tố Số xe (Lịch sử ngày ở tab Kế hoạch)
+    if (emptied.length) await logOutboundEvents(read.filter(x => emptied.includes(x.id)).map(x => ({
+      group_code: x.group_code, event_type: 'PLAN_TRIP_DISCARDED', source: 'PLAN' as const, actor: actorOf(req),
+      detail: `Xe #${x.seq} ${x.group_code} hết đơn sau khi kéo đơn ${b.to === 'pool' ? 'về khung chờ' : b.to === 'unplan' ? 'về Chờ điều' : b.to === 'trip' || b.to === 'new' ? 'sang xe khác' : 'ra khỏi kế hoạch'} ⇒ bỏ xe`,
+    })))
     const hit = read.filter(x => !emptied.includes(x.id))
     await fillMissingVehicles(plan, hit, async () => (await readPlanLight(plan.id)).trips)
     const repriced = await repriceMany(plan, hit)
@@ -1713,6 +1730,9 @@ async function deleteTripInner(req: Request, res: Response) {
     if (got.trip.ods.length) return fail(res, 409, 'TRIP_NOT_EMPTY', `Xe ${got.trip.group_code} còn ${uniq(got.trip.ods.map(o => o.od_number)).length} OD — kéo OD sang xe khác hoặc về khung chờ trước khi bỏ xe.`)
     const { error } = await db.from('dispatch_trip').delete().eq('id', got.trip.id)
     if (error) throw error
+    // 19/10 (user: "lịch sử với xoá chuyến"): xoá xe cũng phải có vết ai · lúc nào — xe không còn trên bàn nên vết đọc ở Lịch sử ngày (tab Kế hoạch)
+    await logOutboundEvents([{ group_code: got.trip.group_code, event_type: 'PLAN_TRIP_DELETED', source: 'PLAN', actor: actorOf(req),
+      detail: `Xoá xe trống #${got.trip.seq} ${got.trip.group_code} khỏi ${planLabel(got.plan)}` }])
     return ok(res, { id: got.trip.id, deleted: true, _plan: await planAfterWrite(got.plan) })
   } catch (e) { return failAny(res, e) }
 }
@@ -2362,6 +2382,7 @@ async function confirmPlanInner(req: Request, res: Response) {
     step(res, 'đánh dấu xe chờ ĐVVT')
     await markTendered(tender)
     const w = direct.length ? await writeTrips(req, res, full, wh, direct) : { lines: 0, group_codes: [] as string[], replan: null, replan_error: null, derive_failed: false, derive_message: null }
+    await logPlanEvent(full as PlanRow, actorOf(req), 'DISPATCH_PLAN_CONFIRMED', `xác nhận ${direct.length} xe vào Kế hoạch xuất${tender.length ? ` · ${tender.length} xe chờ ĐVVT phản hồi` : ''}${empties.length ? ` · bỏ ${empties.length} xe trống` : ''}`)
     const status = await syncPlanStatus(full as PlanRow, req.user?.name ?? null)
     step(res, 'đơn còn ở khung chờ về Chờ điều')
     const returned_to_wait = await releasePoolToWait(full.id)
@@ -2474,6 +2495,7 @@ async function reopenPlanInner(req: Request, res: Response) {
     const actor = actorOf(req)
     await logOutboundEvents(delRows.map(l => ({ group_code: l.group_code, event_type: 'PLAN_DO_REMOVED', source: 'PLAN' as const, actor, do_number: l.do_no,
       detail: `Mở lại kế hoạch điều vận — gỡ DO ${l.do_no} khỏi Số xe ${l.group_code} để sửa trên bàn ghép xe` })))
+    if (open.length) await logPlanEvent(full as PlanRow, actor, 'DISPATCH_PLAN_REOPENED', `mở lại ${open.length} xe để sửa trên bàn: ${openGc.slice(0, 8).join(', ')}${openGc.length > 8 ? ` … +${openGc.length - 8} xe` : ''}${b.force ? ' · đã xác nhận rút cả xe đang có hàng bên Xuất' : ''}`)
     let replan_error: string | null = null
     step(res, 'dội chuyến Xuất kho (ngừng chuyến + nhả khung giờ)')
     if (openGc.length) { try { await replanKhvcGroups(req, openGc, 0, { forceDrop: true }) } catch (e) { replan_error = String(e); console.error('[dispatch reopen] replan:', e) } }
@@ -2541,6 +2563,7 @@ async function moveTripsDateInner(req: Request, res: Response) {
       if (iErr) throw iErr
       target = np as PlanRow
       targetCreated = true
+      await logPlanEvent(target, actor, 'DISPATCH_PLAN_CREATED', `tự lập khi dời ${moving.length} xe từ ngày ${dmyOf(full.plan_date)}${b.reason ? ` · ${b.reason}` : ''}`)
     }
     // số thứ tự nối tiếp trong kế hoạch đích (Số xe giữ nguyên)
     const { data: tgTop, error: tErr } = await db.from('dispatch_trip').select('seq').eq('plan_id', target.id).order('seq', { ascending: false }).limit(1)
@@ -2606,8 +2629,12 @@ async function discardPlanInner(req: Request, res: Response) {
     if (!whAllowed(req, plan.warehouse_id)) return fail(res, 'Kho này ngoài phạm vi được giao', 403)
     if (!EDIT_PLAN.includes(plan.status)) return fail(res, 409, 'PLAN_NOT_DRAFT', 'Kế hoạch đã bỏ')   // 16/10: kế hoạch đã xác nhận cũng bỏ được các xe CHƯA chốt + khung chờ
     const t = now()
-    const { data: dropped, error: tErr } = await db.from('dispatch_trip').update({ status: 'DISCARDED', updated_at: t }).eq('plan_id', plan.id).neq('status', 'CONFIRMED').select('id')
+    const { data: dropped, error: tErr } = await db.from('dispatch_trip').update({ status: 'DISCARDED', updated_at: t }).eq('plan_id', plan.id).neq('status', 'CONFIRMED').select('id, group_code, seq')
     if (tErr) throw tErr
+    // 19/10 (user: "lịch sử với xoá chuyến, xoá kế hoạch"): từng xe nháp bị bỏ + vết mức kế hoạch (ai · lúc nào) — đọc ở Lịch sử ngày, tab Kế hoạch
+    const actor = actorOf(req)
+    const why = plan.status === 'DRAFT' ? 'bỏ nháp' : 'bỏ xe chưa chốt / huỷ kế hoạch'
+    await logOutboundEvents((dropped ?? []).map(d => ({ group_code: d.group_code, event_type: 'PLAN_TRIP_DISCARDED', source: 'PLAN' as const, actor, detail: `Bỏ xe nháp #${d.seq} ${d.group_code} khi ${why}` })))
     // DỌN DÒNG OD của nháp bị bỏ (11/10): khung chờ (Chờ điều + khung chờ kế hoạch) + dòng của xe vừa bỏ — Ba Vì mỗi nháp mang ~3.500 dòng
     // Chờ điều; đo 11/10: 18.694 dòng của 23 nháp đã bỏ nằm chết trong dispatch_trip_od (câu đếm đơn mới quét qua). Xe CONFIRMED giữ dòng (lịch sử).
     const { error: poolErr } = await db.from('dispatch_trip_od').delete().eq('plan_id', plan.id).is('trip_id', null)
@@ -2630,7 +2657,27 @@ async function discardPlanInner(req: Request, res: Response) {
       status = await syncPlanStatus(plan as PlanRow, req.user?.name ?? null)
       await writeSummary(plan as PlanRow)
     }
+    await logPlanEvent(plan as PlanRow, actor, 'DISPATCH_PLAN_DISCARDED', `${status === 'DISCARDED' ? 'ĐÃ BỎ cả kế hoạch' : 'bỏ xe chưa chốt, xe đã vào Kế hoạch xuất giữ nguyên'} · ${dropped?.length ?? 0} xe nháp bị bỏ`)
     return ok(res, { id: plan.id, status, discarded_trips: dropped?.length ?? 0 })
+  } catch (e) { return failAny(res, e) }
+}
+
+// ── GET /tms/dispatch/plans/:id/events — LỊCH SỬ NGÀY (19/10, user hỏi "lịch sử với xoá chuyến, xoá kế hoạch thì sao"): mọi vết
+// outbound_events mang tiền tố Số xe của kho×ngày — vết mức kế hoạch (lập · xác nhận · mở lại · bỏ / huỷ) + vết của TỪNG Số xe, kể cả xe
+// đã bỏ / đã xoá (không còn trên bàn nên popup tình trạng xe không mở được), cả hai mảng (cùng tiền tố). Mới nhất trước; limit khai rõ
+// 1.000 (ngày 150 xe × ~6 vết) — chạm trần thì trả `truncated` để màn nói thẳng.
+export async function planEvents(req: Request, res: Response) {
+  try {
+    const { data: plan, error } = await db.from('dispatch_plan').select('*').eq('id', String(req.params.id)).maybeSingle()
+    if (error) throw error
+    if (!plan) return fail(res, 'Không tìm thấy kế hoạch', 404)
+    if (!whAllowed(req, plan.warehouse_id)) return fail(res, 'Kho này ngoài phạm vi được giao', 403)
+    const code = planCode(plan)
+    if (!code) return ok(res, { code, events: [], truncated: false })
+    const { data, error: eErr } = await db.from('outbound_events').select('id, created_at, actor, event_type, source, group_code, do_number, detail, old_value, new_value')
+      .like('group_code', `${code}%`).order('created_at', { ascending: false }).limit(1000)
+    if (eErr) throw eErr
+    return ok(res, { code, events: data ?? [], truncated: (data ?? []).length >= 1000 })
   } catch (e) { return failAny(res, e) }
 }
 
@@ -2743,6 +2790,8 @@ async function holdOdsInner(req: Request, res: Response) {
     if (emptied.length) {
       const { error } = await db.from('dispatch_trip').delete().in('id', emptied.slice(0, 300)).eq('plan_id', plan.id)
       if (error) throw error
+      await logOutboundEvents(after.trips.filter(x => emptied.includes(x.id)).map(x => ({ group_code: x.group_code, event_type: 'PLAN_TRIP_DISCARDED', source: 'PLAN' as const, actor,
+        detail: `Xe #${x.seq} ${x.group_code} hết đơn sau khi ${b.until ? `hoãn đơn tới ${dmyOf(b.until)}` : 'chuyển đơn sang Không điều'} ⇒ bỏ xe` })))
       // 19/10 (đổi ngày từng đơn trên xe đã chốt: mở lại → hoãn → xe hết đơn bị bỏ, KHÔNG còn bước xác nhận lại): xe vừa bỏ có thể là xe nháp
       // duy nhất của kế hoạch đã xác nhận ⇒ trạng thái kế hoạch phải chốt lại theo các xe còn lại (chụp 19/10: tab Kế hoạch in "1 nháp",
       // bàn "Đang sửa · 0/1 xe mở" dù mọi xe còn lại đã CONFIRMED)
@@ -3272,7 +3321,11 @@ export async function removeFromKhvc(req: Request, res: Response) {
       if (dErr) throw dErr
       for (const tid of uniq(tripOds.map(o => o.trip_id))) {
         const { count } = await db.from('dispatch_trip_od').select('id', { count: 'exact', head: true }).eq('trip_id', tid)
-        if (!count) { const { error: tErr } = await db.from('dispatch_trip').update({ status: 'DISCARDED', updated_at: now() }).eq('id', tid); if (tErr) throw tErr }
+        if (!count) {
+          const { error: tErr } = await db.from('dispatch_trip').update({ status: 'DISCARDED', updated_at: now() }).eq('id', tid)
+          if (tErr) throw tErr
+          await logOutboundEvents([{ group_code: b.group_code, event_type: 'PLAN_TRIP_DISCARDED', source: 'PLAN', actor, do_number: b.od_number, detail: `Xe ${b.group_code} hết đơn sau khi gỡ DO ${b.od_number} ⇒ bỏ xe` }])
+        }
       }
     }
     let replan_error: string | null = null, replan: Record<string, unknown> | null = null

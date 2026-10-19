@@ -111,12 +111,14 @@ const tripCols = (desktop: boolean): RtColDef[] => [
 // Gom theo LÔ (15/10): thêm cột Tải (thanh % xe máy định, cùng dáng cột Tải của bảng xe) ngay sau cột đầu — khung chờ 400 px vẫn thấy
 // Lô · Tải · Pallet · nút Xe mới; cột thao tác rộng hơn cho nút chữ. 16/10: Loại kho lên cột đầu cạnh số OD (user) ⇒ bỏ cột Loại kho,
 // cột đầu rộng thêm cho chip loại + biểu tượng SAP
+// 19/10 (user: "khung chờ khó nhìn, không nhìn được khách hàng"): cột Khách lên NGAY SAU cột OD (trước Pallet · Tấn) — khung chờ 400–575 px
+// trước đây cắt cột Khách ra ngoài màn; dòng nhóm (Khách / Phường / Vùng / Lô) trải tên qua cả cột Khách (span 2) nên không còn cụt chữ.
 const poolCols = (desktop: boolean, lot: boolean): RtColDef[] => [
-  { id: 'x', label: lot ? 'Lô · OD' : 'OD · Loại kho', w: desktop ? 200 : 180 },
+  { id: 'x', label: lot ? 'Lô · OD' : 'OD · Loại kho', w: desktop ? 190 : 180 },
+  { id: 'cust', label: 'Khách', w: 140 },
   ...(lot ? [{ id: 'load', label: 'Tải', w: 60, align: 'right' as const }] : []),
   { id: 'pal', label: 'Pallet', w: 60, align: 'right' },
   { id: 'ton', label: 'Tấn', w: 60, align: 'right' },
-  { id: 'cust', label: 'Khách', w: 180 },
   { id: 'ward', label: 'Phường', w: 120 },
   { id: 'region', label: 'Vùng', w: 110 },
   { id: 'note', label: 'Ghi chú giao hàng SAP', w: 220 },
@@ -124,19 +126,24 @@ const poolCols = (desktop: boolean, lot: boolean): RtColDef[] => [
   { id: 'act', label: '', w: lot ? 64 : 60, align: 'right', stickyRight: desktop },
 ]
 
-type Cell = { node?: ReactNode; cls?: string; title?: string; stop?: boolean }
+type Cell = { node?: ReactNode; cls?: string; title?: string; stop?: boolean; span?: number }   // span: ô trải qua n cột kế (dòng nhóm khung chờ)
 type Cells = Partial<Record<string, Cell>>
 
 /** Một dòng = các ô theo đúng bộ cột; cột đầu (và cột thao tác nếu ghim) mang nền ĐẶC của dòng để phần cuộn không lộ qua. */
 function RowCells({ cols, cells, bg }: { cols: RtColDef[]; cells: Cells; bg: string }) {
-  return <>{cols.map((c, i) => {
+  const out: ReactNode[] = []
+  for (let i = 0; i < cols.length; i++) {
+    const c = cols[i]
     const s = cells[c.id]
+    const span = Math.max(1, Math.min(s?.span ?? 1, cols.length - i))
     const pin = i === 0 ? `sticky left-0 z-10 ${bg}` : c.stickyRight ? `sticky right-0 z-10 ${bg}` : ''
-    return (
-      <TableCell key={c.id} title={s?.title} onClick={s?.stop ? e => e.stopPropagation() : undefined}
-        className={`${TD} ${c.align === 'right' ? 'text-right tabular-nums' : ''} ${pin} ${s?.cls ?? ''}`}>{s?.node}</TableCell>
+    out.push(
+      <TableCell key={c.id} title={s?.title} colSpan={span > 1 ? span : undefined} onClick={s?.stop ? e => e.stopPropagation() : undefined}
+        className={`${TD} ${c.align === 'right' ? 'text-right tabular-nums' : ''} ${pin} ${s?.cls ?? ''}`}>{s?.node}</TableCell>,
     )
-  })}</>
+    i += span - 1
+  }
+  return <>{out}</>
 }
 
 /** Xe bật "Cho vượt số khách" (16/10) — ngoại lệ người cho phép, nhãn để người soát thấy (bảng + thẻ + panel xe) */
@@ -550,7 +557,7 @@ export function DispatchBoardTable({ ops, toolbar, rail, poolHeader, poolExtras 
   const lotMode = f.boardGroup === 'lot'
   const tcols = useMemo(() => tripCols(desktop), [desktop]), pcols = useMemo(() => poolCols(desktop, lotMode), [desktop, lotMode])
   // bộ cột đổi theo cách gom ⇒ khoá độ rộng riêng + remount (useColumnResize chỉ đọc độ rộng lúc mount)
-  const pkey = `dispatch_board_pool_v3${lotMode ? '_lot' : ''}${desktop ? '' : '_m'}`
+  const pkey = `dispatch_board_pool_v4${lotMode ? '_lot' : ''}${desktop ? '' : '_m'}`   // v4 (19/10): cột Khách lên vị trí 2 — bề rộng đã lưu của v3 lệch cột
   // bản ops MỚI NHẤT cho thao tác lúc bấm / kéo trong các dòng xe không vẽ lại (TripRows memo)
   const live = useRef(ops)
   live.current = ops
@@ -614,7 +621,9 @@ export function DispatchBoardTable({ ops, toolbar, rail, poolHeader, poolExtras 
                         <TableRow className="cursor-pointer bg-slate-100 hover:bg-slate-200" onClick={() => ops.togglePoolGroup(g.k)}
                           draggable={dragG} onDragStart={dragG ? e => ops.startDrag(e, ids, true) : undefined} onDragEnd={dragG ? ops.endDrag : undefined}>
                           <RowCells cols={pcols} bg="bg-slate-100" cells={{
+                            // 19/10: tên nhóm (khách / phường / vùng / lô) trải qua cả cột Khách (span 2) — khung chờ hẹp không cụt tên; số OD đứng cuối
                             x: {
+                              span: 2,
                               title: `${label} — bấm để ${open ? 'thu' : 'mở'}${dragG ? ` · kéo dòng này = kéo cả ${g.lot ? 'lô' : 'cụm'}` : ''}`,
                               node: (
                                 <div className="flex min-w-0 items-center gap-1">
@@ -623,6 +632,7 @@ export function DispatchBoardTable({ ops, toolbar, rail, poolHeader, poolExtras 
                                     ? <TickBox checked={nSel === ids.length} indeterminate={nSel > 0} onChange={() => ops.toggleMany(ids)} label={`Chọn cả nhóm ${label}`} />
                                     : null}
                                   <span className="min-w-0 truncate text-[11px] font-semibold text-slate-700">{label}</span>
+                                  <span className="shrink-0 text-[10px] text-slate-500">{new Set(g.rows.map(o => o.od_number)).size} OD</span>
                                 </div>
                               ),
                             },
@@ -630,7 +640,6 @@ export function DispatchBoardTable({ ops, toolbar, rail, poolHeader, poolExtras 
                             load: g.lot ? { title: lotTip(g.lot), node: <LotLoad lot={g.lot} /> } : {},
                             pal: { cls: 'font-semibold', node: nf(g.pallets, 1) },
                             ton: { cls: 'font-semibold', node: nf(g.rows.reduce((s, o) => s + Number(o.tons ?? 0), 0), 2) },
-                            cust: { cls: 'text-slate-500', node: `${new Set(g.rows.map(o => o.od_number)).size} OD` },
                             act: g.lot?.kind === 'under' && ops.editable ? {
                               stop: true,
                               node: <button type="button" disabled={ops.busy} onClick={() => ops.newTripFor(ids)}

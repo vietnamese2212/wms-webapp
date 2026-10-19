@@ -584,6 +584,23 @@ nào thì mở khoá xe đó. Cần 1 hướng nữa: kế hoạch làm nhầm, 
 - **Chế độ sửa NHỚ trong store bộ lọc (`dispatch.editDay`, 16/10 tối):** user bấm Sửa 02/10 → sang Dữ liệu bên ngoài nạp ZSD02 → quay lại, bản
   state component cũ quên chế độ sửa ⇒ kế hoạch đã xác nhận về XEM, không `/sync`, 130 OD mới không vào Chờ điều ("upload rồi không thấy ở
   Xem đơn"). Bấm dòng (xem) xoá `editDay`; Sửa / ổ khoá xanh đặt lại. Khuôn: trạng thái quyết "bàn có tự nạp không" phải sống qua điều hướng.
+- **ĐỔI NGÀY NGAY TRÊN BÀN (19/10, user: "tab Kế hoạch khó thao tác — nên đổi được ngày dễ như bên Kế hoạch (Dữ liệu bên ngoài)"; chốt:
+  Số xe GIỮ NGUYÊN, xe đã đặt khung giờ vẫn cho đổi kèm nhả khung; "thêm vào công cụ tracking: ai làm gì, giờ nào — đi theo dòng"):**
+  - **Cả xe:** `POST /tms/dispatch/plans/:id/move-date { trip_ids ≤ 300, new_date, reason? }` (quyền `dispatch.confirm`, lease kế hoạch
+    nguồn). Xe (đơn · ĐVVT · dòng xe · Số xe) sang kế hoạch cùng kho / mảng của ngày mới — ưu tiên bản đang mở, không có thì bản đã xác
+    nhận, không có nữa thì LẬP (toàn xe đã chốt ⇒ kế hoạch mới CONFIRMED, `params.moved_from`); `seq` nối tiếp trong kế hoạch đích. Xe đã
+    chốt: `khvc_lines.export_date` đổi → `replanKhvcGroups` dội chuyến (`delivery_date`) + lệnh VC (`date`); khung giờ đã đặt NHẢ qua RPC
+    `book_vehicle_slot` (đếm chỗ không ghi tay); sự kiện `PLAN_DATE_CHANGED` (actor · old/new · lý do · số khung đã nhả). Chặn PER-XE
+    cùng luật đổi ngày tab Kế hoạch xuất, KHÔNG force: chuyến hoàn thành / đang xuất / đã quét / giữ nhặt lẻ ⇒ `blocked` nêu lý do, không xe
+    nào đi được ⇒ 409 `ALL_BLOCKED`. Xe nháp / chờ ĐVVT: chỉ chuyển dòng kế hoạch. Trả kế hoạch nguồn + `moved`.
+  - **Từng đơn (đơn rớt không bốc):** FE dàn ba cửa sẵn có — `reopen {trip_ids:[xe]}` (hỏi `force` nếu chuyến có hàng) → `hold {ids, until,
+    reason}` (đơn rời xe, dấu hoãn; BE đòi ngày SAU ngày kế hoạch) → `trips/:id/settle` nếu xe còn đơn (cùng Số xe sống lại, khung giờ giữ;
+    hết đơn thì xe đã bị bỏ). Hỏng giữa chừng: toast nói rõ xe đang ở nháp để người bấm Xác nhận tay. `holdOds` nay ghi `PLAN_OD_HELD`
+    (DO rút khỏi xe nào · hoãn tới ngày · lý do).
+  - **UI:** nút lịch trên dòng xe (Bảng + Thẻ, chỉ khi có quyền xác nhận) · panel xe khối Thao tác xe "Đổi ngày cả xe" · mỗi đơn trên xe đã
+    chốt có "Đổi ngày đơn này" · hộp `DispatchMoveDateDialog` (ngày · lý do · câu nêu hệ quả). Tab Kế hoạch mặc định lọc "Tất cả".
+  - **Tracking:** `GET /tms/trip-flow?codes=X&events=1` kèm 200 vết `outbound_events` mới nhất ⇒ popup tình trạng xe thêm bảng "Lịch sử
+    thao tác" (thời gian · ai · việc · DO · chi tiết; nhãn `EVENT_VI`). Gói 61 **[11j]**.
 - **MỘT Ổ KHOÁ (19/10, user: "hai cái khoá bản chất giống nhau — gộp làm một cho gọn"):** bỏ ổ khoá XANH (LockKeyhole) và chip chữ "Khoá";
   trên bàn (Thẻ + Bảng) mỗi xe chỉ một ổ khoá TÍM = "xe giữ nguyên". Xe nháp: bấm khoá / mở khoá (máy Tối ưu lại không đụng, người vẫn kéo
   được). Xe ĐÃ CHỐT: luôn hiện khoá (cả người cũng không kéo), trong chế độ Sửa bấm = Mở lại riêng xe đó (hỏi trước); panel xe nút "Mở lại xe

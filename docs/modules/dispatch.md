@@ -584,6 +584,11 @@ nào thì mở khoá xe đó. Cần 1 hướng nữa: kế hoạch làm nhầm, 
 - **Chế độ sửa NHỚ trong store bộ lọc (`dispatch.editDay`, 16/10 tối):** user bấm Sửa 02/10 → sang Dữ liệu bên ngoài nạp ZSD02 → quay lại, bản
   state component cũ quên chế độ sửa ⇒ kế hoạch đã xác nhận về XEM, không `/sync`, 130 OD mới không vào Chờ điều ("upload rồi không thấy ở
   Xem đơn"). Bấm dòng (xem) xoá `editDay`; Sửa / ổ khoá xanh đặt lại. Khuôn: trạng thái quyết "bàn có tự nạp không" phải sống qua điều hướng.
+- **MỘT Ổ KHOÁ (19/10, user: "hai cái khoá bản chất giống nhau — gộp làm một cho gọn"):** bỏ ổ khoá XANH (LockKeyhole) và chip chữ "Khoá";
+  trên bàn (Thẻ + Bảng) mỗi xe chỉ một ổ khoá TÍM = "xe giữ nguyên". Xe nháp: bấm khoá / mở khoá (máy Tối ưu lại không đụng, người vẫn kéo
+  được). Xe ĐÃ CHỐT: luôn hiện khoá (cả người cũng không kéo), trong chế độ Sửa bấm = Mở lại riêng xe đó (hỏi trước); panel xe nút "Mở lại xe
+  này" icon Unlock tím. Cờ `dispatch_trip.locked` không đổi nghĩa (vẫn chỉ gác Tối ưu lại; xe chốt giữ cờ cũ — vô hại). Cùng lượt: cột đầu
+  dòng OD dưới xe CHỈ còn số OD + chip (bỏ tên khách in lặp, đã có cột Khách — bản 06/10 in thêm vì cột Khách ngoài màn khi khung chờ mở).
 - **AI ĐANG LÀM (16/10 tối, user "hiện tên người đang làm ok"):** presence Realtime trên kênh riêng tư `wms-dispatch-<plan_id>` (policy
   `20261016b`, `hooks/useDispatchPresence.ts`): mỗi bàn đang mở kế hoạch track { id, name, mode sửa / xem }; chip hổ phách cạnh trạng thái
   "A đang sửa · B xem" (người khác, gộp theo người). Không ghi DB, không qua PostgREST. Cửa ghi vẫn thuê kế hoạch 90 s (`leasePlan`, 409

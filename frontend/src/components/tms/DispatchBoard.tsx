@@ -20,7 +20,7 @@
 // khung chờ | bảng cây xe → đơn); công tắc Bảng | Thẻ trên thanh công cụ giữ bản thẻ để so. Mọi cửa ghi / hoàn tác / hộp thoại ở ĐÂY, dùng chung.
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { AxiosError } from 'axios'
-import { Lock, LockKeyhole, Unlock, X, Plus, Undo2, Redo2, Sparkles, Inbox, AlertTriangle, Replace, ChevronDown, ChevronRight, ChevronsLeft, ChevronsRight, ChevronsDownUp, ChevronsUpDown, Truck, CalendarClock, StickyNote, Ban, RotateCw, Table2, LayoutGrid, ListCollapse, ListTree, MapPin, Route } from 'lucide-react'
+import { Lock, Unlock, X, Plus, Undo2, Redo2, Sparkles, Inbox, AlertTriangle, Replace, ChevronDown, ChevronRight, ChevronsLeft, ChevronsRight, ChevronsDownUp, ChevronsUpDown, Truck, CalendarClock, StickyNote, Ban, RotateCw, Table2, LayoutGrid, ListCollapse, ListTree, MapPin, Route } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -683,19 +683,19 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
             {/* 19/10 (user: gọn row): xe ĐÃ CHỐT không còn badge chữ "Đã vào KH" — nút workflow xanh lá là dấu đã chốt, bấm mở popup tình trạng xe (cùng dạng Bảng) */}
             {st === 'CONFIRMED' && <TripFlow code={t.group_code} tone="done" title={`Xe đã chốt (đã vào Kế hoạch xuất) — bấm xem tình trạng xe ${t.group_code}`} />}
             {(st === 'DECLINED' || st === 'TENDERED') && <StatusBadge tone={st === 'DECLINED' ? 'red' : 'blue'}>{st === 'DECLINED' ? 'Từ chối' : 'Chờ ĐVVT'}</StatusBadge>}
+            {/* MỘT Ổ KHOÁ (19/10, user: "hai cái khoá bản chất giống nhau — gộp làm một"): tím = xe giữ nguyên. Nháp: bấm khoá / mở khoá
+                (máy không đụng, người vẫn kéo). Đã chốt: luôn khoá; trong chế độ Sửa bấm = Mở lại riêng xe này. Bỏ ổ khoá xanh (LockKeyhole). */}
             {ed && (
               <button type="button" className={`rounded p-1 ${lk ? 'bg-violet-600 text-white hover:bg-violet-700' : 'text-slate-400 hover:bg-white hover:text-slate-700'}`} disabled={patchTrip.isPending}
-                title={lk ? 'Đang khoá — "Tối ưu lại" không đụng vào xe này. Bấm để mở khoá' : 'Khoá xe để "Tối ưu lại" giữ nguyên (hỏi lại trước khi khoá)'}
+                title={lk ? 'Đang khoá — "Tối ưu lại" không đụng vào xe này (kéo tay vẫn được). Bấm để mở khoá' : 'Khoá xe để "Tối ưu lại" giữ nguyên (hỏi lại trước khi khoá)'}
                 onClick={() => void toggleLock(t)}>
                 {lk ? <Lock className="h-3.5 w-3.5" /> : <Unlock className="h-3.5 w-3.5" />}
               </button>
             )}
-            {!ed && lk && <Lock className="h-3.5 w-3.5 text-violet-700" aria-label="Xe đã khoá" />}
-            {/* 16/10 (chế độ Sửa kế hoạch đã xác nhận): ổ khoá XANH = xe đã vào KH xuất — bấm để mở lại riêng xe này (khác ổ khoá tím = giữ khi Tối ưu lại) */}
-            {!ed && st === 'CONFIRMED' && editable && onReopenTrip && (
-              <button type="button" className="rounded p-1 text-green-700 hover:bg-green-100" title="Đã vào Kế hoạch xuất — bấm để MỞ LẠI riêng xe này về nháp (hỏi lại trước)" aria-label={`Mở lại xe #${t.seq}`}
-                onClick={() => onReopenTrip(t)}><LockKeyhole className="h-3.5 w-3.5" /></button>
-            )}
+            {!ed && st === 'CONFIRMED' && editable && onReopenTrip
+              ? <button type="button" className="rounded p-1 bg-violet-600 text-white hover:bg-violet-700" title={`Xe #${t.seq} đã chốt — khoá. Bấm để MỞ LẠI riêng xe này về nháp (hỏi lại trước)`} aria-label={`Mở lại xe #${t.seq}`}
+                  onClick={() => onReopenTrip(t)}><Lock className="h-3.5 w-3.5" /></button>
+              : !ed && lk && <Lock className="h-3.5 w-3.5 text-violet-700" aria-label={st === 'CONFIRMED' ? 'Xe đã chốt — khoá' : 'Xe đã khoá'} />}
             {ed && !t.ods.length && (
               <button type="button" className="rounded p-1 text-slate-400 hover:text-red-600" title="Bỏ xe trống" disabled={delTrip.isPending}
                 onClick={() => delTrip.mutateAsync(t.id).catch(e => err(e, 'Không bỏ được xe'))}><X className="h-3.5 w-3.5" /></button>

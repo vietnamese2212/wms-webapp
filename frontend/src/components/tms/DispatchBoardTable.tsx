@@ -13,7 +13,7 @@
 //   • Bảng chuẩn ResizableTable (kéo giãn cột, đầu bảng + cột đầu dính, cột thao tác ghim phải trên PC) — cùng khuôn bảng Xem đơn.
 // Cửa ghi · Hoàn tác · xem trước · hộp thoại · thanh chọn-nhiều dùng CHUNG với bản thẻ (DispatchBoard) — file này chỉ VẼ.
 import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { ChevronDown, ChevronRight, Lock, LockKeyhole, Unlock, X, Truck, StickyNote, RotateCw, Replace, Route, UserPlus } from 'lucide-react'
+import { ChevronDown, ChevronRight, Lock, Unlock, X, Truck, StickyNote, RotateCw, Replace, Route, UserPlus } from 'lucide-react'
 import { TableBody, TableCell, TableRow } from '@/components/ui/table'
 import { Switch } from '@/components/ui/switch'
 import { ResizableTable, type RtColDef } from '@/components/shared/ResizableTable'
@@ -280,11 +280,11 @@ function odCells(ops: BoardOps, o: DispatchTripOd, t: DispatchTrip | null, tree?
           {!t && route && <RouteChip info={route} label={ops.tripLabel} />}
           {o.part_of ? <span className="text-[9px] text-amber-700">phần {o.part_index}/{o.part_of}</span> : null}
           {!t && ops.fresh.has(o.od_number) && <NewOdChip />}
-          {/* đơn dưới xe: tên khách ngay ở cột dính — khung chờ mở thì cột Khách nằm ngoài màn (đo 1280 px 06/10) */}
+          {/* 19/10 (user): cột đầu CHỈ số OD + chip — tên khách đã có cột Khách, không in lặp ở đây nữa (bản 06/10 in thêm vì cột Khách
+              nằm ngoài màn khi khung chờ mở ở 1280 px) */}
           {t && (t.detail.route?.order.length ?? 0) > 1 && stopNoOf(t, o.ship_to_code) != null && (
             <span className="shrink-0 rounded bg-sky-700 px-1 text-[9px] font-bold text-white" title="Điểm giao thứ mấy của xe (kho → điểm gần trước) — in lên Kế hoạch xuất / chuyến Xuất kho">Đ{stopNoOf(t, o.ship_to_code)}</span>
           )}
-          {t && <span className="min-w-0 truncate text-slate-500">{o.ship_to_name ?? o.ship_to_code}</span>}
         </div>
       ),
     },
@@ -379,7 +379,7 @@ function tripCells(ops: BoardOps, t: DispatchTrip, hv: BoardHover, open: boolean
                 chính nút workflow (xanh lá) là dấu đã chốt, bấm mở popup tình trạng xe; chỉ hai trạng thái bất thường còn badge */}
             {st === 'CONFIRMED' && <TripFlow code={t.group_code} tone="done" title={`Xe đã chốt (đã vào Kế hoạch xuất) — bấm xem tình trạng xe ${t.group_code}`} />}
             {(st === 'DECLINED' || st === 'TENDERED') && <StatusBadge tone={st === 'DECLINED' ? 'red' : 'blue'}>{st === 'DECLINED' ? 'Từ chối' : 'Chờ ĐVVT'}</StatusBadge>}
-            {t.locked && <span className="inline-flex shrink-0 items-center gap-0.5 rounded bg-violet-600 px-1 text-[9px] font-bold text-white" title="Đã khoá — lần Tối ưu lại sau giữ nguyên xe này (đơn, dòng xe, ĐVVT)"><Lock className="h-2.5 w-2.5" /><span className="hidden sm:inline">Khoá</span></span>}
+            {/* 19/10: chip chữ "Khoá" bỏ — khối xe đã tô tím + MỘT ổ khoá ở cột thao tác (xem `act`) là đủ */}
             {t.allow_extra_drops && <ExtraDropsBadge />}
             {/* nhãn tiếp nhận khi khung chờ bật lọc "Có xe cùng tuyến" (15/10) */}
             {rtag && <TripRouteBadge tag={rtag} odLabel={ops.odLabel} />}
@@ -457,11 +457,15 @@ function tripCells(ops: BoardOps, t: DispatchTrip, hv: BoardHover, open: boolean
       node: (
         <span className="inline-flex items-center gap-0.5">
           {/* ⊘ "Không điều cả xe" (30/09) BỎ 15/10 (user: "tick ô thì đã ra đủ action") — tick ô dòng xe ⇒ thanh nổi "Không điều ngày này" / "Không điều" */}
-          {ed && <IconBtn title={t.locked ? 'Đang khoá — "Tối ưu lại" không đụng vào xe này. Bấm để mở khoá' : 'Khoá xe để "Tối ưu lại" giữ nguyên (hỏi lại trước khi khoá)'} disabled={ops.tripBusy} onClick={() => ops.toggleLock(t)}>
+          {/* MỘT Ổ KHOÁ (19/10, user: "hai cái khoá bản chất giống nhau — gộp làm một cho gọn"): tím = xe giữ nguyên. Xe nháp: bấm khoá / mở
+              khoá (máy "Tối ưu lại" không đụng, người vẫn kéo được). Xe ĐÃ CHỐT: luôn khoá (cả người cũng không kéo), trong chế độ Sửa bấm
+              = Mở lại riêng xe này (hỏi trước). Trước 19/10: ổ khoá tím + ổ khoá xanh (LockKeyhole) là hai biểu tượng. */}
+          {ed && <IconBtn title={t.locked ? 'Đang khoá — "Tối ưu lại" không đụng vào xe này (kéo tay vẫn được). Bấm để mở khoá' : 'Khoá xe để "Tối ưu lại" giữ nguyên (hỏi lại trước khi khoá)'} disabled={ops.tripBusy} onClick={() => ops.toggleLock(t)}>
             {t.locked ? <Lock className="h-3.5 w-3.5 text-violet-700" /> : <Unlock className="h-3.5 w-3.5" />}</IconBtn>}
-          {/* 16/10 (chế độ Sửa kế hoạch đã xác nhận): ổ khoá XANH = xe đã vào KH xuất — bấm để mở lại riêng xe này (khác ổ khoá tím = giữ khi Tối ưu lại) */}
-          {!ed && st === 'CONFIRMED' && ops.editable && ops.reopenTrip && <IconBtn title={`Mở lại xe #${t.seq} — đã vào Kế hoạch xuất; bấm để mở lại RIÊNG xe này về nháp (hỏi lại trước)`} disabled={ops.tripBusy} onClick={() => ops.reopenTrip!(t)}>
-            <LockKeyhole className="h-3.5 w-3.5 text-green-700" /></IconBtn>}
+          {!ed && st === 'CONFIRMED' && (ops.editable && ops.reopenTrip
+            ? <IconBtn title={`Xe #${t.seq} đã chốt — khoá. Bấm để MỞ LẠI riêng xe này về nháp (hỏi lại trước)`} disabled={ops.tripBusy} onClick={() => ops.reopenTrip!(t)}><Lock className="h-3.5 w-3.5 text-violet-700" /></IconBtn>
+            : <Lock className="h-3.5 w-3.5 text-violet-700" aria-label="Xe đã chốt — khoá" />)}
+          {!ed && st !== 'CONFIRMED' && t.locked && <Lock className="h-3.5 w-3.5 text-violet-700" aria-label="Xe đã khoá" />}
           {ed && !t.ods.length && <IconBtn danger title="Bỏ xe trống" disabled={ops.tripBusy} onClick={() => ops.removeTrip(t)}><X className="h-3.5 w-3.5" /></IconBtn>}
         </span>
       ),

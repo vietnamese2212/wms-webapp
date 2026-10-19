@@ -17,7 +17,7 @@
 // làm lại từ đầu = Bỏ nháp rồi Xem đơn.
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { CheckCircle2, Trash2, Download, Waypoints, ArrowRightLeft, AlertTriangle, ThumbsUp, ThumbsDown, Send, LayoutGrid, ListChecks, RotateCcw, ChevronDown, ChevronUp, Map as MapIcon, FileText, Lock, LockKeyhole, Ban, Users } from 'lucide-react'
+import { CheckCircle2, Trash2, Download, Waypoints, ArrowRightLeft, AlertTriangle, ThumbsUp, ThumbsDown, Send, LayoutGrid, ListChecks, RotateCcw, ChevronDown, ChevronUp, Map as MapIcon, FileText, Lock, Unlock, Ban, Users } from 'lucide-react'
 import { DispatchMap } from '@/components/tms/DispatchMap'
 import { TripRouteMap } from '@/components/tms/TripRouteMap'
 import { DispatchCarrierPicker } from '@/components/tms/DispatchCarrierPicker'
@@ -890,7 +890,8 @@ function TripPane({ trip: t, plan, editable, editableVehicle, canConfirm, needsT
               </>}
               {canSettle && <Button size="sm" className="h-8 bg-blue-600 hover:bg-blue-700" disabled={busy} onClick={onSettle}><Send className="h-3.5 w-3.5 mr-1" /> {needsTender ? 'Chào xe này' : 'Chốt xe này'}</Button>}
               {/* 16/10: mở lại RIÊNG xe này (thêm bớt OD, khoá, chở lẫn, vượt số khách, dời ngày) — xe khác của kế hoạch giữ nguyên */}
-              {st === 'CONFIRMED' && onReopen && <Button size="sm" variant="outline" className="h-8 border-green-300 text-green-800 hover:bg-green-100" disabled={busy} onClick={onReopen}><LockKeyhole className="h-3.5 w-3.5 mr-1" /> Mở lại xe này</Button>}
+              {/* 19/10: một ổ khoá tím cho cả hai nghĩa (khoá tay / đã chốt) — nút mở lại dùng icon Unlock, màu tím cùng họ */}
+              {st === 'CONFIRMED' && onReopen && <Button size="sm" variant="outline" className="h-8 border-violet-300 text-violet-800 hover:bg-violet-100" disabled={busy} onClick={onReopen}><Unlock className="h-3.5 w-3.5 mr-1" /> Mở lại xe này</Button>}
               {/* 18/10 → 19/10 (user chốt "một nút workflow nhỏ, bấm mở popup bảng"): tình trạng xe đã chốt — ai làm, lúc nào, chứng từ, Mở sổ, "Đã giao" */}
               {st === 'CONFIRMED' && <TripFlow code={t.group_code} label className="h-8" />}
             </div>

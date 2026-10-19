@@ -596,6 +596,9 @@ nào thì mở khoá xe đó. Cần 1 hướng nữa: kế hoạch làm nhầm, 
 - **Nút "Quy tắc" trên thanh công cụ bàn (17/10, user: "phần này chỉ đơn giản là rule — làm gọn thành Rule, bật lên là thấy"):** thay chip in cả
   câu dải % tải ("XE 4 PALLET 95–105 % · …" cắt cụt). Chỉ icon + chữ, hổ phách khi đang Bỏ qua dải %; tooltip = câu đầy đủ; bấm mở hộp dải %
   tải — kế hoạch đang sửa thì đổi ngay như cũ, chỉ xem thì mở ĐỌC (`readOnly`: ô khoá, chỉ nút Đóng).
+  **19/10 (user: "bản chất là xem % và tối ưu lại — chỉ 1 nút"):** kế hoạch đang sửa KHÔNG còn nút Quy tắc riêng — nút "Tối ưu lại" mở hộp
+  "Quy tắc dải % tải · Tối ưu lại" (in dải đang áp) với hai nút: "Chỉ áp dải %" (`PATCH /plans/:id/params`, xe nháp tính lại, không ghép) và
+  "Tối ưu lại" (`reoptimize`). Kế hoạch chỉ xem giữ nút "Quy tắc" để đọc. `DispatchLoadBandDialog` prop `secondary`.
 - **Thứ tự luật trong hộp chặn (17/10, user chốt sau test trên kế hoạch 02/10):** `manualRuleBlocks` in luật KHÔNG qua được bằng công tắc
   trên thẻ xe TRƯỚC — điều kiện bảo quản · dòng xe khách được vào — rồi mới trộn Loại kho · số khách · đi xe riêng · kênh · tải. Ca đo: kéo OD
   lạnh FG02 vào xe nóng đang chở FG01 kênh KA, bản cũ mở đầu bằng "Bật Ghép Loại kho khác" — bật xong kéo lại vẫn chặn vì xe không chở được

@@ -658,12 +658,17 @@ quan (như nút workflow trong SAP), bao gồm số chứng từ để đi searc
   (kind + id + ngày) để mở trang đích. 8 câu cho cả lô ≤ 300 mã, không N+1.
 - `GET /tms/trip-flow?codes=a,b` (≤ 200 mã; quyền view của BẤT KỲ màn nào trong 8 sổ; cắt theo phạm vi kho / ĐVVT). FE `useTripFlow(code)`
   GOM mọi lời hỏi trong ~25 ms thành MỘT request; mọi bảng của 8 sổ kéo key `['trip-flow']` ở `TABLE_QUERY_MAP` ⇒ chip đổi realtime.
-- Component `components/tms/TripFlow.tsx` hai dạng: `compact` (một hàng 8 chấm, bước đang đứng in chữ; bấm chấm = đặt bộ lọc trang đích rồi
-  điều hướng — chỉ khi `useCanSeePath` cho phép) và `full` (bảng dọc: bước · tình trạng · số chứng từ · lúc · ai · ghi chú · Mở). Đã gắn: thẻ
-  xe + dòng xe dạng Bảng (xe đã chốt) · panel xe (full) · Xem đơn (dòng Đã điều) · tab Kế hoạch (cột "Tiến độ xe": k/N đã xuất · j đã giao,
-  chỉ hỏi ngày ±7) · Kế hoạch xuất (cạnh "Đã sinh") · Đặt lịch (cạnh mã lệnh + full trong chi tiết) · Xuất kho (pane phải + đầu trang chi
-  tiết) · Đăng ký cổng (cột Mã đơn + chi tiết full) · Phiếu cân (cột Chuyến gắn). Thêm sổ mới vào chuỗi ⇒ sửa `tripFlow.ts`, KHÔNG vẽ chip
-  riêng ở một màn.
+- Component `components/tms/TripFlow.tsx` — **19/10 user chốt lại ("chưa đúng ý: cho MỘT nút workflow nhỏ, mở thì popup hiện table —
+  tình trạng, ai làm, làm khi nào, chứng từ"):** mỗi chỗ cầm Số xe chỉ có một nút icon Workflow 20 px (`label` = nút có chữ "Tình trạng xe"
+  ở panel / tiêu đề chi tiết); bấm mở Dialog `max-w-4xl` chứa `ResizableTable` 7 cột Bước · Tình trạng (StatusBadge) · Chứng từ · Người làm ·
+  Thời gian · Ghi chú · Mở (đặt bộ lọc trang đích rồi điều hướng, chỉ khi `useCanSeePath`; đóng popup), chân popup = "Đã giao" / "Hoàn tác" +
+  Đóng; dòng bước đang đứng tô hổ phách. Dữ liệu chỉ tải KHI MỞ (`useTripFlow(code, open)`) — 50 dòng không tốn request nào tới khi có người
+  bấm; realtime vẫn cập nhật popup đang mở. Sự kiện trong popup (portal) bị chặn không nổi lên dòng / thẻ xe bọc nút. Dạng cũ "8 chấm trên
+  dòng" + "list dọc" đã bỏ (chụp 19/10: chấm ép tên dòng xe thành cột dọc, user bác). Đã gắn: thẻ xe + dòng xe dạng Bảng (xe đã chốt, trong
+  thanh tiêu đề) · panel xe (nút có chữ cạnh "Mở lại xe này") · Xem đơn (dòng Đã điều) · tab Kế hoạch (cột "Tiến độ xe": k/N đã xuất · j đã
+  giao, chỉ hỏi ngày ±7 — đây là cột tổng, vẫn gom lô) · Kế hoạch xuất (cạnh "Đã sinh") · Đặt lịch (cạnh mã lệnh + nút có chữ ở tiêu đề chi
+  tiết) · Xuất kho (pane phải cạnh Số xe + đầu trang chi tiết) · Đăng ký cổng (cột Mã đơn + chi tiết) · Phiếu cân (cột Chuyến gắn). Thêm sổ
+  mới vào chuỗi ⇒ sửa `tripFlow.ts`, KHÔNG vẽ chip riêng ở một màn.
 - **"Đã giao" (bán hàng):** `POST /tms/vehicle-slots/:id/delivered { note?, undo? }` — quyền `tms_plan.confirm_delivery` (migration
   `20261019_trip_delivered.sql` cấp theo năng lực: chức danh `is_driver` được view + confirm_delivery; ai có `tms_plan.book` hoặc
   `dispatch.confirm` được confirm_delivery). Chặn 409 `OUTBOUND_NOT_COMPLETED` khi chuyến chưa Hoàn thành (hàng chưa rời kho), 409

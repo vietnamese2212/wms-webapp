@@ -84,8 +84,8 @@ function DeliverButton({ flow }: { flow: Flow }) {
 const TD = 'px-2 py-1 text-[11px] whitespace-nowrap truncate'
 const COLS: RtColDef[] = [
   { id: 'step', label: 'Bước', w: 110 }, { id: 'state', label: 'Tình trạng', w: 120 }, { id: 'doc', label: 'Chứng từ', w: 150 },
-  { id: 'by', label: 'Người làm', w: 120 }, { id: 'at', label: 'Thời gian', w: 125 }, { id: 'note', label: 'Ghi chú', w: 200 }, { id: 'open', label: '', w: 48 },
-]
+  { id: 'by', label: 'Người làm', w: 140 }, { id: 'at', label: 'Thời gian', w: 125 }, { id: 'note', label: 'Ghi chú', w: 170 }, { id: 'open', label: '', w: 48 },
+] // tổng 863 px < max-w-4xl (896) ⇒ ở máy tính thấy đủ 7 cột kể cả "Mở" không phải cuộn (chụp 19/10: max-w-3xl giấu cột Mở ngoài mép); điện thoại cuộn ngang
 
 /** Bảng 8 bước trong popup: bước · tình trạng · chứng từ · người làm · thời gian · ghi chú · Mở. */
 function FlowTable({ flow, onNavigate }: { flow: Flow; onNavigate: () => void }) {
@@ -126,7 +126,7 @@ function FlowDialog({ code, open, onOpenChange }: { code: string; open: boolean;
   const f = q.data
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-3xl p-0 gap-0" data-trip-flow-dialog={code}>
+      <DialogContent className="max-w-4xl p-0 gap-0" data-trip-flow-dialog={code}>
         <div className="px-4 pt-3 pb-2 pr-10 border-b">
           <DialogTitle className="text-sm font-semibold text-slate-800">Tình trạng xe <span className="font-mono">{code}</span></DialogTitle>
           <DialogDescription className="text-[11px] text-slate-500">Hành trình chứng từ của Số xe qua 8 sổ — mỗi dòng là một sổ, "Mở" đưa tới đúng dòng trong sổ đó.</DialogDescription>

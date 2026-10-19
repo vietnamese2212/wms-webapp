@@ -891,11 +891,11 @@ function TripPane({ trip: t, plan, editable, editableVehicle, canConfirm, needsT
               {canSettle && <Button size="sm" className="h-8 bg-blue-600 hover:bg-blue-700" disabled={busy} onClick={onSettle}><Send className="h-3.5 w-3.5 mr-1" /> {needsTender ? 'Chào xe này' : 'Chốt xe này'}</Button>}
               {/* 16/10: mở lại RIÊNG xe này (thêm bớt OD, khoá, chở lẫn, vượt số khách, dời ngày) — xe khác của kế hoạch giữ nguyên */}
               {st === 'CONFIRMED' && onReopen && <Button size="sm" variant="outline" className="h-8 border-green-300 text-green-800 hover:bg-green-100" disabled={busy} onClick={onReopen}><LockKeyhole className="h-3.5 w-3.5 mr-1" /> Mở lại xe này</Button>}
+              {/* 18/10 → 19/10 (user chốt "một nút workflow nhỏ, bấm mở popup bảng"): tình trạng xe đã chốt — ai làm, lúc nào, chứng từ, Mở sổ, "Đã giao" */}
+              {st === 'CONFIRMED' && <TripFlow code={t.group_code} label className="h-8" />}
             </div>
           </div>
         )}
-        {/* 18/10 (user: "xe đó đang ở tình trạng nào — bao gồm cả giao hàng"): hành trình đầy đủ của xe đã chốt, số chứng từ + nút Mở từng sổ */}
-        {st === 'CONFIRMED' && <TripFlow code={t.group_code} mode="full" />}
 
         <SettingsGroup title={`Bản đồ tuyến · ${t.stops} điểm giao`}>
           <TripRouteMap trip={t} planId={plan.id} />

@@ -3681,6 +3681,8 @@ function OrderDetailDialog({ order, onClose, warehouses, canUploadInbound, canEd
         <div className="px-4 pt-3 pb-2 border-b bg-white shrink-0 pr-10">
           <div className="flex items-center gap-2 flex-wrap mb-2">
             <span className="text-sm font-mono font-bold text-slate-800">{order.order_code || 'Chi tiết đơn'}</span>
+            {/* 19/10 (user chốt): nút workflow — popup bảng tình trạng xe (kế hoạch → giao hàng) + "Đã giao" cho tài xế / ĐVVT */}
+            {order.origin === 'KHVC' && !!order.order_code && <TripFlow code={order.order_code} label />}
             {order.direction === 'OUTBOUND' && <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-orange-100 text-orange-700">Xuất</span>}
             {order.direction === 'INBOUND'  && <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-teal-100 text-teal-700">Nhập</span>}
             {/* Nguồn lệnh (user chốt 03/08 vòng 2): TỪ Kế hoạch xuất = mặc định, KHÔNG badge;
@@ -3721,12 +3723,6 @@ function OrderDetailDialog({ order, onClose, warehouses, canUploadInbound, canEd
 
         {/* Body cuộn — Xe đặt khung giờ + Hàng hóa */}
         <div className="flex-1 min-h-0 overflow-auto p-4 space-y-5 text-xs">
-          {/* 18/10: HÀNH TRÌNH XE đầy đủ (kế hoạch → KH xuất → khung giờ → cổng → cân → xuất → ra cổng → giao) + nút "Đã giao" cho tài xế / ĐVVT */}
-          {order.origin === 'KHVC' && !!order.order_code && (
-            <section>
-              <TripFlow code={order.order_code} mode="full" />
-            </section>
-          )}
           {/* Vehicle slots */}
           <section>
             <p className="text-[9px] font-semibold uppercase tracking-wide text-slate-400 mb-2">Xe đặt khung giờ ({order.vehicle_slots.length})</p>
@@ -4534,8 +4530,8 @@ export default function TMSBookings() {
                             Lệnh TỪ Kế hoạch xuất = mặc định, KHÔNG badge; chỉ nguồn khác "(Excel)" + "KH đã bỏ". */}
                         <div className="flex items-center gap-1 min-w-0" title={order.order_code || undefined}>
                           <span className="truncate">{order.order_code || <span className="text-slate-400 font-normal">—</span>}</span>
-                          {/* 18/10: chuỗi tình trạng xe (kế hoạch → giao hàng) ngay cạnh mã lệnh — ĐVVT / tài xế thấy xe mình đang ở bước nào */}
-                          {order.origin === 'KHVC' && !!order.order_code && <TripFlow code={order.order_code} className="shrink-0" />}
+                          {/* 18/10 → 19/10: nút workflow nhỏ cạnh mã lệnh — bấm mở popup tình trạng xe (ĐVVT / tài xế thấy xe mình ở bước nào) */}
+                          {order.origin === 'KHVC' && !!order.order_code && <TripFlow code={order.order_code} />}
                           {order.plan_dropped ? (
                             <span className="shrink-0 px-1 py-0.5 rounded-full bg-slate-200 text-slate-600 font-sans font-semibold text-[9px] whitespace-nowrap"
                               title="Kế hoạch xuất đã bỏ Số xe này — lệnh ngừng hiệu lực, khung giờ đã nhả cho xe khác">KH đã bỏ</span>

@@ -242,9 +242,11 @@ function OutboundPane({ gdo, onClose }: { gdo: GDO; onClose: () => void }) {
           <StatusBadge tone={st.tone}>{st.label}</StatusBadge>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-600" title="Đóng"><X className="h-3.5 w-3.5" /></button>
         </div>
-        <div className={`mt-1 text-sm font-mono font-semibold leading-tight ${gdoRowText(gdo)}`}>{gdo.group_code}</div>
-        {/* 18/10: chuỗi tình trạng xe — kế hoạch · KH xuất · khung giờ · cổng · cân · xuất · ra cổng · giao; bấm chấm mở sổ đó */}
-        <TripFlow code={gdo.group_code} className="mt-1" />
+        <div className={`mt-1 flex items-center gap-1 text-sm font-mono font-semibold leading-tight ${gdoRowText(gdo)}`}>
+          <span className="min-w-0 truncate" title={gdo.group_code}>{gdo.group_code}</span>
+          {/* 18/10 → 19/10: nút workflow nhỏ — popup tình trạng xe (kế hoạch · KH xuất · khung giờ · cổng · cân · xuất · ra cổng · giao) */}
+          <TripFlow code={gdo.group_code} />
+        </div>
         <div className="text-[11px] text-slate-500 mt-1 truncate" title={npp}>NPP: <span className="font-medium text-slate-700">{npp}</span></div>
       </div>
 

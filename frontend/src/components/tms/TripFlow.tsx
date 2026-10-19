@@ -1,28 +1,32 @@
 // CHUỖI TÌNH TRẠNG XE — "document flow" kiểu SAP cho MỘT Số xe (18/10/2026, user: "tình trạng này xem được ở mọi nơi có liên quan,
 // bao gồm cả số chứng từ để khi cần đi search, và có thể mở ra nó từ đó — không chỉ tab Kế hoạch mà cả Xuất, Booking…").
-// Một component, hai dạng: `compact` = một hàng 8 chấm (bước đang đứng in chữ) đặt trên dòng bảng / thẻ xe; `full` = bảng dọc 8 bước
-// (số chứng từ · giờ · ai · ghi chú · nút Mở) cho panel chi tiết. Dữ liệu một nguồn: `useTripFlow(code)` (gom lô, realtime).
-// Bước "Đã giao" của đơn bán hàng có nút cho tài xế / ĐVVT / điều vận (quyền tms_plan.confirm_delivery) — chỉ khi chuyến đã xuất xong.
+// 19/10 (user chốt lại): KHÔNG trải chuỗi chấm trên dòng — mỗi chỗ cầm Số xe chỉ có MỘT NÚT WORKFLOW NHỎ (như nút workflow của SAP);
+// bấm thì mở popup một BẢNG 8 bước: bước · tình trạng · chứng từ · ai làm · lúc nào · ghi chú · nút Mở sang sổ đó.
+// Dữ liệu chỉ tải KHI MỞ popup (`useTripFlow(code, open)`) — bảng 50 dòng không tốn request nào cho tới khi có người bấm; realtime giữ
+// popup đang mở luôn đúng. Bước "Đã giao" của đơn bán hàng có nút cho tài xế / ĐVVT / điều vận (quyền tms_plan.confirm_delivery).
+import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import type { AxiosError } from 'axios'
-import { ClipboardList, FileCheck2, CalendarClock, LogIn, Scale, PackageMinus, LogOut, PackageCheck, ExternalLink, Undo2, type LucideIcon } from 'lucide-react'
+import { ClipboardList, FileCheck2, CalendarClock, LogIn, Scale, PackageMinus, LogOut, PackageCheck, ExternalLink, Undo2, Workflow, type LucideIcon } from 'lucide-react'
 import { useTripFlow, useConfirmDelivery, type TripFlow as Flow, type TripFlowStep, type TripFlowKey, type TripFlowState } from '@/api/hooks'
 import { useAuthStore } from '@/stores/authStore'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { useCanSeePath } from '@/hooks/useCanSeePath'
 import { useConfirmDialog } from '@/components/shared/ConfirmDialog'
+import { StatusBadge, type BadgeTone } from '@/components/shared/StatusBadge'
 import { Button } from '@/components/ui/button'
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
+import { TableBody, TableCell, TableRow } from '@/components/ui/table'
+import { ResizableTable, type RtColDef } from '@/components/shared/ResizableTable'
 import { toast } from '@/components/ui/use-toast'
 import { can } from '@/config/permissions'
 import { formatDateTime } from '@/utils/formatters'
 
 const ICON: Record<TripFlowKey, LucideIcon> = { PLAN: ClipboardList, KHVC: FileCheck2, BOOKING: CalendarClock, GATE_IN: LogIn, WEIGH: Scale, OUTBOUND: PackageMinus, GATE_OUT: LogOut, DELIVERED: PackageCheck }
 const NAME: Record<TripFlowKey, string> = { PLAN: 'Kế hoạch', KHVC: 'KH xuất', BOOKING: 'Khung giờ', GATE_IN: 'Vào cổng', WEIGH: 'Cân', OUTBOUND: 'Xuất kho', GATE_OUT: 'Ra cổng', DELIVERED: 'Giao hàng' }
-// tone theo NGỮ NGHĨA (StatusBadge): done = xanh lá · active = hổ phách · blocked = đỏ · pending = xám · off = xám nhạt gạch
-const DOT: Record<TripFlowState, string> = {
-  done: 'bg-green-500 text-white', active: 'bg-amber-400 text-amber-950 ring-2 ring-amber-200', pending: 'bg-slate-200 text-slate-500', off: 'bg-slate-100 text-slate-300', blocked: 'bg-red-500 text-white',
-}
-const TEXT: Record<TripFlowState, string> = { done: 'text-green-700', active: 'text-amber-700', pending: 'text-slate-500', off: 'text-slate-400 line-through', blocked: 'text-red-700' }
+const SHEET: Record<TripFlowKey, string> = { PLAN: 'Bàn ghép xe (Điều vận)', KHVC: 'Kế hoạch xuất', BOOKING: 'Đặt lịch (lệnh VC)', GATE_IN: 'Đăng ký cổng', WEIGH: 'Phiếu cân', OUTBOUND: 'Chuyến Xuất kho', GATE_OUT: 'Đăng ký cổng', DELIVERED: 'Tài xế / ĐVVT xác nhận (chuyển kho: kho nhận)' }
+// tone theo NGỮ NGHĨA (StatusBadge): done = xanh lá · active = hổ phách · blocked = đỏ · pending / off = xám
+const TONE: Record<TripFlowState, BadgeTone> = { done: 'green', active: 'amber', pending: 'slate', off: 'slate', blocked: 'red' }
 const PATH: Record<NonNullable<TripFlowStep['ref']>['kind'], string> = { plan: '/tms/dispatch', khvc: '/external', order: '/tms/bookings', gate: '/tms/gate', weigh: '/wms/weigh-tickets', gdo: '/wms/outbound', transfer: '/tms/bookings' }
 const apiMsg = (e: unknown) => (e as AxiosError<{ error?: { message?: string } }>)?.response?.data?.error?.message ?? 'Không thực hiện được'
 
@@ -48,12 +52,8 @@ function useOpenStep(flow: Flow | null | undefined) {
   }
 }
 
-function stepTip(s: TripFlowStep) {
-  return [`${NAME[s.key]}: ${s.label}`, s.doc ? `Chứng từ: ${s.doc}` : '', s.at ? `Lúc ${formatDateTime(s.at)}` : '', s.by ? `Bởi ${s.by}` : '', s.note ?? ''].filter(Boolean).join('\n')
-}
-
 /** Nút "Đã giao" / "Hoàn tác" cho đơn bán hàng — tài xế / ĐVVT / điều vận ghi hộ (quyền confirm_delivery), chỉ khi chuyến đã xuất xong. */
-function DeliverButton({ flow, size = 'sm' }: { flow: Flow; size?: 'sm' | 'xs' }) {
+function DeliverButton({ flow }: { flow: Flow }) {
   const user = useAuthStore(s => s.user)
   const perms = user?.module_permissions
   const [ask, confirmNode] = useConfirmDialog()
@@ -61,7 +61,6 @@ function DeliverButton({ flow, size = 'sm' }: { flow: Flow; size?: 'sm' | 'xs' }
   const d = flow.delivery
   if (d.kind !== 'SALES' || !d.slot_id || !can(perms, 'tms_plan', 'confirm_delivery')) return null
   if (!d.delivered_at && !d.ready) return null
-  const h = size === 'xs' ? 'h-6 text-[10px] px-1.5' : 'h-8 text-xs'
   const go = async () => {
     if (d.delivered_at) {
       if (await ask({ title: `Hoàn tác "Đã giao" của xe ${flow.group_code}?`, body: `Đã ghi bởi ${d.delivered_by ?? '—'} lúc ${d.delivered_at ? formatDateTime(d.delivered_at) : '—'}.`, danger: true, confirmLabel: 'Hoàn tác' }) === null) return
@@ -75,77 +74,96 @@ function DeliverButton({ flow, size = 'sm' }: { flow: Flow; size?: 'sm' | 'xs' }
   return (
     <>
       {d.delivered_at
-        ? <Button type="button" size="sm" variant="outline" className={`${h} border-slate-300 text-slate-600`} disabled={m.isPending} onClick={() => void go()} title="Bấm nhầm — gỡ mốc đã giao"><Undo2 className="mr-1 h-3 w-3" />Hoàn tác</Button>
-        : <Button type="button" size="sm" className={`${h} bg-green-600 hover:bg-green-700`} disabled={m.isPending} onClick={() => void go()} title="Tài xế / ĐVVT xác nhận hàng đã tới tay khách"><PackageCheck className="mr-1 h-3.5 w-3.5" />{m.isPending ? 'Đang ghi…' : 'Đã giao'}</Button>}
+        ? <Button type="button" size="sm" variant="outline" className="h-8 text-xs border-slate-300 text-slate-600" disabled={m.isPending} onClick={() => void go()} title="Bấm nhầm — gỡ mốc đã giao"><Undo2 className="mr-1 h-3 w-3" />Hoàn tác</Button>
+        : <Button type="button" size="sm" className="h-8 text-xs bg-green-600 hover:bg-green-700" disabled={m.isPending} onClick={() => void go()} title="Tài xế / ĐVVT xác nhận hàng đã tới tay khách"><PackageCheck className="mr-1 h-3.5 w-3.5" />{m.isPending ? 'Đang ghi…' : 'Đã giao'}</Button>}
       {confirmNode}
     </>
   )
 }
 
-/** Dạng GỌN — một hàng 8 chấm, bước đang đứng in chữ; bấm chấm = mở trang đích (nếu người xem mở được trang đó). */
-function Compact({ flow, className }: { flow: Flow; className?: string }) {
-  const open = useOpenStep(flow)
-  const cur = flow.current
-  return (
-    <span className={`inline-flex items-center gap-0.5 whitespace-nowrap align-middle ${className ?? ''}`} title={flow.steps.map(stepTip).join('\n\n')} data-trip-flow={flow.group_code}>
-      {flow.steps.map(s => {
-        const Icon = ICON[s.key]
-        const go = open(s)
-        const isCur = s.key === cur
-        const inner = <><Icon className="h-2.5 w-2.5" />{isCur && <span className="ml-0.5 text-[9px] font-semibold leading-none">{s.label}</span>}</>
-        const cls = `inline-flex h-4 items-center rounded-full px-1 ${DOT[s.state]} ${go ? 'cursor-pointer hover:ring-2 hover:ring-sky-300' : ''}`
-        return go
-          ? <button key={s.key} type="button" className={cls} title={stepTip(s)} aria-label={`${NAME[s.key]}: ${s.label} — mở`} onClick={e => { e.stopPropagation(); go() }}>{inner}</button>
-          : <span key={s.key} className={cls} title={stepTip(s)} aria-label={`${NAME[s.key]}: ${s.label}`}>{inner}</span>
-      })}
-    </span>
-  )
-}
+const TD = 'px-2 py-1 text-[11px] whitespace-nowrap truncate'
+const COLS: RtColDef[] = [
+  { id: 'step', label: 'Bước', w: 110 }, { id: 'state', label: 'Tình trạng', w: 120 }, { id: 'doc', label: 'Chứng từ', w: 150 },
+  { id: 'by', label: 'Người làm', w: 120 }, { id: 'at', label: 'Thời gian', w: 125 }, { id: 'note', label: 'Ghi chú', w: 200 }, { id: 'open', label: '', w: 48 },
+]
 
-/** Dạng ĐẦY ĐỦ — bảng dọc 8 bước: bước · tình trạng · số chứng từ · lúc · ai · ghi chú · Mở. */
-function Full({ flow, className }: { flow: Flow; className?: string }) {
+/** Bảng 8 bước trong popup: bước · tình trạng · chứng từ · người làm · thời gian · ghi chú · Mở. */
+function FlowTable({ flow, onNavigate }: { flow: Flow; onNavigate: () => void }) {
   const open = useOpenStep(flow)
   return (
-    <div className={`rounded-md border border-slate-200 bg-white ${className ?? ''}`} data-trip-flow={flow.group_code}>
-      <div className="flex items-center justify-between gap-2 border-b bg-slate-50 px-2 py-1">
-        <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Hành trình xe <span className="font-mono normal-case text-slate-700">{flow.group_code}</span></span>
-        <DeliverButton flow={flow} size="xs" />
-      </div>
-      <ol className="divide-y divide-slate-100">
+    <ResizableTable storageKey="trip_flow_v1" cols={COLS}>
+      <TableBody>
         {flow.steps.map(s => {
           const Icon = ICON[s.key]
           const go = open(s)
+          const cur = s.key === flow.current
+          const dim = s.state === 'off' || s.state === 'pending'
+          const bg = cur ? 'bg-amber-50' : 'bg-white'
           return (
-            <li key={s.key} className="flex items-start gap-2 px-2 py-1 text-[11px]">
-              <span className={`mt-0.5 inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full ${DOT[s.state]}`}><Icon className="h-2.5 w-2.5" /></span>
-              <div className="min-w-0 flex-1 leading-tight">
-                <div className="flex flex-wrap items-baseline gap-x-1.5">
-                  <span className="font-medium text-slate-700">{NAME[s.key]}</span>
-                  <span className={`font-semibold ${TEXT[s.state]}`}>{s.label}</span>
-                  {s.doc && <span className="font-mono text-[10px] text-slate-600">{s.doc}</span>}
-                  {go && <button type="button" className="inline-flex items-center gap-0.5 text-[10px] font-medium text-sky-700 hover:underline" onClick={go}><ExternalLink className="h-2.5 w-2.5" />Mở</button>}
-                </div>
-                {(s.at || s.by || s.note) && (
-                  <div className="text-[10px] text-slate-500">
-                    {s.at && <span className="font-mono">{formatDateTime(s.at)}</span>}{s.at && s.by && ' · '}{s.by}{(s.at || s.by) && s.note && ' · '}{s.note}
-                  </div>
-                )}
-              </div>
-            </li>
+            <TableRow key={s.key} className={bg} data-flow-step={s.key}>
+              <TableCell className={`${TD} sticky left-0 z-10 ${bg} font-medium ${dim ? 'text-slate-400' : 'text-slate-800'}`} title={SHEET[s.key]}>
+                <span className="inline-flex items-center gap-1.5"><Icon className="h-3 w-3" />{NAME[s.key]}</span>
+              </TableCell>
+              <TableCell className={TD}><StatusBadge tone={TONE[s.state]} className={s.state === 'off' ? 'line-through' : ''}>{s.label}</StatusBadge></TableCell>
+              <TableCell className={`${TD} font-mono font-semibold`} title={s.doc ?? undefined}>{s.doc ?? <span className="text-slate-300">—</span>}</TableCell>
+              <TableCell className={TD} title={s.by ?? undefined}>{s.by ?? <span className="text-slate-300">—</span>}</TableCell>
+              <TableCell className={`${TD} font-mono text-[10px]`}>{s.at ? formatDateTime(s.at) : <span className="text-slate-300">—</span>}</TableCell>
+              <TableCell className={`${TD} text-slate-500`} title={s.note ?? undefined}>{s.note ?? <span className="text-slate-300">—</span>}</TableCell>
+              <TableCell className={TD}>
+                {go && <button type="button" className="inline-flex items-center gap-0.5 text-[10px] font-medium text-sky-700 hover:underline" title={`Mở ${SHEET[s.key]} đúng Số xe / ngày này`} onClick={() => { onNavigate(); go() }}><ExternalLink className="h-2.5 w-2.5" />Mở</button>}
+              </TableCell>
+            </TableRow>
           )
         })}
-      </ol>
-    </div>
+      </TableBody>
+    </ResizableTable>
   )
 }
 
-export function TripFlow({ code, mode = 'compact', className, enabled = true }: { code: string | null | undefined; mode?: 'compact' | 'full'; className?: string; enabled?: boolean }) {
-  const q = useTripFlow(code, enabled)
-  if (!code || !enabled) return null
-  if (q.isError) return <span className={`text-[10px] text-red-600 ${className ?? ''}`} title={apiMsg(q.error)}>Không tải được hành trình</span>
-  if (!q.data) return q.isLoading ? <span className={`inline-block h-4 w-24 animate-pulse rounded bg-slate-100 ${className ?? ''}`} aria-label="Đang tải hành trình xe" /> : null
-  return mode === 'full' ? <Full flow={q.data} className={className} /> : <Compact flow={q.data} className={className} />
+/** Popup "Tình trạng xe": tải chuỗi KHI MỞ; realtime cập nhật khi bất kỳ sổ nào đổi. */
+function FlowDialog({ code, open, onOpenChange }: { code: string; open: boolean; onOpenChange: (v: boolean) => void }) {
+  const q = useTripFlow(code, open)
+  const f = q.data
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-3xl p-0 gap-0" data-trip-flow-dialog={code}>
+        <div className="px-4 pt-3 pb-2 pr-10 border-b">
+          <DialogTitle className="text-sm font-semibold text-slate-800">Tình trạng xe <span className="font-mono">{code}</span></DialogTitle>
+          <DialogDescription className="text-[11px] text-slate-500">Hành trình chứng từ của Số xe qua 8 sổ — mỗi dòng là một sổ, "Mở" đưa tới đúng dòng trong sổ đó.</DialogDescription>
+        </div>
+        <div className="overflow-x-auto">
+          {q.isError && <p className="px-4 py-3 text-xs text-red-600">Không tải được hành trình: {apiMsg(q.error)}</p>}
+          {!q.isError && !f && (q.isLoading ? <p className="px-4 py-3 text-xs text-slate-500">Đang tải…</p> : <p className="px-4 py-3 text-xs text-slate-500">Không có hành trình cho Số xe này (chưa vào kế hoạch hoặc ngoài phạm vi của bạn).</p>)}
+          {f && <FlowTable flow={f} onNavigate={() => onOpenChange(false)} />}
+        </div>
+        <div className="flex items-center justify-end gap-2 px-4 py-2 border-t bg-slate-50 rounded-b-xl">
+          {f && <DeliverButton flow={f} />}
+          <Button type="button" size="sm" variant="outline" className="h-8 text-xs" onClick={() => onOpenChange(false)}>Đóng</Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  )
 }
+
+/** NÚT WORKFLOW nhỏ (mặc định: chỉ icon 20 px đứng cạnh Số xe; `label` = nút có chữ cho panel / trang chi tiết). Bấm = mở popup bảng. */
+export function TripFlow({ code, label, className }: { code: string | null | undefined; label?: boolean; className?: string }) {
+  const [open, setOpen] = useState(false)
+  if (!code) return null
+  const cls = label
+    ? `inline-flex h-7 items-center gap-1 rounded-md border border-slate-300 bg-white px-2 text-xs font-medium text-slate-700 hover:bg-slate-50 ${className ?? ''}`
+    : `inline-flex h-5 w-5 shrink-0 items-center justify-center rounded text-sky-700 hover:bg-sky-100 align-middle ${className ?? ''}`
+  return (
+    <>
+      <button type="button" className={cls} title="Tình trạng xe — hành trình chứng từ (kế hoạch → KH xuất → khung giờ → cổng → cân → xuất kho → ra cổng → giao)" aria-label={`Tình trạng xe ${code}`} data-trip-flow={code}
+        onClick={e => { e.stopPropagation(); e.preventDefault(); setOpen(true) }}>
+        <Workflow className="h-3.5 w-3.5" />{label && 'Tình trạng xe'}
+      </button>
+      {/* popup portal ra body nhưng sự kiện React vẫn nổi lên dòng bảng / thẻ xe đang bọc nút ⇒ chặn tại đây (bấm trong popup không chọn dòng / mở chi tiết) */}
+      {open && <span className="contents" onClick={stop} onDoubleClick={stop} onPointerDown={stop} onMouseDown={stop}><FlowDialog code={code} open={open} onOpenChange={setOpen} /></span>}
+    </>
+  )
+}
+const stop = (e: { stopPropagation: () => void }) => e.stopPropagation()
 
 /** Tiến độ gộp của NHIỀU xe (tab Kế hoạch: một ngày / một kế hoạch): đếm theo bước đang đứng. */
 export function tripFlowProgress(flows: Flow[]): { total: number; shipped: number; delivered: number; inWh: number; booked: number; stuck: number } {

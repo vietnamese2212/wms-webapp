@@ -149,7 +149,8 @@ export function DispatchPlansTable({ plans, loading, error, currentPlanId, canPl
         ))}
       </div>
       <div className="min-h-0 flex-1 overflow-auto pb-20 lg:pb-0">
-        <ResizableTable storageKey={`dispatch_plans_v2${desktop ? '' : '_m'}`} cols={cols}>
+        {/* v3 (19/10): thêm cột "Tiến độ xe" — đổi khoá để bề rộng cột đã lưu không lệch cột (cột mới bị bóp còn vài chục px, chữ cắt) */}
+        <ResizableTable storageKey={`dispatch_plans_v3${desktop ? '' : '_m'}`} cols={cols}>
           <TableBody>
             {error && <TableEmptyRow colSpan={cols.length}><span className="text-red-600">Không tải được danh sách kế hoạch: {error}</span></TableEmptyRow>}
             {!error && loading && !rows.length && <TableEmptyRow colSpan={cols.length}>Đang tải…</TableEmptyRow>}

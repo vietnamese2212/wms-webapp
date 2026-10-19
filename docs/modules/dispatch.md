@@ -601,6 +601,20 @@ nào thì mở khoá xe đó. Cần 1 hướng nữa: kế hoạch làm nhầm, 
     chốt có "Đổi ngày đơn này" · hộp `DispatchMoveDateDialog` (ngày · lý do · câu nêu hệ quả). Tab Kế hoạch mặc định lọc "Tất cả".
   - **Tracking:** `GET /tms/trip-flow?codes=X&events=1` kèm 200 vết `outbound_events` mới nhất ⇒ popup tình trạng xe thêm bảng "Lịch sử
     thao tác" (thời gian · ai · việc · DO · chi tiết; nhãn `EVENT_VI`). Gói 61 **[11j]**.
+- **LỊCH SỬ XOÁ XE / BỎ–HUỶ KẾ HOẠCH (19/10, user hỏi "lịch sử đối với việc xoá chuyến, xoá kế hoạch thì sao"):** trước đó sổ vết chỉ ghi ở
+  các cửa chạm Kế hoạch xuất — xoá xe trống, bỏ nháp, huỷ kế hoạch, xe hết đơn bị bỏ KHÔNG có vết, và vết của xe đã bỏ không có chỗ xem (popup
+  tình trạng xe chỉ mở được khi xe còn trên bàn). Nay:
+  - **Vết mức xe:** `PLAN_TRIP_DELETED` (nút ✕ xoá xe trống) · `PLAN_TRIP_DISCARDED` (xe hết đơn khi kéo đơn ra / hoãn / Không điều / gỡ DO;
+    xe nháp bị bỏ khi bỏ nháp / huỷ kế hoạch) — ghi lên Số xe, nêu lý do. Máy ghép lại (Tối ưu lại dựng lại xe chưa khoá) KHÔNG ghi — đó là
+    sắp xếp lại, không phải xoá.
+  - **Vết mức kế hoạch** (`logPlanEvent`): `DISPATCH_PLAN_CREATED` (lập, kể cả tự lập khi dời ngày) · `_CONFIRMED` (n xe · n chờ ĐVVT) ·
+    `_REOPENED` (danh sách xe mở lại, có `force`) · `_DISCARDED` (bỏ cả / chỉ bỏ xe chưa chốt · n xe nháp bị bỏ). `group_code` = TIỀN TỐ Số
+    xe kho×ngày KHÔNG có STT (`<MãKho>_X_<ddmmyy>`) — hai mảng Bán hàng / Trung chuyển cùng tiền tố nên lịch sử là CỦA NGÀY.
+  - **Cửa đọc:** `GET /tms/dispatch/plans/:id/events` (`dispatch.view`) = mọi vết `tiền tố%` (vết kế hoạch + từng Số xe, kể cả xe đã bỏ /
+    đã xoá), mới nhất trước, limit khai 1.000 + `truncated`. Tab Kế hoạch: nút "Lịch sử" trên MỌI dòng (kể cả đã bỏ) → hộp "Lịch sử ngày"
+    (`FlowHistory` thêm cột Số xe; vết kế hoạch in "—"). Realtime `outbound_events` → key `trip-flow`. Gói 61 **[4d] [10f1] [15d3]**.
+  - Cùng lượt (user: "khung chờ khó nhìn, không nhìn được khách hàng"): khung chờ dạng Bảng đưa cột Khách lên NGAY SAU cột OD (trước Pallet ·
+    Tấn), dòng nhóm trải tên qua hai cột (`RowCells` nhận `span`) + "n OD" cuối tên; khoá bề rộng `dispatch_board_pool_v4`.
 - **MỘT Ổ KHOÁ (19/10, user: "hai cái khoá bản chất giống nhau — gộp làm một cho gọn"):** bỏ ổ khoá XANH (LockKeyhole) và chip chữ "Khoá";
   trên bàn (Thẻ + Bảng) mỗi xe chỉ một ổ khoá TÍM = "xe giữ nguyên". Xe nháp: bấm khoá / mở khoá (máy Tối ưu lại không đụng, người vẫn kéo
   được). Xe ĐÃ CHỐT: luôn hiện khoá (cả người cũng không kéo), trong chế độ Sửa bấm = Mở lại riêng xe đó (hỏi trước); panel xe nút "Mở lại xe

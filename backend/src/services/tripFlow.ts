@@ -31,8 +31,8 @@ export type TripFlow = {
   delivery: { kind: 'TRANSFER' | 'SALES'; slot_id: string | null; delivered_at: string | null; delivered_by: string | null; note: string | null; ready: boolean }
 }
 
-type TripRow = { id: string; group_code: string; status: string; plan_id: string; seq: number; confirmed_at: string | null; confirmed_by: string | null; created_at: string }
-type PlanRow = { id: string; plan_date: string; segment: string | null; warehouse_id: string; status: string }
+type TripRow = { id: string; group_code: string; status: string; plan_id: string; seq: number; confirmed_at: string | null; created_at: string }
+type PlanRow = { id: string; plan_date: string; segment: string | null; warehouse_id: string; status: string; confirmed_by: string | null }
 type KhvcRow = { group_code: string; export_date: string | null; uploaded_by: string | null; updated_at: string | null; source: string | null }
 type SlotRow = { id: string; order_id: string; slot_id: string | null; status: string; license_plate: string | null; driver_name: string | null; booked_by: string | null; updated_at: string
   gate_registration_id: string | null; delivered_at: string | null; delivered_by: string | null; delivery_note: string | null
@@ -52,7 +52,7 @@ export async function tripFlowOf(codes0: string[]): Promise<TripFlow[]> {
   const codes = uniq(codes0.map(c => c.trim()).filter(Boolean))
   if (!codes.length) return []
   const [trips, khvc, orders, gdos] = await Promise.all([
-    fetchAllByIdChunks(codes, c => db.from('dispatch_trip').select('id, group_code, status, plan_id, seq, confirmed_at, confirmed_by, created_at').in('group_code', c).neq('status', 'DISCARDED').order('created_at', { ascending: false })) as Promise<TripRow[]>,
+    fetchAllByIdChunks(codes, c => db.from('dispatch_trip').select('id, group_code, status, plan_id, seq, confirmed_at, created_at').in('group_code', c).neq('status', 'DISCARDED').order('created_at', { ascending: false })) as Promise<TripRow[]>,
     fetchAllByIdChunks(codes, c => db.from('khvc_lines').select('group_code, export_date, uploaded_by, updated_at, source').in('group_code', c).neq('sync_status', 'OBSOLETE').order('updated_at', { ascending: false })) as Promise<KhvcRow[]>,
     fetchAllByIdChunks(codes, c => db.from('TmsOrder')
       .select('id, order_code, date, status, plan_dropped, export_status, warehouse_id, ncc_id, source_type, vehicle_slots:TmsVehicleSlot(id, order_id, slot_id, status, license_plate, driver_name, booked_by, updated_at, gate_registration_id, delivered_at, delivered_by, delivery_note, slot:DeliverySlot!slot_id(time_from, time_to, date))')
@@ -68,7 +68,7 @@ export async function tripFlowOf(codes0: string[]): Promise<TripFlow[]> {
   const whIds = uniq([...[...gdoBy.values()].map(g => g.warehouse_id), ...[...orderBy.values()].map(o => o.warehouse_id)].filter((x): x is string => !!x))
   const planIds = uniq([...tripBy.values()].map(t => t.plan_id))
   const [plans, gates, weighs, whs, transfers] = await Promise.all([
-    planIds.length ? fetchAllByIdChunks(planIds, c => db.from('dispatch_plan').select('id, plan_date, segment, warehouse_id, status').in('id', c).order('id')) as Promise<PlanRow[]> : Promise.resolve([] as PlanRow[]),
+    planIds.length ? fetchAllByIdChunks(planIds, c => db.from('dispatch_plan').select('id, plan_date, segment, warehouse_id, status, confirmed_by').in('id', c).order('id')) as Promise<PlanRow[]> : Promise.resolve([] as PlanRow[]),
     gateIds.length ? fetchAllByIdChunks(gateIds, c => db.from('gate_registrations').select('id, registration_number, status, date, entry_at, exit_at, registered_at, entry_by, exit_by').in('id', c).order('id')) as Promise<GateRow[]> : Promise.resolve([] as GateRow[]),
     gdoIds.length ? fetchAllByIdChunks(gdoIds, c => db.from('WeighTicket').select('id, ticket_no, gdo_id, weigh_date, is_complete, in_time, out_time').in('gdo_id', c).order('in_time', { ascending: false })) as Promise<WeighRow[]> : Promise.resolve([] as WeighRow[]),
     whIds.length ? fetchAllByIdChunks(whIds, c => db.from('Warehouse').select('id, require_gate_on_start, require_weigh_on_start').in('id', c).order('id')) as Promise<WhRow[]> : Promise.resolve([] as WhRow[]),
@@ -97,7 +97,7 @@ export async function tripFlowOf(codes0: string[]): Promise<TripFlow[]> {
     // 1. KẾ HOẠCH (bàn ghép xe)
     steps.push(t && p
       ? { key: 'PLAN', state: t.status === 'CONFIRMED' ? 'done' : 'active', label: t.status === 'CONFIRMED' ? 'Đã chốt' : t.status === 'TENDERED' ? 'Chờ ĐVVT' : t.status === 'DECLINED' ? 'ĐVVT từ chối' : 'Nháp',
-          doc: `#${t.seq} · ${dmy(p.plan_date)}`, at: t.confirmed_at ?? t.created_at, by: t.confirmed_by, ref: { kind: 'plan', id: p.id, date: p.plan_date }, note: `Kế hoạch ${p.segment === 'TRANSFER' ? 'Trung chuyển' : 'Bán hàng'} ngày ${dmy(p.plan_date)} · xe #${t.seq}` }
+          doc: `#${t.seq} · ${dmy(p.plan_date)}`, at: t.confirmed_at ?? t.created_at, by: t.status === 'CONFIRMED' ? p.confirmed_by : null, ref: { kind: 'plan', id: p.id, date: p.plan_date }, note: `Kế hoạch ${p.segment === 'TRANSFER' ? 'Trung chuyển' : 'Bán hàng'} ngày ${dmy(p.plan_date)} · xe #${t.seq}` }
       : { key: 'PLAN', state: k || o || g ? 'off' : 'pending', label: k || o || g ? 'Không qua bàn' : 'Chưa lập', doc: null, at: null, by: null, ref: null, note: k || o || g ? 'Số xe nạp thẳng vào Kế hoạch xuất (Excel / tay), không qua bàn ghép xe' : null })
     // 2. KẾ HOẠCH XUẤT
     steps.push(k

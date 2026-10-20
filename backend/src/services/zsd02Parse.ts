@@ -157,6 +157,13 @@ const asJson = (v: unknown): Json => v as unknown as Json
 /** Phiên bản hình dạng `raw` — dòng NO-OP mà `raw._v` cũ hơn thì cửa nạp ghi lại RIÊNG `raw` (giữ updated_at),
  *  để sổ đã nạp trước bản vá cũng có đủ 79 cột cho panel chi tiết. Tăng khi đổi cách dựng raw. */
 export const RAW_VERSION = 2
+/** `raw._v` của dòng đã quá hạn giữ bản chép (cờ retention_days.sap_raw, RPC purge_sap_raw — 20/10): còn {_v:0, created_by}. */
+export const RAW_PURGED = 0
+/** Dòng NO-OP có cần ghi lại `raw`? Hình dạng cũ (thiếu `_v` / `_v` cũ) ⇒ có; đã dọn theo hạn giữ ⇒ KHÔNG (dựng lại là dọn xong lại phình). */
+export const rawNeedsRefresh = (rawV: unknown): boolean => {
+  const v = String(rawV ?? '')
+  return v !== String(RAW_VERSION) && v !== String(RAW_PURGED)
+}
 /** `raw` lưu trọn dòng theo key field; ô ngày về 'YYYY-MM-DD', ô trống bỏ (không lưu 26 chuỗi rỗng mỗi dòng). */
 function rawOf(r: Record<string, unknown>): Json {
   const out: Record<string, unknown> = { _v: RAW_VERSION }

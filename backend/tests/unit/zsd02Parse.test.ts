@@ -5,7 +5,7 @@ import { existsSync, readFileSync } from 'fs'
 import { resolve } from 'path'
 import * as XLSX from 'xlsx'
 import { parseSheetByHeader } from '../../src/utils/excelHeader'
-import { parseZsd02, resolveFlow, splitCodeName, wardCell, bizHash, ZSD02_FIELDS, ZSD02_BIZ, LOADABLE_FLOWS, type Flow, type Zsd02Mat } from '../../src/services/zsd02Parse'
+import { parseZsd02, resolveFlow, splitCodeName, wardCell, bizHash, rawNeedsRefresh, ZSD02_FIELDS, ZSD02_BIZ, LOADABLE_FLOWS, type Flow, type Zsd02Mat } from '../../src/services/zsd02Parse'
 
 const SAMPLE = resolve(__dirname, '../../../Du lieu mau/Du lieu sap zsd02.xlsx')
 const HAS_SAMPLE = existsSync(SAMPLE)
@@ -147,4 +147,12 @@ describe.skipIf(!HAS_SAMPLE)('zsd02Parse — file mẫu SAP 01–25/09/2026 (s�
     // biển số giữ NGUYÊN VĂN (ngoại lệ erp_outbound_orders.license_plate)
     expect(out.od.some(r => /[- ]|[a-z]/.test(String(r.license_plate ?? '')))).toBe(true)
   })
+})
+
+// 20/10: cửa nạp ghi lại RIÊNG raw cho dòng NO-OP có hình dạng raw cũ; raw đã dọn theo hạn giữ (cờ retention_days.sap_raw ⇒ {_v:0, created_by})
+// KHÔNG được dựng lại — nếu không, mỗi lần nạp lại ZSD02 (nhiều lần / ngày) là bản chép vừa dọn phình về như cũ.
+describe('rawNeedsRefresh — raw cũ thì ghi lại, raw đã dọn thì để yên', () => {
+  it('hình dạng hiện hành (_v 2) ⇒ không ghi lại', () => { expect(rawNeedsRefresh('2')).toBe(false); expect(rawNeedsRefresh(2)).toBe(false) })
+  it('đã dọn theo hạn giữ (_v 0) ⇒ KHÔNG dựng lại', () => { expect(rawNeedsRefresh('0')).toBe(false); expect(rawNeedsRefresh(0)).toBe(false) })
+  it('thiếu _v (trước 24/09) / _v cũ ⇒ ghi lại', () => { expect(rawNeedsRefresh(null)).toBe(true); expect(rawNeedsRefresh(undefined)).toBe(true); expect(rawNeedsRefresh('1')).toBe(true) })
 })

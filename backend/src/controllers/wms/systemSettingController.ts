@@ -44,8 +44,10 @@ import {
 // ── THAM SỐ VẬN HÀNH (đợt 2 chống hardcode 13/08) — mặc định + validator ở `utils/settings.ts`
 //    (MỘT nguồn: getter của consumer và validator của PUT dùng chung, không có bản chép tay).
 //    UI = tab "Hệ thống" trang Cài đặt WMS.
-// - retention_days: { photos, feed, error_logs, ledger } — số NGÀY giữ ảnh / thông báo cá nhân / log lỗi / sổ vết outbound_events
-//     (ledger 0 = giữ mãi; bật ⇒ tháng quá hạn được ghi CSV.gz lên bucket `ledger-archive` rồi xoá khỏi DB — services/ledgerArchive.ts, 20/10).
+// - retention_days: { photos, feed, error_logs, ledger, logs, sap_lines, sap_raw } — số NGÀY giữ ảnh / thông báo cá nhân / log lỗi /
+//     sổ vết outbound_events / nhật ký quản trị + cảnh báo đã đóng / dòng ZSD02–VL06O / bản chép `raw` của dòng SAP
+//     (4 cờ sau: 0 = giữ mãi; bật ⇒ tháng quá hạn được ghi CSV.gz lên bucket `ledger-archive` rồi xoá khỏi DB, riêng sap_raw chỉ gỡ
+//     bản chép — services/dataArchive.ts, 20/10).
 // - cycle_count: { A, B, C, window_days } — chu kỳ kiểm kê luân phiên theo hạng + cửa sổ phân hạng ABC.
 // - inbound_edit_window_days: số ngày người NHẬP còn tự sửa/xóa pallet của mình.
 // - packing_max_materials_per_run: số mã tối đa trên 1 trang sổ đóng gói.
@@ -144,7 +146,7 @@ const KNOWN_SETTINGS: Record<string, { validate: (v: unknown) => boolean; hint: 
   },
   retention_days: {
     validate: v => parseRetention(v) !== null,
-    hint: '{ photos: 7–730, feed: 1–90, error_logs: 7–365, ledger: 0 (giữ mãi) | 180–3650 } — số ngày, nguyên; ledger = sổ vết điều vận / chuyến (outbound_events) giữ trong DB, quá hạn lưu trữ ra Storage theo tháng',
+    hint: '{ photos: 7–730, feed: 1–90, error_logs: 7–365, ledger: 0 | 180–3650, logs: 0 | 180–3650, sap_lines: 0 | 365–3650, sap_raw: 0 | 7–365 } — số ngày, nguyên, 0 = giữ mãi; ledger = sổ vết điều vận, logs = nhật ký quản trị + cảnh báo đã đóng, sap_lines = dòng ZSD02 / VL06O (quá hạn lưu trữ ra Storage theo tháng rồi xoá khỏi DB), sap_raw = bản chép nguyên dòng SAP (quá hạn chỉ giữ cột đã tách)',
   },
   cycle_count: {
     validate: v => parseCycleCount(v) !== null,

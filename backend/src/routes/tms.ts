@@ -142,8 +142,7 @@ router.post('/dispatch/plans/:id/resync-od', requirePerm('dispatch', 'plan'),   
 router.post('/dispatch/plans/:id/reopen',     requirePerm('dispatch', 'confirm'), validate({ params: zIdParam, body: dispatch.zReopen }),        dispatch.reopenPlan)    // mở lại xe đã vào KH xuất (chuyến chưa bắt đầu)
 router.post('/dispatch/plans/:id/move-date',  requirePerm('dispatch', 'confirm'), validate({ params: zIdParam, body: dispatch.zMoveDate }),      dispatch.moveTripsDate) // 19/10: dời cả xe sang ngày khác (giữ Số xe, nhả khung giờ, dội chuyến + lệnh VC)
 router.get('/dispatch/history',               requirePerm('dispatch', 'view'),    validate({ query: dispatch.zHistoryQuery }),                   dispatch.dispatchHistory) // 20/10: Lịch sử điều vận của kho — vết kế hoạch + mọi Số xe (kể cả xe đã bỏ / xoá), phân trang + lọc
-// lưu trữ sổ vết ra Storage theo tháng (20/10, cờ retention_days.ledger) — việc nền do FE gọi sau khi tab hiện; danh sách tệp + vé tải
-router.post('/dispatch/history/archive',      requireAnyPerm(['dispatch', 'confirm'], ['wms_settings', 'manage_system']), validate({ body: ledger.zArchiveBody }), ledger.archiveLedger)
+// tệp sổ vết đã lưu trữ ra Storage (20/10, cờ retention_days.ledger) — danh sách + vé tải; việc lưu trữ ở POST /wms/maintenance/archive
 router.get('/dispatch/history/archives',      requirePerm('dispatch', 'view'),    ledger.listLedgerArchives)
 router.delete('/dispatch/trips/:id',          requirePerm('dispatch', 'plan'),    validate({ params: zIdParam }),                                dispatch.deleteTrip)
 router.post('/dispatch/trips/:id/settle',     requirePerm('dispatch', 'confirm'), validate({ params: zIdParam }),                                dispatch.settleTrip)    // chốt MỘT xe (kế hoạch đang chờ ĐVVT)

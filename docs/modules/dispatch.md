@@ -625,12 +625,14 @@ nào thì mở khoá xe đó. Cần 1 hướng nữa: kế hoạch làm nhầm, 
     thao tác" tối đa 1 năm, tìm chữ tối đa 3 tháng, không gửi "từ" ⇒ máy chủ tự lùi đúng trần; vượt ⇒ 400 `WINDOW_TOO_WIDE` nêu cách thu hẹp
     (không cắt âm thầm). **Lưu trữ ra Storage (20/10 chiều, user: "1,5–2 triệu dòng mà 1–2 GB là quá lớn — xử lý luôn"; đo lại: 305 B/dòng
     + ~250 B chỉ mục, ~280 MB/năm):** cờ `retention_days.ledger` (Cài đặt WMS › Hệ thống › "Sổ vết"; 0 = giữ mãi — MẶC ĐỊNH, bật thì
-    180–3650 ngày) ⇒ `services/ledgerArchive.ts` mỗi lượt lấy MỘT tháng cũ nhất quá hạn: đọc đủ dòng (phân trang 1.000), ghi
-    `ledger-archive/outbound_events/<YYYY-MM>.csv.gz` (bucket riêng tư, upsert) rồi mới XOÁ khỏi DB (`delete count exact` theo khoảng
-    created_at — không dính trần URL); GIỮ `QTY_REDUCED*` (RPC `service_level`). Kích hoạt: `POST /tms/dispatch/history/archive {max_months}`
-    (`dispatch.confirm` | `wms_settings.manage_system`) do FE tab Lịch sử gọi sau khi hiện, ≤ 1 lần/giờ/phiên — không ké GET; `GET
-    /tms/dispatch/history/archives` = danh sách tệp + vé tải 1 giờ (dải "Vết cũ đã lưu trữ" trên chân tab). Cùng lượt bỏ `idx_oev_do`
-    (không câu nào lọc theo do_number). Gói 61 **[4d] [4d2] [4d3] [10f1] [15d3]**.
+    180–3650 ngày) ⇒ tháng cũ nhất quá hạn ghi `ledger-archive/outbound_events/<YYYY-MM>[.pN].csv.gz` (bucket riêng tư) rồi mới XOÁ khỏi
+    DB; GIỮ `QTY_REDUCED*` (RPC `service_level`). `GET /tms/dispatch/history/archives` = danh sách tệp + vé tải 1 giờ (dải "Vết cũ đã lưu
+    trữ" trên chân tab). Cùng lượt bỏ `idx_oev_do` (không câu nào lọc theo do_number). **20/10 tối: việc lưu trữ chuyển sang BỘ BẢO TRÌ CHUNG**
+    (`services/dataArchive.ts`, xem `docs/modules/wms_settings.md`) — bản `ledgerArchive.ts` đọc theo OFFSET rồi xoá cả tháng, hai lượt chạy
+    chồng (hai người mở tab cùng lúc) là tệp thiếu dòng / ghi đè = mất dữ liệu; nay keyset + ổ khoá có token + xoá đúng khoảng đã ghi. Route
+    `POST /tms/dispatch/history/archive` BỎ; tab Lịch sử không tự chạy nữa (Header `DataArchiveTick` gọi `POST /wms/maintenance/archive`).
+    Đo thật sau khi nén bảng: 544 B/vết trong DB (dữ liệu + 4 chỉ mục), 54 B/vết trong tệp nén; staging hiện ~5 vết/ngày (đỉnh 175).
+    Gói 61 **[4d] [4d2] [4d3] [10f1] [15d3]**.
   - Cùng lượt (user: "khung chờ khó nhìn, không nhìn được khách hàng"): khung chờ dạng Bảng đưa cột Khách lên NGAY SAU cột OD (trước Pallet ·
     Tấn), dòng nhóm trải tên qua hai cột (`RowCells` nhận `span`) + "n OD" cuối tên; khoá bề rộng `dispatch_board_pool_v4`.
 - **SO TẠO SAU NGÀY ĐI HÀNG KHÔNG TỰ VÀO KẾ HOẠCH (20/10, user hỏi "upload kế hoạch ngày mới, sửa ngày cũ và Tối ưu ⇒ đơn ngày mới nhảy vào

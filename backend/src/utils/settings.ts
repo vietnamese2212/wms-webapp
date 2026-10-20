@@ -35,24 +35,38 @@ const int = (v: unknown, min: number, max: number): number | null =>
   typeof v === 'number' && Number.isInteger(v) && v >= min && v <= max ? v : null
 
 // ── retention_days — thời gian GIỮ dữ liệu ────────────────────────────────────
-export interface RetentionDays { photos: number; feed: number; error_logs: number; ledger: number }
+export interface RetentionDays { photos: number; feed: number; error_logs: number; ledger: number; logs: number; sap_lines: number; sap_raw: number }
 export const RETENTION_DEFAULT: RetentionDays = {
   photos: 60,      // ảnh check list xe nâng + ảnh chữ in phun sổ đóng gói (user chốt 31/07 & 11/08)
   feed: 3,         // thông báo đích danh trên nút chuông (user chốt 06/08)
   error_logs: 30,  // log lỗi phục vụ digest hằng ngày
   ledger: 0,       // sổ vết outbound_events giữ trong DB (20/10): 0 = giữ mãi; 180–3650 = quá hạn thì lưu trữ ra Storage theo tháng rồi xoá
+  // 20/10 (user "ok làm đi" sau khi đo cả DB) — services/dataArchive.ts; 0 = giữ mãi (hành vi cũ), người bật ở Cài đặt WMS › Hệ thống
+  logs: 0,         // nhật ký quản trị + cảnh báo đã đóng: 180–3650 ngày rồi lưu trữ ra tệp
+  sap_lines: 0,    // dòng ZSD02 / VL06O (erp_outbound_orders + erp_so_lines): 365–3650 ngày rồi lưu trữ ra tệp
+  sap_raw: 0,      // bản chép nguyên dòng SAP (`raw`, 76 % byte của dòng): 7–365 ngày rồi chỉ giữ cột đã tách
 }
+/** Cờ thời gian giữ có thể TẮT (0 = giữ mãi) — bật thì phải ≥ sàn: sổ kiểm toán / chứng từ không được xoá bản mới. */
+export const RETENTION_ARCHIVE_RANGE = { ledger: [180, 3650], logs: [180, 3650], sap_lines: [365, 3650], sap_raw: [7, 365] } as const
 export function parseRetention(raw: unknown): RetentionDays | null {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
   const o = raw as Record<string, unknown>
   if (Object.keys(o).some(k => !(k in RETENTION_DEFAULT))) return null
   const photos = int(o.photos, 7, 730), feed = int(o.feed, 1, 90), error_logs = int(o.error_logs, 7, 365)
-  // ledger: thiếu (bản lưu trước 20/10) = 0; 0 hợp lệ (tắt); bật thì tối thiểu 180 ngày — sổ kiểm toán, không cho xoá vết mới
-  const ledger = o.ledger === undefined ? 0 : int(o.ledger, 0, 3650)
-  if (ledger === null || (ledger > 0 && ledger < 180)) return null
-  return photos && feed && error_logs ? { photos, feed, error_logs, ledger } : null
+  // ledger / logs / sap_*: thiếu (bản lưu trước 20/10) = 0; 0 hợp lệ (tắt); bật thì trong khoảng RETENTION_ARCHIVE_RANGE
+  const off: Partial<Record<keyof typeof RETENTION_ARCHIVE_RANGE, number>> = {}
+  for (const [k, [lo, hi]] of Object.entries(RETENTION_ARCHIVE_RANGE) as [keyof typeof RETENTION_ARCHIVE_RANGE, readonly [number, number]][]) {
+    const v = o[k] === undefined ? 0 : int(o[k], 0, hi)
+    if (v === null || (v > 0 && v < lo)) return null
+    off[k] = v
+  }
+  return photos && feed && error_logs
+    ? { photos, feed, error_logs, ledger: off.ledger ?? 0, logs: off.logs ?? 0, sap_lines: off.sap_lines ?? 0, sap_raw: off.sap_raw ?? 0 }
+    : null
 }
 export const getRetentionDays = () => readSetting('retention_days', RETENTION_DEFAULT, parseRetention)
+/** Việc nền XOÁ dữ liệu đọc cờ MỚI NHẤT (bỏ cache 30 s): người vừa tắt cờ thì lượt sau không được xoá theo cờ cũ. */
+export const getRetentionDaysFresh = () => { cache.delete('retention_days'); return getRetentionDays() }
 
 // ── cycle_count — kiểm kê LUÂN PHIÊN theo hạng ABC ────────────────────────────
 export interface CycleCountCfg { A: number; B: number; C: number; window_days: number }

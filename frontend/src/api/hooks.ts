@@ -8351,20 +8351,34 @@ export function useDispatchHistory(p: DispatchHistoryParams, enabled = true) {
     queryFn: async () => (await apiClient.get('/tms/dispatch/history', { params: p })).data.data as { code: string; items: DispatchHistoryItem[]; total: number; page: number; page_size: number },
   })
 }
-/** Lưu trữ sổ vết (20/10): tệp CSV.gz theo tháng trong bucket `ledger-archive` + vé tải 1 giờ; việc lưu trữ do FE gọi sau khi tab hiện. */
-export type LedgerArchiveFile = { month: string; name: string; size: number | null; updated_at: string | null; url: string | null }
+/** Tệp đã lưu trữ (20/10): CSV.gz theo tháng (tháng lớn chia phần `.pN`) trong bucket `ledger-archive` + vé tải 1 giờ. */
+export type ArchiveFile = { month: string; part: number; name: string; size: number | null; updated_at: string | null; url: string | null }
 export function useLedgerArchives(enabled = true) {
   return useQuery({
     queryKey: ['dispatch-history', 'archives'], enabled, staleTime: 5 * 60_000,
-    queryFn: async () => (await apiClient.get('/tms/dispatch/history/archives')).data.data as { files: LedgerArchiveFile[] },
+    queryFn: async () => (await apiClient.get('/tms/dispatch/history/archives')).data.data as { files: ArchiveFile[] },
   })
 }
-export type LedgerArchiveResult = { status: 'off' } | { status: 'nothing'; cutoff: string } | { status: 'archived'; month: string; rows: number; deleted: number; path: string; cutoff: string }
-export function useArchiveLedger() {
+/** Bảo trì dữ liệu lớn theo năm (20/10): mọi sổ đã lưu trữ + lượt chạy gần nhất — chỉ quản trị hệ thống (wms_settings.manage_system). */
+export type DataArchiveTable = { table: string; label: string; group: string; files: ArchiveFile[] }
+export function useDataArchives(enabled = true) {
+  return useQuery({
+    queryKey: ['data-archives'], enabled, staleTime: 5 * 60_000,
+    queryFn: async () => (await apiClient.get('/wms/maintenance/archives')).data.data as { tables: DataArchiveTable[]; last_run_at: string | null; last_result: unknown },
+  })
+}
+export type DataArchiveRun = { status: 'busy' | 'recent' } | { status: 'ran'; ms: number; results: ({ table: string; status: string } | { task: 'sap_raw'; status: string })[] }
+/** Lượt bảo trì nền — gọi sau khi app đã hiện; máy chủ tự giãn 30 phút + ổ khoá (hai lượt không chạy chồng). */
+export function useRunDataArchive() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (max_months: number) => apiClient.post('/tms/dispatch/history/archive', { max_months }).then(r => r.data.data as { results: LedgerArchiveResult[] }),
-    onSuccess: d => { if (d.results.some(r => r.status === 'archived')) qc.invalidateQueries({ queryKey: ['dispatch-history'] }) },
+    mutationFn: () => apiClient.post('/wms/maintenance/archive', {}).then(r => r.data.data as DataArchiveRun),
+    onSuccess: d => {
+      if (d.status === 'ran' && d.results.some(r => r.status === 'archived')) {
+        qc.invalidateQueries({ queryKey: ['data-archives'] })
+        qc.invalidateQueries({ queryKey: ['dispatch-history'] })
+      }
+    },
   })
 }
 /** Tài xế / ĐVVT / điều vận xác nhận xe ĐÃ GIAO (undo = hoàn tác) — quyền tms_plan.confirm_delivery. */

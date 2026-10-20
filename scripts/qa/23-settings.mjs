@@ -4,7 +4,7 @@
 // (có sẵn thì PUT lại nguyên văn, chưa có thì PUT mặc định — ngữ nghĩa tương đương vì consumer
 // đọc mặc định khi chưa cấu hình). Kèm gác chung: key lạ → 400, thiếu token → 401,
 // cờ bí mật (vision_api) không lộ qua GET hở đọc.
-import { login, api, check, finish, BASE, restAll, restWrite } from './lib.mjs'
+import { login, api, check, finish, BASE, restAll, restWrite, ENV } from './lib.mjs'
 
 // So sánh GIÁ TRỊ, không so thứ tự khóa — jsonb của Postgres tự đảo thứ tự key khi lưu
 // ({photos,feed} lưu ra {feed,photos}), so JSON.stringify thô là fail oan (bắt lượt chạy đầu).
@@ -111,11 +111,17 @@ const before = new Map(((await api('/wms/settings', 'GET')).j?.data ?? []).map(s
 
 // Mỗi case: [key, giá trị hợp lệ ≠ mặc định, [các giá trị PHẢI bị 400], mặc định để khôi phục khi chưa có]
 const CASES = [
-  ['retention_days', { photos: 90, feed: 7, error_logs: 60 },
+  // 20/10: ledger / logs / sap_lines / sap_raw — 0 = giữ mãi, bật thì ≥ sàn (sổ kiểm toán không cho xoá bản mới)
+  ['retention_days', { photos: 90, feed: 7, error_logs: 60, ledger: 0, logs: 400, sap_lines: 800, sap_raw: 45 },
     [{ photos: 3, feed: 7, error_logs: 60 },              // photos < 7
      { photos: 90, feed: 7, error_logs: 60, la: 1 },      // khóa lạ
      { photos: 90.5, feed: 7, error_logs: 60 },           // không nguyên
-     { photos: 90, feed: 7 }],                            // thiếu khóa
+     { photos: 90, feed: 7 },                             // thiếu khóa
+     { photos: 90, feed: 7, error_logs: 60, logs: 100 },        // logs < 180
+     { photos: 90, feed: 7, error_logs: 60, sap_lines: 200 },   // sap_lines < 365
+     { photos: 90, feed: 7, error_logs: 60, sap_lines: 4000 },  // sap_lines > 3650
+     { photos: 90, feed: 7, error_logs: 60, sap_raw: 3 },       // sap_raw < 7
+     { photos: 90, feed: 7, error_logs: 60, sap_raw: -1 }],     // âm
     { photos: 60, feed: 3, error_logs: 30 }],
   ['cycle_count', { A: 5, B: 20, C: 60, window_days: 45 },
     [{ A: 30, B: 20, C: 60, window_days: 45 },            // A > B — đảo bản chất ABC
@@ -213,6 +219,100 @@ for (const [key, valid, invalids, def] of CASES) {
     ? { ...restore, TRIP_LATE_DAYS: 14 } : restore
   const rr = await api(`/wms/settings/${key}`, 'PUT', { value: restoreFull })
   check(`${key}: khôi phục giá trị ban đầu → 200`, rr.s === 200, `http=${rr.s}`)
+}
+
+// [archive] BẢO TRÌ DỮ LIỆU LỚN THEO NĂM (20/10, user "ok làm đi" sau khi đo cả DB): gieo dòng QA tháng 05/2014 ở 4 sổ (nhật ký quản trị,
+// cảnh báo đã đóng + một cảnh báo ĐANG MỞ, dòng ZSD02 OD / SO ở plant giả QA23P) + một dòng OD 60 ngày trước còn `raw`; cờ logs / sap_lines
+// 3650 (10 năm — không đụng dữ liệu thật) + sap_raw 30 ⇒ POST /wms/maintenance/archive {force}: 4 tệp 2014-05 trong bucket, dòng gieo bị
+// xoá, cảnh báo đang mở GIỮ, raw dòng 60 ngày còn {_v:0, created_by}, dòng 5 ngày giữ nguyên raw; GET archives liệt kê có vé tải, tệp
+// gunzip ra CSV đủ cột. Ổ KHOÁ: giữ khoá bằng token riêng ⇒ lượt chạy trả 'busy' và KHÔNG xoá gì; không force ngay sau một lượt ⇒ 'recent'.
+{
+  const { gunzipSync } = await import('zlib')
+  const { randomUUID } = await import('crypto')
+  const TAG = 'QA23ARC', PLANT = 'QA23P', MONTH = '2014-05', OLD = '2014-05-10T03:00:00.000Z'
+  const TABLES = ['admin_audit_events', 'alert_events', 'erp_outbound_orders', 'erp_so_lines']
+  const sto = (path, method = 'DELETE') => fetch(`${ENV.SUPABASE_URL}/storage/v1/object/ledger-archive/${path}`, { method, headers: { apikey: ENV.SUPABASE_SERVICE_ROLE_KEY, Authorization: `Bearer ${ENV.SUPABASE_SERVICE_ROLE_KEY}` } }).catch(() => null)
+  const cleanFiles = async () => { for (const t of TABLES) for (const n of [`${MONTH}.csv.gz`, `${MONTH}.p2.csv.gz`, `${MONTH}.p3.csv.gz`]) await sto(`${t}/${n}`) }
+  const cleanRows = async () => {
+    await restWrite('admin_audit_events', 'DELETE', `action=eq.${TAG}`).catch(() => {})
+    await restWrite('alert_events', 'DELETE', `rule=eq.${TAG}`).catch(() => {})
+    await restWrite('erp_outbound_orders', 'DELETE', `plant=eq.${PLANT}`).catch(() => {})
+    await restWrite('erp_so_lines', 'DELETE', `plant=eq.${PLANT}`).catch(() => {})
+  }
+  const runArc = async (body) => {   // lượt bảo trì của người dùng thật đang giữ khoá ⇒ chờ rồi thử lại (không đỏ oan)
+    for (let i = 0; ; i++) {
+      const r = await api('/wms/maintenance/archive', 'POST', body)
+      if (r.j?.data?.status !== 'busy' || i >= 4) return r
+      await new Promise(res => setTimeout(res, 4000))
+    }
+  }
+  await cleanRows(); await cleanFiles()
+  const retBefore = before.has('retention_days') ? before.get('retention_days') : { photos: 60, feed: 3, error_logs: 30 }
+  const base = { photos: 60, feed: 3, error_logs: 30, ...(retBefore && typeof retBefore === 'object' ? retBefore : {}) }
+  const now = new Date().toISOString(), d60 = new Date(Date.now() - 60 * 86_400_000).toISOString(), d5 = new Date(Date.now() - 5 * 86_400_000).toISOString()
+  const rawOld = { _v: 2, created_by: 'QA23USER', address: `${TAG} địa chỉ`, revenue_net: 1 }
+  await restWrite('admin_audit_events', 'POST', '', [{ id: randomUUID(), actor_name: TAG, action: TAG, target_type: 'qa', target_id: TAG, target_label: `${TAG} "có, phẩy"`, created_at: OLD }])
+  await restWrite('alert_events', 'POST', '', [
+    { id: randomUUID(), rule: TAG, dedup_key: `${TAG}:closed`, severity: 'WARNING', title: `${TAG} đã đóng`, first_seen: OLD, last_seen: OLD, resolved_at: OLD, created_at: OLD, updated_at: OLD },
+    { id: randomUUID(), rule: TAG, dedup_key: `${TAG}:open`, severity: 'WARNING', title: `${TAG} đang mở`, first_seen: OLD, last_seen: OLD, resolved_at: null, created_at: OLD, updated_at: OLD },
+  ])
+  await restWrite('erp_outbound_orders', 'POST', '', [
+    { id: randomUUID(), od_number: `${TAG}1`, od_item: '10', plant: PLANT, source: 'ZSD02', raw: rawOld, created_at: OLD, updated_at: OLD },
+    { id: randomUUID(), od_number: `${TAG}2`, od_item: '10', plant: PLANT, source: 'ZSD02', raw: rawOld, created_at: d60, updated_at: d60 },
+    { id: randomUUID(), od_number: `${TAG}3`, od_item: '10', plant: PLANT, source: 'ZSD02', raw: rawOld, created_at: d5, updated_at: d5 },
+  ])
+  await restWrite('erp_so_lines', 'POST', '', [{ id: randomUUID(), so_number: `${TAG}1`, so_item: '10', plant: PLANT, raw: rawOld, created_at: OLD, updated_at: OLD }])
+
+  const setOn = await api('/wms/settings/retention_days', 'PUT', { value: { ...base, logs: 3650, sap_lines: 3650, sap_raw: 30 } })
+  // ổ khoá: giữ bằng token của bộ kiểm ⇒ lượt chạy phải 'busy' và chưa xoá gì
+  let held = null
+  for (let i = 0; i < 5 && held !== 'taken'; i++) {
+    held = await restWrite('rpc/data_archive_take', 'POST', '', { p_token: TAG, p_lease_s: 60, p_min_gap_s: 0 }).catch(e => String(e))
+    if (held !== 'taken') await new Promise(res => setTimeout(res, 4000))
+  }
+  const busy = await api('/wms/maintenance/archive', 'POST', { force: true, tasks: ['logs', 'sap_lines', 'sap_raw'] })
+  const stillThere = (await restAll('admin_audit_events', `select=id&action=eq.${TAG}`)).length
+  await restWrite('rpc/data_archive_release', 'POST', '', { p_token: TAG, p_result: { qa: TAG } }).catch(() => {})
+  check('archive: ổ khoá đang bị giữ ⇒ lượt chạy trả busy, KHÔNG xoá gì (hai lượt chồng nhau là mất dữ liệu)',
+    held === 'taken' && busy.s === 200 && busy.j?.data?.status === 'busy' && stillThere === 1,
+    `held=${held} busy=${busy.s}/${busy.j?.data?.status} còn=${stillThere}`)
+
+  const run = await runArc({ force: true, tasks: ['logs', 'sap_lines', 'sap_raw'] })
+  const res = run.j?.data?.results ?? []
+  const arch = t => res.find(r => r.table === t && r.status === 'archived' && r.month === MONTH)
+  const left = {
+    audit: (await restAll('admin_audit_events', `select=id&action=eq.${TAG}`)).length,
+    alerts: (await restAll('alert_events', `select=dedup_key&rule=eq.${TAG}`)).map(a => a.dedup_key),
+    od: await restAll('erp_outbound_orders', `select=od_number,raw&plant=eq.${PLANT}&order=od_number`),
+    so: (await restAll('erp_so_lines', `select=id&plant=eq.${PLANT}`)).length,
+  }
+  const od2 = left.od.find(o => o.od_number === `${TAG}2`), od3 = left.od.find(o => o.od_number === `${TAG}3`)
+  const purge = res.find(r => r.task === 'sap_raw')
+  check('archive: logs + sap_lines 3650 ⇒ tháng 2014-05 của 4 sổ ghi tệp rồi xoá; cảnh báo ĐANG MỞ giữ; sap_raw 30 ⇒ dòng 60 ngày còn {_v:0, created_by}, dòng 5 ngày giữ raw',
+    setOn.s === 200 && run.s === 200 && run.j?.data?.status === 'ran' && TABLES.every(t => !!arch(t))
+      && left.audit === 0 && left.alerts.length === 1 && left.alerts[0] === `${TAG}:open` && left.so === 0
+      && !left.od.some(o => o.od_number === `${TAG}1`)
+      && JSON.stringify(od2?.raw) === JSON.stringify({ _v: 0, created_by: 'QA23USER' })
+      && od3?.raw?._v === 2 && od3?.raw?.address === rawOld.address && purge?.status === 'purged' && purge.od >= 1,
+    `http=${run.s} st=${run.j?.data?.status} ${run.j?.error?.message ?? ''} arch=${TABLES.map(t => `${t}:${arch(t)?.rows ?? '✗'}`).join(',')} left=${JSON.stringify({ ...left, od: left.od.map(o => `${o.od_number}:${JSON.stringify(o.raw).slice(0, 40)}`) })} purge=${JSON.stringify(purge)}`)
+
+  const list = await api('/wms/maintenance/archives')
+  const tab = t => (list.j?.data?.tables ?? []).find(x => x.table === t)
+  const fAudit = tab('admin_audit_events')?.files?.find(f => f.month === MONTH)
+  const dl = fAudit?.url ? await fetch(fAudit.url) : null
+  const csv = dl?.ok ? gunzipSync(Buffer.from(await dl.arrayBuffer())).toString('utf8') : ''
+  check('archive: GET /wms/maintenance/archives liệt kê tệp từng sổ có vé tải + lượt gần nhất; tệp nhật ký gunzip ra CSV có tiêu đề + dòng gieo (ô có dấu phẩy / ngoặc kép bọc chuẩn)',
+    list.s === 200 && TABLES.every(t => tab(t)?.files?.some(f => f.month === MONTH && !!f.url)) && !!list.j?.data?.last_run_at
+      && dl?.status === 200 && csv.startsWith('id,') && csv.includes('target_label') && csv.includes(`"${TAG} ""có, phẩy"""`),
+    `http=${list.s} files=${TABLES.map(t => `${t}:${(tab(t)?.files ?? []).length}`).join(',')} dl=${dl?.status} csv=${csv.slice(0, 80)}`)
+
+  const recent = await api('/wms/maintenance/archive', 'POST', {})
+  // 'busy' cũng là "không chạy" (lượt của người dùng thật đang giữ khoá) — điều phải gác là KHÔNG chạy lại ngay
+  check('archive: lượt tự động ngay sau một lượt ⇒ không chạy (recent — máy chủ giãn 30 phút)', recent.s === 200 && ['recent', 'busy'].includes(recent.j?.data?.status), `http=${recent.s} st=${recent.j?.data?.status}`)
+
+  const restore = await api('/wms/settings/retention_days', 'PUT', { value: retBefore })
+  check('archive: khôi phục retention_days → 200', restore.s === 200, `http=${restore.s}`)
+  await cleanRows(); await cleanFiles()
 }
 
 // mobile_surface CHỈ superadmin ghi (user chốt 21/09 "config bởi superadmin") — người có wms_settings.manage_system

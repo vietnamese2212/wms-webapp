@@ -19,7 +19,7 @@ import { sapScopeCheck, activateAwaitingForDos } from '../wms/outboundController
 import { loadSapFlowMap, makeDvvtResolver } from '../../services/sapFlow'
 import { upsertCustomerGeo } from '../../services/customerGeo'
 import { autoApplyAfterConfigChange, warehousesWithPolicyOn } from '../../services/dateRuleApply'
-import { parseZsd02, bizHash, isFlow, ZSD02_FIELDS, ZSD02_BIZ, SO_BIZ, LOADABLE_FLOWS, RAW_VERSION, type Zsd02Mat, type OdRecord } from '../../services/zsd02Parse'
+import { parseZsd02, bizHash, isFlow, ZSD02_FIELDS, ZSD02_BIZ, SO_BIZ, LOADABLE_FLOWS, rawNeedsRefresh, type Zsd02Mat, type OdRecord } from '../../services/zsd02Parse'
 import { allowedPlants, plantOrFilter } from './erpOrderController'
 import { findReplacedOds, holdsToCarry, type ReplaceCandidate, type HoldRow } from '../../services/dispatchPool'
 
@@ -146,9 +146,10 @@ export async function uploadZsd02(req: Request, res: Response) {
     // SỔ OD: giữ id · NO-OP theo bizHash · OBSOLETE dòng SAP bỏ trong DO có mặt
     const odNumbers = [...new Set(out.od.map(r => String(r.od_number)))]
     // `raw_v` = raw->>'_v': dòng NO-OP mà hình dạng `raw` cũ (thiếu 26 cột chỉ sống trong raw, 24/09) thì ghi lại
-    // RIÊNG raw GIỮ updated_at — không tính "cập nhật", không kích reconcile (nghiệp vụ không đổi).
+    // RIÊNG raw GIỮ updated_at — không tính "cập nhật", không kích reconcile (nghiệp vụ không đổi). Raw đã dọn theo hạn giữ (_v 0, 20/10)
+    // thì KHÔNG dựng lại.
     type PriorRow = Record<string, unknown> & { id: string; sync_status: string | null; updated_at: string | null; raw_v: string | null }
-    const rawStale = (p: PriorRow) => String(p.raw_v ?? '') !== String(RAW_VERSION)
+    const rawStale = (p: PriorRow) => rawNeedsRefresh(p.raw_v)
     const priorOd = await fetchAllByIdChunks(odNumbers, chunk => db.from('erp_outbound_orders')
       .select('id, od_number, od_item, sync_status, updated_at, raw_v:raw->>_v, ' + ZSD02_BIZ.join(', '))
       .in('od_number', chunk).order('id')) as unknown as (PriorRow & { od_number: string; od_item: string })[]

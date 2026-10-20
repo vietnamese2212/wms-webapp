@@ -84,6 +84,12 @@ export function SapLineDetailSheet({ row, kind, onClose }: { row: SapLine | null
             </SheetHeader>
 
             <div className="flex-1 overflow-y-auto px-4 py-3 space-y-4">
+              {/* 20/10: bản chép nguyên dòng SAP chỉ giữ theo cờ retention_days.sap_raw — quá hạn còn {_v:0, created_by} */}
+              {raw._v === 0 && (
+                <p className="rounded border border-amber-200 bg-amber-50 px-2 py-1.5 text-[11px] text-amber-800">
+                  Dòng đã quá hạn giữ bản chép SAP (Cài đặt WMS › Hệ thống › Bản chép SAP): chỉ còn các cột đã tách; doanh số, hoá đơn, số còn lại… xem lại trên SAP.
+                </p>
+              )}
               <Section title="Đơn hàng SAP" rows={[
                 M('SO/PO SAP', 'so_number'),
                 S('Item SO', 'so_item'),

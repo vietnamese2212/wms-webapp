@@ -1,5 +1,5 @@
 // FILE SINH TỰ ĐỘNG — `node scripts/gen-db-types.mjs` (từ information_schema STAGING). KHÔNG sửa tay.
-// Sinh lúc 2026-10-20T02:24:56.459Z · 115 bảng/view · 194 hàm · 0 enum
+// Sinh lúc 2026-10-20T07:23:34.176Z · 104 bảng/view · 201 hàm · 0 enum
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[]
 
 export type Database = {
@@ -3293,6 +3293,33 @@ export type Database = {
         }
         Relationships: []
       }
+      data_archive_state: {
+        Row: {
+          id: string
+          lease_until: string | null
+          lease_token: string | null
+          last_run_at: string | null
+          last_result: Json | null
+          updated_at: string
+        }
+        Insert: {
+          id: string
+          lease_until?: string | null
+          lease_token?: string | null
+          last_run_at?: string | null
+          last_result?: Json | null
+          updated_at: string
+        }
+        Update: {
+          id?: string
+          lease_until?: string | null
+          lease_token?: string | null
+          last_run_at?: string | null
+          last_result?: Json | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
       date_rule_master: {
         Row: {
           id: string
@@ -5756,366 +5783,6 @@ export type Database = {
         }
         Relationships: []
       }
-      x_bak_20260826_max_materials: {
-        Row: {
-          nguon: string | null
-          ban_ghi: string | null
-          ten: string | null
-          gia_tri_cu: number | null
-        }
-        Insert: {
-          nguon?: string | null
-          ban_ghi?: string | null
-          ten?: string | null
-          gia_tri_cu?: number | null
-        }
-        Update: {
-          nguon?: string | null
-          ban_ghi?: string | null
-          ten?: string | null
-          gia_tri_cu?: number | null
-        }
-        Relationships: []
-      }
-      x_bak_jobtitle_perms_20260912i: {
-        Row: {
-          id: string | null
-          name: string | null
-          module_permissions: Json | null
-          backed_up_at: string | null
-        }
-        Insert: {
-          id?: string | null
-          name?: string | null
-          module_permissions?: Json | null
-          backed_up_at?: string | null
-        }
-        Update: {
-          id?: string | null
-          name?: string | null
-          module_permissions?: Json | null
-          backed_up_at?: string | null
-        }
-        Relationships: []
-      }
-      x_bak_order_dup_20260725: {
-        Row: {
-          id: string | null
-          order_code: string | null
-          date: string | null
-          warehouse_id: string | null
-          ncc_id: string | null
-          npp_name: string | null
-          vehicle_type: string | null
-          direction: string | null
-          warehouse_type: string | null
-          planned_boxes: number | null
-          planned_pallets: number | null
-          planned_tons: number | null
-          gdo_refs: string | null
-          notes: string | null
-          status: string | null
-          created_by: string | null
-          updated_by: string | null
-          created_at: string | null
-          updated_at: string | null
-          priority: boolean | null
-          export_status: string | null
-          material_id: string | null
-          po_number: string | null
-          is_unplanned: boolean | null
-          source_type: string | null
-          transfer_gdo_id: string | null
-          destination_warehouse_id: string | null
-          eta: string | null
-          completed_at: string | null
-          delivery_mode: string | null
-        }
-        Insert: {
-          id?: string | null
-          order_code?: string | null
-          date?: string | null
-          warehouse_id?: string | null
-          ncc_id?: string | null
-          npp_name?: string | null
-          vehicle_type?: string | null
-          direction?: string | null
-          warehouse_type?: string | null
-          planned_boxes?: number | null
-          planned_pallets?: number | null
-          planned_tons?: number | null
-          gdo_refs?: string | null
-          notes?: string | null
-          status?: string | null
-          created_by?: string | null
-          updated_by?: string | null
-          created_at?: string | null
-          updated_at?: string | null
-          priority?: boolean | null
-          export_status?: string | null
-          material_id?: string | null
-          po_number?: string | null
-          is_unplanned?: boolean | null
-          source_type?: string | null
-          transfer_gdo_id?: string | null
-          destination_warehouse_id?: string | null
-          eta?: string | null
-          completed_at?: string | null
-          delivery_mode?: string | null
-        }
-        Update: {
-          id?: string | null
-          order_code?: string | null
-          date?: string | null
-          warehouse_id?: string | null
-          ncc_id?: string | null
-          npp_name?: string | null
-          vehicle_type?: string | null
-          direction?: string | null
-          warehouse_type?: string | null
-          planned_boxes?: number | null
-          planned_pallets?: number | null
-          planned_tons?: number | null
-          gdo_refs?: string | null
-          notes?: string | null
-          status?: string | null
-          created_by?: string | null
-          updated_by?: string | null
-          created_at?: string | null
-          updated_at?: string | null
-          priority?: boolean | null
-          export_status?: string | null
-          material_id?: string | null
-          po_number?: string | null
-          is_unplanned?: boolean | null
-          source_type?: string | null
-          transfer_gdo_id?: string | null
-          destination_warehouse_id?: string | null
-          eta?: string | null
-          completed_at?: string | null
-          delivery_mode?: string | null
-        }
-        Relationships: []
-      }
-      x_bak_plan_dup_20260725: {
-        Row: {
-          id: string | null
-          date: string | null
-          warehouse_id: string | null
-          warehouse_type: string | null
-          vehicle_type: string | null
-          ncc_id: string | null
-          material_id: string | null
-          po_number: string | null
-          planned_boxes: number | null
-          planned_pallets: number | null
-          tms_order_id: string | null
-          created_by: string | null
-          updated_by: string | null
-          created_at: string | null
-          updated_at: string | null
-          status: string | null
-          cancel_reason: string | null
-        }
-        Insert: {
-          id?: string | null
-          date?: string | null
-          warehouse_id?: string | null
-          warehouse_type?: string | null
-          vehicle_type?: string | null
-          ncc_id?: string | null
-          material_id?: string | null
-          po_number?: string | null
-          planned_boxes?: number | null
-          planned_pallets?: number | null
-          tms_order_id?: string | null
-          created_by?: string | null
-          updated_by?: string | null
-          created_at?: string | null
-          updated_at?: string | null
-          status?: string | null
-          cancel_reason?: string | null
-        }
-        Update: {
-          id?: string | null
-          date?: string | null
-          warehouse_id?: string | null
-          warehouse_type?: string | null
-          vehicle_type?: string | null
-          ncc_id?: string | null
-          material_id?: string | null
-          po_number?: string | null
-          planned_boxes?: number | null
-          planned_pallets?: number | null
-          tms_order_id?: string | null
-          created_by?: string | null
-          updated_by?: string | null
-          created_at?: string | null
-          updated_at?: string | null
-          status?: string | null
-          cancel_reason?: string | null
-        }
-        Relationships: []
-      }
-      x_bak_tmsorder_decimalfix_20260729: {
-        Row: {
-          id: string | null
-          order_code: string | null
-          planned_pallets: number | null
-          planned_tons: number | null
-          backed_at: string | null
-        }
-        Insert: {
-          id?: string | null
-          order_code?: string | null
-          planned_pallets?: number | null
-          planned_tons?: number | null
-          backed_at?: string | null
-        }
-        Update: {
-          id?: string | null
-          order_code?: string | null
-          planned_pallets?: number | null
-          planned_tons?: number | null
-          backed_at?: string | null
-        }
-        Relationships: []
-      }
-      x_bak_tmsorder_status_20260907: {
-        Row: {
-          id: string | null
-          status: string | null
-          completed_at: string | null
-          updated_at: string | null
-        }
-        Insert: {
-          id?: string | null
-          status?: string | null
-          completed_at?: string | null
-          updated_at?: string | null
-        }
-        Update: {
-          id?: string | null
-          status?: string | null
-          completed_at?: string | null
-          updated_at?: string | null
-        }
-        Relationships: []
-      }
-      x_flip_bak_adjustment_log: {
-        Row: {
-          id: string | null
-          delta: number | null
-          cartons_before: number | null
-          cartons_after: number | null
-        }
-        Insert: {
-          id?: string | null
-          delta?: number | null
-          cartons_before?: number | null
-          cartons_after?: number | null
-        }
-        Update: {
-          id?: string | null
-          delta?: number | null
-          cartons_before?: number | null
-          cartons_after?: number | null
-        }
-        Relationships: []
-      }
-      x_flip_bak_inbound_plan_lines: {
-        Row: {
-          id: string | null
-          planned_boxes: number | null
-        }
-        Insert: {
-          id?: string | null
-          planned_boxes?: number | null
-        }
-        Update: {
-          id?: string | null
-          planned_boxes?: number | null
-        }
-        Relationships: []
-      }
-      x_flip_bak_inventory_entry: {
-        Row: {
-          id: string | null
-          cartons_imported: number | null
-          cartons_remaining: number | null
-          cartons_reserved: number | null
-          adjustment_qty: number | null
-        }
-        Insert: {
-          id?: string | null
-          cartons_imported?: number | null
-          cartons_remaining?: number | null
-          cartons_reserved?: number | null
-          adjustment_qty?: number | null
-        }
-        Update: {
-          id?: string | null
-          cartons_imported?: number | null
-          cartons_remaining?: number | null
-          cartons_reserved?: number | null
-          adjustment_qty?: number | null
-        }
-        Relationships: []
-      }
-      x_flip_bak_outbound_item: {
-        Row: {
-          id: string | null
-          cartons_ordered: number | null
-          cartons_scanned: number | null
-          loose_picking: number | null
-        }
-        Insert: {
-          id?: string | null
-          cartons_ordered?: number | null
-          cartons_scanned?: number | null
-          loose_picking?: number | null
-        }
-        Update: {
-          id?: string | null
-          cartons_ordered?: number | null
-          cartons_scanned?: number | null
-          loose_picking?: number | null
-        }
-        Relationships: []
-      }
-      x_flip_bak_outbound_scan_entry: {
-        Row: {
-          id: string | null
-          cartons_scanned: number | null
-        }
-        Insert: {
-          id?: string | null
-          cartons_scanned?: number | null
-        }
-        Update: {
-          id?: string | null
-          cartons_scanned?: number | null
-        }
-        Relationships: []
-      }
-      x_flip_bak_production_import: {
-        Row: {
-          id: string | null
-          planned_cartons: number | null
-          posm_cartons: number | null
-        }
-        Insert: {
-          id?: string | null
-          planned_cartons?: number | null
-          posm_cartons?: number | null
-        }
-        Update: {
-          id?: string | null
-          planned_cartons?: number | null
-          posm_cartons?: number | null
-        }
-        Relationships: []
-      }
       x_seed_manifest: {
         Row: {
           tbl: string
@@ -6152,6 +5819,22 @@ export type Database = {
       }
       alerts_packing_unreceived: {
         Args: { p_hours?: number | null; p_window_days?: number | null }
+        Returns: Record<string, unknown>[]
+      }
+      archive_delete: {
+        Args: { p_table: string | null; p_from: string | null; p_to: string | null; p_first_ts: string | null; p_first_id: string | null; p_last_ts: string | null; p_last_id: string | null; p_expected: number | null }
+        Returns: number
+      }
+      archive_fetch: {
+        Args: { p_table: string | null; p_from: string | null; p_to: string | null; p_after_ts: string | null; p_after_id: string | null; p_limit: number | null }
+        Returns: Json
+      }
+      archive_oldest: {
+        Args: { p_table: string | null }
+        Returns: string
+      }
+      archive_spec: {
+        Args: { p_table: string | null }
         Returns: Record<string, unknown>[]
       }
       auth_throttle: {
@@ -6229,6 +5912,14 @@ export type Database = {
       dashboard_stats: {
         Args: { p_warehouse_ids?: unknown | null; p_categories?: unknown | null; p_today?: string | null }
         Returns: Json
+      }
+      data_archive_release: {
+        Args: { p_token: string | null; p_result: Json | null }
+        Returns: undefined
+      }
+      data_archive_take: {
+        Args: { p_token: string | null; p_lease_s: number | null; p_min_gap_s?: number | null }
+        Returns: string
       }
       date_rule_categories: {
         Args: Record<PropertyKey, never>
@@ -6658,6 +6349,10 @@ export type Database = {
         Args: { p_wh_scope: unknown | null; p_cat_scope: unknown | null; p_from: string | null; p_to: string | null; p_search: string | null; p_modes: unknown | null; p_materials: unknown | null; p_cycles: unknown | null; p_machines: unknown | null; p_printers: unknown | null; p_offset: number | null; p_limit: number | null }
         Returns: Json
       }
+      purge_sap_raw: {
+        Args: { p_before: string | null; p_limit?: number | null }
+        Returns: Json
+      }
       putaway_slot_facts: {
         Args: { p_loc_ids: unknown | null; p_material_id?: string | null; p_with_lots?: boolean | null; p_with_mats?: boolean | null }
         Returns: Record<string, unknown>[]
@@ -6803,7 +6498,7 @@ export type Database = {
         Returns: boolean
       }
       unaccent: {
-        Args: { arg1: string | null } | { arg1: unknown | null; arg2: string | null }
+        Args: { arg1: unknown | null; arg2: string | null } | { arg1: string | null }
         Returns: string
       }
       unaccent_init: {

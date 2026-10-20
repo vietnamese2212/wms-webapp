@@ -34,7 +34,7 @@ import {
   useWarehouseZones, useCreateWarehouseZone, useUpdateWarehouseZone, useDeleteWarehouseZone,
   useImportShifts, useCreateImportShift, useUpdateImportShift,
   useQAStatuses, useCreateQAStatus, useUpdateQAStatus,
-  useSystemSettings, useUpdateSystemSetting,
+  useSystemSettings, useUpdateSystemSetting, useDataArchives,
   useMachines, useCreateMachine, useUpdateMachine, useDeleteMachine, type WarehouseMachine,
   useUnits, useAddUnit, useUpdateUnit, useDeleteUnit,
   useStorageConditions, useAddStorageCondition, useUpdateStorageCondition, useDeleteStorageCondition, conditionLabel,
@@ -103,7 +103,9 @@ function parseDc(v: unknown): DeliveryConf {
 }
 
 // ── Tham số vận hành (đợt 2 chống hardcode 13/08) — MIRROR mặc định BE utils/settings.ts ──
-const RET_DEFAULT = { photos: 60, feed: 3, error_logs: 30, ledger: 0 }   // ledger (20/10): sổ vết điều vận — 0 = giữ mãi, 180–3650 = lưu trữ ra Storage theo tháng
+// ledger / logs / sap_lines / sap_raw (20/10): 0 = giữ mãi; bật thì trong khoảng RET_ARCHIVE_RANGE (MIRROR RETENTION_ARCHIVE_RANGE của BE)
+const RET_DEFAULT = { photos: 60, feed: 3, error_logs: 30, ledger: 0, logs: 0, sap_lines: 0, sap_raw: 0 }
+const RET_ARCHIVE_RANGE = { ledger: [180, 3650], logs: [180, 3650], sap_lines: [365, 3650], sap_raw: [7, 365] } as const
 const CYC_DEFAULT = { A: 7, B: 30, C: 90, window_days: 30 }
 const INB_WINDOW_DEFAULT = 2
 const PACK_MAX_DEFAULT = 10
@@ -290,6 +292,31 @@ function HolidayEditor({ value, onChange, readOnly }: {
   )
 }
 
+/** Tệp đã lưu trữ theo từng sổ (20/10) — vé tải 1 giờ; lượt bảo trì nền chạy tự động (DataArchiveTick), ở đây chỉ xem + tải. */
+function ArchivedFiles() {
+  const q = useDataArchives()
+  const tables = (q.data?.tables ?? []).filter(t => t.files.length)
+  return (
+    <div className="space-y-1 text-[10px] text-slate-600" data-archived-files>
+      <SettingLabel text="Đã lưu trữ ra tệp" tip="Tệp CSV nén gzip theo tháng (tháng lớn chia phần #2, #3…). Bấm để tải — liên kết sống 1 giờ. Lượt lưu trữ chạy nền khi người quản trị / điều vận mở app, tối đa 2 lượt mỗi giờ." />
+      {q.isError ? <p className="text-red-600">Không tải được danh sách tệp.</p>
+        : !tables.length ? <p className="text-slate-400">{q.isLoading ? 'Đang tải…' : 'Chưa có tệp nào.'}</p>
+        : tables.map(t => (
+          <div key={t.table} className="flex flex-wrap items-center gap-1">
+            <span className="mr-1 font-medium text-slate-700">{t.label}:</span>
+            {t.files.map(f => {
+              const label = f.part > 1 ? `${f.month} #${f.part}` : f.month
+              return f.url
+                ? <a key={f.name} href={f.url} download className="rounded border border-slate-200 bg-white px-1.5 py-0.5 font-mono text-sky-700 hover:underline" title={`Tải ${f.name}`}>{label}</a>
+                : <span key={f.name} className="font-mono">{label}</span>
+            })}
+          </div>
+        ))}
+      {q.data?.last_run_at && <p className="text-slate-400">Lượt bảo trì gần nhất: {formatDateTime(q.data.last_run_at)}</p>}
+    </div>
+  )
+}
+
 function SystemTab({ canManage, superadmin }: { canManage: boolean; superadmin: boolean }) {
   const { data: settings = [], isLoading } = useSystemSettings()
   const { mutateAsync: save, isPending } = useUpdateSystemSetting()
@@ -396,14 +423,17 @@ function SystemTab({ canManage, superadmin }: { canManage: boolean; superadmin: 
   async function applyChanges() {
     setErr('')
     // Kiểm nhanh phía FE (khoảng hợp lệ MIRROR validator BE) — chặn sớm cho thông báo rõ; BE vẫn là chốt cuối
-    let ret: { photos: number; feed: number; error_logs: number; ledger: number } | null = null
+    let ret: typeof RET_DEFAULT | null = null
     let cyc: { A: number; B: number; C: number; window_days: number } | null = null
     let inb: number | null = null, pack: number | null = null
     if (retDirty) {
       const photos = intIn(draftRet.photos, 7, 730), feed = intIn(draftRet.feed, 1, 90), error_logs = intIn(draftRet.error_logs, 7, 365)
-      const ledger = intIn(draftRet.ledger, 0, 3650)   // 0 hợp lệ = giữ mãi
-      if (!photos || !feed || !error_logs || ledger === null || (ledger > 0 && ledger < 180)) return setErr('Thời gian lưu: Ảnh 7–730 · Thông báo 1–90 · Log lỗi 7–365 · Sổ vết 0 (giữ mãi) hoặc 180–3650 (ngày, số nguyên).')
-      ret = { photos, feed, error_logs, ledger }
+      // 0 hợp lệ = giữ mãi; bật thì trong khoảng
+      const arch = (k: keyof typeof RET_ARCHIVE_RANGE) => { const v = intIn(draftRet[k], 0, RET_ARCHIVE_RANGE[k][1]); return v === null || (v > 0 && v < RET_ARCHIVE_RANGE[k][0]) ? null : v }
+      const ledger = arch('ledger'), logs = arch('logs'), sap_lines = arch('sap_lines'), sap_raw = arch('sap_raw')
+      if (!photos || !feed || !error_logs || ledger === null || logs === null || sap_lines === null || sap_raw === null)
+        return setErr('Thời gian lưu: Ảnh 7–730 · Thông báo 1–90 · Log lỗi 7–365 · Sổ vết / Nhật ký 0 hoặc 180–3650 · Dòng đơn SAP 0 hoặc 365–3650 · Bản chép SAP 0 hoặc 7–365 (ngày, số nguyên; 0 = giữ mãi).')
+      ret = { photos, feed, error_logs, ledger, logs, sap_lines, sap_raw }
     }
     if (cycDirty) {
       const A = intIn(draftCyc.A, 1, 365), B = intIn(draftCyc.B, 1, 365), C = intIn(draftCyc.C, 1, 365), window_days = intIn(draftCyc.window_days, 7, 365)
@@ -548,14 +578,23 @@ function SystemTab({ canManage, superadmin }: { canManage: boolean; superadmin: 
 
           <SettingGroup readOnly={!canManage} title="Thời gian lưu dữ liệu" meta={retRow}>
             <div>
-              <SettingLabel text="Số ngày giữ" tip="Ảnh = ảnh check xe nâng + ảnh chữ in phun Sổ đóng gói (số liệu và người check GIỮ NGUYÊN, chỉ gỡ ảnh) · Thông báo = feed Cá nhân ở nút chuông · Log lỗi = bảng error_logs phục vụ digest hằng ngày · Sổ vết = lịch sử điều vận / chuyến (ai làm gì, lúc nào): 0 = giữ mãi trong DB; đặt 180–3650 thì tháng quá hạn được ghi thành tệp CSV nén trong Storage (tải ở tab Lịch sử của Điều vận) rồi xoá khỏi DB — ~0,5 triệu dòng/năm ≈ 280 MB." />
-              <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-4">
+              <SettingLabel text="Xoá hẳn sau" tip="Ảnh = ảnh check xe nâng + ảnh chữ in phun Sổ đóng gói (số liệu và người check GIỮ NGUYÊN, chỉ gỡ ảnh) · Thông báo = feed Cá nhân ở nút chuông · Log lỗi = bảng error_logs phục vụ digest hằng ngày." />
+              <div className="grid grid-cols-3 gap-1.5">
                 <SettingNum label="Ảnh" unit="ngày" value={draftRet.photos} onChange={v => setDraftRet(d => ({ ...d, photos: v }))} />
                 <SettingNum label="Thông báo" unit="ngày" value={draftRet.feed} onChange={v => setDraftRet(d => ({ ...d, feed: v }))} />
                 <SettingNum label="Log lỗi" unit="ngày" value={draftRet.error_logs} onChange={v => setDraftRet(d => ({ ...d, error_logs: v }))} />
-                <SettingNum label="Sổ vết (0 = giữ mãi)" unit="ngày" value={draftRet.ledger} onChange={v => setDraftRet(d => ({ ...d, ledger: v }))} />
               </div>
             </div>
+            <div>
+              <SettingLabel text="Lưu trữ ra tệp sau (0 = giữ mãi)" tip="Quá hạn thì tháng cũ được ghi thành tệp CSV nén trong Storage (nhỏ hơn ~10 lần, tải lại được ở danh sách bên dưới) rồi xoá khỏi DB. Sổ vết = lịch sử điều vận (180–3650) · Nhật ký = nhật ký quản trị + cảnh báo đã đóng (180–3650) · Dòng đơn SAP = dòng ZSD02 / VL06O (365–3650) · Bản chép SAP = bản chép nguyên dòng SAP (76 % dung lượng của dòng; 7–365): quá hạn chỉ giữ các cột đã tách, panel chi tiết dòng không còn ~26 cột phụ (doanh số, hoá đơn, còn lại…). Pallet · nhập · quét · đơn xuất KHÔNG lưu trữ: Truy xuất lô cần tra trong suốt hạn dùng của hàng." />
+              <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-4">
+                <SettingNum label="Sổ vết" unit="ngày" value={draftRet.ledger} onChange={v => setDraftRet(d => ({ ...d, ledger: v }))} />
+                <SettingNum label="Nhật ký" unit="ngày" value={draftRet.logs} onChange={v => setDraftRet(d => ({ ...d, logs: v }))} />
+                <SettingNum label="Dòng đơn SAP" unit="ngày" value={draftRet.sap_lines} onChange={v => setDraftRet(d => ({ ...d, sap_lines: v }))} />
+                <SettingNum label="Bản chép SAP" unit="ngày" value={draftRet.sap_raw} onChange={v => setDraftRet(d => ({ ...d, sap_raw: v }))} />
+              </div>
+            </div>
+            {canManage && <ArchivedFiles />}
           </SettingGroup>
 
           <SettingGroup readOnly={!canManage} title="Nhập kho" meta={inbRow}>

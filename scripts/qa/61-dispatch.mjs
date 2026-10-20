@@ -484,13 +484,24 @@ try {
       histWide.s === 400 && histWide.j?.error?.code === 'WINDOW_TOO_WIDE' && histQWide.s === 400 && histQWide.j?.error?.code === 'WINDOW_TOO_WIDE' && !!histQ.j?.data?.from,
       `wide=${histWide.s}/${histWide.j?.error?.code} qwide=${histQWide.s}/${histQWide.j?.error?.code} from=${histQ.j?.data?.from}`)
     // [4d3] LƯU TRỮ sổ vết (20/10, user: "vài năm, 1–2 GB quá lớn — xử lý luôn"): cờ retention_days.ledger = 3650 (10 năm — không đụng vết
-    //       thật của staging), gieo 1 vết QA 11 năm trước ⇒ POST archive: tệp 2015-03.csv.gz trong bucket + vết xoá khỏi DB (vết QTY_REDUCED
-    //       cùng tháng GIỮ) + GET archives liệt kê có vé tải; cờ trả về như cũ; ledger 0 ⇒ status off; ledger 30 (dưới sàn 180) ⇒ 400
+    //       thật của staging), gieo 1 vết QA 11 năm trước ⇒ POST /wms/maintenance/archive {force, tasks:[ledger]} (bộ bảo trì chung 20/10 tối):
+    //       tệp 2015-03.csv.gz trong bucket + vết xoá khỏi DB (vết QTY_REDUCED cùng tháng GIỮ) + GET archives liệt kê có vé tải; cờ trả về
+    //       như cũ; ledger 0 ⇒ status off; ledger 30 (dưới sàn 180) ⇒ 400
     {
       const retRow = ((await api('/wms/settings')).j?.data ?? []).find?.(s => s.key === 'retention_days') ?? null
       const retBefore = retRow?.value ?? null
       const base = retBefore && typeof retBefore === 'object' ? retBefore : { photos: 60, feed: 3, error_logs: 30 }
       const OLD_AT = '2015-03-15T03:00:00.000Z', OLD_KEEP = '2015-03-16T03:00:00.000Z'
+      const stoDel = n => fetch(`${ENV.SUPABASE_URL}/storage/v1/object/ledger-archive/outbound_events/${n}`, { method: 'DELETE', headers: { apikey: ENV.SUPABASE_SERVICE_ROLE_KEY, Authorization: `Bearer ${ENV.SUPABASE_SERVICE_ROLE_KEY}` } }).catch(() => {})
+      const ARC_FILES = ['2015-03.csv.gz', '2015-03.p2.csv.gz', '2015-03.p3.csv.gz']
+      for (const n of ARC_FILES) await stoDel(n)   // tệp sót của lượt trước (tên phần mới không ghi đè tệp cũ)
+      const arcRun = async () => {   // lượt bảo trì của người dùng thật đang giữ khoá ⇒ chờ rồi thử lại
+        for (let i = 0; ; i++) {
+          const r = await api('/wms/maintenance/archive', 'POST', { force: true, tasks: ['ledger'] })
+          if (r.j?.data?.status !== 'busy' || i >= 4) return r
+          await new Promise(res => setTimeout(res, 4000))
+        }
+      }
       await restWrite('outbound_events', 'POST', null, [
         // chèn LÔ PostgREST: mọi dòng phải CÙNG bộ khoá (PGRST102)
         { id: crypto.randomUUID(), group_code: `${PREFIX}1`, event_type: 'PLAN_DO_ADDED', source: 'PLAN', actor: 'QA61', old_value: null, new_value: null, detail: 'QA61 vết cũ, "có dấu phẩy", xuống\ndòng', created_at: OLD_AT, updated_at: OLD_AT },
@@ -498,10 +509,10 @@ try {
       ])
       const setLow = await api('/wms/settings/retention_days', 'PUT', { value: { ...base, ledger: 30 } })
       const setOff = await api('/wms/settings/retention_days', 'PUT', { value: { ...base, ledger: 0 } })
-      const arcOff = await api('/tms/dispatch/history/archive', 'POST', { max_months: 1 })
+      const arcOff = await arcRun()
       const setOn = await api('/wms/settings/retention_days', 'PUT', { value: { ...base, ledger: 3650 } })
-      const arc = await api('/tms/dispatch/history/archive', 'POST', { max_months: 1 })
-      const r0 = arc.j?.data?.results?.[0]
+      const arc = await arcRun()
+      const r0 = arc.j?.data?.results?.find(r => r.table === 'outbound_events' && r.status === 'archived') ?? arc.j?.data?.results?.[0]
       const left = await restAll('outbound_events', `select=event_type&group_code=eq.${PREFIX}1&created_at=lt.2016-01-01`)
       const arcs = await api('/tms/dispatch/history/archives')
       const file = (arcs.j?.data?.files ?? []).find(x => x.month === '2015-03')
@@ -513,11 +524,11 @@ try {
         setLow.s === 400 && setOff.s === 200 && arcOff.s === 200 && arcOff.j?.data?.results?.[0]?.status === 'off'
         && setOn.s === 200 && arc.s === 200 && r0?.status === 'archived' && r0?.month === '2015-03' && r0?.rows >= 1 && r0?.deleted >= 1
         && left.length === 1 && left[0].event_type === 'QTY_REDUCED' && arcs.s === 200 && !!file?.url && dl?.status === 200
-        && csv.startsWith('id,created_at,group_code') && csv.includes('"QA61 vết cũ, ""có dấu phẩy"", xuống\ndòng"') && restore.s === 200,
+        && csv.startsWith('id,') && csv.includes('group_code') && csv.includes('"QA61 vết cũ, ""có dấu phẩy"", xuống\ndòng"') && restore.s === 200,
         `low=${setLow.s} off=${arcOff.j?.data?.results?.[0]?.status} on=${setOn.s} arc=${arc.s} ${arc.j?.error?.message ?? ''} r0=${JSON.stringify(r0 ?? null)} left=${left.map(x => x.event_type).join(',')} files=${(arcs.j?.data?.files ?? []).map(x => x.month).join(',')} dl=${dl?.status} csvLen=${csv.length} restore=${restore.s}`)
       // dọn: vết giữ lại + tệp lưu trữ của tháng gieo (Storage REST, service role)
       await restWrite('outbound_events', 'DELETE', `group_code=eq.${PREFIX}1&created_at=lt.2016-01-01`).catch(() => {})
-      await fetch(`${ENV.SUPABASE_URL}/storage/v1/object/ledger-archive/outbound_events/2015-03.csv.gz`, { method: 'DELETE', headers: { apikey: ENV.SUPABASE_SERVICE_ROLE_KEY, Authorization: `Bearer ${ENV.SUPABASE_SERVICE_ROLE_KEY}` } }).catch(() => {})
+      for (const n of ARC_FILES) await stoDel(n)
     }
     check('4d. LỊCH SỬ (19–20/10): tiền tố có DISPATCH_PLAN_CREATED + CONFIRMED + DISCARDED (có người làm) · xe hết đơn khi chuyển OD có PLAN_TRIP_DISCARDED kèm "DO: <số>" · GET /dispatch/history lọc ngày kế hoạch 200 gộp vết kế hoạch + từng Số xe, code = tiền tố, total ≥ n · tìm q + types ra đúng vết',
       ['DISPATCH_PLAN_CREATED', 'DISPATCH_PLAN_CONFIRMED', 'DISPATCH_PLAN_DISCARDED'].every(k => evP.some(e => e.event_type === k && !!e.actor)) && evX.length >= 1

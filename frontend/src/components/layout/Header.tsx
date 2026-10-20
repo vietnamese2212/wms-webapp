@@ -3,6 +3,7 @@ import { Sun, Moon, Menu, ChevronRight } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { NotificationBell } from './NotificationBell'
+import { DataArchiveTick } from './DataArchiveTick'
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem,
   DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger,
@@ -98,6 +99,7 @@ export function Header() {
         <AppUpdateButton />
         {/* Chuông = trung tâm thông báo thật (06/08): tab Cá nhân / Chung / Cài đặt chuông */}
         <NotificationBell />
+        <DataArchiveTick />
 
         {/* Theme toggle */}
         <Button variant="ghost" size="icon" onClick={toggleTheme} className="text-slate-300 hover:bg-white/10 hover:text-white">

@@ -23,6 +23,7 @@ import * as kpi from '../controllers/wms/kpiController'
 import * as warehouseCost from '../controllers/wms/warehouseCostController'
 import * as trace from '../controllers/wms/traceController'
 import * as systemSetting from '../controllers/wms/systemSettingController'
+import * as dataArchive from '../controllers/wms/dataArchiveController'
 import * as warehouseMap from '../controllers/wms/warehouseMapController'
 import * as directed from '../controllers/wms/directedWorkController'
 import * as integrationKeys from '../controllers/integration/keyController'
@@ -114,6 +115,11 @@ router.get('/settings',      systemSetting.listSettings)
 // 11/09: mẫu `validate({…})` — body không phải object / thiếu `value` / key rác → 400 kèm tên trường, trước khi vào controller
 router.put('/settings/:key', requirePerm('wms_settings', 'manage_system'),
   validate({ params: z.object({ key: zText(1, 64) }), body: z.object({ value: z.unknown() }) }), systemSetting.updateSetting)
+// Bảo trì dữ liệu lớn theo năm (20/10): lưu trữ ra Storage / dọn bản chép SAP theo cờ retention_days — việc nền FE gọi sau khi app hiện
+// (≤ 1 lần/giờ mỗi trình duyệt); tệp đã lưu trữ chỉ quản trị hệ thống tải (nhật ký quản trị, dòng đơn SAP)
+router.post('/maintenance/archive',  requireAnyPerm(['wms_settings', 'manage_system'], ['dispatch', 'confirm']),
+  validate({ body: dataArchive.zRunArchiveBody }), dataArchive.runDataArchive)
+router.get('/maintenance/archives',  requirePerm('wms_settings', 'manage_system'), dataArchive.listDataArchives)
 
 // Quản lý API key tích hợp ERP — CHỈ superadmin (kiểm trong controller). Key thô hiện 1 lần lúc tạo.
 router.get('/integration-keys',            integrationKeys.listKeys)

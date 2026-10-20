@@ -138,13 +138,15 @@ else {
     const cos = (await restAll('TransportCompany', `select=id,name&type=eq.${encodeURIComponent('ĐVVT')}&order=code`)).slice(0, 2)
     if (cos.length === 2) {
       const cj = randomUUID(), ce = randomUUID(), cpw = 'Qa' + randomUUID().slice(0, 10) + '!'
-      const mkOrd = async (ncc, n) => {
+      const mkOrd = async (ncc, n, extra = {}) => {
         const oid = randomUUID(), sid = randomUUID()
-        await restWrite('TmsOrder', 'POST', '', [{ id: oid, order_code: `${TAG}-DVVT-${n}`, date: FIX.DATE, warehouse_id: FIX.WH_QR.id, direction: 'OUTBOUND', status: 'PENDING', ncc_id: ncc, created_at: now(), updated_at: now() }])
+        await restWrite('TmsOrder', 'POST', '', [{ id: oid, order_code: `${TAG}-DVVT-${n}`, date: FIX.DATE, warehouse_id: FIX.WH_QR.id, direction: 'OUTBOUND', status: 'PENDING', ncc_id: ncc, created_at: now(), updated_at: now(), ...extra }])
         await restWrite('TmsVehicleSlot', 'POST', '', [{ id: sid, order_id: oid, status: 'PENDING', created_at: now(), updated_at: now() }])
         return sid
       }
       const mine = await mkOrd(cos[0].id, 1), theirs = await mkOrd(cos[1].id, 2)
+      // lệnh CHUYỂN KHO (TRF_) sinh khi chuyến xuất xong không mang ncc_id — ĐVVT vẫn khai giờ đến / SĐT tài xế cho kho nhận (giữ như cũ)
+      const trf = await mkOrd(null, 3, { direction: 'INBOUND', source_type: 'TRANSFER' })
       await restWrite('JobTitle', 'POST', '', [{ id: cj, name: `${TAG} dvvt`, updated_at: now(), module_permissions: { tms_plan: ['view', 'book', 'release'] } }])
       await restWrite('Employee', 'POST', '', [{ id: ce, employee_code: `${TAG}02`, name: `${TAG} dvvt`, email: `${TAG.toLowerCase()}02@test.local`,
         password: await bcrypt.hash(cpw, 10), is_active: true, job_title_id: cj, warehouse_id: FIX.WH_QR.id, warehouse_scope: 'ASSIGNED', ncc_id: cos[0].id, updated_at: now() }])
@@ -159,6 +161,8 @@ else {
         const other = (await restAll('TmsVehicleSlot', `select=driver_name&id=eq.${theirs}`))[0]
         check(`ĐVVT ${cos[0].name}: sửa xe của CHÍNH mình → 200 · xe của ${cos[1].name} → 403 (sửa + nhả), dòng xe hãng khác không đổi`,
           sOwn === 200 && sOther === 403 && rel === 403 && other?.driver_name == null, `mình=${sOwn} khác=${sOther} nhả=${rel} driver=${other?.driver_name}`)
+        const sTrf = await cc(`/tms/vehicle-slots/${trf}`, { driver_phone: '0900000041' })
+        check('ĐVVT khai SĐT tài xế trên lệnh CHUYỂN KHO chưa gán hãng → 200 (giữ luồng giao nhận chuyển kho)', sTrf === 200, `http=${sTrf}`)
       }
     } else check('Fixture tầng 3: cần 2 ĐVVT trong danh mục TransportCompany', false, `tìm được ${cos.length}`)
   } finally { await cleanExtra() }

@@ -14,10 +14,13 @@ function whInScope(scope: string[], ...whs: (string | null | undefined)[]): bool
 // trên xe của Hải An — danh sách GET /tms/orders đã lọc theo ncc_id nhưng cửa GHI thì không; cửa Đã giao thì có). Đường đọc cắt scope bao
 // nhiêu, đường ghi cắt đúng bấy nhiêu.
 const CARRIER_FORBIDDEN = 'Xe của lệnh này thuộc đơn vị vận chuyển khác — không thể thao tác'
-type OrderScopeRow = { warehouse_id: string | null; destination_warehouse_id: string | null; ncc_id: string | null }
+type OrderScopeRow = { warehouse_id: string | null; destination_warehouse_id: string | null; ncc_id: string | null; source_type: string | null }
 function orderAllowed(req: Request, res: Response, o: OrderScopeRow): boolean {
   if (req.user?.warehouse_scope === 'NATIONAL') return true
   if (req.user?.ncc_id) {
+    // Lệnh CHUYỂN KHO (TRF_…) sinh khi chuyến xuất hoàn thành KHÔNG mang ncc_id (đo staging 20/10: 64/64) mà ĐVVT vẫn thấy ở tab Chuyển
+    // kho và khai giờ đến / SĐT tài xế cho kho nhận ⇒ giữ như cũ cho lệnh chuyển kho chưa gán ĐVVT; chỉ chặn lệnh ĐÃ GÁN hãng khác.
+    if (o.ncc_id == null && o.source_type === 'TRANSFER') return true
     if (o.ncc_id !== req.user.ncc_id) { fail(res, CARRIER_FORBIDDEN, 403); return false }
     return true
   }
@@ -30,7 +33,7 @@ function orderAllowed(req: Request, res: Response, o: OrderScopeRow): boolean {
 async function guardOrderWh(req: Request, res: Response, orderId: string): Promise<boolean> {
   if (req.user?.warehouse_scope === 'NATIONAL') return true
   const { data } = await supabase.from('TmsOrder')
-    .select('warehouse_id, destination_warehouse_id, ncc_id').eq('id', orderId).maybeSingle()
+    .select('warehouse_id, destination_warehouse_id, ncc_id, source_type').eq('id', orderId).maybeSingle()
   if (!data) { fail(res, 'Không tìm thấy đơn hàng', 404); return false }
   return orderAllowed(req, res, data as OrderScopeRow)
 }
@@ -38,7 +41,7 @@ async function guardOrderWh(req: Request, res: Response, orderId: string): Promi
 async function guardSlotWh(req: Request, res: Response, slotId: string): Promise<boolean> {
   if (req.user?.warehouse_scope === 'NATIONAL') return true
   const { data } = await supabase.from('TmsVehicleSlot')
-    .select('order:TmsOrder!order_id(warehouse_id, destination_warehouse_id, ncc_id)').eq('id', slotId).maybeSingle()
+    .select('order:TmsOrder!order_id(warehouse_id, destination_warehouse_id, ncc_id, source_type)').eq('id', slotId).maybeSingle()
   const o = (data as { order: OrderScopeRow | null } | null)?.order ?? null
   if (!o) { fail(res, 'Không tìm thấy vehicle slot', 404); return false }
   return orderAllowed(req, res, o)

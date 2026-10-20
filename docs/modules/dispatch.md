@@ -604,7 +604,7 @@ nào thì mở khoá xe đó. Cần 1 hướng nữa: kế hoạch làm nhầm, 
 - **LỊCH SỬ XOÁ XE / BỎ–HUỶ KẾ HOẠCH (19/10, user hỏi "lịch sử đối với việc xoá chuyến, xoá kế hoạch thì sao"):** trước đó sổ vết chỉ ghi ở
   các cửa chạm Kế hoạch xuất — xoá xe trống, bỏ nháp, huỷ kế hoạch, xe hết đơn bị bỏ KHÔNG có vết, và vết của xe đã bỏ không có chỗ xem (popup
   tình trạng xe chỉ mở được khi xe còn trên bàn). Nay:
-  - **Vết mức xe:** `PLAN_TRIP_DELETED` (nút ✕ xoá xe trống) · `PLAN_TRIP_DISCARDED` (xe hết đơn khi kéo đơn ra / hoãn / Không điều / gỡ DO;
+  - **Vết mức xe:** `PLAN_TRIP_DELETED` (nút ✕ xoá xe trống) · `PLAN_TRIP_DISCARDED` (xe hết đơn khi kéo đơn ra / chuyển từng OD `move-od` / hoãn / Không điều / gỡ DO;
     xe nháp bị bỏ khi bỏ nháp / huỷ kế hoạch) — ghi lên Số xe, nêu lý do. Máy ghép lại (Tối ưu lại dựng lại xe chưa khoá) KHÔNG ghi — đó là
     sắp xếp lại, không phải xoá.
   - **Vết mức kế hoạch** (`logPlanEvent`): `DISPATCH_PLAN_CREATED` (lập, kể cả tự lập khi dời ngày) · `_CONFIRMED` (n xe · n chờ ĐVVT) ·

@@ -1414,7 +1414,13 @@ async function moveOdInner(req: Request, res: Response) {
     // nguồn: còn OD thì tính lại, hết OD thì xoá chuyến
     const srcLeft = src.ods.filter(o => o.od_number !== b.od_number)
     if (srcLeft.length) await repriceTrip(plan, { ...src, ods: srcLeft }, src.vehicle_model_id, src.transport_company_id, refs, numOrNull(wh?.dispatch_underload_pct), condLabels)
-    else { const { error } = await db.from('dispatch_trip').delete().eq('id', src.id); if (error) throw error }
+    else {
+      const { error } = await db.from('dispatch_trip').delete().eq('id', src.id)
+      if (error) throw error
+      // 19/10: xe hết đơn bị bỏ = vết (gói 61 [4d] bắt cửa này chưa ghi — 20/10)
+      await logOutboundEvents([{ group_code: src.group_code, event_type: 'PLAN_TRIP_DISCARDED', source: 'PLAN', actor: actorOf(req), do_number: b.od_number,
+        detail: `Xe #${src.seq} ${src.group_code} hết đơn sau khi chuyển DO ${b.od_number} sang xe khác ⇒ bỏ xe` }])
+    }
     // đích
     const tgTrip = (await db.from('dispatch_trip').select('*').eq('id', targetId).maybeSingle()).data as TripRow | null
     if (tgTrip) {

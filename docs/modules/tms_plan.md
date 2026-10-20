@@ -48,6 +48,11 @@ vận bấm "Đã giao" (hoặc "Hoàn tác") ngay trên hành trình xe trong c
 - **Tối 20/10 — GỠ HẲN hình thức OTHER** (user: "kiểu Other không phù hợp thì bỏ đi"). OTHER là chốt 09/07 "mọi đơn xuất đều theo dõi giao
   hàng qua tab Chuyển kho, tài xế tự hoàn thành"; từ 18/10 việc đó là nút "Đã giao" trên lệnh VC ⇒ hai cơ chế cho một sự thật (C90). Nay cờ chỉ
   còn QR · QTY · NONE (`DC_MODES`; PUT có OTHER ⇒ 400; giá trị cũ trong DB lọc bỏ khi đọc — `normalizeDc`); khách ngoài không sinh lệnh mới;
-  "Đẩy lại cho kho nhận" vẫn sinh lệnh khi ship-to được trỏ kho sau. 63 lệnh SELF cũ (12–30/09) trên staging để nguyên. Gói 28 [12a2] [12b] [12c].
+  "Đẩy lại cho kho nhận" vẫn sinh lệnh khi ship-to được trỏ kho sau. Gói 28 [12a2] [12b] [12c]. 63 lệnh SELF cũ (12–30/09) trên staging đã
+  XOÁ theo user (kèm dòng xe + KH nhập, gỡ `transfer_status` của chuyến — không thì chuỗi tình trạng xe lại coi là chuyển kho).
+- **Khuya 20/10 — lệnh chuyển kho KẾ THỪA ĐVVT** (user: "có chứ? đang không như thế à" — không, `ncc_id` để trống): sinh / đồng bộ lệnh
+  chuyển kho ghi `ncc_id` = ĐVVT của lệnh VC cùng Số xe (không dò theo tên); migration 20261020g điền lệnh cũ. Phạm vi ĐVVT nay là MỘT hàm
+  `carrierMayTouch` (utils/carrierScope) cho mọi cửa: `vehicleSlotController` · `orderController.guardOrderScope` (sửa lệnh · xem hàng · …)
+  · tab Chuyển kho của ĐVVT chỉ trả lệnh của công ty mình + lệnh cũ chưa gán hãng. Gói 41 tầng 3b · gói 28 [2b].
 - **Lệnh nhận chuyển kho** cần giờ đến + SĐT tài xế trước khi kho nhận bấm nhận (ĐVVT khai); hoàn thành phiếu nhận đòi chấm sao chuyến giao
   (`RATING_REQUIRED`) khi chế độ đánh giá bắt buộc.

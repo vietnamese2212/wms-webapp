@@ -4,6 +4,7 @@ import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
 import { relinkAfterDelete } from './gateRegistrationController'
 import { normalizePlate } from '../../utils/plate'
+import { carrierMayTouch } from '../../utils/carrierScope'
 
 // ── Scope-write: user ASSIGNED chỉ thao tác xe của lệnh thuộc kho mình (nguồn hoặc đích).
 // NATIONAL → toàn quyền. ĐVVT (ncc_id) → scope theo CÔNG TY (book xe liên kho là hợp lệ, xe hãng khác thì không).
@@ -18,10 +19,8 @@ type OrderScopeRow = { warehouse_id: string | null; destination_warehouse_id: st
 function orderAllowed(req: Request, res: Response, o: OrderScopeRow): boolean {
   if (req.user?.warehouse_scope === 'NATIONAL') return true
   if (req.user?.ncc_id) {
-    // Lệnh CHUYỂN KHO (TRF_…) sinh khi chuyến xuất hoàn thành KHÔNG mang ncc_id (đo staging 20/10: 64/64) mà ĐVVT vẫn thấy ở tab Chuyển
-    // kho và khai giờ đến / SĐT tài xế cho kho nhận ⇒ giữ như cũ cho lệnh chuyển kho chưa gán ĐVVT; chỉ chặn lệnh ĐÃ GÁN hãng khác.
-    if (o.ncc_id == null && o.source_type === 'TRANSFER') return true
-    if (o.ncc_id !== req.user.ncc_id) { fail(res, CARRIER_FORBIDDEN, 403); return false }
+    // Luật chung ở utils/carrierScope (lệnh của công ty mình; lệnh chuyển kho cũ chưa gán hãng vẫn cho khai giờ đến / SĐT)
+    if (!carrierMayTouch(req.user.ncc_id, o)) { fail(res, CARRIER_FORBIDDEN, 403); return false }
     return true
   }
   if (!whInScope(req.user?.warehouse_ids ?? [], o.warehouse_id, o.destination_warehouse_id)) {

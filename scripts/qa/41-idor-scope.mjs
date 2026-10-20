@@ -147,7 +147,8 @@ else {
       const mine = await mkOrd(cos[0].id, 1), theirs = await mkOrd(cos[1].id, 2)
       // lệnh CHUYỂN KHO (TRF_) sinh khi chuyến xuất xong không mang ncc_id — ĐVVT vẫn khai giờ đến / SĐT tài xế cho kho nhận (giữ như cũ)
       const trf = await mkOrd(null, 3, { direction: 'INBOUND', source_type: 'TRANSFER' })
-      await restWrite('JobTitle', 'POST', '', [{ id: cj, name: `${TAG} dvvt`, updated_at: now(), module_permissions: { tms_plan: ['view', 'book', 'release'] } }])
+      // quyền như chức danh thật "Điều hành ĐVVT" ở phần lệnh (có edit — tầng 3b)
+      await restWrite('JobTitle', 'POST', '', [{ id: cj, name: `${TAG} dvvt`, updated_at: now(), module_permissions: { tms_plan: ['view', 'book', 'release', 'edit'] } }])
       await restWrite('Employee', 'POST', '', [{ id: ce, employee_code: `${TAG}02`, name: `${TAG} dvvt`, email: `${TAG.toLowerCase()}02@test.local`,
         password: await bcrypt.hash(cpw, 10), is_active: true, job_title_id: cj, warehouse_id: FIX.WH_QR.id, warehouse_scope: 'ASSIGNED', ncc_id: cos[0].id, updated_at: now() }])
       const cl = await fetch(`${BASE}/api/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: `${TAG.toLowerCase()}02@test.local`, password: cpw }) })
@@ -163,6 +164,27 @@ else {
           sOwn === 200 && sOther === 403 && rel === 403 && other?.driver_name == null, `mình=${sOwn} khác=${sOther} nhả=${rel} driver=${other?.driver_name}`)
         const sTrf = await cc(`/tms/vehicle-slots/${trf}`, { driver_phone: '0900000041' })
         check('ĐVVT khai SĐT tài xế trên lệnh CHUYỂN KHO chưa gán hãng → 200 (giữ luồng giao nhận chuyển kho)', sTrf === 200, `http=${sTrf}`)
+
+        // Tầng 3b (C3 lặp lần 2, 20/10 khuya): orderController.guardOrderScope trả "toàn quyền" cho mọi tài khoản ncc_id ⇒ chức danh
+        // "Điều hành ĐVVT" (tms_plan.edit) sửa / xem hàng lệnh của hãng khác; tab Chuyển kho trả lệnh MỌI hãng. Lệnh chuyển kho nay kế thừa
+        // ĐVVT của chuyến gốc ⇒ đọc và ghi đều theo công ty.
+        const ordOf = async sid => (await restAll('TmsVehicleSlot', `select=order_id&id=eq.${sid}`))[0]?.order_id
+        const [oMine, oTheirs] = [await ordOf(mine), await ordOf(theirs)]
+        const trfMine = await mkOrd(cos[0].id, 4, { direction: 'INBOUND', source_type: 'TRANSFER' })
+        const trfTheirs = await mkOrd(cos[1].id, 5, { direction: 'INBOUND', source_type: 'TRANSFER' })
+        const [oTrfMine, oTrfTheirs, oTrfNull] = [await ordOf(trfMine), await ordOf(trfTheirs), await ordOf(trf)]
+        const cget = async path => { const r = await fetch(`${BASE}/api${path}`, { headers: { Authorization: `Bearer ${ctk}` } }); return { s: r.status, j: await r.json().catch(() => null) } }
+        const pOwn = await cc(`/tms/orders/${oMine}`, { notes: `${TAG} ghi chú của mình` })
+        const pOther = await cc(`/tms/orders/${oTheirs}`, { notes: `${TAG} chen` })
+        const gOther = await cget(`/tms/orders/${oTheirs}/plan-goods`)
+        const theirNote = (await restAll('TmsOrder', `select=notes&id=eq.${oTheirs}`))[0]?.notes
+        check(`ĐVVT ${cos[0].name}: sửa lệnh của mình → 200 · lệnh của ${cos[1].name} → 403 (sửa + xem hàng), ghi chú hãng khác không đổi`,
+          pOwn === 200 && pOther === 403 && gOther.s === 403 && theirNote == null, `mình=${pOwn} khác=${pOther} xem-hàng-khác=${gOther.s} note=${theirNote}`)
+        const lst = await cget(`/tms/orders?source_type=TRANSFER&date_from=${FIX.DATE}&date_to=${FIX.DATE}`)
+        const ids = new Set(((lst.j?.data ?? [])).map(o => o.id))
+        check('Tab Chuyển kho của ĐVVT: thấy lệnh của mình + lệnh cũ chưa gán hãng, KHÔNG thấy lệnh của hãng khác',
+          lst.s === 200 && ids.has(oTrfMine) && ids.has(oTrfNull) && !ids.has(oTrfTheirs),
+          `http=${lst.s} mình=${ids.has(oTrfMine)} chưa-gán=${ids.has(oTrfNull)} hãng-khác=${ids.has(oTrfTheirs)}`)
       }
     } else check('Fixture tầng 3: cần 2 ĐVVT trong danh mục TransportCompany', false, `tìm được ${cos.length}`)
   } finally { await cleanExtra() }

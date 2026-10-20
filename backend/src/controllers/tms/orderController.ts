@@ -13,6 +13,7 @@ import { fetchAllByIdChunks as fetchByIdChunks } from '../../utils/pagination'
 import { parseListParam } from '../../utils/httpQuery'
 import { heldSlotsByOrderId, slotHeldBlockingDate } from '../../utils/bookingGuards'
 import { getReceiptRatingCfg } from '../../utils/settings'
+import { carrierMayTouch, type CarrierOrderRow } from '../../utils/carrierScope'
 
 // Ngày hôm nay theo giờ VN (YYYY-MM-DD) — chặn nghiệp vụ ngày quá khứ. So sánh chuỗi ISO date là an toàn.
 const todayVN = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
@@ -91,7 +92,17 @@ function whInScope(scope: string[], ...whs: (string | null | undefined)[]): bool
   return (whs.filter(Boolean) as string[]).some(w => scope.includes(w))
 }
 // Gác theo id: lệnh phải dính kho trong phạm vi (nguồn hoặc đích). Trả false + đã gửi lỗi nếu chặn.
+// ĐVVT: lệnh phải của CHÍNH công ty mình (utils/carrierScope — C3 lặp 20/10: bản cũ trả "toàn quyền" cho mọi tài khoản ncc_id ⇒ chức danh
+// "Điều hành ĐVVT" có tms_plan.edit sửa / xem hàng được lệnh của hãng khác).
 async function guardOrderScope(req: Request, res: Response, id: string): Promise<boolean> {
+  if (req.user?.warehouse_scope !== 'NATIONAL' && req.user?.ncc_id) {
+    const { data: co } = await supabase.from('TmsOrder').select('ncc_id, source_type').eq('id', id).maybeSingle()
+    if (!co) { fail(res, 'Không tìm thấy lệnh', 404); return false }
+    if (!carrierMayTouch(req.user.ncc_id, co as CarrierOrderRow)) {
+      fail(res, 'Lệnh này thuộc đơn vị vận chuyển khác — không thể xem / thao tác', 403); return false
+    }
+    return true
+  }
   const scope = scopeWhIds(req)
   if (scope === null) return true
   const { data } = await supabase.from('TmsOrder')
@@ -142,6 +153,8 @@ export async function listOrders(req: Request, res: Response) {
         if (date_to)   q = q.lte('date', date_to)
         if (tCats) q = q.or(categoryTextOrScopeFilter('warehouse_type', tCats))
         if (tScope) q = q.or(`warehouse_id.in.(${tScope.join(',')}),destination_warehouse_id.in.(${tScope.join(',')})`)
+        // ĐVVT: chỉ lệnh của công ty mình + lệnh cũ chưa gán hãng (cùng luật carrierMayTouch của cửa ghi) — bản cũ trả lệnh MỌI hãng
+        if (userNccId) q = q.or(`ncc_id.eq.${userNccId},ncc_id.is.null`)
         return q
       })
       const orderIds = orders.map((o: any) => o.id as string)

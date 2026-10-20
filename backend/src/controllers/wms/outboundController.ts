@@ -2131,6 +2131,12 @@ async function maybeAutoCreateTransferOrder(gdoId: string, nowTs: string, opts: 
   const orderCode = `TRF_${destWh ? destWh.code : (gdo.shipto_party || custLabel)}_${gdo.group_code}`
   const vnDate = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
 
+  // ĐVVT KẾ THỪA từ chuyến gốc (20/10, user: "lệnh chuyển kho kế thừa ĐVVT của chuyến gốc — có chứ"): đúng ĐVVT của lệnh VC cùng Số xe
+  // (Kế hoạch xuất → tmsPlanSync), KHÔNG dò theo tên `GroupDeliveryOrder.dvvt`. Bản cũ để trống ⇒ ĐVVT nào cũng thấy / khai được lệnh.
+  const { data: srcOrd } = await supabase.from('TmsOrder').select('ncc_id')
+    .eq('order_code', gdo.group_code).neq('source_type', 'TRANSFER').not('ncc_id', 'is', null).limit(1)
+  const srcNcc = ((srcOrd ?? []) as { ncc_id: string | null }[])[0]?.ncc_id ?? null
+
   const orderId = existing ? existing.id : randomUUID()
   const lineRows = [...matMap.values()].map(m => ({
     id: randomUUID(), tms_order_id: orderId, date: vnDate,
@@ -2157,6 +2163,7 @@ async function maybeAutoCreateTransferOrder(gdoId: string, nowTs: string, opts: 
       direction: 'INBOUND', source_type: 'TRANSFER',
       transfer_gdo_id: gdoId,
       delivery_mode: 'SELF',
+      ncc_id: srcNcc,
       planned_boxes: 0, planned_pallets: 0,
       status: 'PENDING',
       created_at: nowTs, updated_at: nowTs,
@@ -2180,6 +2187,8 @@ async function maybeAutoCreateTransferOrder(gdoId: string, nowTs: string, opts: 
       order_code: orderCode, warehouse_id: orderWarehouseId,
       destination_warehouse_id: destWh ? destWh.id : null,
       delivery_mode: isSelf ? 'SELF' : 'SCAN',
+      // đổi ĐVVT trên bàn sau khi xuất (ghi xuyên lệnh VC) ⇒ hoàn thành lại thì lệnh chuyển kho theo; chuyến không có ĐVVT thì giữ giá trị cũ
+      ...(srcNcc ? { ncc_id: srcNcc } : {}),
       planned_boxes: totalBoxes, updated_at: nowTs,
     }).eq('id', orderId)
   }

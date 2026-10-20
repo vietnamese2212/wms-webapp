@@ -76,7 +76,7 @@ async function cleanup() {
 
 const waitCache = () => new Promise(r => setTimeout(r, 31_000))   // SystemSetting cache 30s/instance
 const transferOf = async () => (await restAll('TmsOrder',
-  `select=id,order_code,status,source_type,delivery_mode,destination_warehouse_id,transfer_gdo_id&transfer_gdo_id=eq.${created.gdo}`))
+  `select=id,order_code,status,source_type,delivery_mode,destination_warehouse_id,transfer_gdo_id,ncc_id&transfer_gdo_id=eq.${created.gdo}`))
 const gdoRow = async () => (await restAll('GroupDeliveryOrder',
   `select=id,status,transfer_status&id=eq.${created.gdo}`))[0]
 
@@ -106,6 +106,12 @@ try {
     shipto_party: FIX.WH_QTY.code, created_at: nowIso(), updated_at: nowIso(),
   })
   created.gdo = gdo.id
+  // 20/10: lệnh VC GỐC của chuyến (cùng Số xe, như tmsPlanSync dựng từ Kế hoạch xuất) mang ĐVVT ⇒ lệnh chuyển kho phải KẾ THỪA ĐVVT này
+  const dvvt = (await restAll('TransportCompany', `select=id,name&type=eq.${encodeURIComponent('ĐVVT')}&order=code&limit=1`))[0]
+  if (dvvt) await restWrite('TmsOrder', 'POST', null, {
+    id: randomUUID(), order_code: `${TAG}-GDO1`, date: vnDate(), warehouse_id: FIX.WH_QR.id, direction: 'OUTBOUND', source_type: 'NCC',
+    ncc_id: dvvt.id, planned_boxes: 0, planned_pallets: 0, status: 'PENDING', created_at: nowIso(), updated_at: nowIso(),
+  })
   const [dlv] = await restWrite('OutboundDelivery', 'POST', null, {
     id: randomUUID(), gdo_id: gdo.id, delivery_code: `${TAG}-DO1`, distributor_name: `${TAG} NPP`,
     created_at: nowIso(), updated_at: nowIso(),
@@ -148,6 +154,8 @@ try {
       && slots.length === 1 && slots[0]?.license_plate === `${TAG}XE01`
       && g?.transfer_status === 'IN_TRANSIT',
       `http=${r.s} ord=${ord?.order_code} lines=${lines.length}/${lines[0]?.planned_boxes} slot=${slots[0]?.license_plate} ts=${g?.transfer_status}`)
+    check('[2b] Lệnh chuyển kho KẾ THỪA ĐVVT của lệnh VC gốc cùng Số xe (ĐVVT đó thấy và khai được, hãng khác thì không)',
+      !!dvvt && ord?.ncc_id === dvvt.id, `ĐVVT gốc=${dvvt?.name ?? 'thiếu fixture'} lệnh chuyển kho ncc=${ord?.ncc_id ?? 'null'}`)
   }
 
   // ── [3] Bỏ-hoàn-thành GIỮ lệnh + hoàn thành lại KHÔNG trùng ────────────────

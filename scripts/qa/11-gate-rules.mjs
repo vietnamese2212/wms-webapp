@@ -13,6 +13,7 @@ const now = () => new Date().toISOString()
 const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
 
 async function cleanup() {
+  await restWrite('outbound_events', 'DELETE', `group_code=like.QAGRUL*`)   // vết [7b] — bảng không khoá ngoại tới chuyến
   const gdos = await restAll('GroupDeliveryOrder', `select=id&group_code=like.QAGRUL*`)
   const gids = gdos.map(g => g.id)
   if (gids.length) {
@@ -213,6 +214,49 @@ const whBoth  = await mkWh('QAGRUL_B', true, true)
   const cur = (await restAll('GroupDeliveryOrder', `select=status&id=eq.${g}`))[0]
   check('check-scan + Lưu thủ công khi chưa Bắt đầu → 400, GDO vẫn PENDING',
     r1.s === 400 && r2.s === 400 && cur?.status === 'PENDING', `${r1.s}/${r2.s} status=${cur?.status}`)
+}
+
+// ── 7. RA CỔNG (20/10, chạy thử một ngày Ba Vì — user chốt "sửa lại cả 2"): cửa API nhận Ra ở MỌI trạng thái và không hỏi gì
+// khi chuyến Xuất kho của xe chưa xong. Nay: chưa Vào thì không Ra (cùng luật nút Ra) · chuyến chưa hoàn thành thì HỎI LẠI một lần ──
+{
+  const gateOf = async id => (await restAll('gate_registrations', `select=status,exit_at&id=eq.${id}`))[0]
+  // (a) lượt xe CHƯA Vào
+  const [regNew] = await restWrite('gate_registrations', 'POST', null, {
+    id: randomUUID(), date: today, registration_number: regNo++, license_plate: 'QAGR7101', warehouse_id: whGate,
+    direction: 'OUTBOUND', status: 'REGISTERED', registered_at: now(), updated_at: now(),
+  })
+  const ra = await api(`/tms/gate-registrations/${regNew.id}/exit`, 'PATCH', {})
+  const sa = await gateOf(regNew.id)
+  check('[7a] Ra cổng khi xe CHƯA Vào → 409 GATE_NOT_ENTERED, lượt xe giữ nguyên (không có giờ ra)',
+    ra.s === 409 && ra.j?.error?.code === 'GATE_NOT_ENTERED' && sa?.status === 'REGISTERED' && sa?.exit_at == null,
+    `${ra.s} ${ra.j?.error?.code} status=${sa?.status} exit=${sa?.exit_at}`)
+
+  // (b) chuyến ĐANG XUẤT gắn lượt xe này: lần đầu hỏi lại (chưa ghi gì), confirm=true mới ra + ghi vết vào sổ chuyến
+  const g = await mkGdo('EXIT1', whGate)
+  const gate = await mkGateReg(whGate, 'QAGR7202')
+  const st = await api(`/wms/outbound/${g}/start`, 'POST', { license_plate: 'QAGR-7202', gate_registration_id: gate })
+  const r1 = await api(`/tms/gate-registrations/${gate}/exit`, 'PATCH', {})
+  const s1 = await gateOf(gate)
+  const r2 = await api(`/tms/gate-registrations/${gate}/exit`, 'PATCH', { confirm: true })
+  const s2 = await gateOf(gate)
+  const ev = await restAll('outbound_events', `select=id,actor&gdo_id=eq.${g}&event_type=eq.GATE_EXIT_TRIP_OPEN`)
+  check('[7b] Chuyến ĐANG XUẤT: Ra → 409 TRIP_NOT_COMPLETED nêu Số xe + "đang xuất", lượt xe vẫn IN · confirm=true → 200 COMPLETED + 1 vết GATE_EXIT_TRIP_OPEN',
+    st.s === 200 && r1.s === 409 && r1.j?.error?.code === 'TRIP_NOT_COMPLETED' && String(r1.j?.error?.message ?? '').includes('QAGRUL_EXIT1 (đang xuất)')
+    && s1?.status === 'IN' && s1?.exit_at == null && r2.s === 200 && s2?.status === 'COMPLETED' && s2?.exit_at != null && ev.length === 1,
+    `start=${st.s} r1=${r1.s} ${r1.j?.error?.code} «${String(r1.j?.error?.message ?? '').slice(0, 90)}» s1=${s1?.status} r2=${r2.s} s2=${s2?.status} ev=${ev.length}`)
+
+  // (c) Ra LẦN HAI (màn cũ / hai bảo vệ) → 409, không ghi đè giờ ra
+  const r3 = await api(`/tms/gate-registrations/${gate}/exit`, 'PATCH', { confirm: true })
+  const s3 = await gateOf(gate)
+  check('[7c] Ra lần hai trên lượt đã ra → 409 ALREADY_EXITED, giờ ra giữ nguyên',
+    r3.s === 409 && r3.j?.error?.code === 'ALREADY_EXITED' && s3?.exit_at === s2?.exit_at, `${r3.s} ${r3.j?.error?.code}`)
+
+  // (d) chuyến ĐÃ HOÀN THÀNH → Ra không hỏi
+  const g2 = await mkGdo('EXIT2', whGate)
+  const gate2 = await mkGateReg(whGate, 'QAGR7303')
+  await restWrite('GroupDeliveryOrder', 'PATCH', `id=eq.${g2}`, { status: 'COMPLETED', gate_registration_id: gate2, started_at: now(), completed_at: now(), updated_at: now() })
+  const r4 = await api(`/tms/gate-registrations/${gate2}/exit`, 'PATCH', {})
+  check('[7d] Chuyến ĐÃ HOÀN THÀNH → Ra 200 ngay, không hỏi', r4.s === 200 && (await gateOf(gate2))?.status === 'COMPLETED', `${r4.s} ${r4.j?.error?.code ?? ''}`)
 }
 
 await cleanup()

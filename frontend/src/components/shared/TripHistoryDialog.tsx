@@ -13,7 +13,7 @@ const SOURCE_LABEL: Record<string, { text: string; cls: string }> = {
   SYSTEM: { text: 'Hệ thống',      cls: 'bg-slate-100 text-slate-500' },
 }
 // Sự kiện nào là CẢNH BÁO (đổi số/ngừng hoạt động) thì tô đậm hơn cho dễ lướt
-const WARN_EVENTS = new Set(['PLAN_VEHICLE_DROPPED', 'AWAITING_SET', 'SAP_NEEDS_REVIEW', 'SAP_BLOCKED', 'PLAN_DO_REMOVED'])
+const WARN_EVENTS = new Set(['PLAN_VEHICLE_DROPPED', 'AWAITING_SET', 'SAP_NEEDS_REVIEW', 'SAP_BLOCKED', 'PLAN_DO_REMOVED', 'GATE_EXIT_TRIP_OPEN'])
 
 // `infoContent` (tùy chọn): khối THÔNG TIN ĐƠN hiện phía trên dòng thời gian — user chốt 03/08
 // "gom về làm 1": một nút Thông tin duy nhất cho cả thông tin đơn + lịch sử sửa, cả browser lẫn mobile.

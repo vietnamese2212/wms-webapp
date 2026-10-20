@@ -1,7 +1,7 @@
 import { Response } from 'express'
 import { supabase } from '../lib/supabase'
 import { getRetentionDays } from './settings'
-import { isQueryTimeout, QUERY_TIMEOUT_MSG } from './pagination'
+import { isQueryTimeout, QUERY_TIMEOUT_MSG, timeoutMsgFor } from './pagination'
 
 export const ok = (res: Response, data: unknown, status = 200) =>
   res.status(status).json({ success: true, data })
@@ -118,6 +118,14 @@ const GENERIC_5XX = 'Lỗi hệ thống, vui lòng thử lại'
  */
 export const isSoftStatus = (status: number): boolean => status === 503
 
+/** Câu quá hạn truy vấn chỉ khuyên "thu hẹp KHOẢNG NGÀY" khi request có bộ lọc ngày (timeoutMsgFor) — đọc req từ `res.req`. */
+function softMessage(message: string, res: Response | undefined): string {
+  if (message !== QUERY_TIMEOUT_MSG) return message
+  const req = res?.req as undefined | { query?: Record<string, unknown>; body?: unknown }
+  const body = req?.body && typeof req.body === 'object' && !Array.isArray(req.body) ? (req.body as Record<string, unknown>) : null
+  return timeoutMsgFor(req?.query, body)
+}
+
 /**
  * Che message cho lỗi 5xx (log chi tiết server-side) — dùng cho các controller có helper `fail`
  * RIÊNG của mình.
@@ -134,7 +142,7 @@ export function maskServerMessage(message: string, status: number, res?: Respons
   if (status < 500) return message
   console.error('[fail]', message)
   recordServerError('be', message, status, undefined, routeOf(res))
-  return isSoftStatus(status) ? message : GENERIC_5XX
+  return isSoftStatus(status) ? softMessage(message, res) : GENERIC_5XX
 }
 
 /**
@@ -238,7 +246,7 @@ export function fail(res: Response, arg2: string | number | PgLikeError, arg3?: 
     if (arg2 >= 500) {
       if (arg4) console.error('[fail]', arg3 ?? 'ERROR', arg4)
       recordServerError('be', arg4 ?? String(arg3 ?? 'ERROR'), arg2, typeof arg3 === 'string' ? arg3 : undefined, routeOf(res))
-      return res.status(arg2).json({ success: false, error: { code: arg3 ?? 'ERROR', message: isSoftStatus(arg2) && arg4 ? arg4 : GENERIC_5XX } })
+      return res.status(arg2).json({ success: false, error: { code: arg3 ?? 'ERROR', message: isSoftStatus(arg2) && arg4 ? softMessage(arg4, res) : GENERIC_5XX } })
     }
     return res.status(arg2).json({ success: false, error: { code: arg3 ?? 'ERROR', message: arg4 ?? '' } })
   }

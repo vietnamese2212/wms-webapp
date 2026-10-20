@@ -34,6 +34,7 @@ import { Rows3, AlignJustify } from 'lucide-react'
 import { useSavedViewsStore } from '@/stores/savedViewsStore'
 import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect'
 import { TripFlow } from '@/components/tms/TripFlow'
+import { useConfirmDialog } from '@/components/shared/ConfirmDialog'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -419,6 +420,7 @@ export default function GateRegistration() {
   const [callTime,  setCallTime]  = useState('')
   const [entryTime, setEntryTime] = useState('')
   const [exitTime,  setExitTime]  = useState('')
+  const [askConfirm, confirmNode] = useConfirmDialog()
 
   const [apiError, setApiError] = useState('')
 
@@ -723,13 +725,23 @@ export default function GateRegistration() {
   })
 
   const exitMut = useMutation({
-    mutationFn: ({ id, load_capacity, custom_time }: { id: string; load_capacity?: string; custom_time?: string }) =>
-      apiClient.patch(`/tms/gate-registrations/${id}/exit`, { load_capacity: load_capacity || undefined, custom_time }).then(r => r.data),
+    mutationFn: ({ id, load_capacity, custom_time, confirm }: { id: string; load_capacity?: string; custom_time?: string; confirm?: boolean }) =>
+      apiClient.patch(`/tms/gate-registrations/${id}/exit`, { load_capacity: load_capacity || undefined, custom_time, confirm }).then(r => r.data),
     onSuccess: (d: { data: GateRegistration }) => {
       invalidate(); syncSelected(d.data); setExitTarget(null); setExitWeight('')
     },
-    onError: (e: { response?: { data?: { error?: { message?: string } } } }) =>
-      toast({ variant: 'destructive', title: e.response?.data?.error?.message ?? 'Lỗi xác nhận ra' }),
+    onError: async (e: { response?: { data?: { error?: { code?: string; message?: string } } } }, vars) => {
+      const err = e.response?.data?.error
+      // 20/10: chuyến Xuất kho của xe chưa hoàn thành ⇒ hỏi lại MỘT lần; đồng ý thì gửi lại kèm confirm (BE ghi vết vào sổ chuyến)
+      if (err?.code === 'TRIP_NOT_COMPLETED' && !vars.confirm) {
+        if (await askConfirm({ title: 'Cho xe ra khi chuyến chưa xuất xong?', body: err.message, confirmLabel: 'Vẫn cho xe ra', danger: true }) !== null)
+          exitMut.mutate({ ...vars, confirm: true })
+        return
+      }
+      // Màn cũ (xe đã ra / chưa vào ở máy khác) ⇒ tải lại để nút về đúng trạng thái
+      if (err?.code === 'ALREADY_EXITED' || err?.code === 'GATE_NOT_ENTERED') { invalidate(); setExitTarget(null) }
+      toast({ variant: 'destructive', title: err?.message ?? 'Lỗi xác nhận ra' })
+    },
   })
 
   const revertCallMut = useMutation({
@@ -1899,6 +1911,7 @@ export default function GateRegistration() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      {confirmNode}
     </div>
   )
 }

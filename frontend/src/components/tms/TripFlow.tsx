@@ -133,6 +133,7 @@ export const EVENT_VI: Record<string, string> = {
   PLAN_VEHICLE_DROPPED: 'Chuyến ngừng', PLAN_VEHICLE_REOPENED: 'Chuyến sống lại', PLAN_DVVT_CHANGED: 'Đổi ĐVVT', PLAN_DO_RENUMBERED: 'Đổi số DO',
   TMS_PLAN_ADOPTED: 'Nhận lệnh VC tạo tay', TRANSFER_PUSHED: 'Đẩy cho kho nhận', AWAITING_SET: 'Chờ SAP', AWAITING_CLEARED: 'Hết chờ SAP', AWAITING_KEEP_SCANNED: 'Giữ hàng đã quét',
   DATE_RULE_SET: 'Chốt %Date', DATE_RULE_CLEARED: 'Bỏ chốt %Date',
+  GATE_EXIT_TRIP_OPEN: 'Ra cổng khi chưa xuất xong',
 }
 const EV_COLS: RtColDef[] = [{ id: 'at', label: 'Thời gian', w: 125 }, { id: 'by', label: 'Ai', w: 150 }, { id: 'what', label: 'Việc', w: 130 }, { id: 'do', label: 'DO', w: 100 }, { id: 'detail', label: 'Chi tiết', w: 360 }]
 /** Bảng "ai làm gì, lúc nào" của MỘT Số xe trong popup tình trạng xe (sổ cả kho: tab Lịch sử của Điều vận, 20/10). */

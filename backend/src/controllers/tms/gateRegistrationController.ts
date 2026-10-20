@@ -7,6 +7,7 @@ import { fetchUpTo, LIST_TOO_LARGE_MSG, rowCapForBytes, fetchAllByIdChunks, isQu
 import { parseListParam } from '../../utils/httpQuery'
 import { normalizePlate } from '../../utils/plate'
 import { maskServerMessage } from '../../utils/response'
+import { logOutboundEvents } from '../../services/outboundEvents'
 
 // 5xx đi qua maskServerMessage như 7 controller có `fail` riêng khác: che message 500 (không lộ tên bảng/cột),
 // GIỮ message 503 (câu hướng dẫn thu hẹp bộ lọc), và ghi error_logs kèm route để digest đếm được ca quá tải.
@@ -723,11 +724,32 @@ export async function doEntry(req: Request, res: Response) {
   return res.json({ success: true, data })
 }
 
+// Chuyến Xuất kho CHƯA hoàn thành của một lượt xe: gắn thẳng lúc Bắt đầu (GDO.gate_registration_id) HOẶC qua lệnh VC
+// mà cổng đã nối (TmsOrder.order_code = Số xe = GDO.group_code — đường của kho không bật "bắt buộc cổng khi Bắt đầu").
+type OpenTrip = { id: string; group_code: string; status: string; plan_dropped: boolean | null }
+async function openTripsOfGate(id: string, orderIds: string[]): Promise<OpenTrip[]> {
+  const codes = orderIds.length
+    ? ((await fetchAllByIdChunks(orderIds, c => supabase.from('TmsOrder').select('order_code').in('id', c).order('id'))) as { order_code: string | null }[])
+        .map(o => o.order_code).filter((x): x is string => !!x)
+    : []
+  const [direct, byCode] = await Promise.all([
+    supabase.from('GroupDeliveryOrder').select('id, group_code, status, plan_dropped').eq('gate_registration_id', id).limit(50),
+    codes.length
+      ? fetchAllByIdChunks(codes, c => supabase.from('GroupDeliveryOrder').select('id, group_code, status, plan_dropped').in('group_code', c).order('id')) as Promise<OpenTrip[]>
+      : Promise.resolve([] as OpenTrip[]),
+  ])
+  if (direct.error) throw direct.error
+  const byId = new Map<string, OpenTrip>()
+  for (const g of [...((direct.data ?? []) as OpenTrip[]), ...byCode]) byId.set(g.id, g)
+  return [...byId.values()].filter(g => g.status !== 'COMPLETED')
+}
+const TRIP_STATE_LABEL: Record<string, string> = { PENDING: 'chưa bắt đầu', IN_PROGRESS: 'đang xuất', PAUSED: 'tạm dừng' }
+
 export async function doExit(req: Request, res: Response) {
   const { id } = req.params
   if (!(await guardGateScope(req, res, id))) return
   const user = (req as Request & { user?: { name?: string } }).user
-  const { load_capacity, custom_time } = req.body
+  const { load_capacity, custom_time, confirm } = req.body ?? {}
   const now = new Date().toISOString()
   // custom_time rác ("abc") → RangeError nổ 500; kiểm hợp lệ trước, sai thì 400 sạch
   const tsD = custom_time ? new Date(custom_time) : null
@@ -736,9 +758,27 @@ export async function doExit(req: Request, res: Response) {
 
   const { data: reg, error: fetchErr } = await supabase
     .from('gate_registrations')
-    .select('tms_order_id, tms_order_ids, tms_vehicle_slot_id')
+    .select('status, direction, license_plate, tms_order_id, tms_order_ids, tms_vehicle_slot_id')
     .eq('id', id).single()
   if (fetchErr) return apiErr(res, 'DB_ERROR', fetchErr.message, 500)
+  const rx = reg as { status: string; direction: string | null; license_plate: string | null; tms_order_id: string | null; tms_order_ids: string | null }
+
+  // 20/10 (chạy thử một ngày Ba Vì, user chốt "sửa lại cả 2"): nút Ra chỉ hiện khi xe ĐÃ VÀO, nhưng cửa API thì nhận mọi trạng thái
+  // ⇒ màn cũ chưa tải lại / hai bảo vệ cùng bấm đóng được lượt xe chưa từng vào (giờ ra có, giờ vào trống). Cùng luật với nút.
+  if (rx.status === 'COMPLETED')
+    return apiErr(res, 'ALREADY_EXITED', 'Xe đã được xác nhận ra cổng — muốn sửa giờ ra / tải trọng thì bấm "Huỷ ra" rồi xác nhận lại', 409)
+  if (rx.status !== 'IN')
+    return apiErr(res, 'GATE_NOT_ENTERED', 'Xe chưa xác nhận VÀO cổng — bấm "Vào" trước (sửa giờ vào nếu xe đã vào từ trước) rồi mới xác nhận Ra', 409)
+
+  // Xe ra khi chuyến Xuất kho chưa hoàn thành = đi khi kho chưa chốt hàng ⇒ HỎI LẠI một lần (confirm=true mới cho qua) + ghi vết vào sổ chuyến.
+  let openTrips: OpenTrip[] = []
+  if (rx.direction !== 'INBOUND') {
+    try { openTrips = await openTripsOfGate(id, getAllOrderIds(rx)) }
+    catch (e) { if (isQueryTimeout(e)) return apiErr(res, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG, 503); return apiErr(res, 'DB_ERROR', String(e), 500) }
+  }
+  const tripText = openTrips.map(g => `${g.group_code} (${g.plan_dropped ? 'điều vận đã rút xe' : TRIP_STATE_LABEL[g.status] ?? g.status})`).join(', ')
+  if (openTrips.length && confirm !== true)
+    return apiErr(res, 'TRIP_NOT_COMPLETED', `Chuyến Xuất kho của xe này CHƯA HOÀN THÀNH: ${tripText}. Xe ra cổng bây giờ là đi khi kho chưa chốt hàng — kiểm tra với kho trước khi cho xe ra.`, 409)
 
   const patch: Record<string, unknown> = {
     status: 'COMPLETED', exit_at: ts, exit_by: user?.name ?? null,
@@ -748,14 +788,24 @@ export async function doExit(req: Request, res: Response) {
     patch.load_capacity = Number(load_capacity)
   }
 
+  // CAS theo trạng thái đã đọc: hai bảo vệ cùng bấm Ra ⇒ người sau 409, không ghi đè giờ ra của người trước
   const { data, error } = await supabase
     .from('gate_registrations')
     .update(patch)
     .eq('id', id)
+    .eq('status', 'IN')
     .select()
-    .single()
+    .maybeSingle()
 
   if (error) return apiErr(res, 'DB_ERROR', error.message, 500)
+  if (!data) return apiErr(res, 'ALREADY_EXITED', 'Lượt xe vừa được người khác cập nhật — tải lại danh sách', 409)
+
+  if (openTrips.length)
+    await logOutboundEvents(openTrips.map(g => ({
+      group_code: g.group_code, gdo_id: g.id, event_type: 'GATE_EXIT_TRIP_OPEN', source: 'USER' as const, actor: user?.name ?? null,
+      new_value: rx.license_plate,
+      detail: `Bảo vệ xác nhận xe ${rx.license_plate ?? ''} RA CỔNG khi chuyến Xuất kho chưa hoàn thành (${g.plan_dropped ? 'điều vận đã rút xe' : TRIP_STATE_LABEL[g.status] ?? g.status}) — đã được hỏi lại và đồng ý`,
+    })))
 
   const r = reg as { tms_order_id: string | null; tms_order_ids: string | null; tms_vehicle_slot_id: string | null }
   const allOrderIds = getAllOrderIds(r)

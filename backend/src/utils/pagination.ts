@@ -132,6 +132,21 @@ export const QUERY_TIMEOUT_MSG =
   'Khoảng lọc quá rộng nên hệ thống chưa tính kịp (nhiều người đang cùng truy vấn). '
   + 'Vui lòng thu hẹp KHOẢNG NGÀY hoặc chọn 1 Kho rồi thử lại.'
 
+export const QUERY_BUSY_MSG =
+  'Hệ thống đang quá tải (nhiều người cùng thao tác) nên chưa xử lý kịp — chờ vài giây rồi thử lại.'
+
+/**
+ * Câu 503 quá hạn truy vấn theo ĐÚNG cửa (20/10, chạy thử một ngày Ba Vì): Hộp việc lái xe nâng · bảng việc · Giám sát vận hành
+ * không có ô ngày mà vẫn bảo người dùng "thu hẹp KHOẢNG NGÀY". Chỉ khuyên thu hẹp khi request THẬT SỰ mang bộ lọc ngày
+ * (`date` · `date_from` · `plan_date` · `from` · `to` · `month`… — tách theo `_`); còn lại là câu "quá tải, thử lại".
+ * `fail()` / `maskServerMessage` tự đổi khi gặp QUERY_TIMEOUT_MSG ⇒ 138 chỗ gọi không phải chạm.
+ */
+export function timeoutMsgFor(...params: (Record<string, unknown> | null | undefined)[]): string {
+  const hasDate = params.some(p => p && typeof p === 'object'
+    && Object.keys(p).some(k => k.toLowerCase().split('_').some(t => t === 'date' || t === 'from' || t === 'to' || t === 'day' || t === 'month')))
+  return hasDate ? QUERY_TIMEOUT_MSG : QUERY_BUSY_MSG
+}
+
 export const LIST_TOO_LARGE_MSG = (max: number) =>
   `Kết quả quá lớn (hơn ${max.toLocaleString('vi-VN')} bản ghi) nên không tải hết được. `
   + 'Vui lòng thu hẹp KHOẢNG NGÀY, hoặc lọc thêm theo Kho / Loại kho rồi thử lại.'

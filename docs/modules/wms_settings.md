@@ -34,7 +34,9 @@ view, manage_warehouse, **manage_type**=tab Loại kho **+ tab "ĐK bảo quản
 User hỏi 20/10 "ghi vài dòng mà tốn nhiều dữ liệu là không ổn — còn những thông tin khác lưu bao lâu?" ⇒ đo cả DB staging: **502 MB, chạm
 trần 500 MB gói Free** (vượt là project chỉ đọc). Chia ra: dữ liệu thật 84 · chỉ mục 215 · chỗ trống do ghi-rồi-xoá 115 (ZSD02 94 MB cho 3 MB
 dữ liệu; bảng quét / dòng xuất 12 MB chỉ mục cho 0,1 MB — dư âm gói tải) · bảng sao lưu cũ 34 · Supabase tự dùng ~50. Đã `VACUUM (FULL)` 19 bảng
-phình + xoá bảng sao lưu (`20261020e`) ⇒ 327 MB. Bảng phình lại theo các lượt QA trên staging — nén lại khi DB gần trần.
+phình + xoá bảng sao lưu (`20261020e`) ⇒ 327 MB; nén `InventoryEntry` (10 s, 147 → 60 MB — 24 chỉ mục phình do update, 101 → 38 MB)
+⇒ **241 MB**. Đo sau khi nén: pallet ~1,1 KB (`InventoryEntry`) + ~1 KB (`ProductionImport`). Bảng phình lại theo các lượt QA trên staging —
+nén lại khi DB gần trần (VACUUM FULL các bảng có dữ liệu thật < 35 % dung lượng).
 
 **Hạn giữ hiện có:** ảnh (`photos`) · chuông (`feed`) · log lỗi (`error_logs`) xoá hẳn · lịch sử đăng nhập 90 ngày (cứng trong RPC `auth_throttle`) ·
 cache Tổng quan 2 ngày · tin realtime Supabase tự xoá. **Bốn cờ lưu trữ (0 = giữ mãi, MẶC ĐỊNH — hành vi cũ):** `ledger` sổ vết điều vận (180–3650) ·

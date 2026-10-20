@@ -587,7 +587,8 @@ function SystemTab({ canManage, superadmin }: { canManage: boolean; superadmin: 
             </div>
             <div>
               <SettingLabel text="Lưu trữ ra tệp sau (0 = giữ mãi)" tip="Quá hạn thì tháng cũ được ghi thành tệp CSV nén trong Storage (nhỏ hơn ~10 lần, tải lại được ở danh sách bên dưới) rồi xoá khỏi DB. Sổ vết = lịch sử điều vận (180–3650) · Nhật ký = nhật ký quản trị + cảnh báo đã đóng (180–3650) · Dòng đơn SAP = dòng ZSD02 / VL06O (365–3650) · Bản chép SAP = bản chép nguyên dòng SAP (76 % dung lượng của dòng; 7–365): quá hạn chỉ giữ các cột đã tách, panel chi tiết dòng không còn ~26 cột phụ (doanh số, hoá đơn, còn lại…). Pallet · nhập · quét · đơn xuất KHÔNG lưu trữ: Truy xuất lô cần tra trong suốt hạn dùng của hàng." />
-              <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-4">
+              {/* 2 cột: ô nhận tới 4 chữ số (3650) — 4 cột trong thẻ 1/3 màn 1280 cắt "365" còn "36" */}
+              <div className="grid grid-cols-2 gap-1.5">
                 <SettingNum label="Sổ vết" unit="ngày" value={draftRet.ledger} onChange={v => setDraftRet(d => ({ ...d, ledger: v }))} />
                 <SettingNum label="Nhật ký" unit="ngày" value={draftRet.logs} onChange={v => setDraftRet(d => ({ ...d, logs: v }))} />
                 <SettingNum label="Dòng đơn SAP" unit="ngày" value={draftRet.sap_lines} onChange={v => setDraftRet(d => ({ ...d, sap_lines: v }))} />

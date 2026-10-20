@@ -13,6 +13,9 @@ describe('singleTypeMatches — loại ĐƠN của đăng ký cổng ↔ loại 
     expect(singleTypeMatches('PM01', 'FG01+PM01')).toBe(true)
     expect(singleTypeMatches('PM01', 'PM01 + FG01')).toBe(true)
   })
+  it('hai bên cùng mang NGUYÊN chuỗi ghép (ghi qua API) vẫn khớp như luật cũ', () => {
+    expect(singleTypeMatches('FG01+PM01', 'FG01+PM01')).toBe(true)
+  })
   it('loại không có trên lệnh thì không khớp', () => {
     expect(singleTypeMatches('FG02', 'FG01+PM01')).toBe(false)
     expect(singleTypeMatches('FG02', 'FG01')).toBe(false)

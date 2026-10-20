@@ -35,7 +35,7 @@ export function splitCategories(raw: string | null | undefined): string[] {
  * nối cổng ↔ lệnh: 20/10 hai cửa lệch luật nhau (gợi ý tách, phép nối so nguyên chuỗi) ⇒ xe chở lẫn không bao giờ gắn được lệnh.
  */
 export function singleTypeMatches(single: string | null | undefined, combined: string | null | undefined): boolean {
-  if (!single || !combined) return true
+  if (!single || !combined || single === combined) return true
   return splitCategories(combined).includes(single)
 }
 

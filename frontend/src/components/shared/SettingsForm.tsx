@@ -30,11 +30,12 @@ export function SettingGroup({ title, meta, readOnly, children }: {
     <section className="border border-slate-200 rounded-lg overflow-hidden bg-white h-full">
       <div className="flex items-center gap-1.5 bg-slate-50 border-b border-slate-200 px-2 py-1.5">
         <span className="w-1 h-3 bg-sky-500 rounded-full shrink-0" />
-        {/* Tiêu đề là phần CHÍNH; dòng "ai sửa · lúc nào" là phần phụ — co trước hết (shrink 999) rồi tiêu đề mới cắt "…"
-            (20/10: tên tài khoản dài ép tiêu đề "Thời gian lưu dữ liệu" còn "T.") */}
-        <span className="min-w-0 truncate text-[11px] font-bold text-sky-900 uppercase tracking-wide">{title}</span>
+        {/* Tiêu đề là phần CHÍNH — KHÔNG co (shrink-0; chỉ cắt "…" khi tự nó dài hơn cả hàng, max-w-full); dòng "ai sửa · lúc nào" là
+            phần phụ, co + cắt. 20/10: tên tài khoản dài ép "Thời gian lưu dữ liệu" còn "T."; bản vá đầu (shrink 999) vẫn để tiêu đề co lẻ
+            pixel ⇒ trình duyệt vẫn vẽ "…" mà scrollWidth (làm tròn) không thấy — đo bằng Range. */}
+        <span className="shrink-0 max-w-full truncate text-[11px] font-bold text-sky-900 uppercase tracking-wide">{title}</span>
         {meta?.updated_by && meta.updated_at && (
-          <span className="ml-auto min-w-0 shrink-[999] truncate text-[9px] text-slate-400 whitespace-nowrap hidden lg:inline" title={`${meta.updated_by} · ${formatDateTime(meta.updated_at)}`}>
+          <span className="ml-auto min-w-0 truncate text-[9px] text-slate-400 whitespace-nowrap hidden lg:inline" title={`${meta.updated_by} · ${formatDateTime(meta.updated_at)}`}>
             {meta.updated_by} · {formatDateTime(meta.updated_at)}
           </span>
         )}

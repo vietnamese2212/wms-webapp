@@ -1,7 +1,7 @@
 import { Request, Response } from 'express'
 import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
-import { categoryTextOrScopeFilter, scopeCategoriesOf, splitCategories } from '../../utils/categoryScope'
+import { categoryAllowed, categoryTextOrScopeFilter, scopeCategoriesOf, singleTypeMatches } from '../../utils/categoryScope'
 import { uuidList } from '../../utils/ids'
 import { fetchUpTo, LIST_TOO_LARGE_MSG, rowCapForBytes, fetchAllByIdChunks, isQueryTimeout, QUERY_TIMEOUT_MSG } from '../../utils/pagination'
 import { parseListParam } from '../../utils/httpQuery'
@@ -288,8 +288,7 @@ export async function suggestBooking(req: Request, res: Response) {
     // Loại kho của LỆNH có thể là chuỗi GHÉP ('FG01+PM01' — xe chở lẫn): so khớp nguyên chuỗi sẽ
     // KHÔNG bao giờ khớp giá trị đơn của đăng ký cổng ⇒ xe chở lẫn không gắn được booking, và ở kho
     // bật rule "phải có đăng ký cổng" thì chuyến không Bắt đầu được. Luật giao ≥1 (utils/categoryScope).
-    if (warehouse_type && vs.order.warehouse_type
-        && !splitCategories(vs.order.warehouse_type).includes(warehouse_type)) return false
+    if (!singleTypeMatches(warehouse_type, vs.order.warehouse_type)) return false
     if (vehicle_type && vs.order.vehicle_type !== vehicle_type) return false
     if (company_id !== null && company_id !== undefined && vs.order.ncc_id !== company_id) return false
     return true
@@ -419,8 +418,8 @@ export async function createGateRegistration(req: Request, res: Response) {
     return apiErr(res, 'FORBIDDEN', 'Ngoài phạm vi kho được giao — không thể tạo đăng ký cổng cho kho này', 403)
   }
   // Phạm vi Loại hàng ('Khác'/không khai → không chặn)
-  const cCats = scopeCategoriesOf(req)
-  if (cCats && warehouse_type && warehouse_type !== 'Khác' && !cCats.includes(warehouse_type as string)) {
+  // giao ≥1 loại là được (chuỗi ghép 'FG01+PM01' — CLAUDE.md "một bản ghi có thể mang nhiều loại"); trước 20/10 so nguyên chuỗi ⇒ 403
+  if (warehouse_type && warehouse_type !== 'Khác' && !categoryAllowed(req, warehouse_type as string)) {
     return apiErr(res, 'FORBIDDEN', 'Ngoài phạm vi Loại hàng được phép — không thể tạo đăng ký loại kho này', 403)
   }
 
@@ -549,11 +548,10 @@ export async function updateGateRegistration(req: Request, res: Response) {
     if (warehouse_id !== undefined && warehouse_id && !uScope.includes(warehouse_id))
       return apiErr(res, 'FORBIDDEN', 'Không thể chuyển đăng ký sang kho ngoài phạm vi được giao', 403)
   }
-  const uCats = scopeCategoriesOf(req)
-  // Loại HIỆN TẠI của bản ghi phải trong phạm vi (chống IDOR-loại: sửa đăng ký loại ngoài scope cùng kho)
-  if (uCats && before?.warehouse_type && before.warehouse_type !== 'Khác' && !uCats.includes(before.warehouse_type))
+  // Loại HIỆN TẠI của bản ghi phải trong phạm vi (chống IDOR-loại: sửa đăng ký loại ngoài scope cùng kho) — giao ≥1 loại (chuỗi ghép)
+  if (before?.warehouse_type && before.warehouse_type !== 'Khác' && !categoryAllowed(req, before.warehouse_type))
     return apiErr(res, 'FORBIDDEN', 'Ngoài phạm vi Loại hàng được phép — không thể sửa đăng ký cổng loại kho này', 403)
-  if (uCats && warehouse_type !== undefined && warehouse_type && warehouse_type !== 'Khác' && !uCats.includes(warehouse_type))
+  if (warehouse_type !== undefined && warehouse_type && warehouse_type !== 'Khác' && !categoryAllowed(req, warehouse_type))
     return apiErr(res, 'FORBIDDEN', 'Ngoài phạm vi Loại hàng được phép — không thể đổi sang loại kho này', 403)
 
   // Đang được CHUYẾN XUẤT trỏ tới → khóa các trường ĐỊNH DANH (biển số/chiều/kho/ngày) — đổi là
@@ -935,7 +933,10 @@ export async function relinkAfterDelete(
     if (!vs.order || !vs.slot) return false
     if (vs.order.date !== date || vs.order.warehouse_id !== warehouse_id) return false
     if (direction !== null && vs.order.direction !== direction) return false
-    if (warehouse_type !== null && vs.order.warehouse_type !== warehouse_type) return false
+    // CÙNG luật giao ≥1 với gợi ý booking (suggest-booking ở trên): lệnh xe chở lẫn mang chuỗi GHÉP 'FG01+PM01', ô Loại kho của đăng ký
+    // cổng chỉ chọn được MỘT loại. 20/10 (chạy thử một ngày Ba Vì): chỉ gợi ý được vá, phép nối vẫn so nguyên chuỗi ⇒ bảo vệ thấy "có
+    // booking" mà cổng KHÔNG BAO GIỜ gắn lệnh — Đặt lịch / Kế hoạch VC không thấy "Đang xuất / Đã xuất" của mọi xe chở lẫn.
+    if (!singleTypeMatches(warehouse_type, vs.order.warehouse_type)) return false
     if (vehicle_type !== null && vs.order.vehicle_type !== vehicle_type) return false
     if (company_id !== null && vs.order.ncc_id !== company_id) return false
     return true

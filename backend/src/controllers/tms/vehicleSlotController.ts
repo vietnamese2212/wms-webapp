@@ -6,40 +6,42 @@ import { relinkAfterDelete } from './gateRegistrationController'
 import { normalizePlate } from '../../utils/plate'
 
 // ── Scope-write: user ASSIGNED chỉ thao tác xe của lệnh thuộc kho mình (nguồn hoặc đích).
-// NATIONAL → null (toàn quyền). ĐVVT (ncc_id) → null vì scope theo CÔNG TY (book xe liên kho là hợp lệ).
-function scopeWhIds(req: Request): string[] | null {
-  if (req.user?.warehouse_scope === 'NATIONAL') return null
-  if (req.user?.ncc_id) return null
-  return req.user?.warehouse_ids ?? []
-}
+// NATIONAL → toàn quyền. ĐVVT (ncc_id) → scope theo CÔNG TY (book xe liên kho là hợp lệ, xe hãng khác thì không).
 function whInScope(scope: string[], ...whs: (string | null | undefined)[]): boolean {
   return (whs.filter(Boolean) as string[]).some(w => scope.includes(w))
 }
-// Gác theo order: lệnh phải dính kho trong phạm vi.
-async function guardOrderWh(req: Request, res: Response, orderId: string): Promise<boolean> {
-  const scope = scopeWhIds(req)
-  if (scope === null) return true
-  const { data } = await supabase.from('TmsOrder')
-    .select('warehouse_id, destination_warehouse_id').eq('id', orderId).maybeSingle()
-  if (!data) { fail(res, 'Không tìm thấy đơn hàng', 404); return false }
-  const o = data as { warehouse_id: string | null; destination_warehouse_id: string | null }
-  if (!whInScope(scope, o.warehouse_id, o.destination_warehouse_id)) {
+// ĐVVT chỉ thao tác xe của lệnh giao cho CHÍNH công ty mình (20/10, chạy thử một ngày Ba Vì: tài khoản ĐVVT 3S sửa được tài xế / biển số
+// trên xe của Hải An — danh sách GET /tms/orders đã lọc theo ncc_id nhưng cửa GHI thì không; cửa Đã giao thì có). Đường đọc cắt scope bao
+// nhiêu, đường ghi cắt đúng bấy nhiêu.
+const CARRIER_FORBIDDEN = 'Xe của lệnh này thuộc đơn vị vận chuyển khác — không thể thao tác'
+type OrderScopeRow = { warehouse_id: string | null; destination_warehouse_id: string | null; ncc_id: string | null }
+function orderAllowed(req: Request, res: Response, o: OrderScopeRow): boolean {
+  if (req.user?.warehouse_scope === 'NATIONAL') return true
+  if (req.user?.ncc_id) {
+    if (o.ncc_id !== req.user.ncc_id) { fail(res, CARRIER_FORBIDDEN, 403); return false }
+    return true
+  }
+  if (!whInScope(req.user?.warehouse_ids ?? [], o.warehouse_id, o.destination_warehouse_id)) {
     fail(res, 'Ngoài phạm vi kho được giao — không thể thao tác xe của lệnh kho này', 403); return false
   }
   return true
 }
-// Gác theo vehicle-slot id (suy ra order rồi gác kho).
+// Gác theo order: lệnh phải dính kho trong phạm vi (ĐVVT: lệnh phải của công ty mình).
+async function guardOrderWh(req: Request, res: Response, orderId: string): Promise<boolean> {
+  if (req.user?.warehouse_scope === 'NATIONAL') return true
+  const { data } = await supabase.from('TmsOrder')
+    .select('warehouse_id, destination_warehouse_id, ncc_id').eq('id', orderId).maybeSingle()
+  if (!data) { fail(res, 'Không tìm thấy đơn hàng', 404); return false }
+  return orderAllowed(req, res, data as OrderScopeRow)
+}
+// Gác theo vehicle-slot id (suy ra order rồi gác kho / công ty).
 async function guardSlotWh(req: Request, res: Response, slotId: string): Promise<boolean> {
-  const scope = scopeWhIds(req)
-  if (scope === null) return true
+  if (req.user?.warehouse_scope === 'NATIONAL') return true
   const { data } = await supabase.from('TmsVehicleSlot')
-    .select('order:TmsOrder!order_id(warehouse_id, destination_warehouse_id)').eq('id', slotId).maybeSingle()
-  const o = (data as { order: { warehouse_id: string | null; destination_warehouse_id: string | null } | null } | null)?.order ?? null
+    .select('order:TmsOrder!order_id(warehouse_id, destination_warehouse_id, ncc_id)').eq('id', slotId).maybeSingle()
+  const o = (data as { order: OrderScopeRow | null } | null)?.order ?? null
   if (!o) { fail(res, 'Không tìm thấy vehicle slot', 404); return false }
-  if (!whInScope(scope, o.warehouse_id, o.destination_warehouse_id)) {
-    fail(res, 'Ngoài phạm vi kho được giao — không thể thao tác xe của lệnh kho này', 403); return false
-  }
-  return true
+  return orderAllowed(req, res, o)
 }
 
 /**
@@ -212,8 +214,11 @@ export async function updateVehicleSlot(req: Request, res: Response) {
         .select('direction, warehouse_type, booking_category, warehouse_id, date').eq('id', existing.order_id).single()
       const primary = (po ?? null) as ConsolOrder | null
       const { data: secondaryOrders } = await supabase.from('TmsOrder')
-        .select('order_code, direction, warehouse_type, booking_category, plan_dropped, warehouse_id, date').in('id', consolidationIds)
-      const secs = (secondaryOrders ?? []) as ConsolOrder[]
+        .select('order_code, direction, warehouse_type, booking_category, plan_dropped, warehouse_id, date, ncc_id').in('id', consolidationIds)
+      const secs = (secondaryOrders ?? []) as (ConsolOrder & { ncc_id?: string | null })[]
+      // ĐVVT chỉ gom lệnh của CHÍNH công ty mình (cùng luật với orderAllowed ở đầu file)
+      const otherCarrier = req.user?.ncc_id ? secs.find(o => o.ncc_id !== req.user!.ncc_id) : undefined
+      if (otherCarrier) return fail(res, 403, 'FORBIDDEN', `Không gom được Số xe ${otherCarrier.order_code ?? ''} — ${CARRIER_FORBIDDEN.toLowerCase()}.`)
 
       // KHO + NGÀY: picker (listConsolidatable) vốn chỉ liệt kê lệnh CÙNG kho/CÙNG ngày/CÙNG ĐVVT,
       // nhưng đường ghi nhận thẳng id từ body ⇒ gọi API bằng id lệnh kho khác là ghi đè được dòng xe

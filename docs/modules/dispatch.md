@@ -230,6 +230,10 @@ Lỗi thấy và đã sửa (cùng commit):
 - **Phạm vi Loại hàng chặn CẢ GÓI ở đường dội xuống**: vai chỉ được giao FG01/PM01 lập 149 xe trong đó 10 xe lạnh FG02 ⇒ Xác nhận ghi 458 dòng
   Kế hoạch xuất mà 0/149 chuyến sinh ("File có 10 chuyến xe lỗi", không nêu xe). Nay `tripGuards` chặn 403 `CATEGORY_OUT_OF_SCOPE` nêu xe +
   loại TRƯỚC khi ghi; `derive_message` nêu 3 xe lỗi đầu + lý do.
+- **20/10 (chạy thử một ngày Ba Vì như 02/10) — xe KHÔNG dòng xe chặn CẢ LÔ**: "Xe mới" cho OD lớn hơn mọi dòng xe khách được vào (17,15 pallet,
+  khách chỉ vào xe 16/17 pallet, dải 100 %) tạo xe không dòng xe; Xác nhận 34 xe ghi Kế hoạch xuất cho cả 34 mà 0 chuyến ("Thiếu Loại xuất").
+  Nay `tripGuards` 422 `VEHICLE_MODEL_REQUIRED` nêu Số xe + pallet; và **mọi** lần đường dội từ chối trước khi ghi (400 VALIDATION_FAILED)
+  `writeTrips` gỡ dòng Kế hoạch xuất vừa ghi + trả xe về trạng thái cũ (`rolled_back`) — không còn "Đã vào KH" mà không chuyến. Gói 61 [21o].
 - **Bỏ nháp sau khi Mở lại hết ⇒ kế hoạch thành "Chờ ĐVVT" 0 xe** (băng "nháp quá ngày" sống mãi): bỏ nháp không còn xe sống ⇒ DISCARDED;
   dọn dòng OD của khung chờ + xe bị bỏ (đo 11/10: 18.694 dòng của 23 nháp đã bỏ nằm chết trong `dispatch_trip_od`, câu đếm đơn mới quét qua;
   dọn tay một lần tối 11/10 — 15.263 → 121 dòng).

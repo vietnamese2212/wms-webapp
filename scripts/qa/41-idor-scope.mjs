@@ -16,6 +16,10 @@ async function cleanExtra() {
     await restWrite('Employee', 'DELETE', `id=eq.${e.id}`)
   }
   for (const j of await restAll('JobTitle', `select=id&name=like.${TAG}*`)) await restWrite('JobTitle', 'DELETE', `id=eq.${j.id}`)
+  for (const o of await restAll('TmsOrder', `select=id&order_code=like.${TAG}*`)) {
+    await restWrite('TmsVehicleSlot', 'DELETE', `order_id=eq.${o.id}`).catch(() => {})
+    await restWrite('TmsOrder', 'DELETE', `id=eq.${o.id}`).catch(() => {})
+  }
   await restWrite('PalletOperation', 'DELETE', `operated_by_name=eq.${TAG}`).catch(() => {})
   await restWrite('erp_outbound_orders', 'DELETE', `od_number=like.${TAG}*`).catch(() => {})
 }
@@ -128,6 +132,35 @@ else {
       const opRow = (await restAll('PalletOperation', `select=undone_at&id=eq.${opId}`))[0]
       check('Thao tác kho khác KHÔNG bị đánh dấu hoàn tác', !!opRow && opRow.undone_at == null, `undone_at=${opRow?.undone_at}`)
     }
+
+    // ── Tầng 3 (20/10, chạy thử một ngày Ba Vì): tài khoản ĐVVT chỉ thao tác xe của lệnh giao cho CHÍNH công ty mình. Trước bản vá
+    //    ĐVVT 3S PATCH được tài xế / biển số trên xe của Hải An (danh sách đã lọc ncc_id, cửa ghi thì không) ──
+    const cos = (await restAll('TransportCompany', `select=id,name&type=eq.${encodeURIComponent('ĐVVT')}&order=code`)).slice(0, 2)
+    if (cos.length === 2) {
+      const cj = randomUUID(), ce = randomUUID(), cpw = 'Qa' + randomUUID().slice(0, 10) + '!'
+      const mkOrd = async (ncc, n) => {
+        const oid = randomUUID(), sid = randomUUID()
+        await restWrite('TmsOrder', 'POST', '', [{ id: oid, order_code: `${TAG}-DVVT-${n}`, date: FIX.DATE, warehouse_id: FIX.WH_QR.id, direction: 'OUTBOUND', status: 'PENDING', ncc_id: ncc, created_at: now(), updated_at: now() }])
+        await restWrite('TmsVehicleSlot', 'POST', '', [{ id: sid, order_id: oid, status: 'PENDING', created_at: now(), updated_at: now() }])
+        return sid
+      }
+      const mine = await mkOrd(cos[0].id, 1), theirs = await mkOrd(cos[1].id, 2)
+      await restWrite('JobTitle', 'POST', '', [{ id: cj, name: `${TAG} dvvt`, updated_at: now(), module_permissions: { tms_plan: ['view', 'book', 'release'] } }])
+      await restWrite('Employee', 'POST', '', [{ id: ce, employee_code: `${TAG}02`, name: `${TAG} dvvt`, email: `${TAG.toLowerCase()}02@test.local`,
+        password: await bcrypt.hash(cpw, 10), is_active: true, job_title_id: cj, warehouse_id: FIX.WH_QR.id, warehouse_scope: 'ASSIGNED', ncc_id: cos[0].id, updated_at: now() }])
+      const cl = await fetch(`${BASE}/api/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: `${TAG.toLowerCase()}02@test.local`, password: cpw }) })
+      const ctk = (await cl.json().catch(() => null))?.data?.token
+      check('Đăng nhập tài khoản ĐVVT (gắn công ty)', !!ctk, `http=${cl.status}`)
+      if (ctk) {
+        const cc = async (path, body) => { const r = await fetch(`${BASE}/api${path}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ctk}` }, body: JSON.stringify({ qty_semantics: 'base', ...body }) }); return r.status }
+        const sOwn = await cc(`/tms/vehicle-slots/${mine}`, { driver_name: `${TAG} tai xe` })
+        const sOther = await cc(`/tms/vehicle-slots/${theirs}`, { driver_name: `${TAG} chen` })
+        const rel = await cc(`/tms/vehicle-slots/${theirs}/release`, {})
+        const other = (await restAll('TmsVehicleSlot', `select=driver_name&id=eq.${theirs}`))[0]
+        check(`ĐVVT ${cos[0].name}: sửa xe của CHÍNH mình → 200 · xe của ${cos[1].name} → 403 (sửa + nhả), dòng xe hãng khác không đổi`,
+          sOwn === 200 && sOther === 403 && rel === 403 && other?.driver_name == null, `mình=${sOwn} khác=${sOther} nhả=${rel} driver=${other?.driver_name}`)
+      }
+    } else check('Fixture tầng 3: cần 2 ĐVVT trong danh mục TransportCompany', false, `tìm được ${cos.length}`)
   } finally { await cleanExtra() }
 }
 finish('IDOR-SCOPE')

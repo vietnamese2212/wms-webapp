@@ -30,6 +30,16 @@ export function splitCategories(raw: string | null | undefined): string[] {
 }
 
 /**
+ * Một loại ĐƠN (ô Loại kho của đăng ký cổng chỉ chọn được MỘT loại) khớp loại của lệnh — lệnh xe chở lẫn mang chuỗi GHÉP
+ * 'FG01+PM01' ⇒ khớp khi loại đơn nằm trong các loại của lệnh. Thiếu một bên ⇒ không lọc. Dùng CHUNG cho gợi ý booking và phép
+ * nối cổng ↔ lệnh: 20/10 hai cửa lệch luật nhau (gợi ý tách, phép nối so nguyên chuỗi) ⇒ xe chở lẫn không bao giờ gắn được lệnh.
+ */
+export function singleTypeMatches(single: string | null | undefined, combined: string | null | undefined): boolean {
+  if (!single || !combined) return true
+  return splitCategories(combined).includes(single)
+}
+
+/**
  * Loại kho của bản ghi có nằm trong scope user không (không khai loại → không chặn).
  *
  * Bản ghi chở LẪN nhiều loại: **GIAO ≥1 loại là được** (user chốt 30/07 — "xe ghép chung

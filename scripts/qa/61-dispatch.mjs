@@ -492,7 +492,8 @@ try {
       const base = retBefore && typeof retBefore === 'object' ? retBefore : { photos: 60, feed: 3, error_logs: 30 }
       const OLD_AT = '2015-03-15T03:00:00.000Z', OLD_KEEP = '2015-03-16T03:00:00.000Z'
       await restWrite('outbound_events', 'POST', null, [
-        { id: crypto.randomUUID(), group_code: `${PREFIX}1`, event_type: 'PLAN_DO_ADDED', source: 'PLAN', actor: 'QA61', detail: 'QA61 vết cũ, "có dấu phẩy", xuống\ndòng', created_at: OLD_AT, updated_at: OLD_AT },
+        // chèn LÔ PostgREST: mọi dòng phải CÙNG bộ khoá (PGRST102)
+        { id: crypto.randomUUID(), group_code: `${PREFIX}1`, event_type: 'PLAN_DO_ADDED', source: 'PLAN', actor: 'QA61', old_value: null, new_value: null, detail: 'QA61 vết cũ, "có dấu phẩy", xuống\ndòng', created_at: OLD_AT, updated_at: OLD_AT },
         { id: crypto.randomUUID(), group_code: `${PREFIX}1`, event_type: 'QTY_REDUCED', source: 'SYSTEM', actor: 'QA61', old_value: '10', new_value: '8', detail: 'QA61 giữ lại', created_at: OLD_KEEP, updated_at: OLD_KEEP },
       ])
       const setLow = await api('/wms/settings/retention_days', 'PUT', { value: { ...base, ledger: 30 } })

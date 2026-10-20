@@ -148,7 +148,7 @@ const KNOWN_SETTINGS: Record<string, { validate: (v: unknown) => boolean; hint: 
   label_format: { validate: v => v === 'underscore' || v === 'semicolon', hint: "'underscore' | 'semicolon'" },
   pct_date_bands: { validate: isPctDateBands, hint: '{ good: number, low: number } với 0 < low ≤ good ≤ 100 — %Date > good xanh, > low vàng, còn lại đỏ' },
   decimal_separator: { validate: v => v === 'dot' || v === 'comma', hint: "'dot' | 'comma'" },
-  delivery_confirmation: { validate: isDeliveryConfirmation, hint: "{ enabled: boolean, modes: ('QR'|'QTY'|'NONE'|'OTHER')[] }" },
+  delivery_confirmation: { validate: isDeliveryConfirmation, hint: "{ enabled: boolean, modes: ('QR'|'QTY'|'NONE')[] } — 'OTHER' (khách ngoài) đã gỡ 20/10" },
   truck_models: { validate: isTruckModels, hint: 'mảng { name, l, w, h } (mm, tối đa 100 dòng xe)' },
   alert_thresholds: {
     validate: isAlertThresholds,

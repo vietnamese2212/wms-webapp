@@ -71,6 +71,8 @@ type Row = {
   where: string; tone: Tone; cust: string; ward: string; region: string
   pallets: number | null; tons: number | null; date: string; note: string; flag: string; until: string | null; reason: string
   fresh?: boolean
+  late?: boolean    // SO tạo sau ngày đi hàng (20/10) — chip, không vào "Chọn N đơn", chỉ tick tay
+  soCreated?: string | null
   noVeh?: boolean   // khách + kênh chưa khai Dòng xe được vào (28/09) — máy không chọn xe
   under?: DispatchUnderMin   // khung chờ của kế hoạch: máy không tạo xe vì dưới Tối thiểu % (07/10)
   tooBig?: DispatchTooBig    // khung chờ của kế hoạch: lớn hơn xe, loại xe không ghép nhiều xe (07/10)
@@ -90,6 +92,12 @@ const SOFT_FLAG = SOFT_FLAG_KINDS
 /** Nhãn OD về ZSD02 SAU khi lập kế hoạch, còn ở khung chờ (user chốt 28/09) — dùng chung bảng Xem đơn + bàn ghép xe. */
 export function NewOdChip() {
   return <span className="rounded bg-sky-100 px-1 text-[9px] font-semibold text-sky-800" title="OD mới về ZSD02 sau khi lập kế hoạch — tự vào tab Điều, chưa lên xe">Mới</span>
+}
+/** SO TẠO SAU NGÀY ĐI HÀNG (20/10, user: "khoá tự động đưa vào kế hoạch SO có ngày tạo sau ngày đi hàng — chỉ đưa tay; có dấu hiệu nhận biết"):
+ *  Sửa / Tối ưu lại không đụng, "Chọn N đơn" không tick; chỉ tick tay ở Xem đơn hoặc kéo tay trên bàn (đơn bù để tính cước). Mirror BE `lateSo`. */
+export const isLateSo = (o: { so_created_date?: string | null }, planDate: string | null | undefined) => !!o.so_created_date && !!planDate && o.so_created_date > planDate
+export function LateSoChip({ date }: { date?: string | null }) {
+  return <span className="rounded bg-amber-100 px-1 text-[9px] font-semibold text-amber-900" title={`SO tạo ${date ? `${dmy(date)}/${date.slice(0, 4)}` : ''} — SAU ngày đi hàng của kế hoạch (đơn bù): không tự vào kế hoạch, chỉ người đưa tay`}>SO sau ngày đi</span>
 }
 /** Tuổi dữ liệu SAP của OD (03/10 tối): lần ZSD02 cuối chạm OD này quá 1 ngày ⇒ chip, vì "mới nhất" chỉ đúng tại thời điểm nạp. */
 function SapAgeChip({ at }: { at: string | null | undefined }) {
@@ -188,6 +196,7 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped, canAct =
         cust: o.ship_to_name ?? o.ship_to_code ?? '', ward: o.ward_code ?? '', region: o.region_name ?? o.region_code ?? '',
         pallets: o.pallets == null ? null : Number(o.pallets), tons: o.tons == null ? null : Number(o.tons), date: o.delivery_date ?? '',
         note: o.note ?? '', flag: flagOf(o.od_number), until: null, reason: '', cats: Object.keys(o.cat_load ?? {}),
+        late: isLateSo(o, plan.plan_date), soCreated: o.so_created_date ?? null,
       })
     }
     const fresh = new Set(plan.params.fresh_ods ?? [])
@@ -198,7 +207,7 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped, canAct =
       pallets: o.pallets == null ? null : Number(o.pallets), tons: o.tons == null ? null : Number(o.tons), date: o.delivery_date ?? '',
       note: o.note ?? '', flag: flagOf(o.od_number), until: null, reason: '', fresh: fresh.has(o.od_number), noVeh: noVehOf(o),
       under: inPlan ? plan.params.under_min?.[o.od_number] : undefined, tooBig: inPlan ? plan.params.too_big?.[o.od_number] : undefined,
-      cats: Object.keys(o.cat_load ?? {}),
+      cats: Object.keys(o.cat_load ?? {}), late: isLateSo(o, plan.plan_date), soCreated: o.so_created_date ?? null,
     }) }
     // OD máy không đo được tải / không lên xe (hàng trả về, chiết khấu…) — nằm ở Điều để người thấy, nhưng không chọn được
     for (const u of plan.unplanned) if (!agg.has(`GO|${u.od_number}`)) add('GO', `GO|${u.od_number}`, {
@@ -296,7 +305,7 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped, canAct =
   // vi người xem vẫn HIỆN (không giấu), chip đỏ ở Lưu ý, và "Chọn N đơn đang hiện" KHÔNG tick chúng — tick tay vẫn được
   const scope = useScopeCatSet()
   const outOf = (r: Row) => outOfScopeCats(r.cats, scope)
-  const pick = rows.filter(r => r.selectable && !outOf(r).length)
+  const pick = rows.filter(r => r.selectable && !outOf(r).length && !r.late)   // 20/10: SO sau ngày đi chỉ tick TAY
   const selRows = tabRows.filter(r => sel.has(r.key))
   const setTab = (k: St) => { setSel(new Set()); setNotesOnly(false); setSoftOnly(false); setF({ reviewTab: k }) }
   const toggle = (k: string) => setSel(p => { const n = new Set(p); n.has(k) ? n.delete(k) : n.add(k); return n })
@@ -634,7 +643,7 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped, canAct =
                     {r.selectable && <input type="checkbox" className="h-4 w-4 cursor-pointer accent-sky-600" checked={sel.has(r.key)} onChange={() => toggle(r.key)} aria-label={`Chọn ${r.od}`} />}
                   </TableCell>
                 )}
-                <TableCell className={`${TD} font-mono font-semibold ${selectableTab ? '' : `sticky left-0 z-10 ${sel.has(r.key) ? 'bg-sky-50' : 'bg-white'}`}`}>{r.od}{r.fresh && <span className="ml-1"><NewOdChip /></span>}<SapAgeChip at={i?.last_synced_at} /></TableCell>
+                <TableCell className={`${TD} font-mono font-semibold ${selectableTab ? '' : `sticky left-0 z-10 ${sel.has(r.key) ? 'bg-sky-50' : 'bg-white'}`}`}>{r.od}{r.fresh && <span className="ml-1"><NewOdChip /></span>}{r.late && <span className="ml-1"><LateSoChip date={r.soCreated} /></span>}<SapAgeChip at={i?.last_synced_at} /></TableCell>
                 <TableCell className={TD} onClick={e => { if (r.ref || (st === 'DONE' && i?.khvc)) e.stopPropagation() }}>
                   <StatusBadge tone={r.tone}>{r.where}</StatusBadge>
                   {/* TIẾN ĐỘ KHO (03/10 đợt 2): đơn đã vào Kế hoạch xuất — chuyến bên Xuất đang ở đâu; chưa bắt đầu thì gỡ được ngay tại đây */}

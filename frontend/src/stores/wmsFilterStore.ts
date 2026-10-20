@@ -456,6 +456,14 @@ interface DispatchFilters {
   deliveryTo: string
   channels: string[]     // kênh khách (Customer.channel)
   regions: string[]      // vùng (tên vùng như cột Vùng in)
+  // tab LỊCH SỬ (20/10): sổ vết điều vận của kho — lọc theo ngày kế hoạch · khoảng ngày thao tác · loại việc · tìm; phân trang server
+  histPlanDate: string
+  histFrom: string
+  histTo: string
+  histTypes: string[]
+  histQ: string
+  histPage: number
+  histPageSize: number
 }
 interface SoLinesFilters {
   search: string
@@ -700,7 +708,7 @@ function initialFilters() {
     doSap: { search: '', dateFrom: '', dateTo: '', source: '', plant: '', shipto: '', material: '', od: '', inPlan: '', used: '', flow: [], dispatch: '', deliveryFrom: '', deliveryTo: '', createdFrom: '', createdTo: '', soCreatedFrom: '', soCreatedTo: '', page: 1, pageSize: 50 },
     soLines: { search: '', dateFrom: '', dateTo: '', plant: '', status: ['OPEN'], flow: [], page: 1, pageSize: 50 },
     freight: { tab: 'tariffs' as const, warehouseId: '', companyId: '', modelId: '', search: '', page: 1, pageSize: 100 },
-    dispatch: { warehouseId: '', planDate: '', editDay: '', planId: '', issue: '', todoFirst: true, tab: 'review', reviewTab: 'GO', segment: 'SALES', boardGroup: 'ward', boardSort: 'region', boardTripGroup: 'region', search: '', boardOpen: [], poolHidden: false, boardView: 'table', boardPoolW: 0, boardOdsHidden: false, createdFrom: '', createdTo: '', soCreatedFrom: '', soCreatedTo: '', deliveryFrom: '', deliveryTo: '', channels: [], regions: [] },
+    dispatch: { warehouseId: '', planDate: '', editDay: '', planId: '', issue: '', todoFirst: true, tab: 'review', reviewTab: 'GO', segment: 'SALES', boardGroup: 'ward', boardSort: 'region', boardTripGroup: 'region', search: '', boardOpen: [], poolHidden: false, boardView: 'table', boardPoolW: 0, boardOdsHidden: false, createdFrom: '', createdTo: '', soCreatedFrom: '', soCreatedTo: '', deliveryFrom: '', deliveryTo: '', channels: [], regions: [], histPlanDate: '', histFrom: '', histTo: '', histTypes: [], histQ: '', histPage: 1, histPageSize: 100 },
     vehicleModels: { search: '', parents: [], status: '', capMode: '', whId: '' },
     khvc: { search: '', dateFrom: '', dateTo: '', exportFrom: '', exportTo: '', warehouse: '', vehType: '', source: '', syncStatus: '', group: '', doNo: '', inDoSap: '', gdoIssue: '', page: 1, pageSize: 50 },
     reconcile: { search: '', status: 'OPEN', dateFrom: '', dateTo: '', page: 1, pageSize: 50 },

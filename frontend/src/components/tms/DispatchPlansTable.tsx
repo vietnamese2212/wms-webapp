@@ -6,8 +6,8 @@
 // mỗi bản một dòng riêng (chỉ xem), không gộp.
 // Nút trên dòng: "Sửa" (có kế hoạch đã xác nhận — nạp đơn chờ cả hai mảng, mở từng xe trên bàn) · "Bỏ nháp" / "Bỏ xe chưa chốt" (đang mở)
 // · "Huỷ kế hoạch" (có xe đã chốt, quyền xác nhận — mở lại mọi xe mở được rồi bỏ). Lọc nhanh: Đang mở · Đã xác nhận · Đã bỏ · Tất cả.
-// 19/10 (user hỏi "lịch sử với xoá chuyến, xoá kế hoạch thì sao"): nút "Lịch sử" trên MỌI dòng (kể cả đã bỏ) → hộp Lịch sử ngày: vết mức kế
-// hoạch (lập · xác nhận · mở lại · bỏ / huỷ) + vết của từng Số xe cùng ngày, KỂ CẢ xe đã bỏ / đã xoá (popup tình trạng xe chỉ có khi xe còn trên bàn).
+// 19/10 (user hỏi "lịch sử với xoá chuyến, xoá kế hoạch thì sao") → 20/10 (user: "thay vì lịch sử ngày, cho lịch sử toàn bộ, có search /
+// filter"): nút "Lịch sử" trên MỌI dòng (kể cả đã bỏ) mở tab Lịch sử của Điều vận đã lọc sẵn ngày kế hoạch đó — vết kế hoạch + từng Số xe, kể cả xe đã bỏ / xoá.
 import { useEffect, useMemo, useState } from 'react'
 import { AlertTriangle, Ban, History, LayoutGrid, Pencil, Trash2 } from 'lucide-react'
 import { TableBody, TableCell, TableRow } from '@/components/ui/table'
@@ -15,10 +15,8 @@ import { ResizableTable, type RtColDef } from '@/components/shared/ResizableTabl
 import { TableEmptyRow } from '@/components/shared/TableEmptyRow'
 import { ListFooter } from '@/components/shared/ListPager'
 import { StatusBadge } from '@/components/shared/StatusBadge'
-import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
-import { usePlanEvents, useTripFlows } from '@/api/hooks'
-import { FlowHistory, TripFlowProgressText } from './TripFlow'
+import { useTripFlows } from '@/api/hooks'
+import { TripFlowProgressText } from './TripFlow'
 import { type DispatchPlanListItem } from '@/api/hooks'
 import { formatDate, formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 import { planHoldsOrders } from './dispatchIssues'
@@ -75,30 +73,6 @@ function DayProgress({ d, today }: { d: DispatchPlanDay; today: string }) {
   return <TripFlowProgressText flows={q.data} />
 }
 
-/** Hộp "Lịch sử ngày" — tải khi mở; hỏi bằng id kế hoạch đầu tiên của dòng (hai mảng cùng tiền tố Số xe nên một câu trả cả ngày). */
-function PlanHistoryDialog({ d, onClose }: { d: DispatchPlanDay; onClose: () => void }) {
-  const q = usePlanEvents(d.plans[0]?.id ?? null)
-  const evs = q.data?.events ?? []
-  return (
-    <Dialog open onOpenChange={v => { if (!v) onClose() }}>
-      <DialogContent className="max-w-4xl p-0 gap-0" data-plan-history={d.key} onClick={e => e.stopPropagation()}>
-        <div className="px-4 pt-3 pb-2 pr-10 border-b">
-          <DialogTitle className="text-sm font-semibold text-slate-800">Lịch sử ngày {formatDate(d.plan_date)}{q.data?.code ? <span className="ml-2 font-mono text-xs text-slate-500">{q.data.code}</span> : null}</DialogTitle>
-          <DialogDescription className="text-[11px] text-slate-500">Ai làm gì, lúc nào — lập / xác nhận / mở lại / bỏ kế hoạch và mọi thao tác trên từng Số xe của ngày (cả Bán hàng lẫn Trung chuyển), kể cả xe đã bỏ hoặc đã xoá.</DialogDescription>
-        </div>
-        {q.isError && <p className="px-4 py-3 text-xs text-red-600">Không tải được lịch sử.</p>}
-        {!q.isError && q.isLoading && <p className="px-4 py-3 text-xs text-slate-500">Đang tải…</p>}
-        {!q.isError && !q.isLoading && !evs.length && <p className="px-4 py-3 text-xs text-slate-500">Chưa có vết nào cho ngày này.</p>}
-        {q.data?.code && evs.length > 0 && <FlowHistory events={evs} code={q.data.code} title="Lịch sử ngày · ai làm gì, lúc nào" />}
-        <div className="flex items-center justify-between gap-2 px-4 py-2 border-t bg-slate-50 rounded-b-xl">
-          <span className="text-[10px] text-slate-500">{q.data?.truncated ? 'Chỉ hiện 1.000 vết mới nhất.' : ''}</span>
-          <Button type="button" size="sm" variant="outline" className="h-8 text-xs" onClick={onClose}>Đóng</Button>
-        </div>
-      </DialogContent>
-    </Dialog>
-  )
-}
-
 function useIsDesktop() {
   const [d, setD] = useState(() => typeof window !== 'undefined' && window.matchMedia('(min-width: 1024px)').matches)
   useEffect(() => {
@@ -129,11 +103,12 @@ function SegCell({ p, today }: { p: DispatchPlanListItem | null; today: string }
   )
 }
 
-export function DispatchPlansTable({ plans, loading, error, currentPlanId, canPlan, canConfirm, busyId, onOpen, onEdit, onDiscard, onCancel }: {
+export function DispatchPlansTable({ plans, loading, error, currentPlanId, canPlan, canConfirm, busyId, onOpen, onEdit, onDiscard, onCancel, onHistory }: {
   plans: DispatchPlanListItem[]; loading: boolean; error: string | null
   currentPlanId: string | null   // kế hoạch đang mở trên bàn — tô nhẹ dòng ngày của nó để biết "mình đang ở đâu"
   canPlan: boolean; canConfirm: boolean; busyId: string | null
   onOpen: (d: DispatchPlanDay) => void
+  onHistory: (d: DispatchPlanDay) => void    // 20/10: sang tab Lịch sử, lọc sẵn ngày kế hoạch này
   onEdit: (d: DispatchPlanDay) => void       // có kế hoạch đã xác nhận: nạp đơn chờ cả hai mảng + sang bàn, mở từng xe
   onDiscard: (d: DispatchPlanDay) => void    // bỏ nháp / bỏ xe chưa chốt của mọi mảng đang mở
   onCancel: (d: DispatchPlanDay) => void     // huỷ cả kế hoạch (cả hai mảng) đã có xe chốt — làm nhầm
@@ -141,7 +116,6 @@ export function DispatchPlansTable({ plans, loading, error, currentPlanId, canPl
   const desktop = useIsDesktop()
   const today = todayVN()
   const [show, setShow] = useState<Show>('all')   // 19/10 (user: "Đang mở" ra bảng trống khi mọi kế hoạch đã xác nhận — khó thao tác) ⇒ mặc định Tất cả
-  const [hist, setHist] = useState<DispatchPlanDay | null>(null)   // hộp Lịch sử ngày (19/10)
   const cols = useMemo<RtColDef[]>(() => [
     { id: 'date', label: 'Ngày giao', w: 96 },
     { id: 'sales', label: 'Bán hàng', w: 230 },
@@ -215,8 +189,8 @@ export function DispatchPlansTable({ plans, loading, error, currentPlanId, canPl
                   <TableCell className={`${TD} text-right ${desktop ? `sticky right-0 z-10 ${bg}` : ''}`} onClick={e => e.stopPropagation()}>
                     <span className="inline-flex items-center gap-2">
                       <button type="button" className="inline-flex items-center gap-1 font-medium text-sky-700 hover:underline" onClick={() => onOpen(d)}><LayoutGrid className="h-3 w-3" />Mở</button>
-                      <button type="button" className="inline-flex items-center gap-1 font-medium text-slate-700 hover:underline" onClick={() => setHist(d)} data-plan-history-btn={d.key}
-                        title="Lịch sử ngày — ai lập / xác nhận / mở lại / bỏ kế hoạch, và mọi thao tác trên từng Số xe (kể cả xe đã bỏ / đã xoá)"><History className="h-3 w-3" />Lịch sử</button>
+                      <button type="button" className="inline-flex items-center gap-1 font-medium text-slate-700 hover:underline" onClick={() => onHistory(d)} data-plan-history-btn={d.key}
+                        title="Mở tab Lịch sử đã lọc ngày này — ai lập / xác nhận / mở lại / bỏ kế hoạch, và mọi thao tác trên từng Số xe (kể cả xe đã bỏ / đã xoá)"><History className="h-3 w-3" />Lịch sử</button>
                       {/* SỬA (16/10): nạp đơn chờ của CẢ HAI mảng vào khung chờ, sang bàn — xe đã chốt hiện ổ khoá, mở khoá xe nào thì xe đó về nháp */}
                       {canPlan && hasConfirmed && <button type="button" className="inline-flex items-center gap-1 font-medium text-sky-700 hover:underline disabled:opacity-50" disabled={busy} onClick={() => onEdit(d)} title="Nạp đơn chờ của ngày (cả Bán hàng lẫn Trung chuyển) vào khung chờ rồi sang Bàn ghép xe; xe đã vào Kế hoạch xuất tô tím + ổ khoá — mở khoá xe cần sửa"><Pencil className="h-3 w-3" />{busy ? 'Đang nạp…' : 'Sửa'}</button>}
                       {canPlan && open && <button type="button" className="inline-flex items-center gap-1 font-medium text-red-700 hover:underline disabled:opacity-50" disabled={busy} onClick={() => onDiscard(d)} title="Bỏ mọi xe chưa chốt + khung chờ của cả hai mảng; xe đã vào Kế hoạch xuất giữ nguyên">
@@ -233,7 +207,6 @@ export function DispatchPlansTable({ plans, loading, error, currentPlanId, canPl
       </div>
       <ListFooter page={1} pageSize={Math.max(1, rows.length)} total={rows.length} unit="ngày" onPageSize={() => { }} options={[]}
         right={`${overdueN ? `${nf(overdueN)} ngày có nháp quá ngày · ` : ''}mỗi dòng một ngày, cột Bán hàng · Trung chuyển là hai mảng của ngày đó — bấm dòng để mở; "Sửa" kế hoạch đã xác nhận = mở khoá từng xe trên bàn`} />
-      {hist && <PlanHistoryDialog d={hist} onClose={() => setHist(null)} />}
     </div>
   )
 }

@@ -47,7 +47,7 @@ import { whTypeBadgeCls } from '@/utils/cargoCategory'
 import { DispatchCarrierPicker } from './DispatchCarrierPicker'
 import { DispatchCustomerVehiclesSheet } from './DispatchCustomerVehiclesSheet'
 import { DispatchLoadBandDialog, DispatchLoadBandChip, useLoadBandParents, fullBands, bandSummary, type LoadBandDraft } from './DispatchLoadBandDialog'
-import { NewOdChip } from './DispatchReviewTable'
+import { NewOdChip, LateSoChip, isLateSo } from './DispatchReviewTable'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { EDITABLE, tripStatus, issuesOf, needsWork, ISSUE_ORDER, ISSUE_SHORT, TODO_KEYS, RED_ISSUES, FLAG_VI, selectionAfterMove, poolLotGroups, lotTip, liveTripId, undoSteps, routeMatches, routeOff, fitPairs, routeTags, lockAsk, type IssueKey, type IssueCtx, type RouteMatch, type RouteRuleCtx } from './dispatchIssues'
@@ -474,6 +474,7 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
             {!o.trip_id && routeRows.has(o.id) && <RouteChip info={routeRows.get(o.id)!} label={tripLabel} />}
             {o.part_of ? <span className="text-[9px] text-amber-700">phần {o.part_index}/{o.part_of}</span> : null}
             {!o.trip_id && fresh.has(o.od_number) && <NewOdChip />}
+            {isLateSo(o, plan.plan_date) && <LateSoChip date={o.so_created_date} />}
             <span className="ml-auto tabular-nums text-slate-600 whitespace-nowrap">{nf(o.pallets, 1)} pl · {nf(o.tons, 1)} t</span>
           </div>
           {/* KHÔNG cắt "…" (user 25/09 tối: "nội dung trong thẻ đơn hàng bị che bằng dấu …") — tên khách xuống dòng */}

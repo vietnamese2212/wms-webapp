@@ -471,13 +471,18 @@ try {
     const planCode = PREFIX.replace(/_$/, '')
     const evP = await restAll('outbound_events', `select=event_type,actor,detail&group_code=eq.${planCode}&order=created_at.desc`)
     const evX = await restAll('outbound_events', `select=event_type,group_code&group_code=like.${PREFIX}*&event_type=eq.PLAN_TRIP_DISCARDED`)
-    const p3id = p3.j?.data?.id   // biến trần: thước độ phủ cắt đường dẫn từ dấu `?` (coverage-surface PREFIX_RE) nên `${a?.b}` giữa đường làm mất đuôi `/events`
-    const hist = await api(`/tms/dispatch/plans/${p3id}/events`)
-    const hv = hist.j?.data?.events ?? []
-    check('4d. Lịch sử NGÀY (19/10): tiền tố có DISPATCH_PLAN_CREATED + CONFIRMED + DISCARDED (có người làm) · xe hết đơn khi kéo có PLAN_TRIP_DISCARDED · GET /plans/:id/events 200 gộp vết kế hoạch + vết từng Số xe, code = tiền tố',
+    // 20/10 (user: "lịch sử toàn bộ, có search, filter" + "list các DO trong chiếc xe bị xoá"): cửa GET /tms/dispatch/history phân trang + lọc ngày
+    //       kế hoạch / loại việc / tìm; vết "Bỏ xe" của [2e] mang "DO: <OD2>"
+    const hist = await api(`/tms/dispatch/history?warehouse_id=${WH}&plan_date=${DAY}&page_size=200`)
+    const hv = hist.j?.data?.items ?? []
+    const TODAY_VN = new Date(Date.now() + 7 * 3600e3).toISOString().slice(0, 10)
+    const histQ = await api(`/tms/dispatch/history?warehouse_id=${WH}&q=${OD[1]}&types=PLAN_TRIP_DISCARDED&from=${TODAY_VN}&to=${TODAY_VN}`)
+    const hvQ = histQ.j?.data?.items ?? []
+    check('4d. LỊCH SỬ (19–20/10): tiền tố có DISPATCH_PLAN_CREATED + CONFIRMED + DISCARDED (có người làm) · xe hết đơn khi chuyển OD có PLAN_TRIP_DISCARDED kèm "DO: <số>" · GET /dispatch/history lọc ngày kế hoạch 200 gộp vết kế hoạch + từng Số xe, code = tiền tố, total ≥ n · tìm q + types ra đúng vết',
       ['DISPATCH_PLAN_CREATED', 'DISPATCH_PLAN_CONFIRMED', 'DISPATCH_PLAN_DISCARDED'].every(k => evP.some(e => e.event_type === k && !!e.actor)) && evX.length >= 1
-      && hist.s === 200 && hist.j?.data?.code === planCode && hv.some(e => e.event_type === 'DISPATCH_PLAN_DISCARDED') && hv.some(e => e.group_code !== planCode) && hist.j?.data?.truncated === false,
-      `plan=${evP.map(e => e.event_type).join(',')} xeBỏ=${evX.length} http=${hist.s} ${hist.j?.error?.message ?? ''} n=${hv.length} code=${hist.j?.data?.code}`)
+      && hist.s === 200 && hist.j?.data?.code === planCode && hv.some(e => e.event_type === 'DISPATCH_PLAN_DISCARDED') && hv.some(e => e.group_code !== planCode) && (hist.j?.data?.total ?? 0) >= hv.length
+      && histQ.s === 200 && hvQ.length >= 1 && hvQ.every(e => e.event_type === 'PLAN_TRIP_DISCARDED') && hvQ.some(e => (e.detail ?? '').includes(`DO: ${OD[1]}`)),
+      `plan=${evP.map(e => e.event_type).join(',')} xeBỏ=${evX.length} http=${hist.s} ${hist.j?.error?.message ?? ''} n=${hv.length}/${hist.j?.data?.total} code=${hist.j?.data?.code} · q=${histQ.s} n=${hvQ.length} ${(hvQ[0]?.detail ?? '').slice(0, 120)}`)
   }
 
   // ── [7] ĐIỀU KIỆN BẢO QUẢN (user chốt 24/09: lạnh âm · 2–8 · 15–25 · thường) ──
@@ -2465,6 +2470,30 @@ try {
       const uh = await api(`/tms/dispatch/plans/${s4.id}/unhide`, 'POST', { od_numbers: [OD[2]] })
       const rp1 = await api(`/tms/dispatch/plans/${s4.id}/refresh-pool`, 'POST', { review_all: true })
       const rv1 = (await poolRow())?.reviewed_at ?? null
+      // ── [21m0] (20/10, user: "upload ngày mới rồi Sửa ngày cũ + Tối ưu ⇒ đơn ngày mới nhảy vào ngày cũ — khoá tự động với SO tạo sau ngày đi,
+      //    chỉ đưa tay; đơn bù"): SO tạo DAY+1 về ZSD02 ⇒ Sửa (review_all) nạp vào Chờ điều với so_created_date = DAY+1 nhưng KHÔNG đặt mốc
+      //    (late_skipped = 1); Tối ưu lại review_all không ghép; tick tay (reoptimize ids) mới lên xe ──
+      const ODL = 'QA61ODL1', DAYL = new Date(Date.parse(`${DAY}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10)
+      await restWrite('erp_outbound_orders', 'POST', null, {
+        id: crypto.randomUUID(), od_number: ODL, od_item: '10', material_code: FIX.MAT_POOL, qty_base: 2 * perPallet,
+        ship_to_code: SHIP[2], ship_to_name: 'QA61 NPP 3', ward_code: W2, region_code: REGION, plant: wh?.sap_plant ?? null, delivery_date: DAY, flow: 'SALE',
+        source: 'EXCEL', sync_status: 'ACTIVE', last_synced_at: nowIso(), updated_at: nowIso(), so_created_at: `${DAYL}T08:00:00+07:00`,
+      })
+      const rowL = async () => (await restAll('dispatch_trip_od', `select=id,reviewed_at,so_created_date,trip_id&plan_id=eq.${s4.id}&od_number=eq.${ODL}`))[0] ?? null
+      const rpL = await api(`/tms/dispatch/plans/${s4.id}/refresh-pool`, 'POST', { review_all: true })
+      const L1 = await rowL()
+      const reL = await api(`/tms/dispatch/plans/${s4.id}/reoptimize`, 'POST', { review_all: true })
+      const L2 = await rowL()
+      const reM = L1 ? await api(`/tms/dispatch/plans/${s4.id}/reoptimize`, 'POST', { ids: [L1.id] }) : { s: 0, j: null }
+      const L3 = await rowL()
+      check('21m0. SO TẠO SAU NGÀY ĐI (20/10): Sửa nạp vào Chờ điều với so_created_date = ngày sau, KHÔNG đặt mốc (late_skipped = 1) · Tối ưu lại review_all không ghép · tick tay (ids) ⇒ lên xe',
+        rpL.s === 200 && rpL.j?.data?.refreshed?.late_skipped === 1 && !!L1 && L1.so_created_date === DAYL && L1.reviewed_at === null
+        && reL.s === 200 && L2?.trip_id == null && L2?.reviewed_at === null && reM.s === 200 && !!L3?.trip_id,
+        `sửa=${rpL.s} ${rpL.j?.error?.message ?? ''} skipped=${rpL.j?.data?.refreshed?.late_skipped} row=${JSON.stringify(L1)} tối_ưu=${reL.s} sau=${JSON.stringify(L2)} tay=${reM.s} ${reM.j?.error?.message ?? ''} xe=${L3?.trip_id ? 'có' : 'không'}`)
+      // dọn (ghi thẳng): dòng OD + xe tay của ODL + dòng ZSD02 — không để lại xe làm lệch các phép sau của [21m]
+      await restWrite('dispatch_trip_od', 'DELETE', `plan_id=eq.${s4.id}&od_number=eq.${ODL}`).catch(() => {})
+      if (L3?.trip_id) await restWrite('dispatch_trip', 'DELETE', `id=eq.${L3.trip_id}`).catch(() => {})
+      await restWrite('erp_outbound_orders', 'DELETE', `od_number=eq.${ODL}`).catch(() => {})
       const cf2 = await api(`/tms/dispatch/plans/${s4.id}/confirm`, 'POST', {})                           // không còn xe nháp ⇒ 409
       await restWrite('dispatch_plan', 'PATCH', `id=eq.${s4.id}`, { status: 'CONFIRMED', updated_at: nowIso() })   // trạng thái như sau "Sửa" (mọi xe còn lại đã chốt)
       const mvN = await mv([r3.id], 'new')                                                                   // xe MỚI từ khung chờ trên kế hoạch đã chốt

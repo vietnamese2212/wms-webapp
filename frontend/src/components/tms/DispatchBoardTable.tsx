@@ -24,7 +24,7 @@ import { TripFlow } from './TripFlow'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import type { DispatchPlan, DispatchTrip, DispatchTripOd, DispatchOdFlag, DispatchMoveTo, DispatchMovePreview } from '@/api/hooks'
 import { DispatchCarrierPicker } from './DispatchCarrierPicker'
-import { NewOdChip } from './DispatchReviewTable'
+import { NewOdChip, LateSoChip, isLateSo } from './DispatchReviewTable'
 import { SapFlagIcon } from './SapFlagIcon'
 import { tripStatus, issuesOf, ISSUE_ORDER, ISSUE_SHORT, TODO_KEYS, RED_ISSUES, FLAG_VI, SOFT_FLAG_KINDS, lotTip, ROUTE_LEVEL_VI, type IssueCtx, type PoolLot, type PoolRoute, type TripRouteTag } from './dispatchIssues'
 
@@ -289,6 +289,8 @@ function odCells(ops: BoardOps, o: DispatchTripOd, t: DispatchTrip | null, tree?
           {!t && route && <RouteChip info={route} label={ops.tripLabel} />}
           {o.part_of ? <span className="text-[9px] text-amber-700">phần {o.part_index}/{o.part_of}</span> : null}
           {!t && ops.fresh.has(o.od_number) && <NewOdChip />}
+          {/* 20/10: SO tạo sau ngày đi hàng (đơn bù) — không tự vào kế hoạch, dấu nhận biết ở cả khung chờ lẫn trên xe */}
+          {isLateSo(o, ops.plan.plan_date) && <LateSoChip date={o.so_created_date} />}
           {/* 19/10 (user): cột đầu CHỈ số OD + chip — tên khách đã có cột Khách, không in lặp ở đây nữa (bản 06/10 in thêm vì cột Khách
               nằm ngoài màn khi khung chờ mở ở 1280 px) */}
           {t && (t.detail.route?.order.length ?? 0) > 1 && stopNoOf(t, o.ship_to_code) != null && (

@@ -17,7 +17,7 @@
 // làm lại từ đầu = Bỏ nháp rồi Xem đơn.
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { CheckCircle2, Trash2, Download, Waypoints, ArrowRightLeft, AlertTriangle, ThumbsUp, ThumbsDown, Send, LayoutGrid, ListChecks, RotateCcw, ChevronDown, ChevronUp, Map as MapIcon, FileText, Lock, Unlock, Ban, Users, CalendarClock } from 'lucide-react'
+import { CheckCircle2, Trash2, Download, Waypoints, ArrowRightLeft, AlertTriangle, ThumbsUp, ThumbsDown, Send, LayoutGrid, ListChecks, RotateCcw, ChevronDown, ChevronUp, Map as MapIcon, FileText, Lock, Unlock, Ban, Users, CalendarClock, History } from 'lucide-react'
 import { DispatchMoveDateDialog, type MoveDateTarget } from '@/components/tms/DispatchMoveDateDialog'
 import { DispatchMap } from '@/components/tms/DispatchMap'
 import { TripRouteMap } from '@/components/tms/TripRouteMap'
@@ -29,11 +29,12 @@ import { Switch } from '@/components/ui/switch'
 import { useWhTypeMetaMap } from '@/hooks/useWhTypeMeta'
 import { whTypeBadgeCls } from '@/utils/cargoCategory'
 import { DispatchPlansTable, type DispatchPlanDay } from '@/components/tms/DispatchPlansTable'
+import { DispatchHistoryTab } from '@/components/tms/DispatchHistoryTab'
 import { useDispatchPresence } from '@/hooks/useDispatchPresence'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { DispatchBoard, RULE_BLOCK_CODES, apiCode, ruleDialog } from '@/components/tms/DispatchBoard'
 import { DispatchKpiBar } from '@/components/tms/DispatchKpiBar'
-import { DispatchReviewTable } from '@/components/tms/DispatchReviewTable'
+import { DispatchReviewTable, LateSoChip, isLateSo } from '@/components/tms/DispatchReviewTable'
 import { EDITABLE, tripStatus, ISSUES, issuesOf, needsWork, SOFT_FLAG_KINDS, boardPlanOf, outOfScopeCats, ruleWarnings, lockAsk, type IssueKey } from '@/components/tms/dispatchIssues'
 import { useMobileTabs } from '@/hooks/useMobileSurface'
 import type { AxiosError } from 'axios'
@@ -208,11 +209,13 @@ export default function Dispatch() {
     // 06/10: tab "Danh sách xe" GỘP vào Bàn ghép xe dạng bảng (user: "nếu phù hợp bạn làm") — dòng xe của bảng đã mang đủ cột của danh
     // sách; chọn nhiều xe (tick ô dòng xe) ⇒ "Gán ĐVVT · Đổi dòng xe" trên thanh nổi của bàn
     { key: 'map', label: 'Bản đồ', icon: MapIcon },
+    // Lịch sử (20/10, user: "lịch sử toàn bộ, có search / filter — nơi tập kết và kiểm tra"): sổ vết điều vận của kho, kể cả xe đã bỏ / xoá
+    { key: 'history', label: 'Lịch sử', icon: History },
   ], [openN])
   const tabs = useMobileTabs('/tms/dispatch', permTabs, f.tab || 'review', (t: string) => setF({ tab: t }))
   const tab = tabs.some(t => t.key === f.tab) ? f.tab : (tabs[0]?.key ?? 'review')
-  // Bản đồ + Kế hoạch không mang cụm thao tác / dải Soát / chỉ số của kế hoạch đang mở
-  const planTab = tab !== 'map' && tab !== 'plans'
+  // Bản đồ + Kế hoạch + Lịch sử không mang cụm thao tác / dải Soát / chỉ số của kế hoạch đang mở
+  const planTab = tab !== 'map' && tab !== 'plans' && tab !== 'history'
 
   // 03/10: dòng xe ĐANG DÙNG TẠI KHO đang điều vận (kho cấu hình riêng thì bật/tắt + sức chứa theo kho)
   const { data: modelsRes } = useVehicleModels({ is_active: true, warehouse_id: f.warehouseId || undefined })
@@ -431,9 +434,10 @@ export default function Dispatch() {
     setDiscardingId(targets[0].id)
     Promise.all(targets.map(p => refresh.mutateAsync({ id: p.id, review_all: p.status !== 'DRAFT' }).then(r => ({ p, r })))).then(rs => {
       const reviewed = rs.reduce((a, x) => a + (x.r.refreshed.reviewed ?? 0), 0), added = rs.reduce((a, x) => a + x.r.refreshed.added, 0)
+      const late = rs.reduce((a, x) => a + (x.r.refreshed.late_skipped ?? 0), 0)   // 20/10: SO tạo sau ngày đi ở lại Chờ điều — nói rõ
       toast({
         title: reviewed ? `${nf(reviewed)} đơn chờ vào khung chờ${added ? ` (${nf(added)} mới từ ZSD02)` : ''}` : added ? `${nf(added)} OD mới từ ZSD02` : 'Không có đơn chờ',
-        description: `${rs.map(x => `${SEGMENT_VI[x.p.segment ?? 'SALES']}: ${nf(x.r.refreshed.reviewed ?? 0)}`).join(' · ')}. Kéo đơn chờ lên xe mới; xe đã vào Kế hoạch xuất tô tím + ổ khoá xanh — bấm ổ khoá để mở lại riêng xe đó rồi sửa. Xong bấm Xác nhận.`,
+        description: `${rs.map(x => `${SEGMENT_VI[x.p.segment ?? 'SALES']}: ${nf(x.r.refreshed.reviewed ?? 0)}`).join(' · ')}.${late ? ` ${nf(late)} đơn có SO tạo SAU ngày đi ở lại Chờ điều (chip "SO sau ngày đi") — tick tay ở Xem đơn nếu đó là đơn bù.` : ''} Kéo đơn chờ lên xe mới; xe đã vào Kế hoạch xuất tô tím + ổ khoá xanh — bấm ổ khoá để mở lại riêng xe đó rồi sửa. Xong bấm Xác nhận.`,
       })
     }).catch(e => err(e, 'Không nạp được đơn chờ')).finally(() => setDiscardingId(null))
   }
@@ -765,18 +769,22 @@ export default function Dispatch() {
         )}
         {/* dải Soát (bản 03/10 là một hàng riêng) nay nằm TRONG thanh công cụ của bàn — `soatNode`; dải chỉ số ở hàng đầu trang (14/10) */}
 
-        <div className={plan || tab === 'plans' ? 'flex-1 min-h-0' : 'flex-1 min-h-0 overflow-auto pb-20 lg:pb-4'}>
+        <div className={plan || tab === 'plans' || tab === 'history' ? 'flex-1 min-h-0' : 'flex-1 min-h-0 overflow-auto pb-20 lg:pb-4'}>
           {!f.warehouseId ? (
             <div className="flex flex-col items-center justify-center gap-2 py-20 text-slate-400">
               <Waypoints className="h-10 w-10 opacity-30" />
               <p className="text-sm font-medium text-slate-500">Chọn <b>kho xuất</b> và <b>ngày giao</b> để xem / lập kế hoạch ghép chuyến</p>
               <p className="text-xs">Pool = OD ZSD02 của kho (theo Plant SAP) có ngày giao đó và chưa nằm trong Kế hoạch xuất.</p>
             </div>
+          ) : tab === 'history' ? (
+            // tab LỊCH SỬ (20/10): sổ vết điều vận của kho — kế hoạch + mọi Số xe (kể cả xe đã bỏ / xoá), lọc + tìm, phân trang server
+            <DispatchHistoryTab warehouseId={f.warehouseId} />
           ) : tab === 'plans' ? (
             // tab KẾ HOẠCH (16/10): một dòng một NGÀY (cả hai mảng) — bấm dòng mở (giữ mảng đang xem rồi sang bàn); Sửa / Bỏ nháp / Huỷ cho cả ngày
             <DispatchPlansTable plans={allPlans} loading={allPlansQ.isLoading} error={allPlansQ.isError ? apiMsg(allPlansQ.error) : null} currentPlanId={planId}
               canPlan={canPlan} canConfirm={canConfirm} busyId={discardingId} onOpen={openDay}
-              onEdit={startEdit} onDiscard={d => void discardDay(d)} onCancel={d => void cancelDay(d)} />
+              onEdit={startEdit} onDiscard={d => void discardDay(d)} onCancel={d => void cancelDay(d)}
+              onHistory={d => setF({ tab: 'history', histPlanDate: d.plan_date, histFrom: '', histTo: '', histQ: '', histTypes: [], histPage: 1 })} />
           ) : plans.isLoading || planQ.isLoading ? (
             <div className="p-6 text-center text-xs text-slate-400">Đang tải…</div>
           ) : !plan ? (
@@ -1019,6 +1027,7 @@ function TripPane({ trip: t, plan, editable, editableVehicle, canConfirm, needsT
                   {fl && <SapFlagIcon flag={fl} />}
                   {chips(cats)}
                   {o.part_of ? <span className="text-[9px] text-amber-700">phần {o.part_index}/{o.part_of} — OD bị tách, gom về một xe trước khi xác nhận</span> : null}
+                  {isLateSo(o, plan.plan_date) && <LateSoChip date={o.so_created_date} />}
                 </div>
                 <div className="text-slate-600 truncate">{o.ship_to_name ?? o.ship_to_code}{o.ward_code ? <span className="text-slate-400"> · {o.ward_code}</span> : null}</div>
                 <div className="text-slate-500 tabular-nums">{nf(parts.reduce((s, p) => s + Number(p.pallets ?? 0), 0), 2)} pallet · {nf(parts.reduce((s, p) => s + Number(p.tons ?? 0), 0), 2)} tấn · {parts.reduce((s, p) => s + p.lines, 0)} dòng hàng</div>

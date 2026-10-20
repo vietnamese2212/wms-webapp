@@ -25,7 +25,8 @@ import { distancesFor, unmeasured, measurePairs, whKey, custKey } from '../../se
 import { ok, fail, raisedUserError, recordServerError, type PgLikeError } from '../../utils/response'
 import { categoryAllowed } from '../../utils/categoryScope'
 import { fetchAllByIdChunks, fetchAllRowsParallel, isQueryTimeout } from '../../utils/pagination'
-import { utcMs } from '../../utils/dates'
+import { utcMs, vnDayOf } from '../../utils/dates'
+import { parseListParam } from '../../utils/httpQuery'
 import { z, zId, zDay, zBool, zText } from '../../middlewares/validate'
 import { normDvvt } from '../../utils/sapUnits'
 import { getDispatchCategoryConfig } from '../../utils/warehouseTypeMeta'
@@ -277,7 +278,7 @@ async function loadShareActual(whId: string, day: string, carriers: EngineCarrie
 }
 
 // ── POOL LŨY TIẾN: OD ZSD02 của kho — ngày giao đó + tồn đọng — chưa được lo ở đâu (luật: services/dispatchPool) ──────
-type PoolRow = PoolCandidateRow & { od_item: string; material_code: string | null; qty_base: number | string | null; ship_to_code: string | null; ship_to_name: string | null; ward_code: string | null; region_code: string | null; flow: string | null; sap_pallets: number | string | null; gross_weight_kg: number | string | null; storage_location: string | null; note_delivery: string | null }
+type PoolRow = PoolCandidateRow & { od_item: string; material_code: string | null; qty_base: number | string | null; ship_to_code: string | null; ship_to_name: string | null; ward_code: string | null; region_code: string | null; flow: string | null; sap_pallets: number | string | null; gross_weight_kg: number | string | null; storage_location: string | null; note_delivery: string | null; so_created_at: string | null }
 type MatRow = LoadMat & { material_code: string; category: string | null }
 type CustRow = { ship_to_code: string; ward_code: string | null; region_code: string | null; region_name: string | null; channel: string | null; warehouse_id: string | null; is_active: boolean; dispatch_vehicles: Record<string, unknown> | null; dispatch_separate: boolean | null; max_customers_per_trip: number | null; max_customers_by_category: Record<string, unknown> | null }
 const CUST_COLS = 'ship_to_code, ward_code, region_code, region_name, channel, warehouse_id, is_active, dispatch_vehicles, dispatch_separate, max_customers_per_trip, max_customers_by_category'
@@ -316,7 +317,7 @@ function dropGaps(ods: EngineOd[], models: Pick<EngineModel, 'id' | 'name' | 'ma
   const open = ods.filter(o => o.max_customers == null)
   return { models: noDrops, channels: uniq(open.map(o => o.channel).filter((x): x is string => !!x)).sort(), no_channel_ods: open.filter(o => !o.channel).length }
 }
-type OdMeta = { delivery_date: string | null; region_code: string | null; region_name: string | null; note: string | null; sig: string }
+type OdMeta = { delivery_date: string | null; region_code: string | null; region_name: string | null; note: string | null; sig: string; so_created_at: string | null }
 /** Chữ ký dòng hàng SAP của một OD (item | mã | SL base) lúc chụp — ZSD02 nạp lại mà chữ ký khác = SAP đã SỬA đơn sau khi người
  *  đã xem (27/09 tối, user: "chú ý việc sửa đơn, điều chỉnh thì xử lý thế nào"). */
 type SigRow = { od_item: string; material_code: string | null; qty_base: number | string | null }
@@ -333,7 +334,7 @@ const inSlocs = <R extends { storage_location: string | null }>(rows: R[], slocs
 const loadableLines = <R extends { flow: string | null }>(rows: R[]) => rows.filter(r => LOADABLE_FLOW.has(String(r.flow)))
 /** Mốc "đã xem" của một dòng OD: người xác nhận đơn ở bước Xem đơn (hoặc thao tác chính tay trên OD đó — bỏ hoãn, thay OD, cập nhật theo SAP). */
 type Rev = { at: string; by: string | null } | null
-const POOL_COLS = 'od_number, od_item, material_code, qty_base, ship_to_code, ship_to_name, ward_code, region_code, flow, sap_pallets, gross_weight_kg, storage_location, delivery_date, sap_dispatch_status, mat_doc, qty_issued_base, dvvt_raw, license_plate, note_delivery'
+const POOL_COLS = 'od_number, od_item, material_code, qty_base, ship_to_code, ship_to_name, ward_code, region_code, flow, sap_pallets, gross_weight_kg, storage_location, delivery_date, sap_dispatch_status, mat_doc, qty_issued_base, dvvt_raw, license_plate, note_delivery, so_created_at'
 const shiftDay = (d: string, n: number) => new Date(Date.parse(`${d}T00:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10)
 const dmyOf = (d: string) => `${d.slice(8, 10)}/${d.slice(5, 7)}/${d.slice(0, 4)}`   // ngày lịch (date, không múi giờ) → dd/mm/yyyy cho câu báo
 
@@ -495,7 +496,8 @@ async function loadCandidates(wh: WhRow, day: string, cfg: CatCfg, opts: { onlyO
     })
     const inc = split.include.get(od)!
     // ghi chú giao hàng SAP (vd "GIAO 10/9", "NPP không nhận hàng chủ nhật") — người REVIEW đọc, máy KHÔNG đọc (luật 10/09)
-    meta.set(od, { delivery_date: inc.delivery_date, region_code: first.region_code ?? cust?.region_code ?? null, region_name: cust?.region_name ?? null, note: noteOf(rs), sig: odSig(rs) })
+    meta.set(od, { delivery_date: inc.delivery_date, region_code: first.region_code ?? cust?.region_code ?? null, region_name: cust?.region_name ?? null, note: noteOf(rs), sig: odSig(rs),
+      so_created_at: rs.map(r => r.so_created_at).filter((x): x is string => !!x).sort()[0] ?? null })   // 20/10: ngày tạo SO (sớm nhất) — so với ngày đi hàng
   }
   const gaps: ConfigGaps = {
     no_condition: [...gapCat.entries()].map(([category, s]) => ({ category, ods: s.size })).sort((a, b) => b.ods - a.ods || a.category.localeCompare(b.category)),
@@ -531,8 +533,13 @@ function odRow(planId: string, tripId: string | null, o: TripOd, m: OdMeta | und
     is_transfer: o.transfer, allowed_models: o.allowed_models, note: m?.note ?? null, updated_at: t,
     separate: o.separate, max_customers: o.max_customers, channel: o.channel,
     sap_sig: m?.sig ?? null, reviewed_at: rev?.at ?? null, reviewed_by: rev?.by ?? null,
+    so_created_date: vnDayOf(m?.so_created_at ?? null),   // 20/10: bản chụp ngày tạo SO (VN) — > plan_date = "SO sau ngày đi"
   }
 }
+/** SO TẠO SAU NGÀY ĐI HÀNG (20/10, user: "khoá tự động đưa vào kế hoạch SO có ngày tạo sau ngày đi hàng, chỉ đưa vào khi user đưa bằng tay —
+ *  đơn bù để tính cước; có dấu hiệu nhận biết"): dòng OD mang `so_created_date` > ngày kế hoạch ⇒ Sửa (`refresh-pool review_all`) và
+ *  Tối ưu lại (`review_all`) KHÔNG đặt mốc / không ghép; chỉ tick ở Xem đơn hoặc kéo tay trên bàn mới lên xe. Mirror FE `isLateSo`. */
+const lateSo = (o: { so_created_date: string | null }, planDate: string) => !!o.so_created_date && o.so_created_date > planDate
 /** Cả một OD (chưa tách) → TripOd — cho OD vào khung chờ (nạp OD mới / thay OD). */
 function wholeOd(od: EngineOd): TripOd {
   const s = sumLines(od.lines)
@@ -1419,7 +1426,7 @@ async function moveOdInner(req: Request, res: Response) {
       if (error) throw error
       // 19/10: xe hết đơn bị bỏ = vết (gói 61 [4d] bắt cửa này chưa ghi — 20/10)
       await logOutboundEvents([{ group_code: src.group_code, event_type: 'PLAN_TRIP_DISCARDED', source: 'PLAN', actor: actorOf(req), do_number: b.od_number,
-        detail: `Xe #${src.seq} ${src.group_code} hết đơn sau khi chuyển DO ${b.od_number} sang xe khác ⇒ bỏ xe` }])
+        detail: `Xe #${src.seq} ${src.group_code} hết đơn sau khi chuyển DO ${b.od_number} sang xe khác ⇒ bỏ xe · DO: ${b.od_number}` }])
     }
     // đích
     const tgTrip = (await db.from('dispatch_trip').select('*').eq('id', targetId).maybeSingle()).data as TripRow | null
@@ -1641,7 +1648,7 @@ async function moveOdsInner(req: Request, res: Response) {
     // 19/10: xe bị bỏ vì hết đơn cũng là "xoá chuyến" — ghi ai · lúc nào lên tiền tố Số xe (Lịch sử ngày ở tab Kế hoạch)
     if (emptied.length) await logOutboundEvents(read.filter(x => emptied.includes(x.id)).map(x => ({
       group_code: x.group_code, event_type: 'PLAN_TRIP_DISCARDED', source: 'PLAN' as const, actor: actorOf(req),
-      detail: `Xe #${x.seq} ${x.group_code} hết đơn sau khi kéo đơn ${b.to === 'pool' ? 'về khung chờ' : b.to === 'unplan' ? 'về Chờ điều' : b.to === 'trip' || b.to === 'new' ? 'sang xe khác' : 'ra khỏi kế hoạch'} ⇒ bỏ xe`,
+      detail: `Xe #${x.seq} ${x.group_code} hết đơn sau khi kéo đơn ${b.to === 'pool' ? 'về khung chờ' : b.to === 'unplan' ? 'về Chờ điều' : b.to === 'trip' || b.to === 'new' ? 'sang xe khác' : 'ra khỏi kế hoạch'} ⇒ bỏ xe · DO: ${uniq(rows.filter(o => o.trip_id === x.id).map(o => o.od_number)).join(', ')}`,
     })))
     const hit = read.filter(x => !emptied.includes(x.id))
     await fillMissingVehicles(plan, hit, async () => (await readPlanLight(plan.id)).trips)
@@ -1775,7 +1782,7 @@ async function reoptimizePlanInner(req: Request, res: Response) {
     // (08/10) "đường vòng tối đa %" nay thuộc DÒNG XE — `loadRefs` đọc giá trị hiện tại mỗi lượt ghép, không chụp vào kế hoạch
     const full = (await readPlan(plan.id))!
     let redo = full.trips.filter(t => !t.locked && EDITABLE_TRIP.includes(statusOf(t)))
-    let src = b.review_all ? full.pool : full.pool.filter(o => o.reviewed_at)
+    let src = b.review_all ? full.pool.filter(o => !lateSo(o, plan.plan_date)) : full.pool.filter(o => o.reviewed_at)   // 20/10: SO sau ngày đi không tự ghép
     if (b.ids) {
       const want = new Set(b.ids)
       src = full.pool.filter(o => want.has(o.id))
@@ -2069,11 +2076,15 @@ async function refreshPoolInner(req: Request, res: Response) {
     step(res, `ghi ${loadable.length} dòng OD mới vào khung chờ`)
     await insertOdRows(loadable.map(o => odRow(plan.id, null, wholeOd(o), cand.meta.get(o.od_number), t, null)))
     // Sửa kế hoạch: mọi dòng Chờ điều (cũ + vừa nạp) vào khung chờ — lọc theo kế hoạch, không theo danh sách id (không dính trần URL)
-    let reviewed = b.review_all ? full.pool.filter(o => !o.reviewed_at).length + loadable.length : 0
+    // 20/10 (user: "upload ngày mới rồi Sửa ngày cũ + Tối ưu ⇒ đơn ngày mới nhảy vào ngày cũ"): SO tạo SAU ngày đi hàng ở lại Chờ điều —
+    // không nhận mốc, Tối ưu lại không đụng; chỉ tick / kéo tay (đơn bù). `late_skipped` để màn nói rõ.
+    const isLate = (so: string | null) => !!so && (vnDayOf(so) ?? '') > plan.plan_date
+    const late_skipped = b.review_all ? full.pool.filter(o => !o.reviewed_at && lateSo(o, plan.plan_date)).length + loadable.filter(o => isLate(cand.meta.get(o.od_number)?.so_created_at ?? null)).length : 0
+    let reviewed = b.review_all ? full.pool.filter(o => !o.reviewed_at).length + loadable.length - late_skipped : 0
     if (b.review_all) {
       step(res, `đưa ${reviewed} dòng Chờ điều vào khung chờ`)
       const { error } = await db.from('dispatch_trip_od').update({ reviewed_at: t, reviewed_by: req.user?.name ?? null, updated_at: t })
-        .eq('plan_id', plan.id).is('trip_id', null).is('reviewed_at', null)
+        .eq('plan_id', plan.id).is('trip_id', null).is('reviewed_at', null).or(`so_created_date.is.null,so_created_date.lte.${plan.plan_date}`)
       if (error) throw error
       // "Không liên quan" CỦA CHÍNH NGƯỜI BẤM (dấu riêng từng người, tab Xem đơn) ở lại Chờ điều — tự soi 16/10 tối: bản đầu kéo cả chúng
       // lên khung chờ. Gỡ mốc vừa ghi (đúng mốc t) theo lô 300; thường rỗng ⇒ không thêm request
@@ -2097,7 +2108,7 @@ async function refreshPoolInner(req: Request, res: Response) {
     step(res, 'tổng kết kế hoạch')
     await writeSummary({ ...plan, params: asJson(params) })
     step(res, 'đọc lại kế hoạch để trả về')
-    return ok(res, { ...(await readPlan(plan.id)), refreshed: { added: loadable.length, skipped_not_loadable: fresh.length - loadable.length, reviewed } })
+    return ok(res, { ...(await readPlan(plan.id)), refreshed: { added: loadable.length, skipped_not_loadable: fresh.length - loadable.length, reviewed, late_skipped } })
   } catch (e) { return failAny(res, e) }
 }
 
@@ -2640,7 +2651,11 @@ async function discardPlanInner(req: Request, res: Response) {
     // 19/10 (user: "lịch sử với xoá chuyến, xoá kế hoạch"): từng xe nháp bị bỏ + vết mức kế hoạch (ai · lúc nào) — đọc ở Lịch sử ngày, tab Kế hoạch
     const actor = actorOf(req)
     const why = plan.status === 'DRAFT' ? 'bỏ nháp' : 'bỏ xe chưa chốt / huỷ kế hoạch'
-    await logOutboundEvents((dropped ?? []).map(d => ({ group_code: d.group_code, event_type: 'PLAN_TRIP_DISCARDED', source: 'PLAN' as const, actor, detail: `Bỏ xe nháp #${d.seq} ${d.group_code} khi ${why}` })))
+    // danh sách DO của từng xe bị bỏ (20/10, user: "cần biết list các DO trong chiếc xe bị xoá") — đọc TRƯỚC khi dọn dòng OD ở dưới
+    const droppedIds0 = (dropped ?? []).map(d => d.id)
+    const dropOds = droppedIds0.length ? (await fetchAllByIdChunks(droppedIds0, c => db.from('dispatch_trip_od').select('trip_id, od_number').eq('plan_id', plan.id).in('trip_id', c).order('id'))) as { trip_id: string | null; od_number: string }[] : []
+    await logOutboundEvents((dropped ?? []).map(d => ({ group_code: d.group_code, event_type: 'PLAN_TRIP_DISCARDED', source: 'PLAN' as const, actor,
+      detail: `Bỏ xe nháp #${d.seq} ${d.group_code} khi ${why} · DO: ${uniq(dropOds.filter(o => o.trip_id === d.id).map(o => o.od_number)).join(', ') || '(trống)'}` })))
     // DỌN DÒNG OD của nháp bị bỏ (11/10): khung chờ (Chờ điều + khung chờ kế hoạch) + dòng của xe vừa bỏ — Ba Vì mỗi nháp mang ~3.500 dòng
     // Chờ điều; đo 11/10: 18.694 dòng của 23 nháp đã bỏ nằm chết trong dispatch_trip_od (câu đếm đơn mới quét qua). Xe CONFIRMED giữ dòng (lịch sử).
     const { error: poolErr } = await db.from('dispatch_trip_od').delete().eq('plan_id', plan.id).is('trip_id', null)
@@ -2668,22 +2683,35 @@ async function discardPlanInner(req: Request, res: Response) {
   } catch (e) { return failAny(res, e) }
 }
 
-// ── GET /tms/dispatch/plans/:id/events — LỊCH SỬ NGÀY (19/10, user hỏi "lịch sử với xoá chuyến, xoá kế hoạch thì sao"): mọi vết
-// outbound_events mang tiền tố Số xe của kho×ngày — vết mức kế hoạch (lập · xác nhận · mở lại · bỏ / huỷ) + vết của TỪNG Số xe, kể cả xe
-// đã bỏ / đã xoá (không còn trên bàn nên popup tình trạng xe không mở được), cả hai mảng (cùng tiền tố). Mới nhất trước; limit khai rõ
-// 1.000 (ngày 150 xe × ~6 vết) — chạm trần thì trả `truncated` để màn nói thẳng.
-export async function planEvents(req: Request, res: Response) {
+// ── GET /tms/dispatch/history — LỊCH SỬ ĐIỀU VẬN của kho (19/10 hỏi "lịch sử với xoá chuyến, xoá kế hoạch"; 20/10 user: "thay vì lịch sử
+// ngày, cho lịch sử toàn bộ, có search / filter — nơi tập kết và kiểm tra"): mọi vết outbound_events mang tiền tố Số xe của kho (`<MãKho>_X_`)
+// — vết mức kế hoạch (lập · xác nhận · mở lại · bỏ / huỷ) + vết của TỪNG Số xe, KỂ CẢ xe đã bỏ / đã xoá (không còn trên bàn nên popup tình
+// trạng xe không mở được). Phân trang SERVER (sổ vết lớn theo lịch sử — không kéo cả bảng); lọc: ngày kế hoạch (tiền tố kho×ngày) · khoảng
+// ngày thao tác (ngày VN) · loại việc · tìm (Số xe / DO / người / chi tiết). Mới nhất trước.
+export const zHistoryQuery = z.object({
+  warehouse_id: zId, plan_date: zDay.optional(), from: zDay.optional(), to: zDay.optional(),
+  types: zText(1, 2000).optional(), q: zText(1, 100).optional(),
+  page: z.coerce.number().int().min(1).max(10_000).optional(), page_size: z.coerce.number().int().min(1).max(200).optional(),
+})
+export async function dispatchHistory(req: Request, res: Response) {
   try {
-    const { data: plan, error } = await db.from('dispatch_plan').select('*').eq('id', String(req.params.id)).maybeSingle()
+    const qy = req.query as unknown as z.infer<typeof zHistoryQuery>
+    if (!whAllowed(req, qy.warehouse_id)) return fail(res, 'Kho này ngoài phạm vi được giao', 403)
+    const wh = await loadWarehouse(qy.warehouse_id)
+    if (!wh) return fail(res, 'Không tìm thấy kho', 404)
+    const prefix = qy.plan_date ? codePrefixOf(wh.code, qy.plan_date).replace(/_$/, '') : `${wh.code}_X_`
+    const page = qy.page ?? 1, size = qy.page_size ?? 100
+    let sel = db.from('outbound_events').select('id, created_at, actor, event_type, source, group_code, do_number, detail, old_value, new_value', { count: 'exact' })
+      .like('group_code', `${prefix}%`)
+    if (qy.from) sel = sel.gte('created_at', new Date(`${qy.from}T00:00:00+07:00`).toISOString())
+    if (qy.to) sel = sel.lt('created_at', new Date(`${shiftDay(qy.to, 1)}T00:00:00+07:00`).toISOString())
+    const types = (parseListParam(qy.types) ?? []).filter(s => /^[A-Z_]+$/.test(s))
+    if (types.length) sel = sel.in('event_type', types.slice(0, 50))
+    const q = (qy.q ?? '').replace(/[,()%*\\"']/g, ' ').trim()   // ký tự điều khiển của bộ lọc PostgREST bỏ đi — tìm chữ, không tìm biểu thức
+    if (q) sel = sel.or(`group_code.ilike.*${q}*,do_number.ilike.*${q}*,actor.ilike.*${q}*,detail.ilike.*${q}*`)
+    const { data, error, count } = await sel.order('created_at', { ascending: false }).order('id', { ascending: false }).range((page - 1) * size, page * size - 1)
     if (error) throw error
-    if (!plan) return fail(res, 'Không tìm thấy kế hoạch', 404)
-    if (!whAllowed(req, plan.warehouse_id)) return fail(res, 'Kho này ngoài phạm vi được giao', 403)
-    const code = planCode(plan)
-    if (!code) return ok(res, { code, events: [], truncated: false })
-    const { data, error: eErr } = await db.from('outbound_events').select('id, created_at, actor, event_type, source, group_code, do_number, detail, old_value, new_value')
-      .like('group_code', `${code}%`).order('created_at', { ascending: false }).limit(1000)
-    if (eErr) throw eErr
-    return ok(res, { code, events: data ?? [], truncated: (data ?? []).length >= 1000 })
+    return ok(res, { code: prefix, items: data ?? [], total: count ?? 0, page, page_size: size })
   } catch (e) { return failAny(res, e) }
 }
 
@@ -2797,7 +2825,7 @@ async function holdOdsInner(req: Request, res: Response) {
       const { error } = await db.from('dispatch_trip').delete().in('id', emptied.slice(0, 300)).eq('plan_id', plan.id)
       if (error) throw error
       await logOutboundEvents(after.trips.filter(x => emptied.includes(x.id)).map(x => ({ group_code: x.group_code, event_type: 'PLAN_TRIP_DISCARDED', source: 'PLAN' as const, actor,
-        detail: `Xe #${x.seq} ${x.group_code} hết đơn sau khi ${b.until ? `hoãn đơn tới ${dmyOf(b.until)}` : 'chuyển đơn sang Không điều'} ⇒ bỏ xe` })))
+        detail: `Xe #${x.seq} ${x.group_code} hết đơn sau khi ${b.until ? `hoãn đơn tới ${dmyOf(b.until)}` : 'chuyển đơn sang Không điều'} ⇒ bỏ xe · DO: ${uniq(leaving.filter(o => o.trip_id === x.id).map(o => o.od_number)).join(', ')}` })))
       // 19/10 (đổi ngày từng đơn trên xe đã chốt: mở lại → hoãn → xe hết đơn bị bỏ, KHÔNG còn bước xác nhận lại): xe vừa bỏ có thể là xe nháp
       // duy nhất của kế hoạch đã xác nhận ⇒ trạng thái kế hoạch phải chốt lại theo các xe còn lại (chụp 19/10: tab Kế hoạch in "1 nháp",
       // bàn "Đang sửa · 0/1 xe mở" dù mọi xe còn lại đã CONFIRMED)
@@ -3330,7 +3358,7 @@ export async function removeFromKhvc(req: Request, res: Response) {
         if (!count) {
           const { error: tErr } = await db.from('dispatch_trip').update({ status: 'DISCARDED', updated_at: now() }).eq('id', tid)
           if (tErr) throw tErr
-          await logOutboundEvents([{ group_code: b.group_code, event_type: 'PLAN_TRIP_DISCARDED', source: 'PLAN', actor, do_number: b.od_number, detail: `Xe ${b.group_code} hết đơn sau khi gỡ DO ${b.od_number} ⇒ bỏ xe` }])
+          await logOutboundEvents([{ group_code: b.group_code, event_type: 'PLAN_TRIP_DISCARDED', source: 'PLAN', actor, do_number: b.od_number, detail: `Xe ${b.group_code} hết đơn sau khi gỡ DO ${b.od_number} ⇒ bỏ xe · DO: ${b.od_number}` }])
         }
       }
     }

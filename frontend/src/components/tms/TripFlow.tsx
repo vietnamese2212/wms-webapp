@@ -121,7 +121,8 @@ function FlowTable({ flow, onNavigate }: { flow: Flow; onNavigate: () => void })
 }
 
 // Lịch sử thao tác (19/10, user: "ghi nhận ai làm gì, giờ nào — đi theo dòng"): nhãn việc theo event_type; loại chưa khai in mã thô
-const EVENT_VI: Record<string, string> = {
+/** Nhãn tiếng Việt của mọi `event_type` trong sổ outbound_events — dùng chung popup tình trạng xe + tab Lịch sử (20/10). */
+export const EVENT_VI: Record<string, string> = {
   PLAN_DATE_CHANGED: 'Đổi ngày', PLAN_OD_HELD: 'Hoãn đơn', PLAN_DO_REMOVED: 'Gỡ DO khỏi xe', PLAN_DO_ADDED: 'Thêm DO vào xe',
   PLAN_VEHICLE_MODEL_CHANGED: 'Đổi dòng xe', PLAN_BOOKING_CATEGORY_CHANGED: 'Đổi cửa đặt lịch', TMS_PLAN_CREATED: 'Sinh lệnh VC', TMS_PLAN_DROPPED: 'Lệnh VC ngừng',
   TMS_PLAN_REOPENED: 'Lệnh VC sống lại', DELIVERED: 'Đã giao', DELIVERY_UNDONE: 'Hoàn tác đã giao', KHVC_CHANGED: 'KH xuất đổi', PLAN_PULLED: 'Bàn rút xe',
@@ -134,21 +135,18 @@ const EVENT_VI: Record<string, string> = {
   DATE_RULE_SET: 'Chốt %Date', DATE_RULE_CLEARED: 'Bỏ chốt %Date',
 }
 const EV_COLS: RtColDef[] = [{ id: 'at', label: 'Thời gian', w: 125 }, { id: 'by', label: 'Ai', w: 150 }, { id: 'what', label: 'Việc', w: 130 }, { id: 'do', label: 'DO', w: 100 }, { id: 'detail', label: 'Chi tiết', w: 360 }]
-// Lịch sử NGÀY (tab Kế hoạch): thêm cột Số xe — vết mức kế hoạch không có STT, in "—"
-const EV_COLS_DAY: RtColDef[] = [EV_COLS[0], { id: 'code', label: 'Số xe', w: 150 }, ...EV_COLS.slice(1)]
-/** Bảng "ai làm gì, lúc nào" — trong popup tình trạng xe (một Số xe) và hộp Lịch sử ngày (`code` = thêm cột Số xe, bảng cao hơn). */
-export function FlowHistory({ events, code, title }: { events: (TripFlowEvent & { group_code?: string })[]; code?: string; title?: string }) {
+/** Bảng "ai làm gì, lúc nào" của MỘT Số xe trong popup tình trạng xe (sổ cả kho: tab Lịch sử của Điều vận, 20/10). */
+function FlowHistory({ events }: { events: TripFlowEvent[] }) {
   if (!events.length) return null
   return (
     <div className="border-t">
-      <div className="bg-slate-50 px-4 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500">{title ?? 'Lịch sử thao tác · ai làm gì, lúc nào'} ({events.length})</div>
-      <div className={code ? 'max-h-[60vh] overflow-auto' : 'max-h-56 overflow-auto'}>
-        <ResizableTable storageKey={code ? 'trip_flow_events_day_v1' : 'trip_flow_events_v1'} cols={code ? EV_COLS_DAY : EV_COLS}>
+      <div className="bg-slate-50 px-4 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500">Lịch sử thao tác · ai làm gì, lúc nào ({events.length})</div>
+      <div className="max-h-56 overflow-auto">
+        <ResizableTable storageKey="trip_flow_events_v1" cols={EV_COLS}>
           <TableBody>
             {events.map(e => (
               <TableRow key={e.id} className="bg-white">
                 <TableCell className={`${TD} sticky left-0 z-10 bg-white font-mono text-[10px]`}>{formatDateTime(e.created_at)}</TableCell>
-                {code && <TableCell className={`${TD} font-mono`} title={e.group_code}>{e.group_code && e.group_code !== code ? e.group_code : <span className="text-slate-400" title="Vết mức kế hoạch (cả ngày)">—</span>}</TableCell>}
                 <TableCell className={TD} title={e.actor ?? undefined}>{e.actor ?? <span className="text-slate-300">—</span>}</TableCell>
                 <TableCell className={`${TD} font-medium text-slate-700`} title={e.event_type}>{EVENT_VI[e.event_type] ?? e.event_type}</TableCell>
                 <TableCell className={`${TD} font-mono`}>{e.do_number ?? <span className="text-slate-300">—</span>}</TableCell>

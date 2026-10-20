@@ -6085,6 +6085,7 @@ export interface DispatchTripOd {
   od_number: string; ship_to_code: string | null; ship_to_name: string | null; ward_code: string | null; region_code?: string | null; region_name?: string | null
   pallets: number | string | null; tons: number | string | null; lines: number; part_index: number | null; part_of: number | null; material_codes: string[]
   conditions?: string[]; cat_load?: Record<string, number> | null; delivery_date?: string | null   // ngày giao SAP — chỉ hiển thị (05/10 khuya)
+  so_created_date?: string | null   // 20/10: ngày tạo SO (VN) chụp lúc nạp — > ngày kế hoạch = "SO sau ngày đi" (đơn bù): không tự vào kế hoạch
   is_transfer?: boolean                // trung chuyển giữa các kho của mình — chỉ loại OD này được lên container
   allowed_models?: string[] | null      // dòng xe khách được vào (chụp lúc lập / lúc sửa trên bàn) — [] = khách + kênh chưa khai (28/09: máy không chọn xe) · null = dòng chụp trước 28/09
   note?: string | null                  // ghi chú giao hàng SAP (27/09) — người review đọc, máy không đọc
@@ -6453,7 +6454,7 @@ export function useRefreshDispatchPool() {
   return useMutation({
     // review_all (16/10): nút "Sửa" kế hoạch đã xác nhận — mọi đơn Chờ điều vào thẳng khung chờ của bàn
     mutationFn: (v: { id: string; review_all?: boolean }) => apiClient.post(`/tms/dispatch/plans/${v.id}/refresh-pool`, v.review_all ? { review_all: true } : {}, { timeout: 120_000 })
-      .then(r => r.data.data as DispatchPlan & { refreshed: { added: number; skipped_not_loadable: number; reviewed: number } }),
+      .then(r => r.data.data as DispatchPlan & { refreshed: { added: number; skipped_not_loadable: number; reviewed: number; late_skipped?: number } }),
     onSuccess: p => { putDispatchPlan(qc, p); qc.invalidateQueries({ queryKey: ['dispatch-sync', p.id] }) },
   })
 }
@@ -8339,13 +8340,14 @@ export function useTripFlowDetail(code: string | null | undefined, enabled = tru
     queryFn: async () => (((await apiClient.get('/tms/trip-flow', { params: { codes: code, events: '1' } })).data.data as { flows: (TripFlow & { events?: TripFlowEvent[] })[] }).flows[0] ?? null),
   })
 }
-/** LỊCH SỬ NGÀY của kế hoạch (19/10, user hỏi "lịch sử với xoá chuyến, xoá kế hoạch"): vết mức kế hoạch + mọi Số xe cùng tiền tố kho×ngày,
- *  kể cả xe đã bỏ / đã xoá — tải KHI MỞ hộp thoại; key dưới ['trip-flow'] để realtime outbound_events làm mới. */
-export type PlanDayEvent = TripFlowEvent & { group_code: string }
-export function usePlanEvents(planId: string | null | undefined, enabled = true) {
+/** LỊCH SỬ ĐIỀU VẬN của kho (20/10, user: "lịch sử toàn bộ, có search / filter — nơi tập kết và kiểm tra"): vết mức kế hoạch + mọi Số xe,
+ *  kể cả xe đã bỏ / đã xoá; phân trang server; key dưới ['trip-flow'] để realtime outbound_events làm mới. */
+export type DispatchHistoryItem = TripFlowEvent & { group_code: string }
+export type DispatchHistoryParams = { warehouse_id: string; plan_date?: string; from?: string; to?: string; types?: string; q?: string; page: number; page_size: number }
+export function useDispatchHistory(p: DispatchHistoryParams, enabled = true) {
   return useQuery({
-    queryKey: ['trip-flow', 'plan-events', planId ?? ''], enabled: !!planId && enabled, staleTime: 30_000,
-    queryFn: async () => (await apiClient.get(`/tms/dispatch/plans/${planId}/events`)).data.data as { code: string; events: PlanDayEvent[]; truncated: boolean },
+    queryKey: ['trip-flow', 'history', p], enabled: !!p.warehouse_id && enabled, staleTime: 30_000, placeholderData: keepPreviousData,
+    queryFn: async () => (await apiClient.get('/tms/dispatch/history', { params: p })).data.data as { code: string; items: DispatchHistoryItem[]; total: number; page: number; page_size: number },
   })
 }
 /** Tài xế / ĐVVT / điều vận xác nhận xe ĐÃ GIAO (undo = hoàn tác) — quyền tms_plan.confirm_delivery. */

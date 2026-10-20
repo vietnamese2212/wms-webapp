@@ -610,11 +610,25 @@ nào thì mở khoá xe đó. Cần 1 hướng nữa: kế hoạch làm nhầm, 
   - **Vết mức kế hoạch** (`logPlanEvent`): `DISPATCH_PLAN_CREATED` (lập, kể cả tự lập khi dời ngày) · `_CONFIRMED` (n xe · n chờ ĐVVT) ·
     `_REOPENED` (danh sách xe mở lại, có `force`) · `_DISCARDED` (bỏ cả / chỉ bỏ xe chưa chốt · n xe nháp bị bỏ). `group_code` = TIỀN TỐ Số
     xe kho×ngày KHÔNG có STT (`<MãKho>_X_<ddmmyy>`) — hai mảng Bán hàng / Trung chuyển cùng tiền tố nên lịch sử là CỦA NGÀY.
-  - **Cửa đọc:** `GET /tms/dispatch/plans/:id/events` (`dispatch.view`) = mọi vết `tiền tố%` (vết kế hoạch + từng Số xe, kể cả xe đã bỏ /
-    đã xoá), mới nhất trước, limit khai 1.000 + `truncated`. Tab Kế hoạch: nút "Lịch sử" trên MỌI dòng (kể cả đã bỏ) → hộp "Lịch sử ngày"
-    (`FlowHistory` thêm cột Số xe; vết kế hoạch in "—"). Realtime `outbound_events` → key `trip-flow`. Gói 61 **[4d] [10f1] [15d3]**.
+  - **Cửa đọc — TAB "LỊCH SỬ" của Điều vận (20/10, user: "thay vì lịch sử ngày, cho lịch sử toàn bộ, có search / filter — nơi tập kết và
+    kiểm tra"):** `GET /tms/dispatch/history?warehouse_id&plan_date?&from?&to?&types?&q?&page&page_size≤200` (`dispatch.view`) = mọi vết
+    `<MãKho>_X_%` (vết kế hoạch + từng Số xe, kể cả xe đã bỏ / đã xoá), phân trang SERVER, lọc ngày kế hoạch (tiền tố kho×ngày) · khoảng
+    ngày thao tác (VN) · loại việc · tìm (Số xe / DO / người / chi tiết, ký tự điều khiển PostgREST bị bỏ). FE `DispatchHistoryTab` (bộ lọc
+    `hist*` trong slice dispatch, chưa lọc = 7 ngày gần nhất, `ListFooter` 50/100/200); nút "Lịch sử" ở tab Kế hoạch mở tab này với ngày kế
+    hoạch chọn sẵn (bản 19/10 là hộp "Lịch sử ngày", bỏ). Vết "Bỏ xe" ghi **danh sách DO** (`· DO: a, b, c` — user: "cần biết list các DO
+    trong chiếc xe bị xoá"). Realtime `outbound_events` → key `trip-flow`. Gói 61 **[4d] [10f1] [15d3]**.
   - Cùng lượt (user: "khung chờ khó nhìn, không nhìn được khách hàng"): khung chờ dạng Bảng đưa cột Khách lên NGAY SAU cột OD (trước Pallet ·
     Tấn), dòng nhóm trải tên qua hai cột (`RowCells` nhận `span`) + "n OD" cuối tên; khoá bề rộng `dispatch_board_pool_v4`.
+- **SO TẠO SAU NGÀY ĐI HÀNG KHÔNG TỰ VÀO KẾ HOẠCH (20/10, user hỏi "upload kế hoạch ngày mới, sửa ngày cũ và Tối ưu ⇒ đơn ngày mới nhảy vào
+  ngày cũ, đúng không?" — đúng là xảy ra, do 05/10 "ngày giao không đáng tin, mọi đơn chưa đi là ứng viên" + 16/10 "Sửa đưa mọi đơn chờ vào
+  khung chờ"; user chốt: "khoá tự động với SO có ngày tạo sau ngày đi hàng, chỉ đưa vào khi user đưa tay — đơn bù để tính cước; có dấu hiệu
+  nhận biết"):** cột `dispatch_trip_od.so_created_date` (migration `20261020`, bản chụp ngày VN của `erp_outbound_orders.so_created_at`
+  — sớm nhất trong các dòng của OD) ghi ở `odRow` khi nạp; `lateSo(o, plan_date)` = `so_created_date > plan_date` (mirror FE `isLateSo`).
+  Cửa TỰ ĐỘNG bỏ qua: `refresh-pool review_all` (nút Sửa) không đặt mốc cho dòng late (`.or(so_created_date.is.null,so_created_date.lte.D)`,
+  trả `late_skipped`, toast nói rõ) · `reoptimize review_all` lọc late khỏi `src`. Cửa TAY cho qua: tick ở Xem đơn → "Tạo kế hoạch" (`ids`),
+  kéo thả / chuyển từng OD trên bàn. "Chọn N đơn đang hiện" KHÔNG tick dòng late (`pick`), tick lẻ vẫn được. Dấu nhận biết: chip hổ phách
+  "SO sau ngày đi" (tooltip ngày tạo) ở Xem đơn · khung chờ + dòng OD trên xe (Bảng + Thẻ) · panel xe. Dòng chụp trước 20/10 để null = như
+  trước. Gói 61 **[21m0]**. Thêm cửa tự ghép mới ⇒ phải lọc `lateSo`.
 - **MỘT Ổ KHOÁ (19/10, user: "hai cái khoá bản chất giống nhau — gộp làm một cho gọn"):** bỏ ổ khoá XANH (LockKeyhole) và chip chữ "Khoá";
   trên bàn (Thẻ + Bảng) mỗi xe chỉ một ổ khoá TÍM = "xe giữ nguyên". Xe nháp: bấm khoá / mở khoá (máy Tối ưu lại không đụng, người vẫn kéo
   được). Xe ĐÃ CHỐT: luôn hiện khoá (cả người cũng không kéo), trong chế độ Sửa bấm = Mở lại riêng xe đó (hỏi trước); panel xe nút "Mở lại xe

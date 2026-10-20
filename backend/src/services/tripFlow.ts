@@ -42,7 +42,16 @@ type GdoRow = { id: string; group_code: string; status: string; started_at: stri
 type GateRow = { id: string; registration_number: number; status: string; date: string | null; entry_at: string | null; exit_at: string | null; registered_at: string | null; entry_by: string | null; exit_by: string | null }
 type WeighRow = { id: string; ticket_no: string | null; gdo_id: string; weigh_date: string | null; is_complete: boolean; in_time: string | null; out_time: string | null }
 type WhRow = { id: string; require_gate_on_start: boolean | null; require_weigh_on_start: boolean | null }
-type TransferRow = { id: string; transfer_gdo_id: string; status: string; completed_at: string | null }
+type TransferRow = { id: string; transfer_gdo_id: string; status: string; completed_at: string | null; destination_warehouse_id: string | null }
+
+/** Bước "Đã giao" theo CHUYỂN KHO (kho nhận xác nhận) hay BÁN HÀNG (tài xế / ĐVVT xác nhận)?
+ *  Chuyển kho = lệnh TRF có KHO ĐÍCH thật. 20/10 (chạy thử một ngày Ba Vì): cờ `delivery_confirmation.modes` có OTHER ⇒ chuyến bán hàng
+ *  tới khách thường cũng sinh lệnh TRF_ (SELF, không kho đích) + `transfer_status = IN_TRANSIT` ⇒ chuỗi coi là chuyển kho, chờ "kho nhận"
+ *  mãi, còn "Đã giao" tài xế bấm (luật 19/10) ghi vào mà không bao giờ hiện. Không có lệnh TRF thì mới dựa vào `transfer_status`. */
+export function isTransferDelivery(trf: { destination_warehouse_id: string | null } | undefined, transferStatus: string | null | undefined): boolean {
+  if (trf) return !!trf.destination_warehouse_id
+  return !!transferStatus
+}
 
 const uniq = <T,>(a: T[]) => [...new Set(a)]
 const hhmm = (t: string | null | undefined) => (t ? String(t).slice(0, 5) : '')
@@ -72,7 +81,7 @@ export async function tripFlowOf(codes0: string[]): Promise<TripFlow[]> {
     gateIds.length ? fetchAllByIdChunks(gateIds, c => db.from('gate_registrations').select('id, registration_number, status, date, entry_at, exit_at, registered_at, entry_by, exit_by').in('id', c).order('id')) as Promise<GateRow[]> : Promise.resolve([] as GateRow[]),
     gdoIds.length ? fetchAllByIdChunks(gdoIds, c => db.from('WeighTicket').select('id, ticket_no, gdo_id, weigh_date, is_complete, in_time, out_time').in('gdo_id', c).order('in_time', { ascending: false })) as Promise<WeighRow[]> : Promise.resolve([] as WeighRow[]),
     whIds.length ? fetchAllByIdChunks(whIds, c => db.from('Warehouse').select('id, require_gate_on_start, require_weigh_on_start').in('id', c).order('id')) as Promise<WhRow[]> : Promise.resolve([] as WhRow[]),
-    gdoIds.length ? fetchAllByIdChunks(gdoIds, c => db.from('TmsOrder').select('id, transfer_gdo_id, status, completed_at').in('transfer_gdo_id', c).order('id')) as Promise<TransferRow[]> : Promise.resolve([] as TransferRow[]),
+    gdoIds.length ? fetchAllByIdChunks(gdoIds, c => db.from('TmsOrder').select('id, transfer_gdo_id, status, completed_at, destination_warehouse_id').in('transfer_gdo_id', c).order('id')) as Promise<TransferRow[]> : Promise.resolve([] as TransferRow[]),
   ])
   const planBy = new Map(plans.map(p => [p.id, p]))
   const gateBy = new Map(gates.map(g => [g.id, g]))
@@ -91,7 +100,7 @@ export async function tripFlowOf(codes0: string[]): Promise<TripFlow[]> {
     const needGate = wh?.require_gate_on_start !== false, needWeigh = wh?.require_weigh_on_start === true
     const dropped = g?.plan_dropped === true || o?.plan_dropped === true
     const trf = g ? trfBy.get(g.id) : undefined
-    const isTransfer = !!g?.transfer_status || !!trf
+    const isTransfer = isTransferDelivery(trf, g?.transfer_status)
     const steps: FlowStep[] = []
 
     // 1. KẾ HOẠCH (bàn ghép xe)

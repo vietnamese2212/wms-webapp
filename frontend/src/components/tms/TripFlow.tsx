@@ -128,6 +128,10 @@ const EVENT_VI: Record<string, string> = {
   // 19/10 (user hỏi "lịch sử với xoá chuyến, xoá kế hoạch"): vết mức xe bị bỏ / xoá + vết mức kế hoạch
   PLAN_TRIP_DISCARDED: 'Bỏ xe', PLAN_TRIP_DELETED: 'Xoá xe trống', DISPATCH_PLAN_CREATED: 'Lập kế hoạch', DISPATCH_PLAN_CONFIRMED: 'Xác nhận KH',
   DISPATCH_PLAN_REOPENED: 'Mở lại KH', DISPATCH_PLAN_DISCARDED: 'Bỏ / huỷ KH',
+  // các loại còn lại trong sổ (rà 20/10 — hộp Lịch sử ngày in mã thô "PLAN_VEHICLE_DROPPED")
+  PLAN_VEHICLE_DROPPED: 'Chuyến ngừng', PLAN_VEHICLE_REOPENED: 'Chuyến sống lại', PLAN_DVVT_CHANGED: 'Đổi ĐVVT', PLAN_DO_RENUMBERED: 'Đổi số DO',
+  TMS_PLAN_ADOPTED: 'Nhận lệnh VC tạo tay', TRANSFER_PUSHED: 'Đẩy cho kho nhận', AWAITING_SET: 'Chờ SAP', AWAITING_CLEARED: 'Hết chờ SAP', AWAITING_KEEP_SCANNED: 'Giữ hàng đã quét',
+  DATE_RULE_SET: 'Chốt %Date', DATE_RULE_CLEARED: 'Bỏ chốt %Date',
 }
 const EV_COLS: RtColDef[] = [{ id: 'at', label: 'Thời gian', w: 125 }, { id: 'by', label: 'Ai', w: 150 }, { id: 'what', label: 'Việc', w: 130 }, { id: 'do', label: 'DO', w: 100 }, { id: 'detail', label: 'Chi tiết', w: 360 }]
 // Lịch sử NGÀY (tab Kế hoạch): thêm cột Số xe — vết mức kế hoạch không có STT, in "—"

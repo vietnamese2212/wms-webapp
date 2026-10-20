@@ -2484,15 +2484,19 @@ try {
       const L1 = await rowL()
       const reL = await api(`/tms/dispatch/plans/${s4.id}/reoptimize`, 'POST', { review_all: true })
       const L2 = await rowL()
+      // tay 1: tick ở Xem đơn → "Tạo kế hoạch" (ids) ⇒ đặt mốc (2 pallet dưới dải tải nên máy không dựng xe — đúng luật 07/10, không phải cổng chặn)
       const reM = L1 ? await api(`/tms/dispatch/plans/${s4.id}/reoptimize`, 'POST', { ids: [L1.id] }) : { s: 0, j: null }
       const L3 = await rowL()
-      check('21m0. SO TẠO SAU NGÀY ĐI (20/10): Sửa nạp vào Chờ điều với so_created_date = ngày sau, KHÔNG đặt mốc (late_skipped = 1) · Tối ưu lại review_all không ghép · tick tay (ids) ⇒ lên xe',
+      // tay 2: kéo lên "Xe mới" trên bàn ⇒ lên xe
+      const mvL = L1 ? await mv([L1.id], 'new') : { s: 0, j: null }
+      const L4 = await rowL()
+      check('21m0. SO TẠO SAU NGÀY ĐI (20/10): Sửa nạp vào Chờ điều với so_created_date = ngày sau, KHÔNG đặt mốc (late_skipped = 1) · Tối ưu lại review_all không ghép · tick (ids) đặt mốc · kéo tay Xe mới ⇒ lên xe',
         rpL.s === 200 && rpL.j?.data?.refreshed?.late_skipped === 1 && !!L1 && L1.so_created_date === DAYL && L1.reviewed_at === null
-        && reL.s === 200 && L2?.trip_id == null && L2?.reviewed_at === null && reM.s === 200 && !!L3?.trip_id,
-        `sửa=${rpL.s} ${rpL.j?.error?.message ?? ''} skipped=${rpL.j?.data?.refreshed?.late_skipped} row=${JSON.stringify(L1)} tối_ưu=${reL.s} sau=${JSON.stringify(L2)} tay=${reM.s} ${reM.j?.error?.message ?? ''} xe=${L3?.trip_id ? 'có' : 'không'}`)
+        && reL.s === 200 && L2?.trip_id == null && L2?.reviewed_at === null && reM.s === 200 && !!L3?.reviewed_at && mvL.s === 200 && !!L4?.trip_id,
+        `sửa=${rpL.s} ${rpL.j?.error?.message ?? ''} skipped=${rpL.j?.data?.refreshed?.late_skipped} row=${JSON.stringify(L1)} tối_ưu=${reL.s} sau=${JSON.stringify(L2)} ids=${reM.s} mốc=${!!L3?.reviewed_at} kéo=${mvL.s} ${mvL.j?.error?.message ?? ''} xe=${L4?.trip_id ? 'có' : 'không'}`)
       // dọn (ghi thẳng): dòng OD + xe tay của ODL + dòng ZSD02 — không để lại xe làm lệch các phép sau của [21m]
       await restWrite('dispatch_trip_od', 'DELETE', `plan_id=eq.${s4.id}&od_number=eq.${ODL}`).catch(() => {})
-      if (L3?.trip_id) await restWrite('dispatch_trip', 'DELETE', `id=eq.${L3.trip_id}`).catch(() => {})
+      if (L4?.trip_id) await restWrite('dispatch_trip', 'DELETE', `id=eq.${L4.trip_id}`).catch(() => {})
       await restWrite('erp_outbound_orders', 'DELETE', `od_number=eq.${ODL}`).catch(() => {})
       const cf2 = await api(`/tms/dispatch/plans/${s4.id}/confirm`, 'POST', {})                           // không còn xe nháp ⇒ 409
       await restWrite('dispatch_plan', 'PATCH', `id=eq.${s4.id}`, { status: 'CONFIRMED', updated_at: nowIso() })   // trạng thái như sau "Sửa" (mọi xe còn lại đã chốt)

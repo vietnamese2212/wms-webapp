@@ -2228,6 +2228,14 @@ async function tripGuards(req: Request, full: FullPlan, subset: FullTrip[]): Pro
     }
     if (bad.length) return { err: [`${bad.length} xe sai quy định ghép xe — chưa vào Kế hoạch xuất được:\n${bad.slice(0, 6).map(x => `• Xe #${x.t.seq} ${x.t.group_code}: ${x.blocks.map(b => b.message).join(' ')}`).join('\n')}${bad.length > 6 ? `\n• … và ${bad.length - 6} xe nữa` : ''}\nSửa trên Bàn ghép xe (chip "Sai quy định" / "Vượt tải") rồi xác nhận lại.`, 409, 'TRIP_RULE_VIOLATION'] }
   }
+  // XE CHƯA CÓ DÒNG XE (20/10, chạy thử một ngày Ba Vì): "Xe mới" cho OD lớn hơn mọi dòng xe khách được vào (17,15 pallet / xe 17 pallet)
+  // tạo xe KHÔNG dòng xe — luật ghép không đo được tải nên không chặn. Đường dội xuống cần Loại xe ("Thiếu Loại xuất") và từ chối CẢ LÔ ⇒
+  // xác nhận 34 xe ra 0 chuyến Xuất kho, bàn vẫn hiện "Đã vào KH" (lớp C5). Chặn TẠI ĐÂY, nêu đích danh xe.
+  const noModel = loaded.filter(t => !t.vehicle_model_id)
+  if (noModel.length) {
+    const plOf = (t: FullTrip) => t.ods.reduce((a, o) => a + Number(o.pallets ?? 0), 0).toLocaleString('vi-VN', { maximumFractionDigits: 2 })
+    return { err: [`${noModel.length} xe chưa có dòng xe — chưa vào Kế hoạch xuất được: ${noModel.slice(0, 6).map(t => `Xe #${t.seq} ${t.group_code} (${plOf(t)} pallet)`).join(', ')}${noModel.length > 6 ? ` … và ${noModel.length - 6} xe nữa` : ''}. Bấm vào xe chọn dòng xe; OD lớn hơn mọi dòng xe khách được vào thì trả OD về Chờ điều.`, 422, 'VEHICLE_MODEL_REQUIRED'] }
+  }
   const live = full.trips.filter(t => statusOf(t) !== 'DISCARDED' && t.ods.length)
   const tripsByOd = new Map<string, string[]>()
   for (const t of live) for (const od of uniq(t.ods.map(o => o.od_number))) { const l = tripsByOd.get(od) ?? []; l.push(t.group_code); tripsByOd.set(od, l) }
@@ -2336,7 +2344,25 @@ async function writeTrips(req: Request, res: Response, full: FullPlan, wh: WhRow
     ? `${String(derive.error?.message ?? 'đường sinh chuyến từ chối kế hoạch')}${ve.length ? ` — ${ve.slice(0, 3).map(v => `${v.group_code}: ${v.errors[0]}`).join(' · ')}${ve.length > 3 ? ` … +${ve.length - 3} xe` : ''}` : ''}`
     : null
   if (derive_failed) console.error('[dispatch confirm] derive từ chối:', JSON.stringify(derive).slice(0, 500))
-  return { lines: rows.length, group_codes: gcs, replan, replan_error, derive_failed, derive_message }
+  // TỪ CHỐI TRƯỚC KHI GHI (400 VALIDATION_FAILED "File có N chuyến xe lỗi — không upload" — cả lô, chưa sinh gì) ⇒ GỠ dòng Kế hoạch xuất
+  // vừa ghi + trả xe về trạng thái cũ (20/10). Trước đó xe nằm CONFIRMED "Đã vào KH" mà không chuyến Xuất kho / lệnh VC, và câu báo
+  // chỉ sang tab Kế hoạch xuất — nơi dòng DISPATCH đã khoá từ 13/10 ⇒ ngõ cụt. Gác `tripGuards` lo ca đã biết; đây là lưới cho ca chưa biết.
+  let rolled_back = false
+  if (derive_failed && (derive as { status?: number }).status === 400) {
+    for (let i = 0; i < rows.length; i += 300) {
+      const { error } = await db.from('khvc_lines').delete().in('id', rows.slice(i, i + 300).map(r => r.id))
+      if (error) throw error
+    }
+    for (const st of uniq(trips.map(statusOf))) {
+      const ids = trips.filter(x => statusOf(x) === st).map(x => x.id)
+      for (let i = 0; i < ids.length; i += 300) {
+        const { error } = await db.from('dispatch_trip').update({ status: st, confirmed_at: null, updated_at: now() }).in('id', ids.slice(i, i + 300))
+        if (error) throw error
+      }
+    }
+    rolled_back = true
+  }
+  return { lines: rolled_back ? 0 : rows.length, group_codes: gcs, replan, replan_error, derive_failed, derive_message, rolled_back }
 }
 
 /** ĐVVT của chuyến có cần phản hồi không — đọc CỜ HIỆN TẠI của danh mục, không tin bản chụp trong detail lúc lập. */
@@ -2398,13 +2424,13 @@ async function confirmPlanInner(req: Request, res: Response) {
     const tender = trips.filter(t => t.transport_company_id && flags.get(t.transport_company_id))
     step(res, 'đánh dấu xe chờ ĐVVT')
     await markTendered(tender)
-    const w = direct.length ? await writeTrips(req, res, full, wh, direct) : { lines: 0, group_codes: [] as string[], replan: null, replan_error: null, derive_failed: false, derive_message: null }
-    await logPlanEvent(full as PlanRow, actorOf(req), 'DISPATCH_PLAN_CONFIRMED', `xác nhận ${direct.length} xe vào Kế hoạch xuất${tender.length ? ` · ${tender.length} xe chờ ĐVVT phản hồi` : ''}${empties.length ? ` · bỏ ${empties.length} xe trống` : ''}`)
+    const w = direct.length ? await writeTrips(req, res, full, wh, direct) : { lines: 0, group_codes: [] as string[], replan: null, replan_error: null, derive_failed: false, derive_message: null, rolled_back: false }
+    if (!w.rolled_back) await logPlanEvent(full as PlanRow, actorOf(req), 'DISPATCH_PLAN_CONFIRMED', `xác nhận ${direct.length} xe vào Kế hoạch xuất${tender.length ? ` · ${tender.length} xe chờ ĐVVT phản hồi` : ''}${empties.length ? ` · bỏ ${empties.length} xe trống` : ''}`)
     const status = await syncPlanStatus(full as PlanRow, req.user?.name ?? null)
     step(res, 'đơn còn ở khung chờ về Chờ điều')
-    const returned_to_wait = await releasePoolToWait(full.id)
+    const returned_to_wait = w.rolled_back ? 0 : await releasePoolToWait(full.id)
     await writeSummary(full as PlanRow)
-    return ok(res, { plan_id: full.id, status, trips: direct.length, tendered: tender.length, tendered_group_codes: tender.map(t => t.group_code), discarded_empty: empties.length, returned_to_wait, lines: w.lines, group_codes: w.group_codes, replan: w.replan, replan_error: w.replan_error, derive_failed: w.derive_failed, derive_message: w.derive_message })
+    return ok(res, { plan_id: full.id, status, trips: w.rolled_back ? 0 : direct.length, tendered: tender.length, tendered_group_codes: tender.map(t => t.group_code), discarded_empty: empties.length, returned_to_wait, lines: w.lines, group_codes: w.group_codes, replan: w.replan, replan_error: w.replan_error, derive_failed: w.derive_failed, derive_message: w.derive_message, rolled_back: w.rolled_back })
   } catch (e) { return failAny(res, e) }
 }
 
@@ -2428,7 +2454,7 @@ async function settleTripInner(req: Request, res: Response) {
     const status = await syncPlanStatus(plan, req.user?.name ?? null)
     if (status === 'CONFIRMED') await releasePoolToWait(plan.id)   // xe cuối cùng chốt ⇒ đơn còn ở khung chờ về Chờ điều (13/10)
     await writeSummary(plan)
-    return ok(res, { trip_id: trip.id, group_code: trip.group_code, trip_status: needs ? 'TENDERED' : 'CONFIRMED', plan_status: status, lines: w?.lines ?? 0, replan: w?.replan ?? null, replan_error: w?.replan_error ?? null, derive_failed: w?.derive_failed ?? false, derive_message: w?.derive_message ?? null })
+    return ok(res, { trip_id: trip.id, group_code: trip.group_code, trip_status: needs ? 'TENDERED' : w?.rolled_back ? statusOf(trip) : 'CONFIRMED', plan_status: status, lines: w?.lines ?? 0, replan: w?.replan ?? null, replan_error: w?.replan_error ?? null, derive_failed: w?.derive_failed ?? false, derive_message: w?.derive_message ?? null, rolled_back: w?.rolled_back ?? false })
   } catch (e) { return failAny(res, e) }
 }
 
@@ -2460,7 +2486,7 @@ async function respondTripInner(req: Request, res: Response) {
     const status = await syncPlanStatus(plan, actor)
     if (status === 'CONFIRMED') await releasePoolToWait(plan.id)   // xe chờ cuối cùng được nhận ⇒ đơn còn ở khung chờ về Chờ điều (13/10)
     await writeSummary(plan)
-    return ok(res, { trip_id: trip.id, group_code: trip.group_code, trip_status: 'CONFIRMED', plan_status: status, lines: w.lines, replan: w.replan, replan_error: w.replan_error })
+    return ok(res, { trip_id: trip.id, group_code: trip.group_code, trip_status: w.rolled_back ? statusOf(trip) : 'CONFIRMED', plan_status: status, lines: w.lines, replan: w.replan, replan_error: w.replan_error, derive_failed: w.derive_failed, derive_message: w.derive_message, rolled_back: w.rolled_back })
   } catch (e) { return failAny(res, e) }
 }
 

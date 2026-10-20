@@ -375,11 +375,12 @@ export default function Dispatch() {
       toast({
         // ⚠️ KHÔNG khẳng định "chuyến đã sinh" khi chưa đo được. Đường dội xuống có thể TỪ CHỐI TRỌN GÓI
         // mà không ném lỗi (derive_failed) — trước 24/09 câu này vẫn in "đã sinh" trong khi thực tế 0/50.
+        // 20/10: bị từ chối trước khi ghi ⇒ BE gỡ lại (rolled_back), xe vẫn NHÁP — sửa ngay trên bàn (dòng DISPATCH khoá ở tab Kế hoạch xuất)
         title: r.derive_failed
-          ? `Đã ghi ${r.lines} dòng Kế hoạch xuất — nhưng CHƯA sinh được chuyến nào`
+          ? (r.rolled_back ? 'Chưa xác nhận được — xe vẫn ở dạng nháp' : `Đã ghi ${r.lines} dòng Kế hoạch xuất — nhưng CHƯA sinh được chuyến nào`)
           : r.tendered ? `Đã ghi ${r.trips} xe vào Kế hoạch xuất · ${r.tendered} xe chờ ĐVVT phản hồi` : `Đã ghi ${r.lines} dòng Kế hoạch xuất cho ${r.trips} xe`,
         description: r.derive_failed
-          ? `${r.derive_message ?? 'đường sinh chuyến từ chối kế hoạch'} — kế hoạch nằm ở tab Kế hoạch xuất, sửa chỗ bị từ chối rồi chuyến sẽ tự dội xuống.`
+          ? `${r.derive_message ?? 'đường sinh chuyến từ chối kế hoạch'} — sửa xe bị nêu trên Bàn ghép xe rồi xác nhận lại.`
           : r.replan_error ? `Kế hoạch đã lưu nhưng chuyến chưa dội xuống: ${r.replan_error}` : r.tendered ? `Xe chờ: ${r.tendered_group_codes.join(', ')} — ghi "ĐVVT nhận / từ chối" trong panel từng xe.` : 'Chuyến bên Xuất kho + lệnh VC bên Kế hoạch VC đã sinh.',
         variant: r.replan_error || r.derive_failed ? 'destructive' : undefined,
       })
@@ -551,7 +552,7 @@ export default function Dispatch() {
       ? { title: `Chào xe ${t.group_code} cho ${t.detail.carrier?.name ?? 'ĐVVT'}?`, body: 'Xe sẽ CHỜ ĐVVT phản hồi.', confirmLabel: 'Chào xe' }
       : { title: `Chốt xe ${t.group_code} vào Kế hoạch xuất ngay?`, body: 'ĐVVT không cần phản hồi.', confirmLabel: 'Chốt xe' }) === null) return
     settle.mutateAsync(t.id).then(r => toast({
-      title: r.derive_failed ? `Xe ${r.group_code}: đã ghi kế hoạch nhưng CHƯA sinh được chuyến` : r.trip_status === 'TENDERED' ? `Xe ${r.group_code} đang chờ ĐVVT phản hồi` : `Xe ${r.group_code} đã vào Kế hoạch xuất`,
+      title: r.derive_failed ? (r.rolled_back ? `Xe ${r.group_code}: chưa chốt được — xe vẫn ở dạng nháp` : `Xe ${r.group_code}: đã ghi kế hoạch nhưng CHƯA sinh được chuyến`) : r.trip_status === 'TENDERED' ? `Xe ${r.group_code} đang chờ ĐVVT phản hồi` : `Xe ${r.group_code} đã vào Kế hoạch xuất`,
       description: r.derive_failed ? (r.derive_message ?? undefined) : (r.replan_error ?? undefined),
       variant: r.replan_error || r.derive_failed ? 'destructive' : undefined,
     })).catch(e => err(e, 'Không chốt được xe'))

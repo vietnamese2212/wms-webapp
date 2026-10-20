@@ -2626,6 +2626,35 @@ try {
       await api(`/tms/dispatch/plans/${s5.id}`, 'DELETE')
     } else check('21n. Fixture: 3 OD, mỗi OD một xe qua ô Xe mới', false, `plan=${s5.s}`)
     await cleanupTrips()
+    // ── [21o] XE KHÔNG DÒNG XE ở cửa Xác nhận (20/10, chạy thử một ngày Ba Vì — C5 lặp): "Xe mới" cho OD lớn hơn mọi dòng xe khách được vào
+    //     tạo xe không dòng xe; trước bản vá Xác nhận 200 · ghi dòng KH xuất cho CẢ lô · đường dội từ chối cả lô ("Thiếu Loại xuất") ⇒ 0 chuyến
+    //     Xuất kho mà xe vẫn CONFIRMED. Nay: 422 VEHICLE_MODEL_REQUIRED nêu đích danh xe, KHÔNG ghi gì · chọn dòng xe xong ⇒ 200, đủ chuyến ──
+    await Promise.all([setCust(0), setCust(1), setCust(2)])
+    const s6 = await build()
+    if (s6.ok) {
+      const { A, B, C, q: [, , r3], mv } = s6
+      const kh6 = async gcs => (await restAll('khvc_lines', `select=id&group_code=in.(${gcs.join(',')})&sync_status=neq.OBSOLETE`)).length
+      const gd6 = async gcs => (await restAll('GroupDeliveryOrder', `select=id&group_code=in.(${gcs.join(',')})`)).length
+      for (const t of [A, B, C]) await restWrite('dispatch_trip', 'PATCH', `id=eq.${t.id}`, { transport_company_id: DA.id, updated_at: nowIso() })
+      await mv([r3.id], 'pool')
+      const mvN = await api(`/tms/dispatch/plans/${s6.id}/move`, 'POST', { ids: [r3.id], to: 'new', restore: { seq: 91, vehicle_model_ids: [], transport_company_id: DA.id, locked: false, allow_mix_categories: null } })
+      const P6 = (await api(`/tms/dispatch/plans/${s6.id}`)).j?.data
+      const N = P6?.trips?.find(t => t.status !== 'DISCARDED' && t.ods.some(o => o.od_number === OD[2]))
+      const cfBad = await api(`/tms/dispatch/plans/${s6.id}/confirm`, 'POST', {})
+      const gcs = [A.group_code, B.group_code, N?.group_code].filter(Boolean)
+      const khBad = await kh6(gcs), stBad = (await api(`/tms/dispatch/plans/${s6.id}`)).j?.data?.trips?.filter(t => gcs.includes(t.group_code)).map(t => t.status)
+      const pt = N ? await api(`/tms/dispatch/trips/${N.id}`, 'PATCH', { vehicle_model_id: C.vehicle_model_id }) : { s: 0 }
+      const cfOk = await api(`/tms/dispatch/plans/${s6.id}/confirm`, 'POST', {})
+      const khOk = await kh6(gcs), gdOk = await gd6(gcs)
+      check('21o. XE KHÔNG DÒNG XE: Xác nhận ⇒ 422 VEHICLE_MODEL_REQUIRED nêu Số xe, KHÔNG ghi dòng KH xuất nào, mọi xe giữ nháp · chọn dòng xe ⇒ Xác nhận 200, đủ 3 chuyến Xuất kho',
+        mvN.s === 200 && !!N && !N.vehicle_model_id
+        && cfBad.s === 422 && cfBad.j?.error?.code === 'VEHICLE_MODEL_REQUIRED' && (cfBad.j?.error?.message ?? '').includes(N.group_code) && khBad === 0 && (stBad ?? []).every(s => s === 'DRAFT')
+        && pt.s === 200 && cfOk.s === 200 && !cfOk.j?.data?.derive_failed && khOk === 3 && gdOk === 3,
+        `xe mới=${em(mvN)} vm=${N?.vehicle_model_id ?? 'null'} · xn=${em(cfBad)} «${(cfBad.j?.error?.message ?? '').slice(0, 90)}» kh=${khBad} xe=${JSON.stringify(stBad)} · chọn dòng=${em(pt)} xn2=${em(cfOk)} derive_failed=${cfOk.j?.data?.derive_failed} kh=${khOk} gdo=${gdOk}`)
+      await api(`/tms/dispatch/plans/${s6.id}/reopen`, 'POST', { force: true })
+      await api(`/tms/dispatch/plans/${s6.id}`, 'DELETE')
+    } else check('21o. Fixture: 3 OD, mỗi OD một xe qua ô Xe mới', false, `plan=${s6.s}`)
+    await cleanupTrips()
     await Promise.all([0, 1, 2].map(i => setCust(i, { dispatch_vehicles: ALLV })))
     await restWrite('vehicle_model', 'DELETE', `sap_code=in.(QA61X05,QA61X06,QA61X07,QA61X08,QA61X04)`).catch(() => {})
     await restWrite('erp_outbound_orders', 'PATCH', `od_number=in.(${OD.join(',')})`, { sync_status: 'OBSOLETE', updated_at: nowIso() })

@@ -48,3 +48,11 @@ date; 13 dòng kênh Trung chuyển chưa khai mức). Màn Quy định date th�
 ?channel=GT,KA` · `__NO_CHANNEL__` = chưa có khách / chưa phân kênh; RPC `outbound_date_rule_lines.p_channels`, migration `20261020f`). Cách làm:
 lọc kho + ngày + "Chưa khai" + Kênh → tick các dòng có ghi chú không liên quan date → "Quy định date (N)" → khai một mức → Lưu (nguồn = chốt tay).
 Gói 57 [15q2].
+
+## 20/10 — Cửa xuất chỉ nhả khi HOÀN THÀNH (user chốt) · cửa pallet Ba Vì nhận 2 xe
+
+Hỏi về làm cuốn chiếu (xe trước gần xong, xe sau chưa Bắt đầu được), user chốt: "đơn giản chỉ là thêm 1 xe vào đó nữa là xong, và hoàn thành
+thì nó mới nhả slot ra — để user họ có trách nhiệm làm cho xong (bao gồm gỡ đơn), nếu không họ sẽ bị mắc việc". ⇒ GIỮ luật RULE 3: suất cửa
+tính theo chuyến IN_PROGRESS / PAUSED, nhả khi Hoàn thành / Bỏ bắt đầu / Huỷ — kể cả chuyến bị điều vận rút (kho phải trả hàng + Bỏ bắt đầu).
+ĐỪNG đề xuất nút "Xe rời cửa" / nhả khi Ra cổng / hàng chờ cửa. Cuốn chiếu = sức chứa cửa: "Cửa pallet 1" · "Cửa Pallet 2" của Ba Vì 1 → 2 xe
+(sửa qua Sơ đồ kho, staging); cửa cont / sca vốn 2 xe.

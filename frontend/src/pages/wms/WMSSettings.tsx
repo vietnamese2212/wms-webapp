@@ -88,7 +88,7 @@ const DC_MODE_OPTS = [
   { value: 'QR',    label: 'Kho QR (tồn kho QR)' },
   { value: 'QTY',   label: 'Kho QTY / QTY theo date (tồn số lượng)' },
   { value: 'NONE',  label: 'Kho NONE (tài xế tự hoàn thành)' },
-  { value: 'OTHER', label: 'Khách ngoài (tài xế tự hoàn thành)' },
+  // "Khách ngoài" (OTHER) gỡ 20/10 (user: "không phù hợp thì bỏ đi"): giao cho khách = tài xế bấm "Đã giao" trên lệnh VC
 ]
 type DeliveryConf = { enabled: boolean; modes: string[] }
 function parseDc(v: unknown): DeliveryConf {
@@ -96,7 +96,7 @@ function parseDc(v: unknown): DeliveryConf {
     const o = v as { enabled?: unknown; modes?: unknown }
     return {
       enabled: o.enabled === true,
-      modes: Array.isArray(o.modes) ? o.modes.filter((m): m is string => typeof m === 'string') : [],
+      modes: Array.isArray(o.modes) ? o.modes.filter((m): m is string => typeof m === 'string' && DC_MODE_OPTS.some(x => x.value === m)) : [],
     }
   }
   return { enabled: true, modes: ['QR', 'QTY'] }   // mặc định = hành vi đơn vị 1

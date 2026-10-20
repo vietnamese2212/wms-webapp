@@ -84,6 +84,8 @@ try {
   // ── Fixture: mã SIM + GDO ĐANG XUẤT ở kho nguồn, shipto = kho đích QTY ──────
   const [dc] = await restAll('SystemSetting', 'select=value&key=eq.delivery_confirmation')
   dcBackup = dc?.value ?? { enabled: true, modes: ['QR', 'QTY'] }
+  // Bản lưu cũ còn 'OTHER' (gỡ 20/10) thì PUT trả lại sẽ 400 ⇒ cờ kẹt ở giá trị của [1] (chỉ QR). Trả lại bản đã lọc.
+  if (Array.isArray(dcBackup.modes)) dcBackup = { ...dcBackup, modes: dcBackup.modes.filter(m => m !== 'OTHER') }
 
   const [mat] = await restWrite('Material', 'POST', null, {
     id: randomUUID(), material_code: `${TAG}001`, short_name: `${TAG} hàng test chuyển kho`,
@@ -311,9 +313,11 @@ try {
     const p1 = await api(`/wms/outbound/${created.gdo}/push-transfer`, 'POST', {})
     check('[12a] Chuyến đã có kho nhận và ĐÃ nhận xong → đẩy lại 409 TRANSFER_ALREADY_PUSHED',
       p1.s === 409 && p1.j?.error?.code === 'TRANSFER_ALREADY_PUSHED', `http=${p1.s} code=${p1.j?.error?.code}`)
-    // Chuyến 2: ship-to LẠ (chưa có khách / chưa trỏ kho) hoàn thành với cờ OTHER bật ⇒ lệnh SELF không kho đích; đẩy ⇒ 422
-    await api('/wms/settings/delivery_confirmation', 'PUT', { value: { enabled: true, modes: ['QR', 'QTY', 'NONE', 'OTHER'] } })
-    await waitCache()
+    // Chuyến 2: ship-to LẠ (chưa có khách / chưa trỏ kho). 20/10: hình thức OTHER ("khách ngoài") GỠ khỏi cờ — nó sinh lệnh
+    // "chuyển kho" giả cho MỌI chuyến bán hàng và che "Đã giao" của tài xế (C90) ⇒ cờ không nhận OTHER, hoàn thành KHÔNG sinh lệnh
+    const pOther = await api('/wms/settings/delivery_confirmation', 'PUT', { value: { enabled: true, modes: ['QR', 'QTY', 'NONE', 'OTHER'] } })
+    check('[12a2] Cờ xác nhận giao hàng KHÔNG còn nhận hình thức OTHER (khách ngoài) ⇒ 400',
+      pOther.s === 400, `http=${pOther.s} ${pOther.j?.error?.message ?? ''}`)
     const ST2 = `${TAG}ST2`
     const [g2] = await restWrite('GroupDeliveryOrder', 'POST', null, {
       id: randomUUID(), group_code: `${TAG}-GDO2`, warehouse_id: FIX.WH_QR.id, warehouse_type: FIX.MAT_POOL_CAT,
@@ -325,22 +329,21 @@ try {
     const c2 = await api(`/wms/outbound/${g2.id}`, 'PATCH', { status: 'COMPLETED' })
     const o2a = (await restAll('TmsOrder', `select=id,order_code,delivery_mode,destination_warehouse_id,warehouse_id,status&transfer_gdo_id=eq.${g2.id}`))[0]
     const p2 = await api(`/wms/outbound/${g2.id}/push-transfer`, 'POST', {})
-    check('[12b] Ship-to chưa trỏ kho: hoàn thành ⇒ lệnh OTHER (SELF, không kho đích, nằm dưới KHO XUẤT) · đẩy lại ⇒ 422 SHIPTO_UNLINKED',
-      c2.s === 200 && o2a?.delivery_mode === 'SELF' && o2a?.destination_warehouse_id == null && o2a?.warehouse_id === FIX.WH_QR.id
-      && p2.s === 422 && p2.j?.error?.code === 'SHIPTO_UNLINKED',
-      `complete=${c2.s} ord=${o2a?.order_code}/${o2a?.delivery_mode}/dest=${o2a?.destination_warehouse_id} push=${p2.s} ${p2.j?.error?.code}`)
-    // Trỏ kho SAU khi đã xuất ⇒ không nối tự động; kho xuất bấm đẩy ⇒ CHÍNH lệnh cũ đổi đích + hình thức + kế hoạch nhập
+    check('[12b] Ship-to chưa trỏ kho: hoàn thành 200 mà KHÔNG sinh lệnh chuyển kho (khách ngoài không còn lệnh SELF giả) · đẩy lại ⇒ 422 SHIPTO_UNLINKED',
+      c2.s === 200 && !o2a && p2.s === 422 && p2.j?.error?.code === 'SHIPTO_UNLINKED',
+      `complete=${c2.s} ord=${o2a?.order_code ?? '—'}/${o2a?.delivery_mode ?? ''} push=${p2.s} ${p2.j?.error?.code}`)
+    // Trỏ kho SAU khi đã xuất ⇒ không nối tự động; kho xuất bấm đẩy ⇒ SINH lệnh (SCAN + kho đích + kế hoạch nhập)
     const cu = await api('/masterdata/customers', 'POST', { ship_to_code: ST2, name: `${TAG} NPP 2`, warehouse_id: FIX.WH_QTY.id })
     const o2b = (await restAll('TmsOrder', `select=destination_warehouse_id&transfer_gdo_id=eq.${g2.id}`))[0]
     const p3 = await api(`/wms/outbound/${g2.id}/push-transfer`, 'POST', {})
     const o2c = (await restAll('TmsOrder', `select=id,order_code,delivery_mode,destination_warehouse_id,warehouse_id&transfer_gdo_id=eq.${g2.id}`))[0]
     const lines2 = o2c ? await restAll('inbound_plan_lines', `select=planned_boxes,warehouse_id&tms_order_id=eq.${o2c.id}`) : []
     const ev = await restAll('outbound_events', `select=event_type&gdo_id=eq.${g2.id}&event_type=eq.TRANSFER_PUSHED`)
-    check('[12c] Trỏ kho sau khi xuất: KHÔNG tự nối (đích vẫn trống) · bấm đẩy ⇒ 200, cùng lệnh (giữ id) đổi sang SCAN + kho đích + KH nhập planned = SL xuất · có sự kiện TRANSFER_PUSHED',
-      cu.s === 201 && o2b?.destination_warehouse_id == null && p3.s === 200 && p3.j?.data?.dest?.id === FIX.WH_QTY.id
-      && o2c?.id === o2a?.id && o2c?.delivery_mode === 'SCAN' && o2c?.destination_warehouse_id === FIX.WH_QTY.id && o2c?.warehouse_id === FIX.WH_QTY.id
+    check('[12c] Trỏ kho sau khi xuất: KHÔNG tự nối (vẫn chưa có lệnh) · bấm đẩy ⇒ 200, sinh lệnh SCAN + kho đích + KH nhập planned = SL xuất · có sự kiện TRANSFER_PUSHED',
+      cu.s === 201 && !o2b && p3.s === 200 && p3.j?.data?.dest?.id === FIX.WH_QTY.id
+      && o2c?.delivery_mode === 'SCAN' && o2c?.destination_warehouse_id === FIX.WH_QTY.id && o2c?.warehouse_id === FIX.WH_QTY.id
       && lines2.length === 1 && Number(lines2[0]?.planned_boxes) === QTY && ev.length === 1,
-      `cust=${cu.s} ${cu.j?.error?.message ?? ''} before=${o2b?.destination_warehouse_id} push=${p3.s} ${p3.j?.error?.message ?? ''} mode=${o2c?.delivery_mode} lines=${lines2.length} ev=${ev.length}`)
+      `cust=${cu.s} ${cu.j?.error?.message ?? ''} before=${o2b ? 'có lệnh' : 'không'} push=${p3.s} ${p3.j?.error?.message ?? ''} mode=${o2c?.delivery_mode} lines=${lines2.length} ev=${ev.length}`)
     const p4 = await api(`/wms/outbound/${g2.id}/push-transfer`, 'POST', {})
     check('[12d] Đẩy lần 2 khi lệnh đã có kho nhận ⇒ 409 TRANSFER_ALREADY_PUSHED, không sinh lệnh đôi',
       p4.s === 409 && p4.j?.error?.code === 'TRANSFER_ALREADY_PUSHED' && (await restAll('TmsOrder', `select=id&transfer_gdo_id=eq.${g2.id}`)).length === 1,

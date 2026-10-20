@@ -2101,7 +2101,9 @@ async function maybeAutoCreateTransferOrder(gdoId: string, nowTs: string, opts: 
   let destWh: DestWh | null = gdo.shipto_party ? ((await warehouseByShipto(gdo.shipto_party)) as DestWh | null) : null
   // Kho phụ nội bộ của site KHÁC → không auto-transfer, coi như khách ngoài (OTHER).
   if (destWh?.parent_warehouse_id && destWh.parent_warehouse_id !== gdo.warehouse_id) destWh = null
-  // Hình thức kho nhận: kho khớp DB → QR/QTY/NONE; không khớp (khách ngoài) → OTHER.
+  // Hình thức kho nhận: kho khớp DB → QR/QTY/NONE; không khớp (khách ngoài) → OTHER — hình thức này GỠ khỏi cờ 20/10
+  // (DC_MODES) nên khách ngoài không sinh lệnh mới; "Đã giao" của chuyến bán hàng = tài xế xác nhận trên lệnh VC.
+  // Lệnh OTHER cũ còn sống vẫn được sync (existing) · "Đẩy lại cho kho nhận" (manual) chỉ chạy khi ship-to đã trỏ kho.
   const modeKey = destWh ? (destWh.inventory_mode === 'NONE' ? 'NONE' : isQtyLike(destWh.inventory_mode) ? 'QTY' : 'QR') : 'OTHER'
   if (!existing && !dc.modes.includes(modeKey) && !opts.manual) return null   // loại này không được chọn → ngắt (không tạo booking mới)
   // NONE / OTHER: tài xế TỰ HOÀN THÀNH (không nhận-quét, không tạo tồn). QR/QTY: nhận-quét như cũ.

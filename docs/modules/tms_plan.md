@@ -37,14 +37,17 @@ vận bấm "Đã giao" (hoặc "Hoàn tác") ngay trên hành trình xe trong c
 "đã giao" của chuyển kho là `transfer_status` do kho nhận xác nhận. Chuỗi 8 bước hiện cạnh mã lệnh ở danh sách và đầy đủ trong chi tiết
 (`components/tms/TripFlow.tsx`, nguồn `services/tripFlow.ts` — xem docs/modules/dispatch.md mục 18/10). Gói QA 14 [5h–5l].
 
-## 20/10 — chạy thử một ngày Ba Vì (vai thật): ĐVVT theo công ty · "Đã giao" khi có lệnh OTHER
+## 20/10 — chạy thử một ngày Ba Vì (vai thật): ĐVVT theo công ty · "Đã giao" khi có lệnh OTHER · gỡ OTHER
 
 - **ĐVVT chỉ thao tác xe của CHÍNH công ty mình** (book / nhả / thu hồi / xoá / thêm dòng xe / gom lệnh — `orderAllowed` ở
   `vehicleSlotController`): trước đó tài khoản có `ncc_id` được "toàn quyền" ⇒ ĐVVT 3S sửa được tài xế xe Hải An. Ngoại lệ: lệnh CHUYỂN KHO
   chưa gán hãng (`TRF_…` sinh lúc Hoàn thành không mang `ncc_id`) — ĐVVT vẫn khai giờ đến / SĐT cho kho nhận. Gói 41 tầng 3.
 - **Cờ `delivery_confirmation.modes` có OTHER** ⇒ Hoàn thành chuyến BÁN HÀNG tới khách thường cũng sinh lệnh `TRF_<shipto>_…` (SELF,
   không kho đích) + `transfer_status`. Chuỗi tình trạng xe nay chỉ coi là chuyển kho khi lệnh TRF có KHO ĐÍCH (`isTransferDelivery`) — bước
-  Đã giao của xe bán hàng đọc xác nhận tài xế. Lệnh SELF vẫn hiện ở tab Chuyển kho của kho xuất (64 lệnh trên staging) — tắt OTHER là
-  quyết định của người dùng.
+  Đã giao của xe bán hàng đọc xác nhận tài xế.
+- **Tối 20/10 — GỠ HẲN hình thức OTHER** (user: "kiểu Other không phù hợp thì bỏ đi"). OTHER là chốt 09/07 "mọi đơn xuất đều theo dõi giao
+  hàng qua tab Chuyển kho, tài xế tự hoàn thành"; từ 18/10 việc đó là nút "Đã giao" trên lệnh VC ⇒ hai cơ chế cho một sự thật (C90). Nay cờ chỉ
+  còn QR · QTY · NONE (`DC_MODES`; PUT có OTHER ⇒ 400; giá trị cũ trong DB lọc bỏ khi đọc — `normalizeDc`); khách ngoài không sinh lệnh mới;
+  "Đẩy lại cho kho nhận" vẫn sinh lệnh khi ship-to được trỏ kho sau. 63 lệnh SELF cũ (12–30/09) trên staging để nguyên. Gói 28 [12a2] [12b] [12c].
 - **Lệnh nhận chuyển kho** cần giờ đến + SĐT tài xế trước khi kho nhận bấm nhận (ĐVVT khai); hoàn thành phiếu nhận đòi chấm sao chuyến giao
   (`RATING_REQUIRED`) khi chế độ đánh giá bắt buộc.

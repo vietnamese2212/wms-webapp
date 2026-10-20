@@ -23,10 +23,13 @@ import {
 //   Chiều IN: quyết định format tem sinh. Chiều QUÉT inbound: cờ GATE format (getLabelFormat) —
 //   ';' chỉ nhận tem ';', '_' chỉ nhận tem '_' (mỗi đơn vị 1 format cố định; quét nhầm → chặn).
 
-// - delivery_confirmation: { enabled: boolean, modes: ('QR'|'QTY'|'NONE'|'OTHER')[] } — xác nhận giao hàng.
+// - delivery_confirmation: { enabled: boolean, modes: ('QR'|'QTY'|'NONE')[] } — xác nhận giao hàng.
 //     enabled=false → xuất kho KHÔNG tạo booking TMS (Chuyển kho).
 //     enabled=true  → chỉ tạo booking cho HÌNH THỨC KHO NHẬN có trong modes (theo inventory_mode của kho khớp
-//       shipto; không khớp DB = 'OTHER'). QR/QTY = luồng nhận-quét như cũ; NONE/OTHER = tài xế TỰ HOÀN THÀNH.
+//       shipto). QR/QTY = luồng nhận-quét như cũ; NONE = tài xế TỰ HOÀN THÀNH.
+//     'OTHER' (khách ngoài, không phải kho) GỠ 20/10 — user: "không phù hợp thì bỏ đi": nó sinh lệnh "chuyển kho" giả cho
+//       MỌI chuyến bán hàng, trùng với "Đã giao" do tài xế xác nhận trên lệnh VC (18/10) và che bước đó (C90). Giá trị cũ
+//       còn lưu trong DB được LỌC BỎ khi đọc (normalizeDc), không làm hỏng cả cờ.
 //     Mặc định (khi chưa cấu hình) = { enabled:true, modes:['QR','QTY'] } → giữ nguyên hành vi đơn vị 1.
 
 // - decimal_separator: 'dot' | 'comma' — dấu thập phân cho ô nhập số (KG/decimal) ở form (vd Mã hàng).
@@ -67,7 +70,7 @@ import {
 //     FE đọc qua usePctBands() + pctDateCls() (utils/pctDateBands) — thêm chỗ hiển thị %Date mới
 //     BẮT BUỘC dùng cặp này, KHÔNG tự viết ternary ngưỡng.
 
-export const DC_MODES = ['QR', 'QTY', 'NONE', 'OTHER'] as const
+export const DC_MODES = ['QR', 'QTY', 'NONE'] as const
 export type DeliveryConfirmation = { enabled: boolean; modes: string[] }
 export const DC_DEFAULT: DeliveryConfirmation = { enabled: true, modes: ['QR', 'QTY'] }
 
@@ -76,6 +79,13 @@ function isDeliveryConfirmation(v: unknown): v is DeliveryConfirmation {
   const o = v as Record<string, unknown>
   if (typeof o.enabled !== 'boolean' || !Array.isArray(o.modes)) return false
   return o.modes.every(m => typeof m === 'string' && (DC_MODES as readonly string[]).includes(m))
+}
+/** Đọc cờ đã lưu: bỏ hình thức không còn trong DC_MODES (vd 'OTHER' gỡ 20/10) thay vì coi cả cờ là hỏng rồi rơi về mặc định. */
+export function normalizeDc(v: unknown): DeliveryConfirmation {
+  if (!v || typeof v !== 'object') return DC_DEFAULT
+  const o = v as Record<string, unknown>
+  if (typeof o.enabled !== 'boolean' || !Array.isArray(o.modes)) return DC_DEFAULT
+  return { enabled: o.enabled, modes: o.modes.filter((m): m is string => typeof m === 'string' && (DC_MODES as readonly string[]).includes(m)) }
 }
 
 function isTruckModels(v: unknown): boolean {
@@ -214,8 +224,7 @@ let _dcCache: { value: DeliveryConfirmation; at: number } | null = null
 export async function getDeliveryConfirmation(): Promise<DeliveryConfirmation> {
   if (_dcCache && Date.now() - _dcCache.at < 30_000) return _dcCache.value
   const { data } = await supabase.from('SystemSetting').select('value').eq('key', 'delivery_confirmation').maybeSingle()
-  const v = data?.value
-  const value: DeliveryConfirmation = isDeliveryConfirmation(v) ? v : DC_DEFAULT
+  const value = normalizeDc(data?.value)
   _dcCache = { value, at: Date.now() }
   return value
 }

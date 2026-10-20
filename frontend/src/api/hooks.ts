@@ -8351,6 +8351,22 @@ export function useDispatchHistory(p: DispatchHistoryParams, enabled = true) {
     queryFn: async () => (await apiClient.get('/tms/dispatch/history', { params: p })).data.data as { code: string; items: DispatchHistoryItem[]; total: number; page: number; page_size: number },
   })
 }
+/** Lưu trữ sổ vết (20/10): tệp CSV.gz theo tháng trong bucket `ledger-archive` + vé tải 1 giờ; việc lưu trữ do FE gọi sau khi tab hiện. */
+export type LedgerArchiveFile = { month: string; name: string; size: number | null; updated_at: string | null; url: string | null }
+export function useLedgerArchives(enabled = true) {
+  return useQuery({
+    queryKey: ['dispatch-history', 'archives'], enabled, staleTime: 5 * 60_000,
+    queryFn: async () => (await apiClient.get('/tms/dispatch/history/archives')).data.data as { files: LedgerArchiveFile[] },
+  })
+}
+export type LedgerArchiveResult = { status: 'off' } | { status: 'nothing'; cutoff: string } | { status: 'archived'; month: string; rows: number; deleted: number; path: string; cutoff: string }
+export function useArchiveLedger() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (max_months: number) => apiClient.post('/tms/dispatch/history/archive', { max_months }).then(r => r.data.data as { results: LedgerArchiveResult[] }),
+    onSuccess: d => { if (d.results.some(r => r.status === 'archived')) qc.invalidateQueries({ queryKey: ['dispatch-history'] }) },
+  })
+}
 /** Tài xế / ĐVVT / điều vận xác nhận xe ĐÃ GIAO (undo = hoàn tác) — quyền tms_plan.confirm_delivery. */
 export function useConfirmDelivery() {
   const qc = useQueryClient()

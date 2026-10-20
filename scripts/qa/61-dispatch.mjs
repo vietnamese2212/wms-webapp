@@ -7,7 +7,7 @@
 //       Kế hoạch xuất ngay (khvc_lines + chuyến sinh), xe của ĐVVT CẦN phản hồi đứng CHỜ; xe chờ/đã chốt không sửa được;
 //       từ chối ⇒ đổi ĐVVT ⇒ chốt lẻ xe ⇒ kế hoạch CONFIRMED. Kế hoạch đang chờ không cho lập lại.
 // Fixture QA61_*: dựng qua API thật + PostgREST, ngày giao 2027-03-16 (xa để không đụng OD thật), dọn hết ở finally.
-import { login, api, restAll, restWrite, resolveFixtures, FIX, check, finish, BASE, authToken } from './lib.mjs'
+import { login, api, restAll, restWrite, resolveFixtures, FIX, check, finish, BASE, authToken, ENV } from './lib.mjs'
 
 const PACK = '61-dispatch'
 const DAY = '2027-03-16'
@@ -483,6 +483,41 @@ try {
     check('4d2. Sổ vết vài năm (20/10): khoảng > 1 năm → 400 WINDOW_TOO_WIDE · tìm chữ > 3 tháng → 400 · không gửi "từ" ⇒ máy chủ tự lùi đúng trần (trả from)',
       histWide.s === 400 && histWide.j?.error?.code === 'WINDOW_TOO_WIDE' && histQWide.s === 400 && histQWide.j?.error?.code === 'WINDOW_TOO_WIDE' && !!histQ.j?.data?.from,
       `wide=${histWide.s}/${histWide.j?.error?.code} qwide=${histQWide.s}/${histQWide.j?.error?.code} from=${histQ.j?.data?.from}`)
+    // [4d3] LƯU TRỮ sổ vết (20/10, user: "vài năm, 1–2 GB quá lớn — xử lý luôn"): cờ retention_days.ledger = 3650 (10 năm — không đụng vết
+    //       thật của staging), gieo 1 vết QA 11 năm trước ⇒ POST archive: tệp 2015-03.csv.gz trong bucket + vết xoá khỏi DB (vết QTY_REDUCED
+    //       cùng tháng GIỮ) + GET archives liệt kê có vé tải; cờ trả về như cũ; ledger 0 ⇒ status off; ledger 30 (dưới sàn 180) ⇒ 400
+    {
+      const retRow = ((await api('/wms/settings')).j?.data ?? []).find?.(s => s.key === 'retention_days') ?? null
+      const retBefore = retRow?.value ?? null
+      const base = retBefore && typeof retBefore === 'object' ? retBefore : { photos: 60, feed: 3, error_logs: 30 }
+      const OLD_AT = '2015-03-15T03:00:00.000Z', OLD_KEEP = '2015-03-16T03:00:00.000Z'
+      await restWrite('outbound_events', 'POST', null, [
+        { id: crypto.randomUUID(), group_code: `${PREFIX}1`, event_type: 'PLAN_DO_ADDED', source: 'PLAN', actor: 'QA61', detail: 'QA61 vết cũ, "có dấu phẩy", xuống\ndòng', created_at: OLD_AT, updated_at: OLD_AT },
+        { id: crypto.randomUUID(), group_code: `${PREFIX}1`, event_type: 'QTY_REDUCED', source: 'SYSTEM', actor: 'QA61', old_value: '10', new_value: '8', detail: 'QA61 giữ lại', created_at: OLD_KEEP, updated_at: OLD_KEEP },
+      ])
+      const setLow = await api('/wms/settings/retention_days', 'PUT', { value: { ...base, ledger: 30 } })
+      const setOff = await api('/wms/settings/retention_days', 'PUT', { value: { ...base, ledger: 0 } })
+      const arcOff = await api('/tms/dispatch/history/archive', 'POST', { max_months: 1 })
+      const setOn = await api('/wms/settings/retention_days', 'PUT', { value: { ...base, ledger: 3650 } })
+      const arc = await api('/tms/dispatch/history/archive', 'POST', { max_months: 1 })
+      const r0 = arc.j?.data?.results?.[0]
+      const left = await restAll('outbound_events', `select=event_type&group_code=eq.${PREFIX}1&created_at=lt.2016-01-01`)
+      const arcs = await api('/tms/dispatch/history/archives')
+      const file = (arcs.j?.data?.files ?? []).find(x => x.month === '2015-03')
+      const dl = file?.url ? await fetch(file.url) : null
+      const gz = dl ? Buffer.from(await dl.arrayBuffer()) : null
+      const csv = gz ? (await import('zlib')).gunzipSync(gz).toString('utf8') : ''
+      const restore = await api('/wms/settings/retention_days', 'PUT', { value: retBefore ?? base })
+      check('4d3. Lưu trữ sổ vết (20/10): ledger 30 → 400 (sàn 180) · ledger 0 ⇒ off · ledger 3650 ⇒ tháng 2015-03 ghi tệp + xoá vết QA (giữ QTY_REDUCED) · GET archives có vé tải, tệp gunzip ra CSV có dòng vết (ô có dấu phẩy / xuống dòng bọc ngoặc kép) · cờ trả như cũ',
+        setLow.s === 400 && setOff.s === 200 && arcOff.s === 200 && arcOff.j?.data?.results?.[0]?.status === 'off'
+        && setOn.s === 200 && arc.s === 200 && r0?.status === 'archived' && r0?.month === '2015-03' && r0?.rows >= 1 && r0?.deleted >= 1
+        && left.length === 1 && left[0].event_type === 'QTY_REDUCED' && arcs.s === 200 && !!file?.url && dl?.status === 200
+        && csv.startsWith('id,created_at,group_code') && csv.includes('"QA61 vết cũ, ""có dấu phẩy"", xuống\ndòng"') && restore.s === 200,
+        `low=${setLow.s} off=${arcOff.j?.data?.results?.[0]?.status} on=${setOn.s} arc=${arc.s} ${arc.j?.error?.message ?? ''} r0=${JSON.stringify(r0 ?? null)} left=${left.map(x => x.event_type).join(',')} files=${(arcs.j?.data?.files ?? []).map(x => x.month).join(',')} dl=${dl?.status} csvLen=${csv.length} restore=${restore.s}`)
+      // dọn: vết giữ lại + tệp lưu trữ của tháng gieo (Storage REST, service role)
+      await restWrite('outbound_events', 'DELETE', `group_code=eq.${PREFIX}1&created_at=lt.2016-01-01`).catch(() => {})
+      await fetch(`${ENV.SUPABASE_URL}/storage/v1/object/ledger-archive/outbound_events/2015-03.csv.gz`, { method: 'DELETE', headers: { apikey: ENV.SUPABASE_SERVICE_ROLE_KEY, Authorization: `Bearer ${ENV.SUPABASE_SERVICE_ROLE_KEY}` } }).catch(() => {})
+    }
     check('4d. LỊCH SỬ (19–20/10): tiền tố có DISPATCH_PLAN_CREATED + CONFIRMED + DISCARDED (có người làm) · xe hết đơn khi chuyển OD có PLAN_TRIP_DISCARDED kèm "DO: <số>" · GET /dispatch/history lọc ngày kế hoạch 200 gộp vết kế hoạch + từng Số xe, code = tiền tố, total ≥ n · tìm q + types ra đúng vết',
       ['DISPATCH_PLAN_CREATED', 'DISPATCH_PLAN_CONFIRMED', 'DISPATCH_PLAN_DISCARDED'].every(k => evP.some(e => e.event_type === k && !!e.actor)) && evX.length >= 1
       && hist.s === 200 && hist.j?.data?.code === planCode && hv.some(e => e.event_type === 'DISPATCH_PLAN_DISCARDED') && hv.some(e => e.group_code !== planCode) && (hist.j?.data?.total ?? 0) >= hv.length

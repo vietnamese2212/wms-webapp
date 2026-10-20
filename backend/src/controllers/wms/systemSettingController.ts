@@ -44,7 +44,8 @@ import {
 // ── THAM SỐ VẬN HÀNH (đợt 2 chống hardcode 13/08) — mặc định + validator ở `utils/settings.ts`
 //    (MỘT nguồn: getter của consumer và validator của PUT dùng chung, không có bản chép tay).
 //    UI = tab "Hệ thống" trang Cài đặt WMS.
-// - retention_days: { photos, feed, error_logs } — số NGÀY giữ ảnh / thông báo cá nhân / log lỗi.
+// - retention_days: { photos, feed, error_logs, ledger } — số NGÀY giữ ảnh / thông báo cá nhân / log lỗi / sổ vết outbound_events
+//     (ledger 0 = giữ mãi; bật ⇒ tháng quá hạn được ghi CSV.gz lên bucket `ledger-archive` rồi xoá khỏi DB — services/ledgerArchive.ts, 20/10).
 // - cycle_count: { A, B, C, window_days } — chu kỳ kiểm kê luân phiên theo hạng + cửa sổ phân hạng ABC.
 // - inbound_edit_window_days: số ngày người NHẬP còn tự sửa/xóa pallet của mình.
 // - packing_max_materials_per_run: số mã tối đa trên 1 trang sổ đóng gói.
@@ -143,7 +144,7 @@ const KNOWN_SETTINGS: Record<string, { validate: (v: unknown) => boolean; hint: 
   },
   retention_days: {
     validate: v => parseRetention(v) !== null,
-    hint: '{ photos: 7–730, feed: 1–90, error_logs: 7–365 } — số ngày, nguyên',
+    hint: '{ photos: 7–730, feed: 1–90, error_logs: 7–365, ledger: 0 (giữ mãi) | 180–3650 } — số ngày, nguyên; ledger = sổ vết điều vận / chuyến (outbound_events) giữ trong DB, quá hạn lưu trữ ra Storage theo tháng',
   },
   cycle_count: {
     validate: v => parseCycleCount(v) !== null,

@@ -103,7 +103,7 @@ function parseDc(v: unknown): DeliveryConf {
 }
 
 // ── Tham số vận hành (đợt 2 chống hardcode 13/08) — MIRROR mặc định BE utils/settings.ts ──
-const RET_DEFAULT = { photos: 60, feed: 3, error_logs: 30 }
+const RET_DEFAULT = { photos: 60, feed: 3, error_logs: 30, ledger: 0 }   // ledger (20/10): sổ vết điều vận — 0 = giữ mãi, 180–3650 = lưu trữ ra Storage theo tháng
 const CYC_DEFAULT = { A: 7, B: 30, C: 90, window_days: 30 }
 const INB_WINDOW_DEFAULT = 2
 const PACK_MAX_DEFAULT = 10
@@ -396,13 +396,14 @@ function SystemTab({ canManage, superadmin }: { canManage: boolean; superadmin: 
   async function applyChanges() {
     setErr('')
     // Kiểm nhanh phía FE (khoảng hợp lệ MIRROR validator BE) — chặn sớm cho thông báo rõ; BE vẫn là chốt cuối
-    let ret: { photos: number; feed: number; error_logs: number } | null = null
+    let ret: { photos: number; feed: number; error_logs: number; ledger: number } | null = null
     let cyc: { A: number; B: number; C: number; window_days: number } | null = null
     let inb: number | null = null, pack: number | null = null
     if (retDirty) {
       const photos = intIn(draftRet.photos, 7, 730), feed = intIn(draftRet.feed, 1, 90), error_logs = intIn(draftRet.error_logs, 7, 365)
-      if (!photos || !feed || !error_logs) return setErr('Thời gian lưu: Ảnh 7–730 · Thông báo 1–90 · Log lỗi 7–365 (ngày, số nguyên).')
-      ret = { photos, feed, error_logs }
+      const ledger = intIn(draftRet.ledger, 0, 3650)   // 0 hợp lệ = giữ mãi
+      if (!photos || !feed || !error_logs || ledger === null || (ledger > 0 && ledger < 180)) return setErr('Thời gian lưu: Ảnh 7–730 · Thông báo 1–90 · Log lỗi 7–365 · Sổ vết 0 (giữ mãi) hoặc 180–3650 (ngày, số nguyên).')
+      ret = { photos, feed, error_logs, ledger }
     }
     if (cycDirty) {
       const A = intIn(draftCyc.A, 1, 365), B = intIn(draftCyc.B, 1, 365), C = intIn(draftCyc.C, 1, 365), window_days = intIn(draftCyc.window_days, 7, 365)
@@ -547,11 +548,12 @@ function SystemTab({ canManage, superadmin }: { canManage: boolean; superadmin: 
 
           <SettingGroup readOnly={!canManage} title="Thời gian lưu dữ liệu" meta={retRow}>
             <div>
-              <SettingLabel text="Số ngày giữ" tip="Ảnh = ảnh check xe nâng + ảnh chữ in phun Sổ đóng gói (số liệu và người check GIỮ NGUYÊN, chỉ gỡ ảnh) · Thông báo = feed Cá nhân ở nút chuông · Log lỗi = bảng error_logs phục vụ digest hằng ngày." />
-              <div className="grid grid-cols-3 gap-1.5">
+              <SettingLabel text="Số ngày giữ" tip="Ảnh = ảnh check xe nâng + ảnh chữ in phun Sổ đóng gói (số liệu và người check GIỮ NGUYÊN, chỉ gỡ ảnh) · Thông báo = feed Cá nhân ở nút chuông · Log lỗi = bảng error_logs phục vụ digest hằng ngày · Sổ vết = lịch sử điều vận / chuyến (ai làm gì, lúc nào): 0 = giữ mãi trong DB; đặt 180–3650 thì tháng quá hạn được ghi thành tệp CSV nén trong Storage (tải ở tab Lịch sử của Điều vận) rồi xoá khỏi DB — ~0,5 triệu dòng/năm ≈ 280 MB." />
+              <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-4">
                 <SettingNum label="Ảnh" unit="ngày" value={draftRet.photos} onChange={v => setDraftRet(d => ({ ...d, photos: v }))} />
                 <SettingNum label="Thông báo" unit="ngày" value={draftRet.feed} onChange={v => setDraftRet(d => ({ ...d, feed: v }))} />
                 <SettingNum label="Log lỗi" unit="ngày" value={draftRet.error_logs} onChange={v => setDraftRet(d => ({ ...d, error_logs: v }))} />
+                <SettingNum label="Sổ vết (0 = giữ mãi)" unit="ngày" value={draftRet.ledger} onChange={v => setDraftRet(d => ({ ...d, ledger: v }))} />
               </div>
             </div>
           </SettingGroup>

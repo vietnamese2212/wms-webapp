@@ -623,8 +623,14 @@ nào thì mở khoá xe đó. Cần 1 hướng nữa: kế hoạch làm nhầm, 
     **Sổ vết sống vài năm (user 20/10):** ước lượng Ba Vì ~1.500–2.000 vết/ngày (~5 vết/xe + vết theo DO; `DATE_RULE_SET` của Xuất kho chiếm
     nhiều nhất) ⇒ ~0,5 triệu dòng/năm, vài năm = vài triệu. Mọi câu đều bị RÀO bằng khoảng thời gian: không lọc Ngày kế hoạch thì "Thời gian
     thao tác" tối đa 1 năm, tìm chữ tối đa 3 tháng, không gửi "từ" ⇒ máy chủ tự lùi đúng trần; vượt ⇒ 400 `WINDOW_TOO_WIDE` nêu cách thu hẹp
-    (không cắt âm thầm). Chưa xoá / lưu trữ vết (sổ kiểm toán); vượt ~5 triệu dòng mới cân nhắc phân vùng theo tháng. Gói 61 **[4d] [4d2]
-    [10f1] [15d3]**.
+    (không cắt âm thầm). **Lưu trữ ra Storage (20/10 chiều, user: "1,5–2 triệu dòng mà 1–2 GB là quá lớn — xử lý luôn"; đo lại: 305 B/dòng
+    + ~250 B chỉ mục, ~280 MB/năm):** cờ `retention_days.ledger` (Cài đặt WMS › Hệ thống › "Sổ vết"; 0 = giữ mãi — MẶC ĐỊNH, bật thì
+    180–3650 ngày) ⇒ `services/ledgerArchive.ts` mỗi lượt lấy MỘT tháng cũ nhất quá hạn: đọc đủ dòng (phân trang 1.000), ghi
+    `ledger-archive/outbound_events/<YYYY-MM>.csv.gz` (bucket riêng tư, upsert) rồi mới XOÁ khỏi DB (`delete count exact` theo khoảng
+    created_at — không dính trần URL); GIỮ `QTY_REDUCED*` (RPC `service_level`). Kích hoạt: `POST /tms/dispatch/history/archive {max_months}`
+    (`dispatch.confirm` | `wms_settings.manage_system`) do FE tab Lịch sử gọi sau khi hiện, ≤ 1 lần/giờ/phiên — không ké GET; `GET
+    /tms/dispatch/history/archives` = danh sách tệp + vé tải 1 giờ (dải "Vết cũ đã lưu trữ" trên chân tab). Cùng lượt bỏ `idx_oev_do`
+    (không câu nào lọc theo do_number). Gói 61 **[4d] [4d2] [4d3] [10f1] [15d3]**.
   - Cùng lượt (user: "khung chờ khó nhìn, không nhìn được khách hàng"): khung chờ dạng Bảng đưa cột Khách lên NGAY SAU cột OD (trước Pallet ·
     Tấn), dòng nhóm trải tên qua hai cột (`RowCells` nhận `span`) + "n OD" cuối tên; khoá bề rộng `dispatch_board_pool_v4`.
 - **SO TẠO SAU NGÀY ĐI HÀNG KHÔNG TỰ VÀO KẾ HOẠCH (20/10, user hỏi "upload kế hoạch ngày mới, sửa ngày cũ và Tối ưu ⇒ đơn ngày mới nhảy vào

@@ -120,7 +120,7 @@ function readBackendEnv() {
   } catch { /* thiếu .env → gói invariant sẽ tự báo */ }
   return out
 }
-const ENV = readBackendEnv()
+export const ENV = readBackendEnv()   // gói cần gọi Storage REST (vd dọn tệp lưu trữ, gói 61 [4d3]) dùng cùng khoá service role
 export { utcMs } from './utcms.mjs'   // mốc DB → UTC (cột timestamp không offset)
 export const HAS_DB = !!(ENV.SUPABASE_URL && ENV.SUPABASE_SERVICE_ROLE_KEY)
 

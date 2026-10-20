@@ -13,9 +13,11 @@ import { SearchInput } from '@/components/shared/SearchInput'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { useDebouncedValue } from '@/hooks/useDebouncedValue'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
-import { useDispatchHistory } from '@/api/hooks'
+import { useAuthStore } from '@/stores/authStore'
+import { can } from '@/config/permissions'
+import { useDispatchHistory, useLedgerArchives, useArchiveLedger } from '@/api/hooks'
 import { EVENT_VI } from './TripFlow'
-import { formatDateTime } from '@/utils/formatters'
+import { formatDate, formatDateTime } from '@/utils/formatters'
 
 const TD = 'px-2 py-1 text-[10px] whitespace-nowrap'
 const apiMsg = (e: unknown) => (e as AxiosError<{ error?: { message?: string } }>)?.response?.data?.error?.message ?? 'Không tải được lịch sử.'
@@ -31,10 +33,39 @@ const COLS: RtColDef[] = [
 ]
 const TYPE_OPTS = Object.entries(EVENT_VI).map(([value, label]) => ({ value, label })).sort((a, b) => a.label.localeCompare(b.label, 'vi'))
 const PAGE_OPTS = [50, 100, 200] as const   // trần page_size của cửa đọc = 200
+const fmtMB = (b: number | null) => (b == null ? '' : ` · ${(b / 1_048_576).toFixed(b < 1_048_576 ? 2 : 1)} MB`)
+let archiveRanAt = 0   // lưu trữ chạy tối đa một lần mỗi giờ mỗi phiên trình duyệt (việc nền, không ké GET)
+
+/** Tệp đã lưu trữ (tháng cũ hơn số ngày giữ, cờ retention_days.ledger) — vé tải 1 giờ; không có tệp thì không chiếm chỗ. */
+function ArchiveStrip({ canRun }: { canRun: boolean }) {
+  const q = useLedgerArchives()
+  const run = useArchiveLedger()
+  useEffect(() => {
+    if (!canRun || Date.now() - archiveRanAt < 3_600_000) return
+    archiveRanAt = Date.now()
+    run.mutate(3)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canRun])
+  const files = q.data?.files ?? []
+  const last = run.data?.results.at(-1)
+  if (!files.length && !run.isPending) return null
+  return (
+    <div className="flex shrink-0 flex-wrap items-center gap-x-2 gap-y-1 border-t bg-amber-50/60 px-3 py-1 text-[10px] text-slate-600" data-ledger-archives>
+      <span className="font-medium text-slate-700">Vết cũ đã lưu trữ ra tệp{last && 'cutoff' in last ? ` (trước ${formatDate(last.cutoff)})` : ''}:</span>
+      {files.map(f => f.url
+        ? <a key={f.name} href={f.url} className="rounded border border-amber-200 bg-white px-1.5 py-0.5 font-mono text-[10px] text-sky-700 hover:underline" title={`Tải ${f.name}${fmtMB(f.size)}`} download>{f.month}</a>
+        : <span key={f.name} className="font-mono">{f.month}</span>)}
+      {run.isPending && <span className="text-slate-400">đang lưu trữ tháng cũ…</span>}
+      {last?.status === 'archived' && <span className="text-green-700">vừa lưu trữ {last.month}: {last.rows.toLocaleString('vi-VN')} vết</span>}
+    </div>
+  )
+}
 
 export function DispatchHistoryTab({ warehouseId }: { warehouseId: string }) {
   const f = useWmsFilterStore(s => s.dispatch)
   const setF = useWmsFilterStore(s => s.setDispatch)
+  const perms = useAuthStore(s => s.user)?.module_permissions
+  const canArchive = can(perms, 'dispatch', 'confirm') || can(perms, 'wms_settings', 'manage_system')
   // chưa lọc ngày kế hoạch lẫn thời gian ⇒ 7 ngày gần nhất (không kéo cả sổ); có ngày kế hoạch thì xem trọn vết của ngày đó
   const from = f.histPlanDate ? f.histFrom : (f.histFrom || daysAgo(7))
   const q = useDebouncedValue(f.histQ.trim(), 300)
@@ -82,6 +113,7 @@ export function DispatchHistoryTab({ warehouseId }: { warehouseId: string }) {
         </ResizableTable>
         <PagerNav page={page} totalPages={totalPages} onPage={p => setF({ histPage: p })} />
       </div>
+      <ArchiveStrip canRun={canArchive} />
       <ListFooter page={page} pageSize={pageSize} total={total} unit="vết" onPageSize={n => setF({ histPageSize: n, histPage: 1 })} options={PAGE_OPTS}
         right={`${hq.data?.code ? `tiền tố ${hq.data.code} · ` : ''}vết mức kế hoạch (lập · xác nhận · mở lại · bỏ / huỷ) và của từng Số xe, kể cả xe đã bỏ / đã xoá — dòng "Bỏ xe" ghi danh sách DO`} />
     </div>

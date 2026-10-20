@@ -35,18 +35,22 @@ const int = (v: unknown, min: number, max: number): number | null =>
   typeof v === 'number' && Number.isInteger(v) && v >= min && v <= max ? v : null
 
 // ── retention_days — thời gian GIỮ dữ liệu ────────────────────────────────────
-export interface RetentionDays { photos: number; feed: number; error_logs: number }
+export interface RetentionDays { photos: number; feed: number; error_logs: number; ledger: number }
 export const RETENTION_DEFAULT: RetentionDays = {
   photos: 60,      // ảnh check list xe nâng + ảnh chữ in phun sổ đóng gói (user chốt 31/07 & 11/08)
   feed: 3,         // thông báo đích danh trên nút chuông (user chốt 06/08)
   error_logs: 30,  // log lỗi phục vụ digest hằng ngày
+  ledger: 0,       // sổ vết outbound_events giữ trong DB (20/10): 0 = giữ mãi; 180–3650 = quá hạn thì lưu trữ ra Storage theo tháng rồi xoá
 }
 export function parseRetention(raw: unknown): RetentionDays | null {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
   const o = raw as Record<string, unknown>
   if (Object.keys(o).some(k => !(k in RETENTION_DEFAULT))) return null
   const photos = int(o.photos, 7, 730), feed = int(o.feed, 1, 90), error_logs = int(o.error_logs, 7, 365)
-  return photos && feed && error_logs ? { photos, feed, error_logs } : null
+  // ledger: thiếu (bản lưu trước 20/10) = 0; 0 hợp lệ (tắt); bật thì tối thiểu 180 ngày — sổ kiểm toán, không cho xoá vết mới
+  const ledger = o.ledger === undefined ? 0 : int(o.ledger, 0, 3650)
+  if (ledger === null || (ledger > 0 && ledger < 180)) return null
+  return photos && feed && error_logs ? { photos, feed, error_logs, ledger } : null
 }
 export const getRetentionDays = () => readSetting('retention_days', RETENTION_DEFAULT, parseRetention)
 

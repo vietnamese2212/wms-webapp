@@ -2701,17 +2701,29 @@ export async function dispatchHistory(req: Request, res: Response) {
     if (!wh) return fail(res, 'Không tìm thấy kho', 404)
     const prefix = qy.plan_date ? codePrefixOf(wh.code, qy.plan_date).replace(/_$/, '') : `${wh.code}_X_`
     const page = qy.page ?? 1, size = qy.page_size ?? 100
+    const q = (qy.q ?? '').replace(/[,()%*\\"']/g, ' ').trim()   // ký tự điều khiển của bộ lọc PostgREST bỏ đi — tìm chữ, không tìm biểu thức
+    // SỔ VẾT SỐNG VÀI NĂM (user 20/10: "dữ liệu của nó sẽ là rất nhiều ngày, vài năm") — ước lượng Ba Vì ~1.500–2.000 vết/ngày ⇒ ~0,5 triệu/năm.
+    // Không lọc ngày kế hoạch (tiền tố một ngày đã hẹp) thì khoảng thời gian là THỨ GIỮ câu lệnh nhẹ: tối đa 1 năm; tìm chữ (ilike trong tập
+    // đã lọc) tối đa 3 tháng. Vượt ⇒ 400 nêu cách thu hẹp, KHÔNG cắt âm thầm (luật danh sách lớn). Không gửi "từ" ⇒ lùi đúng trần.
+    let from = qy.from ?? null, to = qy.to ?? null
+    if (!qy.plan_date) {
+      to = to ?? vnDayOf(new Date())
+      const cap = q ? 92 : 365
+      from = from ?? shiftDay(to!, -cap)
+      const span = Math.round((Date.parse(to!) - Date.parse(from)) / 86_400_000) + 1
+      if (span > 366) return fail(res, 400, 'WINDOW_TOO_WIDE', 'Khoảng "Thời gian thao tác" tối đa 1 năm — sổ vết sống nhiều năm, mỗi năm hàng trăm nghìn dòng. Thu hẹp khoảng ngày, hoặc lọc theo Ngày kế hoạch.')
+      if (q && span > 93) return fail(res, 400, 'WINDOW_TOO_WIDE', 'Tìm chữ chỉ trong tối đa 3 tháng — thu hẹp "Thời gian thao tác", hoặc lọc theo Ngày kế hoạch rồi tìm.')
+    }
     let sel = db.from('outbound_events').select('id, created_at, actor, event_type, source, group_code, do_number, detail, old_value, new_value', { count: 'exact' })
       .like('group_code', `${prefix}%`)
-    if (qy.from) sel = sel.gte('created_at', new Date(`${qy.from}T00:00:00+07:00`).toISOString())
-    if (qy.to) sel = sel.lt('created_at', new Date(`${shiftDay(qy.to, 1)}T00:00:00+07:00`).toISOString())
+    if (from) sel = sel.gte('created_at', new Date(`${from}T00:00:00+07:00`).toISOString())
+    if (to) sel = sel.lt('created_at', new Date(`${shiftDay(to, 1)}T00:00:00+07:00`).toISOString())
     const types = (parseListParam(qy.types) ?? []).filter(s => /^[A-Z_]+$/.test(s))
     if (types.length) sel = sel.in('event_type', types.slice(0, 50))
-    const q = (qy.q ?? '').replace(/[,()%*\\"']/g, ' ').trim()   // ký tự điều khiển của bộ lọc PostgREST bỏ đi — tìm chữ, không tìm biểu thức
     if (q) sel = sel.or(`group_code.ilike.*${q}*,do_number.ilike.*${q}*,actor.ilike.*${q}*,detail.ilike.*${q}*`)
     const { data, error, count } = await sel.order('created_at', { ascending: false }).order('id', { ascending: false }).range((page - 1) * size, page * size - 1)
     if (error) throw error
-    return ok(res, { code: prefix, items: data ?? [], total: count ?? 0, page, page_size: size })
+    return ok(res, { code: prefix, items: data ?? [], total: count ?? 0, page, page_size: size, from, to })
   } catch (e) { return failAny(res, e) }
 }
 

@@ -4,6 +4,7 @@
 // khoảng ngày thao tác · việc · tìm (Số xe / DO / người / chi tiết). Chưa lọc gì ⇒ 7 ngày gần nhất. Nút "Lịch sử" ở tab Kế hoạch mở tab này
 // với ngày kế hoạch đã chọn sẵn. Realtime: key ['trip-flow'] làm mới khi outbound_events đổi.
 import { useEffect, useMemo } from 'react'
+import type { AxiosError } from 'axios'
 import { TableBody, TableCell, TableRow } from '@/components/ui/table'
 import { ResizableTable, type RtColDef } from '@/components/shared/ResizableTable'
 import { TableEmptyRow } from '@/components/shared/TableEmptyRow'
@@ -17,6 +18,7 @@ import { EVENT_VI } from './TripFlow'
 import { formatDateTime } from '@/utils/formatters'
 
 const TD = 'px-2 py-1 text-[10px] whitespace-nowrap'
+const apiMsg = (e: unknown) => (e as AxiosError<{ error?: { message?: string } }>)?.response?.data?.error?.message ?? 'Không tải được lịch sử.'
 const todayVN = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
 const daysAgo = (n: number) => new Date(Date.parse(`${todayVN()}T00:00:00Z`) - n * 86_400_000).toISOString().slice(0, 10)
 /** Ngày kế hoạch suy từ Số xe `<MãKho>_X_<ddmmyy>[_stt]` → dd/mm/yy */
@@ -61,7 +63,8 @@ export function DispatchHistoryTab({ warehouseId }: { warehouseId: string }) {
       <div className="min-h-0 flex-1 overflow-auto">
         <ResizableTable storageKey="dispatch_history_v1" cols={COLS}>
           <TableBody>
-            {hq.isError && <TableEmptyRow colSpan={COLS.length}><span className="text-red-600">Không tải được lịch sử.</span></TableEmptyRow>}
+            {/* 400 WINDOW_TOO_WIDE (sổ vết vài năm — khoảng tối đa 1 năm, tìm chữ 3 tháng): câu của máy chủ nói cách thu hẹp */}
+            {hq.isError && <TableEmptyRow colSpan={COLS.length}><span className="text-red-600">{apiMsg(hq.error)}</span></TableEmptyRow>}
             {!hq.isError && hq.isLoading && !items.length && <TableEmptyRow colSpan={COLS.length}>Đang tải…</TableEmptyRow>}
             {!hq.isError && !hq.isLoading && !items.length && <TableEmptyRow colSpan={COLS.length}>Không có vết nào trong khoảng đang lọc{!f.histPlanDate && !f.histFrom ? ' (mặc định 7 ngày gần nhất — nới "Thời gian thao tác" để xem xa hơn)' : ''}.</TableEmptyRow>}
             {items.map(e => (

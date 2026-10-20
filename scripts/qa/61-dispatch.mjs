@@ -478,6 +478,11 @@ try {
     const TODAY_VN = new Date(Date.now() + 7 * 3600e3).toISOString().slice(0, 10)
     const histQ = await api(`/tms/dispatch/history?warehouse_id=${WH}&q=${OD[1]}&types=PLAN_TRIP_DISCARDED&from=${TODAY_VN}&to=${TODAY_VN}`)
     const hvQ = histQ.j?.data?.items ?? []
+    const histWide = await api(`/tms/dispatch/history?warehouse_id=${WH}&from=2020-01-01&to=2026-12-31`)                       // > 1 năm ⇒ 400 nêu cách thu hẹp
+    const histQWide = await api(`/tms/dispatch/history?warehouse_id=${WH}&q=abc&from=2026-01-01&to=2026-12-31`)                // tìm chữ > 3 tháng ⇒ 400
+    check('4d2. Sổ vết vài năm (20/10): khoảng > 1 năm → 400 WINDOW_TOO_WIDE · tìm chữ > 3 tháng → 400 · không gửi "từ" ⇒ máy chủ tự lùi đúng trần (trả from)',
+      histWide.s === 400 && histWide.j?.error?.code === 'WINDOW_TOO_WIDE' && histQWide.s === 400 && histQWide.j?.error?.code === 'WINDOW_TOO_WIDE' && !!histQ.j?.data?.from,
+      `wide=${histWide.s}/${histWide.j?.error?.code} qwide=${histQWide.s}/${histQWide.j?.error?.code} from=${histQ.j?.data?.from}`)
     check('4d. LỊCH SỬ (19–20/10): tiền tố có DISPATCH_PLAN_CREATED + CONFIRMED + DISCARDED (có người làm) · xe hết đơn khi chuyển OD có PLAN_TRIP_DISCARDED kèm "DO: <số>" · GET /dispatch/history lọc ngày kế hoạch 200 gộp vết kế hoạch + từng Số xe, code = tiền tố, total ≥ n · tìm q + types ra đúng vết',
       ['DISPATCH_PLAN_CREATED', 'DISPATCH_PLAN_CONFIRMED', 'DISPATCH_PLAN_DISCARDED'].every(k => evP.some(e => e.event_type === k && !!e.actor)) && evX.length >= 1
       && hist.s === 200 && hist.j?.data?.code === planCode && hv.some(e => e.event_type === 'DISPATCH_PLAN_DISCARDED') && hv.some(e => e.group_code !== planCode) && (hist.j?.data?.total ?? 0) >= hv.length

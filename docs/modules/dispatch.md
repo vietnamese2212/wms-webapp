@@ -620,7 +620,11 @@ nào thì mở khoá xe đó. Cần 1 hướng nữa: kế hoạch làm nhầm, 
     refetch theo phiếu cân / khung giờ). **Nặng hay không (user hỏi 20/10, đo EXPLAIN staging):** câu lọc đi qua chỉ mục `created_at` (7 ngày)
     hoặc `idx_oev_group` tiền tố (`text_pattern_ops`, migration `20261020b` — trước đó LIKE tiền tố quét cả bảng 137 ms ⇒ 4 ms); tìm `q`
     là ilike TRONG tập đã lọc theo ngày; count exact một câu cùng lọc; mỗi trang ≤ 200 dòng ~ 30 KB. Thêm cột lọc mới ⇒ hỏi lại EXPLAIN.
-    Gói 61 **[4d] [10f1] [15d3]**.
+    **Sổ vết sống vài năm (user 20/10):** ước lượng Ba Vì ~1.500–2.000 vết/ngày (~5 vết/xe + vết theo DO; `DATE_RULE_SET` của Xuất kho chiếm
+    nhiều nhất) ⇒ ~0,5 triệu dòng/năm, vài năm = vài triệu. Mọi câu đều bị RÀO bằng khoảng thời gian: không lọc Ngày kế hoạch thì "Thời gian
+    thao tác" tối đa 1 năm, tìm chữ tối đa 3 tháng, không gửi "từ" ⇒ máy chủ tự lùi đúng trần; vượt ⇒ 400 `WINDOW_TOO_WIDE` nêu cách thu hẹp
+    (không cắt âm thầm). Chưa xoá / lưu trữ vết (sổ kiểm toán); vượt ~5 triệu dòng mới cân nhắc phân vùng theo tháng. Gói 61 **[4d] [4d2]
+    [10f1] [15d3]**.
   - Cùng lượt (user: "khung chờ khó nhìn, không nhìn được khách hàng"): khung chờ dạng Bảng đưa cột Khách lên NGAY SAU cột OD (trước Pallet ·
     Tấn), dòng nhóm trải tên qua hai cột (`RowCells` nhận `span`) + "n OD" cuối tên; khoá bề rộng `dispatch_board_pool_v4`.
 - **SO TẠO SAU NGÀY ĐI HÀNG KHÔNG TỰ VÀO KẾ HOẠCH (20/10, user hỏi "upload kế hoạch ngày mới, sửa ngày cũ và Tối ưu ⇒ đơn ngày mới nhảy vào

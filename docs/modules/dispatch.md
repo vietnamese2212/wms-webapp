@@ -616,7 +616,11 @@ nào thì mở khoá xe đó. Cần 1 hướng nữa: kế hoạch làm nhầm, 
     ngày thao tác (VN) · loại việc · tìm (Số xe / DO / người / chi tiết, ký tự điều khiển PostgREST bị bỏ). FE `DispatchHistoryTab` (bộ lọc
     `hist*` trong slice dispatch, chưa lọc = 7 ngày gần nhất, `ListFooter` 50/100/200); nút "Lịch sử" ở tab Kế hoạch mở tab này với ngày kế
     hoạch chọn sẵn (bản 19/10 là hộp "Lịch sử ngày", bỏ). Vết "Bỏ xe" ghi **danh sách DO** (`· DO: a, b, c` — user: "cần biết list các DO
-    trong chiếc xe bị xoá"). Realtime `outbound_events` → key `trip-flow`. Gói 61 **[4d] [10f1] [15d3]**.
+    trong chiếc xe bị xoá"). Realtime `outbound_events` → key `dispatch-history` (riêng, qua `coalescedInvalidate`; không ké `trip-flow` để khỏi
+    refetch theo phiếu cân / khung giờ). **Nặng hay không (user hỏi 20/10, đo EXPLAIN staging):** câu lọc đi qua chỉ mục `created_at` (7 ngày)
+    hoặc `idx_oev_group` tiền tố (`text_pattern_ops`, migration `20261020b` — trước đó LIKE tiền tố quét cả bảng 137 ms ⇒ 4 ms); tìm `q`
+    là ilike TRONG tập đã lọc theo ngày; count exact một câu cùng lọc; mỗi trang ≤ 200 dòng ~ 30 KB. Thêm cột lọc mới ⇒ hỏi lại EXPLAIN.
+    Gói 61 **[4d] [10f1] [15d3]**.
   - Cùng lượt (user: "khung chờ khó nhìn, không nhìn được khách hàng"): khung chờ dạng Bảng đưa cột Khách lên NGAY SAU cột OD (trước Pallet ·
     Tấn), dòng nhóm trải tên qua hai cột (`RowCells` nhận `span`) + "n OD" cuối tên; khoá bề rộng `dispatch_board_pool_v4`.
 - **SO TẠO SAU NGÀY ĐI HÀNG KHÔNG TỰ VÀO KẾ HOẠCH (20/10, user hỏi "upload kế hoạch ngày mới, sửa ngày cũ và Tối ưu ⇒ đơn ngày mới nhảy vào

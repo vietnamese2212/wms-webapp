@@ -97,7 +97,7 @@ const TABLE_QUERY_MAP: Record<string, string[][]> = {
   dispatch_od_segment:   [['dispatch-plans']],   // lấy đơn sang mảng khác (03/10 tối)
   dispatch_od_outside:   [['zsd02-coverage']],   // dấu Ngoài app (03/10 tối) — đổi cả "ngày tạo cần phủ" của màn upload
   od_lineage:            [],   // phả hệ DO (thay · tách · gộp) — cờ họ hàng trên bàn
-  outbound_events:     [['gdo-events'], ['trip-flow']],   // 19/10: lịch sử thao tác trong popup tình trạng xe + Lịch sử ngày (tab Kế hoạch)
+  outbound_events:     [['gdo-events'], ['trip-flow'], ['dispatch-history']],   // 19–20/10: lịch sử thao tác trong popup tình trạng xe + tab Lịch sử điều vận (gộp theo coalescedInvalidate)
   khvc_lines:          [['khvc'], ['khvc-facets'], ['do-sap'], ['trip-flow']],
   WeighTicket:         [['weigh-tickets'], ['weigh-ticket-warehouses'], ['control-tower'], ['trip-flow']],
   SlottingPlan:        [['slotting-plans'], ['slotting-plan'], ['work-inbox']],

@@ -8346,7 +8346,8 @@ export type DispatchHistoryItem = TripFlowEvent & { group_code: string }
 export type DispatchHistoryParams = { warehouse_id: string; plan_date?: string; from?: string; to?: string; types?: string; q?: string; page: number; page_size: number }
 export function useDispatchHistory(p: DispatchHistoryParams, enabled = true) {
   return useQuery({
-    queryKey: ['trip-flow', 'history', p], enabled: !!p.warehouse_id && enabled, staleTime: 30_000, placeholderData: keepPreviousData,
+    // key RIÊNG (không nằm dưới 'trip-flow'): tab chỉ cần làm mới khi outbound_events đổi — không refetch theo khvc_lines / phiếu cân / khung giờ
+    queryKey: ['dispatch-history', p], enabled: !!p.warehouse_id && enabled, staleTime: 30_000, placeholderData: keepPreviousData,
     queryFn: async () => (await apiClient.get('/tms/dispatch/history', { params: p })).data.data as { code: string; items: DispatchHistoryItem[]; total: number; page: number; page_size: number },
   })
 }

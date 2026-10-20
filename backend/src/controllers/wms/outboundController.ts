@@ -6072,6 +6072,11 @@ export async function getDateRuleLines(req: Request, res: Response) {
     const kindRaw = parseListParam(req.query.kind) ?? []
     const kinds = kindRaw.map(s => s.toUpperCase()).filter(s => DATE_RULE_KINDS.includes(s))
     if (kindRaw.length && !kinds.length) return fail(res, 400, 'VALIDATION_ERROR', 'Kiểu quy định date không hợp lệ')
+    // Lọc theo KÊNH của khách (20/10, user: dòng có ghi chú không liên quan date thì lọc kênh rồi tick khai một lượt).
+    // '__NO_CHANNEL__' = khách chưa có trong danh mục / chưa phân kênh.
+    const chanRaw = parseListParam(req.query.channel) ?? []
+    const chans = chanRaw.map(s => s.toUpperCase().trim()).filter(s => /^[A-Z0-9_]{1,40}$/.test(s))
+    if (chanRaw.length && chans.length !== chanRaw.length) return fail(res, 400, 'VALIDATION_ERROR', 'Kênh không hợp lệ')
 
     const { data, error } = await supabase.rpc('outbound_date_rule_lines', {
       p_from: from, p_to: to,
@@ -6082,6 +6087,7 @@ export async function getDateRuleLines(req: Request, res: Response) {
       p_source: src.length ? src : null,
       p_mat_categories: mcat.length ? mcat : null,
       p_kinds: kinds.length ? kinds : null,
+      p_channels: chans.length ? chans : null,
     })
     if (error) return fail(res, error)
     return ok(res, { ...(data ?? { rows: [], total: 0, summary: {} }), page, page_size: pageSize })

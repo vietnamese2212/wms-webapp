@@ -39,3 +39,12 @@ view, **prepare**=Chuẩn bị hàng (board soạn hàng, read-only — tách kh
 
 ## 03/10 tối — CỔNG SAP Ở KHO (user: "sai lệch ở khâu đơn hàng nếu không được sửa thì cũng ngăn ở xuất hàng — xuất hàng lấy chung dữ liệu ZSD02")
 `sapIssueError(gdoId, action)` (outboundController, cache 30 s theo chuyến): chuyến có DO mà MỌI dòng ZSD02 đã OBSOLETE (SAP đã bỏ / đã thay bằng DO khác) hoặc còn `reconcile_tasks` OPEN ⇒ **409 `SAP_ISSUE_OPEN`** ở Bắt đầu chuyến · quét (`scanItem`, kể cả nhặt lẻ) · Lưu thủ công · Xuất luôn · Hoàn thành (PATCH status COMPLETED). Câu lỗi nêu DO, chuyện gì, và nơi xử lý (Dữ liệu bên ngoài → Cần xử lý · Điều vận → Xem đơn). Chuyến tay không có dòng ZSD02 không bị ảnh hưởng. Gói 61 [17c]. Đợt sau: nút xử lý tại kho (Cắt dòng · Đổi số DO · Hoàn chuyến · Giữ và ghi cần sửa bên SAP) theo ma trận ở `docs/plans/DISPATCH_OD_LIFECYCLE_2026-10-03.md`. **Đường gỡ (user chốt 03/10, phương án (c)):** không có cửa "giữ và chạy tiếp" — DO bị SAP bỏ/thay thì huỷ chuyến rồi điều lại với DO mới: chưa bắt đầu → xoá Số xe ở tab Kế hoạch xuất; đã bắt đầu → xoá các QR đã quét (hoàn tồn, `deleteScanEntry`) → Bỏ bắt đầu (`unstart`) → xoá Số xe → Điều vận ghép DO mới. Các cửa đó KHÔNG bị `sapIssueError` chặn (chỉ Bắt đầu · quét · Lưu tay · Xuất luôn · Hoàn thành bị chặn); câu 409 nêu đúng các bước.
+
+## 20/10 — Quy định date: lọc theo KÊNH của khách
+
+User 20/10: "một số note của tôi không liên quan tới date … tôi nên có filter của Kênh trong giao diện áp quy định date". Kho Ba Vì để
+"Áp %Date tự động = Chỉ dòng KHÔNG có ghi chú CS" (đo 02/10 thật: 159/258 dòng tự áp; 86 dòng trống vì có ghi chú — chỉ 3/103 ghi chú nói về
+date; 13 dòng kênh Trung chuyển chưa khai mức). Màn Quy định date thêm ô lọc **Kênh** (ghim trên thanh lọc; `GET /wms/outbound/date-rule-lines
+?channel=GT,KA` · `__NO_CHANNEL__` = chưa có khách / chưa phân kênh; RPC `outbound_date_rule_lines.p_channels`, migration `20261020f`). Cách làm:
+lọc kho + ngày + "Chưa khai" + Kênh → tick các dòng có ghi chú không liên quan date → "Quy định date (N)" → khai một mức → Lưu (nguồn = chốt tay).
+Gói 57 [15q2].

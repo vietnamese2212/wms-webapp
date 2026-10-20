@@ -760,6 +760,19 @@ try {
       && mine.every(x => x.item_id && x.group_code && x.material_code),
       `http=${lines.s} dòng của gói=${mine.length} tổng=${lines.j?.data?.total} band=${JSON.stringify(lines.j?.data?.summary)}`)
 
+    // 20/10 — LỌC THEO KÊNH (user: ghi chú CS không liên quan date ⇒ lọc kênh rồi tick khai một lượt). Chuyến của gói không có
+    // ship-to ⇒ khách chưa có / chưa phân kênh ⇒ chỉ hiện ở "Chưa phân kênh", không bao giờ ở một kênh thật.
+    const noCh = await api(`/wms/outbound/date-rule-lines?date_from=${vnDate()}&date_to=${vnDate()}&page_size=500&channel=__NO_CHANNEL__`)
+    const gt = await api(`/wms/outbound/date-rule-lines?date_from=${vnDate()}&date_to=${vnDate()}&page_size=500&channel=GT`)
+    const badCh = await api(`/wms/outbound/date-rule-lines?date_from=${vnDate()}&date_to=${vnDate()}&channel=a.b`)
+    const mineNo = (noCh.j?.data?.rows ?? []).filter(x => String(x.group_code ?? '').includes(T))
+    const gtRows = gt.j?.data?.rows ?? []
+    check('[15q2] Lọc Kênh: "Chưa phân kênh" giữ đủ dòng của gói và chỉ dòng chưa phân kênh · kênh GT chỉ dòng GT, không lẫn dòng của gói · kênh sai dạng → 400',
+      noCh.s === 200 && mineNo.length === mine.length && (noCh.j?.data?.rows ?? []).every(x => !x.customer_has_channel)
+      && gt.s === 200 && gtRows.every(x => x.customer_has_channel && x.channel === 'GT') && !gtRows.some(x => String(x.group_code ?? '').includes(T))
+      && badCh.s === 400,
+      `chưa kênh=${noCh.s}/${mineNo.length}/${mine.length} GT=${gt.s}/${gtRows.length} sai=${badCh.s}`)
+
     const bad = await api(`/wms/outbound/date-rule-lines?date_from=${vnDate()}&date_to=2027-12-31`)
     check('[15r] Khoảng ngày quá rộng → 400 (kiểm ở BE TRƯỚC khi gọi DB)', bad.s === 400, `http=${bad.s}`)
   }

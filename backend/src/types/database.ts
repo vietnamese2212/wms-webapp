@@ -1,5 +1,5 @@
 // FILE SINH TỰ ĐỘNG — `node scripts/gen-db-types.mjs` (từ information_schema STAGING). KHÔNG sửa tay.
-// Sinh lúc 2026-10-20T07:23:34.176Z · 104 bảng/view · 201 hàm · 0 enum
+// Sinh lúc 2026-10-20T13:29:40.041Z · 104 bảng/view · 201 hàm · 0 enum
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[]
 
 export type Database = {
@@ -6294,7 +6294,7 @@ export type Database = {
         Returns: Json
       }
       outbound_date_rule_lines: {
-        Args: { p_from: string | null; p_to: string | null; p_scope_wh?: unknown | null; p_warehouse_id?: string | null; p_categories?: unknown | null; p_state?: string | null; p_search?: string | null; p_limit?: number | null; p_offset?: number | null; p_source?: unknown | null; p_mat_categories?: unknown | null; p_kinds?: unknown | null; p_shiptos?: unknown | null }
+        Args: { p_from: string | null; p_to: string | null; p_scope_wh?: unknown | null; p_warehouse_id?: string | null; p_categories?: unknown | null; p_state?: string | null; p_search?: string | null; p_limit?: number | null; p_offset?: number | null; p_source?: unknown | null; p_mat_categories?: unknown | null; p_kinds?: unknown | null; p_shiptos?: unknown | null; p_channels?: unknown | null }
         Returns: Json
       }
       outbound_gdos_facets: {
@@ -6498,7 +6498,7 @@ export type Database = {
         Returns: boolean
       }
       unaccent: {
-        Args: { arg1: unknown | null; arg2: string | null } | { arg1: string | null }
+        Args: { arg1: string | null } | { arg1: unknown | null; arg2: string | null }
         Returns: string
       }
       unaccent_init: {

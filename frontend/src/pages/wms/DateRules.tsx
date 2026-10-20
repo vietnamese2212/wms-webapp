@@ -74,6 +74,9 @@ const SOURCE_OPTS = [
   { value: 'REVIEW',   label: 'Cần xem' },
 ]
 
+// Giá trị đặc biệt của bộ lọc Kênh — khớp BE (`outbound_date_rule_lines.p_channels`)
+const NO_CHANNEL = '__NO_CHANNEL__'
+
 const KIND_OPTS = [
   { value: 'MIN_PCT',  label: '≥ % hạn dùng' },
   { value: 'MIN_DAYS', label: '≥ số ngày còn lại' },
@@ -105,7 +108,7 @@ export default function DateRules() {
     (channels ?? []).find(c => c.value === v)?.label ?? v ?? ''
   const { data, isLoading } = useDateRuleLines({
     from: f.from, to: f.to, warehouseId: f.warehouseId, state: f.state, search: f.search,
-    source: f.source, matCategory: f.matCategory, kind: f.kind, page: f.page, pageSize: f.pageSize,
+    source: f.source, matCategory: f.matCategory, kind: f.kind, channel: f.channel, page: f.page, pageSize: f.pageSize,
   })
   const rows = data?.rows ?? []
   const sum = data?.summary ?? { lines: 0, set: 0, unset: 0, with_note: 0, trips: 0, review: 0, no_channel: 0, no_shelf_life: 0 }
@@ -177,6 +180,10 @@ export default function DateRules() {
     { key: 'kind', label: 'Kiểu quy định', type: 'multi',
       options: KIND_OPTS, selected: f.kind,
       onChange: (v: string[]) => setF({ kind: v, page: 1 }) },
+    // KÊNH của khách (20/10, user: ghi chú CS không liên quan date ⇒ lọc kênh, tick các dòng đó rồi khai một lượt)
+    { key: 'chan', label: 'Kênh', type: 'multi', pinned: true,
+      options: [...(channels ?? []).map(c => ({ value: c.value, label: c.label })), { value: NO_CHANNEL, label: 'Chưa phân kênh' }],
+      selected: f.channel, onChange: (v: string[]) => setF({ channel: v, page: 1 }) },
   ]
 
   return (

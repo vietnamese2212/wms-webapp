@@ -4449,7 +4449,7 @@ export interface DateRuleLine {
 }
 export function useDateRuleLines(p: {
   from: string; to: string; warehouseId?: string; state?: string; search?: string
-  source?: string[]; matCategory?: string[]; kind?: string[]; page: number; pageSize: number
+  source?: string[]; matCategory?: string[]; kind?: string[]; channel?: string[]; page: number; pageSize: number
 }) {
   return useQuery({
     queryKey: ['date-rule-lines', p],
@@ -4463,6 +4463,7 @@ export function useDateRuleLines(p: {
           source: p.source?.length ? p.source.join(',') : undefined,
           material_category: p.matCategory?.length ? p.matCategory.join(',') : undefined,
           kind: p.kind?.length ? p.kind.join(',') : undefined,
+          channel: p.channel?.length ? p.channel.join(',') : undefined,
           page: p.page, page_size: p.pageSize,
         },
       })

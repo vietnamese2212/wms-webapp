@@ -286,6 +286,8 @@ interface DateRuleFilters {
   matCategory: string[]
   // KIỂU quy định: MIN_PCT | MIN_DAYS | FEFO | EXACT | SPLIT
   kind: string[]
+  // KÊNH của khách (20/10) — '__NO_CHANNEL__' = chưa có khách / chưa phân kênh
+  channel: string[]
   page: number; pageSize: number
 }
 
@@ -669,7 +671,7 @@ function initialFilters() {
     slotting:     { warehouseId: '', categories: [], days: 30, level: 'NORMAL' as const, principle: 'FEFO' as const, palletKind: 'FULL' as const, tab: 'analysis' as const },
     warehouseMap: { warehouseId: '', zones: [] as string[], overlay: 'stock' as const },
     dateRules:    { from: today(), to: today(), warehouseId: '', state: '' as const, search: '', source: [] as string[],
-                    matCategory: [] as string[], kind: [] as string[], page: 1, pageSize: 200 },
+                    matCategory: [] as string[], kind: [] as string[], channel: [] as string[], page: 1, pageSize: 200 },
     directedWork: { warehouseId: '', tab: 'INBOX' as const, gdoId: '', mine: true, scope: 'all' as const,
                     cats: [] as string[], hideDone: false },
     fill:         { warehouseId: '', date: today(), tab: 'demand' as const, search: '', status: ['PENDING'], mine: false,

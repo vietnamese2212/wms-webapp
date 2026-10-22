@@ -2655,6 +2655,41 @@ try {
       await api(`/tms/dispatch/plans/${s6.id}`, 'DELETE')
     } else check('21o. Fixture: 3 OD, mỗi OD một xe qua ô Xe mới', false, `plan=${s6.s}`)
     await cleanupTrips()
+    // ── [21p] HUỶ KẾ HOẠCH rồi LẬP LẠI cùng ngày (22/10, user hỏi "xoá đi … phát hành lại 1 kế hoạch mới thì sao"): Huỷ xoá dòng KH xuất + bỏ xe
+    //     ⇒ bản cũ đánh số lại từ 1 ⇒ xe mới TRÙNG Số xe của chuyến ĐANG XUẤT đã ngừng ⇒ chuyến cũ sống lại dưới xe khác. Nay số đó được giữ chỗ.
+    //     Kèm (user: "mở khoá xe từ kế hoạch sửa thì không thấy dấu hiệu"): mở khoá MỘT xe đã khoá tay trước khi chốt ⇒ gỡ luôn cờ khoá ──
+    await Promise.all([setCust(0), setCust(1), setCust(2)])
+    const s7 = await build()
+    if (s7.ok) {
+      const { A, B, C } = s7
+      for (const t of [A, B, C]) await restWrite('dispatch_trip', 'PATCH', `id=eq.${t.id}`, { transport_company_id: DA.id, updated_at: nowIso() })
+      await restWrite('dispatch_trip', 'PATCH', `id=eq.${A.id}`, { locked: true, updated_at: nowIso() })   // khoá tay trước khi chốt
+      const cf7 = await api(`/tms/dispatch/plans/${s7.id}/confirm`, 'POST', {})
+      const roA = await api(`/tms/dispatch/plans/${s7.id}/reopen`, 'POST', { trip_ids: [A.id] })
+      const aAfter = (await restAll('dispatch_trip', `select=status,locked&id=eq.${A.id}`))[0]
+      const cfA = await api(`/tms/dispatch/plans/${s7.id}/confirm`, 'POST', {})
+      const gC = async () => (await restAll('GroupDeliveryOrder', `select=id,status,plan_dropped&group_code=eq.${C.group_code}`))[0] ?? null
+      const g0 = await gC()
+      if (g0) await restWrite('GroupDeliveryOrder', 'PATCH', `id=eq.${g0.id}`, { status: 'IN_PROGRESS', started_at: nowIso(), updated_at: nowIso() })   // kho Bắt đầu xe C
+      const cx = await api(`/tms/dispatch/plans/${s7.id}/reopen`, 'POST', { force: true })   // Huỷ kế hoạch = mở lại mọi xe (đã hỏi) …
+      const dl = await api(`/tms/dispatch/plans/${s7.id}`, 'DELETE')                         // … rồi bỏ
+      const g1 = await gC()
+      const s8 = await build()                                                               // lập lại cùng ngày, cùng 3 đơn
+      const codes8 = s8.ok ? [s8.A, s8.B, s8.C].map(t => t.group_code) : []
+      const cf8 = s8.ok ? await api(`/tms/dispatch/plans/${s8.id}/confirm`, 'POST', {}) : { s: 0 }
+      const g2 = await gC()
+      check('21p. Mở khoá xe đã KHOÁ TAY ⇒ xe về nháp + hết khoá · HUỶ kế hoạch khi chuyến xe C ĐANG XUẤT ⇒ chuyến C ngừng · lập lại cùng ngày ⇒ KHÔNG xe mới nào lấy Số xe của C, Xác nhận 200 mà chuyến C vẫn ngừng (không sống lại dưới xe khác)',
+        cf7.s === 200 && roA.s === 200 && aAfter?.status === 'DRAFT' && aAfter?.locked === false && cfA.s === 200
+        && !!g0 && cx.s === 200 && dl.s === 200 && g1?.plan_dropped === true && g1?.status === 'IN_PROGRESS'
+        && s8.ok && codes8.length === 3 && !codes8.includes(C.group_code) && cf8.s === 200 && g2?.id === g0.id && g2?.plan_dropped === true,
+        `xn=${em(cf7)} mởA=${em(roA)} A=${aAfter?.status}/khoá=${aAfter?.locked} xnA=${em(cfA)} · huỷ=${em(cx)}/${em(dl)} C=${g1?.status}/ngừng=${g1?.plan_dropped} · lập lại=${s8.s} số=${codes8.map(c => c.slice(PREFIX.length)).join(',')} (C=${C.group_code.slice(PREFIX.length)}) xn=${em(cf8)} C sau=${g2?.plan_dropped}`)
+      if (g0) {
+        await restWrite('reconcile_tasks', 'DELETE', `gdo_id=eq.${g0.id}`).catch(() => {})
+        await restWrite('GroupDeliveryOrder', 'PATCH', `id=eq.${g0.id}`, { status: 'PENDING', started_at: null, updated_at: nowIso() })   // để cleanupTrips dọn như chuyến thường
+      }
+      if (s8.ok) { await api(`/tms/dispatch/plans/${s8.id}/reopen`, 'POST', { force: true }); await api(`/tms/dispatch/plans/${s8.id}`, 'DELETE') }
+    } else check('21p. Fixture: 3 OD, mỗi OD một xe qua ô Xe mới', false, `plan=${s7.s}`)
+    await cleanupTrips()
     await Promise.all([0, 1, 2].map(i => setCust(i, { dispatch_vehicles: ALLV })))
     await restWrite('vehicle_model', 'DELETE', `sap_code=in.(QA61X05,QA61X06,QA61X07,QA61X08,QA61X04)`).catch(() => {})
     await restWrite('erp_outbound_orders', 'PATCH', `od_number=in.(${OD.join(',')})`, { sync_status: 'OBSOLETE', updated_at: nowIso() })

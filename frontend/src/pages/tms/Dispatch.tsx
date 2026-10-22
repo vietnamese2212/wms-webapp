@@ -413,8 +413,8 @@ export default function Dispatch() {
     const segs = targets.map(p => SEGMENT_VI[p.segment ?? 'SALES']).join(' · ')
     if (await ask({
       title: partly ? `Bỏ các xe CHƯA vào Kế hoạch xuất ngày ${formatDate(d.plan_date)} (${segs})?` : `Bỏ nháp ngày ${formatDate(d.plan_date)} (${segs})?`,
-      danger: true, confirmLabel: partly ? 'Bỏ xe chưa chốt' : 'Bỏ nháp',
-      body: partly ? 'Gồm xe đang chờ / bị từ chối / nháp. Xe đã vào Kế hoạch xuất giữ nguyên; đơn của xe bị bỏ quay về Chờ điều.' : 'Đơn trên nháp được nhả ra — kế hoạch ngày khác lấy được ngay (khung chờ vốn đã tự do).',
+      danger: true, confirmLabel: partly ? 'Bỏ xe chưa chốt' : 'Bỏ nháp', cancelLabel: 'Không, giữ lại',
+      body: partly ? 'Gồm xe đang chờ / bị từ chối / nháp — KỂ CẢ xe bạn vừa mở khoá để sửa (dòng Kế hoạch xuất của xe đó đã gỡ lúc mở khoá; bỏ là mất hẳn xe — muốn giữ thì Xác nhận lại xe đó). Xe đã vào Kế hoạch xuất giữ nguyên; đơn của xe bị bỏ quay về Chờ điều.' : 'Đơn trên nháp được nhả ra — kế hoạch ngày khác lấy được ngay (khung chờ vốn đã tự do).',
     }) === null) return
     setDiscardingId(targets[0].id)
     try {
@@ -438,7 +438,7 @@ export default function Dispatch() {
       const late = rs.reduce((a, x) => a + (x.r.refreshed.late_skipped ?? 0), 0)   // 20/10: SO tạo sau ngày đi ở lại Chờ điều — nói rõ
       toast({
         title: reviewed ? `${nf(reviewed)} đơn chờ vào khung chờ${added ? ` (${nf(added)} mới từ ZSD02)` : ''}` : added ? `${nf(added)} OD mới từ ZSD02` : 'Không có đơn chờ',
-        description: `${rs.map(x => `${SEGMENT_VI[x.p.segment ?? 'SALES']}: ${nf(x.r.refreshed.reviewed ?? 0)}`).join(' · ')}.${late ? ` ${nf(late)} đơn có SO tạo SAU ngày đi ở lại Chờ điều (chip "SO sau ngày đi") — tick tay ở Xem đơn nếu đó là đơn bù.` : ''} Kéo đơn chờ lên xe mới; xe đã vào Kế hoạch xuất tô tím + ổ khoá xanh — bấm ổ khoá để mở lại riêng xe đó rồi sửa. Xong bấm Xác nhận.`,
+        description: `${rs.map(x => `${SEGMENT_VI[x.p.segment ?? 'SALES']}: ${nf(x.r.refreshed.reviewed ?? 0)}`).join(' · ')}.${late ? ` ${nf(late)} đơn có SO tạo SAU ngày đi ở lại Chờ điều (chip "SO sau ngày đi") — tick tay ở Xem đơn nếu đó là đơn bù.` : ''} Kéo đơn chờ lên xe mới; xe đã vào Kế hoạch xuất tô tím + ổ khoá tím — bấm ổ khoá để mở khoá riêng xe đó (xe hết tô tím, về nháp) rồi sửa. Xe không mở khoá vẫn giữ nguyên Kế hoạch xuất + khung giờ. Xong bấm Xác nhận.`,
       })
     }).catch(e => err(e, 'Không nạp được đơn chờ')).finally(() => setDiscardingId(null))
   }
@@ -486,7 +486,7 @@ export default function Dispatch() {
       if (!r) return
       const warned = r.reopened.warned?.length ?? 0
       toast({
-        title: r.reopened.trips ? `Đã mở lại xe #${t.seq} — sửa rồi Xác nhận lại` : `Không mở lại được xe #${t.seq}`,
+        title: r.reopened.trips ? `Đã mở khoá xe #${t.seq} — xe về nháp (hết tô tím), sửa rồi Xác nhận lại` : `Không mở lại được xe #${t.seq}`,
         description: r.reopened.blocked[0]?.reason ?? r.reopened.replan_error ?? (warned ? 'Chuyến bên Xuất đang có hàng đã quét — thủ kho nhận việc "Cần xử lý"; về đúng xe này rồi Xác nhận thì chuyến sống lại với hàng đã quét' : undefined),
         variant: r.reopened.trips ? undefined : 'destructive',
       })
@@ -514,7 +514,7 @@ export default function Dispatch() {
     })
   }
   const cancelPlan = async (p: CancelTarget) => {
-    if (await ask({ title: `Huỷ cả kế hoạch ${SEGMENT_VI[p.segment ?? 'SALES']} ngày ${formatDate(p.plan_date)}?`, danger: true, confirmLabel: 'Huỷ kế hoạch', body: cancelBody(p.summary?.confirmed ?? 0) }) === null) return
+    if (await ask({ title: `Huỷ cả kế hoạch ${SEGMENT_VI[p.segment ?? 'SALES']} ngày ${formatDate(p.plan_date)}?`, danger: true, confirmLabel: 'Huỷ kế hoạch', cancelLabel: 'Không, giữ kế hoạch', body: cancelBody(p.summary?.confirmed ?? 0) }) === null) return
     setDiscardingId(p.id)
     try { cancelToast(formatDate(p.plan_date), [await cancelInner(p)]) } catch (e) { err(e, 'Không huỷ được kế hoạch') } finally { setDiscardingId(null) }
   }
@@ -523,7 +523,7 @@ export default function Dispatch() {
     const targets = livePlans(d)
     if (!targets.length) return
     const n = targets.reduce((a, p) => a + (p.summary?.confirmed ?? 0), 0)
-    if (await ask({ title: `Huỷ cả kế hoạch ngày ${formatDate(d.plan_date)} (${targets.map(p => SEGMENT_VI[p.segment ?? 'SALES']).join(' · ')})?`, danger: true, confirmLabel: 'Huỷ kế hoạch', body: cancelBody(n) }) === null) return
+    if (await ask({ title: `Huỷ cả kế hoạch ngày ${formatDate(d.plan_date)} (${targets.map(p => SEGMENT_VI[p.segment ?? 'SALES']).join(' · ')})?`, danger: true, confirmLabel: 'Huỷ kế hoạch', cancelLabel: 'Không, giữ kế hoạch', body: cancelBody(n) }) === null) return
     setDiscardingId(targets[0].id)
     try {
       const rs: Awaited<ReturnType<typeof cancelInner>>[] = []

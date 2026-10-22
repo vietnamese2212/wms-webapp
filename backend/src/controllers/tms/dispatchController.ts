@@ -41,7 +41,7 @@ import {
   odStopsCap, modelDrops, condsOf, mainCatsOf, lineConditions, resolveAllowedModels, resolveMaxCustomers, type MaxCustomersCfg, mixBlockReason, dropsBlockReason, manualRuleBlocks, type RuleBlock, routeKind, type RouteKind, priceCombo, comboModel, splitLoad, basisOf,
   type TripVehicle, withLoadBands, type LoadBand, type EngineGeo, type UnderMin, type TooBig, routeOf,
 } from '../../services/dispatchEngine'
-import { splitPool, redoDispatchedOf, type ExcludedOd, type ExcludedDetail, type ExcludeKind, type PoolCandidateRow, type OtherDraft } from '../../services/dispatchPool'
+import { splitPool, redoDispatchedOf, shareBaseRange, type ExcludedOd, type ExcludedDetail, type ExcludeKind, type PoolCandidateRow, type OtherDraft } from '../../services/dispatchPool'
 import { applyWarehouseOverrides, loadWarehouseOverrides, multiVehicleOf, detourPctOf } from '../../services/vehicleModelScope'
 import { replanKhvcGroups } from '../wms/outboundController'
 import { classifyKhvcDelete, outboundHoldState } from '../external/khvcController'
@@ -255,13 +255,16 @@ async function loadRefs(whId: string, day: string, wards: string[]): Promise<Ref
   return { models, carriers, tariffs, surcharges, allocations, share_targets }
 }
 
-/** Tỷ trọng kỳ ĐANG CÓ: chuyến của kho trong THÁNG của ngày giao (chưa huỷ), gom theo ĐVVT (dvvt → mã qua resolver alias). */
+/** Tỷ trọng kỳ ĐANG CÓ: chuyến của kho từ đầu THÁNG tới TRƯỚC ngày của kế hoạch (chưa huỷ, chưa ngừng), gom theo ĐVVT (dvvt → mã qua
+ *  resolver alias). 22/10 (user: "tối ưu 2 lần ra 1 kết quả, xoá đi tạo lại ra kết quả khác — 1 phương pháp tính cần ra 1 kết quả"):
+ *  bản cũ đếm cả tháng KỂ CẢ chính ngày đó, và đếm luôn chuyến NGỪNG (plan_dropped — xe vừa bị xoá / rút) ⇒ mỗi lần xoá + tạo lại, tỷ trọng
+ *  đọc vào khác (đo staging Ba Vì 02/10: 15/8/7 chuyến → 31/18/15) ⇒ hãng dưới chỉ tiêu đổi ⇒ giá đổi ⇒ cách ghép đổi. Nay cùng một ngày =
+ *  cùng một con số, không phụ thuộc thứ tự thao tác trong ngày. Test `dispatchShareBase` gác. */
 async function loadShareActual(whId: string, day: string, carriers: EngineCarrier[]): Promise<Record<string, ShareActual>> {
-  const [y, m] = day.split('-').map(Number)
-  const from = `${y}-${String(m).padStart(2, '0')}-01`
-  const to = new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10)
+  const { from, before } = shareBaseRange(day)
   const [rows, resolve] = await Promise.all([
-    fetchAllRowsParallel(() => db.from('GroupDeliveryOrder').select('id, dvvt, freight_detail').eq('warehouse_id', whId).gte('delivery_date', from).lte('delivery_date', to).neq('status', 'CANCELLED').order('id')) as Promise<{ dvvt: string | null; freight_detail: { pallets?: number | null; tons?: number | null } | null }[]>,
+    fetchAllRowsParallel(() => db.from('GroupDeliveryOrder').select('id, dvvt, freight_detail').eq('warehouse_id', whId).gte('delivery_date', from).lt('delivery_date', before)
+      .neq('status', 'CANCELLED').eq('plan_dropped', false).order('id')) as Promise<{ dvvt: string | null; freight_detail: { pallets?: number | null; tons?: number | null } | null }[]>,
     makeDvvtResolver(),
   ])
   const byCode = new Map(carriers.map(c => [c.code, c.id]))
@@ -568,14 +571,30 @@ async function loadConditionLabels(): Promise<Record<string, string>> {
 
 /** STT kế tiếp = max STT đã có trong Kế hoạch xuất của kho×ngày VÀ trên xe nháp của MỌI kế hoạch còn sống cùng kho×ngày + 1
  *  (03/10 tối: hai mảng Trung chuyển / Bán hàng là hai kế hoạch cùng tiền tố Số xe — đếm riêng từng kế hoạch là trùng Số xe khi xác nhận). */
+/** 22/10 (soi câu user "xoá đi … phát hành lại 1 kế hoạch mới thì sao"): Huỷ kế hoạch xoá dòng Kế hoạch xuất + bỏ xe ⇒ kế hoạch mới cùng ngày
+ *  đánh số lại từ 1 ⇒ trùng Số xe của chuyến Xuất kho ĐÃ NGỪNG mà còn GIỮ HÀNG (đang xuất · tạm dừng · đã quét / giữ nhặt lẻ = có việc
+ *  PLAN_PULLED mở) ⇒ chuyến cũ SỐNG LẠI dưới xe mới với hàng của xe khác (đang xuất thì nội dung không đổi theo). Giữ chỗ các số đó; chuyến
+ *  ngừng đã trống hàng (PENDING, không việc mở) thì vẫn dùng lại số — số xe liền mạch (12/10). */
+async function heldDroppedCodes(prefix: string): Promise<string[]> {
+  const [gd, rt] = await Promise.all([
+    fetchAllRowsParallel(() => db.from('GroupDeliveryOrder').select('group_code').like('group_code', `${prefix}%`).eq('plan_dropped', true)
+      .in('status', ['IN_PROGRESS', 'PAUSED']).order('group_code')) as Promise<{ group_code: string }[]>,
+    fetchAllRowsParallel(() => db.from('reconcile_tasks').select('group_code').like('group_code', `${prefix}%`).eq('change_type', 'PLAN_PULLED')
+      .eq('status', 'OPEN').order('id')) as Promise<{ group_code: string | null }[]>,
+  ])
+  return [...gd.map(g => g.group_code), ...rt.map(r => r.group_code).filter((x): x is string => !!x)]
+}
 async function takenSeqs(prefix: string, excludeTripIds: string[] = []): Promise<Set<number>> {
-  const [kh, tr] = await Promise.all([
+  const [kh, tr, held] = await Promise.all([
     fetchAllRowsParallel(() => db.from('khvc_lines').select('group_code').like('group_code', `${prefix}%`).order('group_code')) as Promise<{ group_code: string }[]>,
     fetchAllRowsParallel(() => db.from('dispatch_trip').select('id, group_code').like('group_code', `${prefix}%`).neq('status', 'DISCARDED').order('group_code')) as Promise<{ id: string; group_code: string }[]>,
+    heldDroppedCodes(prefix),
   ])
   const ex = new Set(excludeTripIds)
   const taken = new Set<number>()
-  for (const r of [...kh, ...tr.filter(t => !ex.has(t.id))]) { const n = Number(r.group_code.slice(prefix.length)); if (Number.isFinite(n) && n > 0) taken.add(n) }
+  for (const code of [...kh.map(r => r.group_code), ...tr.filter(t => !ex.has(t.id)).map(t => t.group_code), ...held]) {
+    const n = Number(code.slice(prefix.length)); if (Number.isFinite(n) && n > 0) taken.add(n)
+  }
   return taken
 }
 async function nextSeq(prefix: string): Promise<number> {
@@ -2535,6 +2554,16 @@ async function reopenPlanInner(req: Request, res: Response) {
       if (rErr) throw rErr
       delRows.push(...(((rr ?? {}) as { lines?: { group_code: string; do_no: string }[] }).lines ?? []))
     }
+    // MỞ KHOÁ TỪNG XE (trip_ids) = xe sửa được ngay ⇒ gỡ luôn cờ khoá tay (22/10, user: "mở khoá xe từ kế hoạch sửa thì không thấy dấu hiệu
+    // mở khoá"): RPC chỉ đưa xe về DRAFT, cờ `locked` đặt trước lúc chốt còn nguyên ⇒ xe vẫn tím + vẫn ổ khoá, y như chưa bấm. "Mở lại" CẢ kế
+    // hoạch giữ cờ cũ (khoá để Tối ưu lại không đụng — chủ ý của người khoá).
+    if (b.trip_ids?.length && open.length) {
+      const ids = open.map(t => t.id)
+      for (let i = 0; i < ids.length; i += 300) {
+        const { error: lErr } = await db.from('dispatch_trip').update({ locked: false, updated_at: now() }).in('id', ids.slice(i, i + 300)).eq('locked', true)
+        if (lErr) throw lErr
+      }
+    }
     const actor = actorOf(req)
     await logOutboundEvents(delRows.map(l => ({ group_code: l.group_code, event_type: 'PLAN_DO_REMOVED', source: 'PLAN' as const, actor, do_number: l.do_no,
       detail: `Mở lại kế hoạch điều vận — gỡ DO ${l.do_no} khỏi Số xe ${l.group_code} để sửa trên bàn ghép xe` })))
@@ -3589,7 +3618,8 @@ async function reviewInfoOf(plan: PlanRow, ods: string[]): Promise<Record<string
         note_delivery: noteOf(rs), note_invoice: uniq(rs.map(r => (r.note_invoice ?? '').trim()).filter(Boolean)).join(' · ') || null,
         customer_ref: uniq(rs.map(r => (r.customer_ref ?? '').trim()).filter(Boolean)).join(' · ') || null,
         sold_to: f?.sold_to_code ?? null, route_name: f?.route_name ?? null, od_created_at: f?.od_created_at ?? null, flow: f?.flow ?? null,
-        so_created_at: f?.so_created_at ?? null, sales_district: f?.sales_district ?? null, dist_channel: f?.dist_channel ?? null, dvvt_raw: f?.dvvt_raw ?? null,
+        // ngày tạo SO = SỚM NHẤT trong các dòng của OD — cùng cách với bản chụp `so_created_date` (luật "SO sau ngày đi"), không lấy dòng đầu
+        so_created_at: rs.map(r => r.so_created_at).filter((x): x is string => !!x).sort()[0] ?? null, sales_district: f?.sales_district ?? null, dist_channel: f?.dist_channel ?? null, dvvt_raw: f?.dvvt_raw ?? null,
         driver_name: f?.driver_name ?? null, license_plate: f?.license_plate ?? null,
         sap_pallets: sumN(rs, 'sap_pallets'), sap_m3: sumN(rs, 'sap_m3'), qty_issued_base: sumN(rs, 'qty_issued_base'),
         mat_doc: joinU(rs, 'mat_doc'), billing_no: joinU(rs, 'billing_no'), approval_status: joinU(rs, 'approval_status'),

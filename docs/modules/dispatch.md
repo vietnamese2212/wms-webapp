@@ -748,3 +748,30 @@ quan (như nút workflow trong SAP), bao gồm số chứng từ để đi searc
   `TMS_PLAN_DROPPED` khi lệnh ngừng; tài khoản ĐVVT / tài xế chỉ xe của ĐVVT mình. Ghi `outbound_events` `DELIVERED` / `DELIVERY_UNDONE`.
   Nút nằm trong chính component (dạng full) ⇒ tài xế bấm ở chi tiết lệnh Đặt lịch, điều vận ghi hộ ở panel xe.
 - Gói QA 14 [5h–5l] gác: 8 bước · 409 khi chưa xuất · 200 sau khi hoàn thành · hoàn tác · vết sự kiện.
+
+## 22/10 — góp ý của người điều vận (Sửa kế hoạch · chi tiết DO · SO sau ngày đi · tổng khung chờ · mở khoá xe · kết quả ghép · Huỷ rồi lập lại)
+
+- **Kết quả ghép phải lặp lại được** (user: "tối ưu 2 lần ra 1 kết quả, xoá đi tạo lại ra kết quả khác"): máy ghép là hàm thuần của đầu
+  vào; thứ đổi là **tỷ trọng ĐVVT đã chạy** (`loadShareActual`) — bản cũ đếm cả tháng KỂ CẢ chính ngày kế hoạch và đếm cả chuyến NGỪNG
+  (xe vừa xoá) ⇒ mỗi lần xoá + tạo lại hãng dưới chỉ tiêu đổi ⇒ giá đổi ⇒ cách ghép đổi (staging Ba Vì 02/10: 15/8/7 → 31/18/15 chuyến).
+  Nay chỉ đếm đầu tháng → TRƯỚC ngày kế hoạch, bỏ `plan_dropped` (`shareBaseRange`, test `dispatchPool.test.ts`). Còn khác thì do cấu hình
+  đổi thật (dải % tải lấy bản LƯU CUỐI của kho — hộp thoại in sẵn để người xem).
+- **Huỷ kế hoạch rồi lập lại cùng ngày không được lấy trùng Số xe của chuyến còn GIỮ HÀNG**: Huỷ xoá dòng KH xuất + bỏ xe ⇒ bản cũ đánh số
+  lại từ 1 ⇒ xe mới mang Số xe của chuyến ĐANG XUẤT đã ngừng ⇒ chuyến cũ sống lại dưới xe khác (đang xuất thì nội dung không đổi theo).
+  `takenSeqs` nay giữ chỗ số của chuyến `plan_dropped` đang xuất / tạm dừng / còn việc `PLAN_PULLED` mở; chuyến ngừng đã trống hàng thì
+  vẫn dùng lại số (liền mạch, 12/10). Gói 61 [21p].
+- **Mở khoá MỘT xe (`reopen trip_ids`) gỡ luôn cờ khoá tay** — RPC chỉ đưa về DRAFT, cờ `locked` đặt trước lúc chốt còn nguyên ⇒ xe vẫn tím
+  + ổ khoá như chưa bấm (user: "mở khoá thì không thấy dấu hiệu"). "Mở lại" cả kế hoạch giữ cờ. Ổ khoá ở chế độ XEM có tooltip "bấm Sửa ở tab
+  Kế hoạch". Hộp thoại Huỷ / Bỏ: nút thoát ghi "Không, giữ kế hoạch" / "Không, giữ lại" (bản cũ "Huỷ" đứng cạnh "Huỷ kế hoạch"); "Bỏ xe chưa
+  chốt" nói rõ gồm cả xe vừa mở khoá.
+- **Chi tiết DO** (`DispatchOdDetailSheet`): thêm Ngày tạo SO (đỏ khi sau ngày đi) · Người tạo / Ngày tạo DO · Kênh · Kênh PP · Vùng BH ·
+  khối Số lượng (pallet · tấn của KẾ HOẠCH + pallet / khối lượng / thể tích SAP · dòng · SL quy đổi) · Vận chuyển SAP (ĐVVT · tài xế · biển) ·
+  Kho · chứng từ (Số xe · ngày xuất · trạng thái chuyến · Mat doc · hoá đơn · lần ZSD02 cập nhật); đang tải thì nói ra. Ngày tạo SO của chi
+  tiết = SỚM NHẤT trong các dòng (cùng cách với bản chụp `so_created_date`).
+- **SO sau ngày đi = CHỮ ĐỎ** cả dòng (khung chờ + dòng đơn trên xe, Bảng + Thẻ), chip đổi đỏ; khung chờ dạng Bảng có cột **Ngày tạo SO**
+  (khoá độ rộng `dispatch_board_pool_v5`), dạng Thẻ in "SO dd-MM" cạnh số OD. Luật vẫn là SAU (`>`), như chốt 20/10.
+- **Tổng pallet · tấn của nhóm khung chờ DÍNH khi cuộn**: dòng nhóm dạng Bảng `sticky top-11` (ngay dưới tiêu đề cột, nhóm sau đẩy nhóm
+  trước), tiêu đề nhóm dạng Thẻ `sticky top-0`; dạng Thẻ + dòng đầu khung chờ thêm tấn.
+- **Sửa kế hoạch đã xác nhận — hành vi hiện tại (trả lời user, chưa đổi)**: bấm Sửa KHÔNG đụng xe đã chốt (KH xuất · chuyến · lệnh VC ·
+  khung giờ giữ nguyên) — kế hoạch cũ vẫn hiệu lực tới khi bạn mở khoá xe nào; mở khoá là TÁC ĐỘNG NGAY (gỡ KH xuất, chuyến ngừng, nhả khung
+  giờ); chưa có nút "thoát sửa / bỏ thay đổi" — xe đã mở khoá chỉ quay lại bằng Xác nhận lại (cùng Số xe sống lại, khung giờ đặt lại).

@@ -97,7 +97,7 @@ export function NewOdChip() {
  *  Sửa / Tối ưu lại không đụng, "Chọn N đơn" không tick; chỉ tick tay ở Xem đơn hoặc kéo tay trên bàn (đơn bù để tính cước). Mirror BE `lateSo`. */
 export const isLateSo = (o: { so_created_date?: string | null }, planDate: string | null | undefined) => !!o.so_created_date && !!planDate && o.so_created_date > planDate
 export function LateSoChip({ date }: { date?: string | null }) {
-  return <span className="rounded bg-amber-100 px-1 text-[9px] font-semibold text-amber-900" title={`SO tạo ${date ? `${dmy(date)}/${date.slice(0, 4)}` : ''} — SAU ngày đi hàng của kế hoạch (đơn bù): không tự vào kế hoạch, chỉ người đưa tay`}>SO sau ngày đi</span>
+  return <span className="rounded bg-red-100 px-1 text-[9px] font-semibold text-red-700" title={`SO tạo ${date ? `${dmy(date)}/${date.slice(0, 4)}` : ''} — SAU ngày đi hàng của kế hoạch (đơn bù): không tự vào kế hoạch, chỉ người đưa tay`}>SO sau ngày đi</span>
 }
 /** Tuổi dữ liệu SAP của OD (03/10 tối): lần ZSD02 cuối chạm OD này quá 1 ngày ⇒ chip, vì "mới nhất" chỉ đúng tại thời điểm nạp. */
 function SapAgeChip({ at }: { at: string | null | undefined }) {
@@ -763,7 +763,8 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped, canAct =
         parents={bandParents} initial={{ bands: fullBands(bandParents, plan.params.load_bands, plan.params.underload_pct), bypass: plan.params.load_bypass === true }} busy={reopt.isPending}
         onConfirm={doCreateWith} />
       <DispatchOdDetailSheet planId={plan.id} info={detailRow ? info[detailRow.od] : undefined} onClose={() => setDetail(null)}
-        sum={detailRow ? { od: detailRow.od, where: detailRow.where, tone: detailRow.tone, cust: detailRow.cust, ward: detailRow.ward, region: detailRow.region, date: detailRow.date, flag: detailRow.flag, reason: detailRow.reason } : null} />
+        sum={detailRow ? { od: detailRow.od, where: detailRow.where, tone: detailRow.tone, cust: detailRow.cust, ward: detailRow.ward, region: detailRow.region, date: detailRow.date, flag: detailRow.flag, reason: detailRow.reason,
+          pallets: detailRow.pallets, tons: detailRow.tons, planDate: plan.plan_date } : null} />
       {confirmNode}
     </div>
   )

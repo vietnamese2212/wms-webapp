@@ -40,6 +40,7 @@ import {
 } from '@/api/hooks'
 import { DispatchBoardTable, RouteChip, TripRouteBadge, TickBox, ExtraDropsBadge, type BoardOps, type BoardDropAttrs, type BoardPoolGroup } from './DispatchBoardTable'
 import { SapFlagIcon } from './SapFlagIcon'
+import { formatDate } from '@/utils/formatters'
 import { DispatchOdDetailSheet, type OdSummary } from './DispatchOdDetailSheet'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { useWhTypeMetaMap } from '@/hooks/useWhTypeMeta'
@@ -466,7 +467,9 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
         )}
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1 flex-wrap">
-            <span className="font-mono font-semibold">{o.od_number}</span>
+            {/* 22/10: SO tạo SAU ngày đi hàng (đơn bù) — số OD + ngày tạo SO chữ đỏ, cùng dấu hiệu dạng Bảng */}
+            <span className={`font-mono font-semibold ${isLateSo(o, plan.plan_date) ? 'text-red-600' : ''}`}>{o.od_number}</span>
+            {o.so_created_date && <span className={`text-[9px] tabular-nums ${isLateSo(o, plan.plan_date) ? 'font-semibold text-red-600' : 'text-slate-400'}`} title="Ngày tạo SO">SO {formatDate(o.so_created_date, 'dd-MM')}</span>}
             {/* 16/10: tình trạng SAP = biểu tượng + tooltip, Loại kho ngay sau số OD — cùng dạng Bảng */}
             {fl && <SapFlagIcon flag={fl} />}
             {catChips(catsByLoad([o.cat_load]))}
@@ -698,7 +701,7 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
             {!ed && st === 'CONFIRMED' && editable && onReopenTrip
               ? <button type="button" className="rounded p-1 bg-violet-600 text-white hover:bg-violet-700" title={`Xe #${t.seq} đã chốt — khoá. Bấm để MỞ LẠI riêng xe này về nháp (hỏi lại trước)`} aria-label={`Mở lại xe #${t.seq}`}
                   onClick={() => onReopenTrip(t)}><Lock className="h-3.5 w-3.5" /></button>
-              : !ed && lk && <Lock className="h-3.5 w-3.5 text-violet-700" aria-label={st === 'CONFIRMED' ? 'Xe đã chốt — khoá' : 'Xe đã khoá'} />}
+              : !ed && lk && <span title={st === 'CONFIRMED' ? 'Xe đã chốt — khoá. Đang ở chế độ XEM: muốn mở khoá thì bấm Sửa ở tab Kế hoạch (cần quyền Xác nhận điều vận)' : 'Xe đã khoá'}><Lock className="h-3.5 w-3.5 text-violet-700" aria-label={st === 'CONFIRMED' ? 'Xe đã chốt — khoá' : 'Xe đã khoá'} /></span>}
             {/* 19/10: đổi ngày cả xe (giữ Số xe, nhả khung giờ, chuyến + lệnh VC theo) — cùng nút với dạng Bảng */}
             {onMoveDateTrip && st !== 'DISCARDED' && (
               <button type="button" className="rounded p-1 text-sky-700 hover:bg-sky-100" disabled={patchTrip.isPending} title={`Đổi ngày cả xe #${t.seq} — giữ Số xe; khung giờ đã đặt bị nhả; chuyến Xuất kho + lệnh VC đổi ngày theo`} aria-label={`Đổi ngày xe #${t.seq}`}
@@ -772,7 +775,7 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
           <div className="flex items-center gap-2">
             <Inbox className="h-4 w-4 text-slate-500 shrink-0" />
             <span className="text-xs font-semibold text-slate-700">Khung chờ</span>
-            <span className="text-[11px] text-slate-500 tabular-nums">{nf(plan.summary.pool_ods ?? pool.length)} OD · {nf(plan.summary.pool_pallets ?? 0, 1)} pl</span>
+            <span className="text-[11px] text-slate-500 tabular-nums">{nf(plan.summary.pool_ods ?? pool.length)} OD · {nf(plan.summary.pool_pallets ?? 0, 1)} pl · {nf(pool.reduce((a, o) => a + Number(o.tons ?? 0), 0), 1)} t</span>
             <button type="button" className="ml-auto hidden lg:inline-flex rounded p-0.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700" title="Thu gọn khung chờ — bàn xe rộng hơn" onClick={() => setF({ poolHidden: true })}><ChevronsLeft className="h-4 w-4" /></button>
           </div>
           {/* khung chờ dạng Thẻ chỉ 300 px (dạng Bảng kéo hẹp được tới 300): thêm nút "Lô n" (15/10) là chữ "Gom theo" bị bẻ hai dòng ⇒ chữ
@@ -916,7 +919,8 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
     const t = o.trip_id ? plan.trips.find(x => x.id === o.trip_id) : null
     const fl = flags.get(o.od_number)
     return { od: o.od_number, where: t ? `Xe #${t.seq}` : 'Khung chờ', tone: t ? 'blue' : 'amber', cust: o.ship_to_name ?? o.ship_to_code ?? '', ward: o.ward_code ?? '',
-      region: o.region_name ?? o.region_code ?? '', date: o.delivery_date ?? '', flag: fl ? `${FLAG_VI[fl.kind]}${fl.info ? ` — ${fl.info}` : ''}` : '', reason: '' }
+      region: o.region_name ?? o.region_code ?? '', date: o.delivery_date ?? '', flag: fl ? `${FLAG_VI[fl.kind]}${fl.info ? ` — ${fl.info}` : ''}` : '', reason: '',
+      pallets: o.pallets == null ? null : Number(o.pallets), tons: o.tons == null ? null : Number(o.tons), planDate: plan.plan_date }
   }
   const ops: BoardOps = {
     plan, editable, canDrag, desktop, q, flags, ctx, fresh, follow, sel, toggle, toggleMany, editableTrip,
@@ -964,14 +968,15 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
             const open = !collapsed.has(g.k)
             return (
               <div key={g.k} className="rounded border border-slate-200 bg-white">
-                <div className="flex items-center gap-1.5 px-1.5 py-1 border-b border-slate-100">
+                {/* 22/10: tiêu đề nhóm (tổng pallet · tấn) DÍNH đầu khung chờ khi cuộn trong nhóm — cùng luật dòng nhóm dạng Bảng */}
+                <div className="sticky top-0 z-10 flex items-center gap-1.5 rounded-t bg-white px-1.5 py-1 border-b border-slate-100">
                   <button type="button" className="text-slate-400" onClick={() => setCollapsed(p => { const n = new Set(p); n.has(g.k) ? n.delete(g.k) : n.add(g.k); return n })}>
                     {open ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
                   </button>
                   <span className="text-[11px] font-semibold text-slate-700 break-words flex-1 min-w-0">{g.label ?? g.k}</span>
                   {/* gom theo LÔ (15/10): % xe máy định + "Xe mới" — cùng dòng lô của dạng Bảng */}
                   {g.lot && <span className={`text-[10px] font-medium tabular-nums whitespace-nowrap ${g.lot.kind === 'big' ? 'text-red-600' : 'text-amber-700'}`} title={lotTip(g.lot)}>{nf(g.lot.pct, 0)}%</span>}
-                  <span className="text-[10px] text-slate-500 tabular-nums whitespace-nowrap">{g.rows.length} OD · {nf(g.pallets, 1)} pl</span>
+                  <span className="text-[10px] text-slate-500 tabular-nums whitespace-nowrap">{g.rows.length} OD · {nf(g.pallets, 1)} pl · {nf(g.rows.reduce((a, o) => a + Number(o.tons ?? 0), 0), 1)} t</span>
                   {g.lot?.kind === 'under' && editable && <button type="button" disabled={busy} onClick={() => void run(g.rows.map(o => o.id), 'new')}
                     title="Cả lô vào MỘT xe mới — máy chọn dòng xe + ĐVVT; xe báo Non tải vì dưới tối thiểu"
                     className="shrink-0 rounded border border-amber-300 bg-white px-1 text-[10px] font-medium text-amber-900 hover:bg-amber-50 disabled:opacity-50">Xe mới</button>}

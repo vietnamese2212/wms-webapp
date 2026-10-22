@@ -1,7 +1,7 @@
 // Điều vận v2 (25/09) — pool LŨY TIẾN + OD bị SO sửa THAY + cửa đặt lịch khi chuyển OD + máy chọn xe cho "xe mới".
 // Một phép kiểm cho một luật user chốt; oracle = viết tay từ câu chốt.
 import { describe, it, expect } from 'vitest'
-import { splitPool, findReplacedOds, holdsToCarry, redoDispatchedOf, type PoolCandidateRow } from '../../src/services/dispatchPool'
+import { splitPool, findReplacedOds, holdsToCarry, redoDispatchedOf, shareBaseRange, type PoolCandidateRow } from '../../src/services/dispatchPool'
 import { bookingFromCatLoads, catLoadOf, suggestVehicle, runDispatch, type EngineModel, type EngineCarrier, type EngineTariff, type EngineOd } from '../../src/services/dispatchEngine'
 
 const DAY = '2026-09-25'
@@ -202,5 +202,16 @@ describe('SAP thay OD đang Không điều (user chốt 27/09 khuya: "chuyển d
   it('OD mới đã có dấu riêng ở kho đó ⇒ giữ dấu đó; hai OD cũ cùng thay bằng một OD mới ⇒ một dấu; kho khác vẫn chuyển', () => {
     const out = holdsToCarry([h('1', null), h('2', null), h('3', null, 'W2')], [['1', '11'], ['2', '11'], ['3', '33']], [{ warehouse_id: 'W1', od_number: '33' }], '2026-09-27')
     expect(out.map(x => [x.warehouse_id, x.od_number])).toEqual([['W1', '11'], ['W2', '33']])
+  })
+})
+
+// 22/10 (user: "tối ưu 2 lần ra 1 kết quả, xoá đi tạo lại ra kết quả khác"): tỷ trọng ĐVVT chỉ đếm chuyến TRƯỚC ngày của kế hoạch — đếm cả
+// chính ngày đó thì chuyến vừa xoá / mảng kia vừa chốt làm đổi hãng dưới chỉ tiêu ⇒ đổi giá ⇒ đổi cách ghép.
+describe('shareBaseRange — tỷ trọng ĐVVT không đếm chính ngày của kế hoạch', () => {
+  it('đầu tháng → TRƯỚC ngày kế hoạch (cận trên loại trừ)', () => {
+    expect(shareBaseRange('2026-10-22')).toEqual({ from: '2026-10-01', before: '2026-10-22' })
+  })
+  it('ngày đầu tháng ⇒ khoảng rỗng (from = before) — chưa có lịch sử, không lấy tháng trước', () => {
+    expect(shareBaseRange('2026-11-01')).toEqual({ from: '2026-11-01', before: '2026-11-01' })
   })
 })

@@ -26,6 +26,7 @@ import type { DispatchPlan, DispatchTrip, DispatchTripOd, DispatchOdFlag, Dispat
 import { DispatchCarrierPicker } from './DispatchCarrierPicker'
 import { NewOdChip, LateSoChip, isLateSo } from './DispatchReviewTable'
 import { SapFlagIcon } from './SapFlagIcon'
+import { formatDate } from '@/utils/formatters'
 import { tripStatus, issuesOf, ISSUE_ORDER, ISSUE_SHORT, TODO_KEYS, RED_ISSUES, FLAG_VI, SOFT_FLAG_KINDS, lotTip, ROUTE_LEVEL_VI, type IssueCtx, type PoolLot, type PoolRoute, type TripRouteTag } from './dispatchIssues'
 
 const nf = (n: number | string | null | undefined, d = 0) => (n == null ? '—' : Number(n).toLocaleString('vi-VN', { maximumFractionDigits: d }))
@@ -119,6 +120,8 @@ const poolCols = (desktop: boolean, lot: boolean): RtColDef[] => [
   ...(lot ? [{ id: 'load', label: 'Tải', w: 60, align: 'right' as const }] : []),
   { id: 'pal', label: 'Pallet', w: 60, align: 'right' },
   { id: 'ton', label: 'Tấn', w: 60, align: 'right' },
+  // 22/10 (user: "trong row dòng chờ cũng có ngày tạo SO"): SO tạo SAU ngày đi hàng = chữ đỏ (đơn bù — không tự vào kế hoạch)
+  { id: 'so', label: 'Ngày tạo SO', w: 82 },
   { id: 'ward', label: 'Phường', w: 120 },
   { id: 'region', label: 'Vùng', w: 110 },
   { id: 'note', label: 'Ghi chú giao hàng SAP', w: 220 },
@@ -130,13 +133,17 @@ type Cell = { node?: ReactNode; cls?: string; title?: string; stop?: boolean; sp
 type Cells = Partial<Record<string, Cell>>
 
 /** Một dòng = các ô theo đúng bộ cột; cột đầu (và cột thao tác nếu ghim) mang nền ĐẶC của dòng để phần cuộn không lộ qua. */
-function RowCells({ cols, cells, bg }: { cols: RtColDef[]; cells: Cells; bg: string }) {
+// `stickTop` (22/10, user: "subtotal pallet, tấn ở khung chờ — scroll tới một mức thì mất"): dòng NHÓM của khung chờ dính ngay dưới tiêu đề
+// cột (h-11) khi cuộn — nhóm sau đẩy lên thay nhóm trước, luôn thấy tổng pallet · tấn của nhóm đang xem. Mọi ô dính mang nền đặc.
+function RowCells({ cols, cells, bg, stickTop }: { cols: RtColDef[]; cells: Cells; bg: string; stickTop?: boolean }) {
   const out: ReactNode[] = []
   for (let i = 0; i < cols.length; i++) {
     const c = cols[i]
     const s = cells[c.id]
     const span = Math.max(1, Math.min(s?.span ?? 1, cols.length - i))
-    const pin = i === 0 ? `sticky left-0 z-10 ${bg}` : c.stickyRight ? `sticky right-0 z-10 ${bg}` : ''
+    const pin = stickTop
+      ? `sticky top-11 ${i === 0 ? 'left-0 z-[12]' : c.stickyRight ? 'right-0 z-[12]' : 'z-[11]'} ${bg}`
+      : i === 0 ? `sticky left-0 z-10 ${bg}` : c.stickyRight ? `sticky right-0 z-10 ${bg}` : ''
     out.push(
       <TableCell key={c.id} title={s?.title} colSpan={span > 1 ? span : undefined} onClick={s?.stop ? e => e.stopPropagation() : undefined}
         className={`${TD} ${c.align === 'right' ? 'text-right tabular-nums' : ''} ${pin} ${s?.cls ?? ''}`}>{s?.node}</TableCell>,
@@ -267,6 +274,7 @@ function odCells(ops: BoardOps, o: DispatchTripOd, t: DispatchTrip | null, tree?
   const tb = t ? undefined : ops.plan.params.too_big?.[o.od_number]   // 07/10: lớn hơn xe, loại xe không ghép nhiều xe
   const route = t ? null : ops.routeOf(o.id)
   const share = t ? shareOf(o, t) : null
+  const late = isLateSo(o, ops.plan.plan_date)
   const warnText = [fl ? `${FLAG_VI[fl.kind]}${fl.info ? ` — ${fl.info}` : ''}` : '', noVeh ? 'Khách và kênh chưa khai Dòng xe được vào — máy không chọn xe' : '',
     followOnly ? 'Chỉ có hàng đi kèm đơn — chờ đơn chính của khách, hoặc kéo tay lên xe của khách' : '',
     um ? `Máy không tạo xe: lô ${um.ods} OD trên ${um.vehicle} chỉ ${nf(um.pct, 1)} % < tối thiểu ${um.min} % — kéo lên xe / Xe mới, hoặc tick rồi "Trả về Chờ điều"; muốn máy vẫn tạo: Tối ưu lại, tick "Bỏ qua dải %"` : '',
@@ -290,7 +298,7 @@ function odCells(ops: BoardOps, o: DispatchTripOd, t: DispatchTrip | null, tree?
           {o.part_of ? <span className="text-[9px] text-amber-700">phần {o.part_index}/{o.part_of}</span> : null}
           {!t && ops.fresh.has(o.od_number) && <NewOdChip />}
           {/* 20/10: SO tạo sau ngày đi hàng (đơn bù) — không tự vào kế hoạch, dấu nhận biết ở cả khung chờ lẫn trên xe */}
-          {isLateSo(o, ops.plan.plan_date) && <LateSoChip date={o.so_created_date} />}
+          {late && <LateSoChip date={o.so_created_date} />}
           {/* 19/10 (user): cột đầu CHỈ số OD + chip — tên khách đã có cột Khách, không in lặp ở đây nữa (bản 06/10 in thêm vì cột Khách
               nằm ngoài màn khi khung chờ mở ở 1280 px) */}
           {t && (t.detail.route?.order.length ?? 0) > 1 && stopNoOf(t, o.ship_to_code) != null && (
@@ -302,6 +310,8 @@ function odCells(ops: BoardOps, o: DispatchTripOd, t: DispatchTrip | null, tree?
     load: share == null ? {} : { title: 'Phần sức chứa xe mà đơn này chiếm', node: <span className="text-slate-400">{share > 0 && share < 1 ? '<1' : nf(share, 0)}%</span> },
     pal: { node: nf(o.pallets, 1) },
     ton: { node: nf(o.tons, 2) },
+    so: { cls: late ? 'font-semibold' : '', title: late ? 'SO tạo SAU ngày đi hàng của kế hoạch — đơn bù: không tự vào kế hoạch, chỉ người đưa tay' : '',
+      node: o.so_created_date ? formatDate(o.so_created_date, 'dd-MM-yy') : <span className="text-slate-300">—</span> },
     cust: { cls: 'truncate', title: [o.ship_to_name, o.ship_to_code].filter(Boolean).join(' · '), node: o.ship_to_name ?? o.ship_to_code ?? <span className="text-slate-300">—</span> },
     ward: { cls: 'truncate', title: o.ward_code ?? '', node: o.ward_code ?? <span className="text-slate-300">—</span> },
     region: { cls: 'truncate', title: o.region_name ?? o.region_code ?? '', node: o.region_name ?? o.region_code ?? <span className="text-slate-300">—</span> },
@@ -475,7 +485,7 @@ function tripCells(ops: BoardOps, t: DispatchTrip, hv: BoardHover, open: boolean
             {t.locked ? <Lock className="h-3.5 w-3.5 text-violet-700" /> : <Unlock className="h-3.5 w-3.5" />}</IconBtn>}
           {!ed && st === 'CONFIRMED' && (ops.editable && ops.reopenTrip
             ? <IconBtn title={`Xe #${t.seq} đã chốt — khoá. Bấm để MỞ LẠI riêng xe này về nháp (hỏi lại trước)`} disabled={ops.tripBusy} onClick={() => ops.reopenTrip!(t)}><Lock className="h-3.5 w-3.5 text-violet-700" /></IconBtn>
-            : <Lock className="h-3.5 w-3.5 text-violet-700" aria-label="Xe đã chốt — khoá" />)}
+            : <span title="Xe đã chốt — khoá. Đang ở chế độ XEM: muốn mở khoá thì bấm Sửa ở tab Kế hoạch (cần quyền Xác nhận điều vận)"><Lock className="h-3.5 w-3.5 text-violet-700" aria-label="Xe đã chốt — khoá" /></span>)}
           {!ed && st !== 'CONFIRMED' && t.locked && <Lock className="h-3.5 w-3.5 text-violet-700" aria-label="Xe đã khoá" />}
           {/* 19/10 (user: "đổi ngày dễ như bên Kế hoạch xuất"): dời cả xe sang ngày khác — giữ Số xe, nhả khung giờ, chuyến + lệnh VC theo */}
           {ops.moveDate && st !== 'DISCARDED' && <IconBtn title={`Đổi ngày cả xe #${t.seq} — giữ Số xe; khung giờ đã đặt bị nhả; chuyến Xuất kho + lệnh VC đổi ngày theo`} disabled={ops.tripBusy} onClick={() => ops.moveDate!(t)}><CalendarClock className="h-3.5 w-3.5 text-sky-700" /></IconBtn>}
@@ -531,7 +541,7 @@ const TripRows = memo(function TripRows({ ops, live, t, open, onToggle, cols, hv
         return (
           <TableRow key={o.id} {...drop} draggable={dragOk}
             onDragStart={dragOk ? e => live.current.startDrag(e, live.current.idsFor(o), true) : undefined} onDragEnd={dragOk ? () => live.current.endDrag() : undefined}
-            className={`cursor-pointer ${rbg} ${lk ? 'hover:bg-violet-100' : 'hover:bg-slate-50'} ${edgeR} ${last ? endB : ''} ${dragOk ? 'active:cursor-grabbing' : ''}`} onClick={() => live.current.onOpenOd(o)}>
+            className={`cursor-pointer ${rbg} ${isLateSo(o, ops.plan.plan_date) ? 'text-red-600' : ''} ${lk ? 'hover:bg-violet-100' : 'hover:bg-slate-50'} ${edgeR} ${last ? endB : ''} ${dragOk ? 'active:cursor-grabbing' : ''}`} onClick={() => live.current.onOpenOd(o)}>
             <RowCells cols={cols} cells={odCells(ops, o, t, { rail, last })} bg={rbg} />
           </TableRow>
         )
@@ -559,7 +569,7 @@ export function DispatchBoardTable({ ops, toolbar, rail, poolHeader, poolExtras 
   const lotMode = f.boardGroup === 'lot'
   const tcols = useMemo(() => tripCols(desktop), [desktop]), pcols = useMemo(() => poolCols(desktop, lotMode), [desktop, lotMode])
   // bộ cột đổi theo cách gom ⇒ khoá độ rộng riêng + remount (useColumnResize chỉ đọc độ rộng lúc mount)
-  const pkey = `dispatch_board_pool_v4${lotMode ? '_lot' : ''}${desktop ? '' : '_m'}`   // v4 (19/10): cột Khách lên vị trí 2 — bề rộng đã lưu của v3 lệch cột
+  const pkey = `dispatch_board_pool_v5${lotMode ? '_lot' : ''}${desktop ? '' : '_m'}`   // v4 (19/10): cột Khách lên vị trí 2 · v5 (22/10): thêm cột Ngày tạo SO — bề rộng đã lưu của bản trước lệch cột
   // bản ops MỚI NHẤT cho thao tác lúc bấm / kéo trong các dòng xe không vẽ lại (TripRows memo)
   const live = useRef(ops)
   live.current = ops
@@ -622,7 +632,7 @@ export function DispatchBoardTable({ ops, toolbar, rail, poolHeader, poolExtras 
                       <Fragment key={g.k}>
                         <TableRow className="cursor-pointer bg-slate-100 hover:bg-slate-200" onClick={() => ops.togglePoolGroup(g.k)}
                           draggable={dragG} onDragStart={dragG ? e => ops.startDrag(e, ids, true) : undefined} onDragEnd={dragG ? ops.endDrag : undefined}>
-                          <RowCells cols={pcols} bg="bg-slate-100" cells={{
+                          <RowCells cols={pcols} bg="bg-slate-100" stickTop cells={{
                             // 19/10: tên nhóm (khách / phường / vùng / lô) trải qua cả cột Khách (span 2) — khung chờ hẹp không cụt tên; số OD đứng cuối
                             x: {
                               span: 2,
@@ -655,7 +665,7 @@ export function DispatchBoardTable({ ops, toolbar, rail, poolHeader, poolExtras 
                           const rbg = ops.sel.has(o.id) ? 'bg-sky-50' : ops.q && ops.matches(o) ? 'bg-yellow-50' : 'bg-white'
                           return (
                             <TableRow key={o.id} draggable={dragOk} onDragStart={dragOk ? e => ops.startDrag(e, ops.idsFor(o), true) : undefined} onDragEnd={dragOk ? ops.endDrag : undefined}
-                              className={`cursor-pointer ${rbg} hover:bg-slate-50 ${dragOk ? 'active:cursor-grabbing' : ''}`} onClick={() => ops.onOpenOd(o)}>
+                              className={`cursor-pointer ${rbg} ${isLateSo(o, ops.plan.plan_date) ? 'text-red-600' : ''} hover:bg-slate-50 ${dragOk ? 'active:cursor-grabbing' : ''}`} onClick={() => ops.onOpenOd(o)}>
                               <RowCells cols={pcols} cells={odCells(ops, o, null)} bg={rbg} />
                             </TableRow>
                           )

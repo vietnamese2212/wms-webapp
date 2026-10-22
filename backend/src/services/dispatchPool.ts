@@ -180,3 +180,9 @@ export function findReplacedOds(
   }
   return { replaced, shipped_conflicts, edges, uncertain }
 }
+
+/** KHOẢNG NGÀY tính tỷ trọng ĐVVT đã chạy (22/10): đầu tháng → TRƯỚC ngày của kế hoạch (`.lt(before)`). Không đếm chính ngày đó — xoá
+ *  rồi tạo lại / xác nhận mảng kia trước không được đổi kết quả ghép của cùng một ngày (dispatchController.loadShareActual). */
+export function shareBaseRange(day: string): { from: string; before: string } {
+  return { from: `${day.slice(0, 7)}-01`, before: day }
+}

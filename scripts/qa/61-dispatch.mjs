@@ -2638,6 +2638,10 @@ try {
       for (const t of [A, B, C]) await restWrite('dispatch_trip', 'PATCH', `id=eq.${t.id}`, { transport_company_id: DA.id, updated_at: nowIso() })
       await mv([r3.id], 'pool')
       const mvN = await api(`/tms/dispatch/plans/${s6.id}/move`, 'POST', { ids: [r3.id], to: 'new', restore: { seq: 91, vehicle_model_ids: [], transport_company_id: DA.id, locked: false, allow_mix_categories: null } })
+      // "Xe mới" không tìm được dòng xe khách được vào (ca thật 20/10: OD lớn hơn mọi dòng xe) ⇒ xe KHÔNG dòng xe. Fixture có dòng xe vừa đủ nên
+      // máy luôn gợi ý được — dựng thẳng trạng thái đó (22/10: lượt chạy đầu [21o] đỏ vì xe mới vẫn có dòng xe gợi ý)
+      const N0 = tripOfOd(mvN.j?.data, OD[2])
+      if (N0) await restWrite('dispatch_trip', 'PATCH', `id=eq.${N0.id}`, { vehicle_model_id: null, extra_vehicle_model_ids: [], updated_at: nowIso() })
       const P6 = (await api(`/tms/dispatch/plans/${s6.id}`)).j?.data
       const N = P6?.trips?.find(t => t.status !== 'DISCARDED' && t.ods.some(o => o.od_number === OD[2]))
       const cfBad = await api(`/tms/dispatch/plans/${s6.id}/confirm`, 'POST', {})
@@ -2674,20 +2678,26 @@ try {
       const cx = await api(`/tms/dispatch/plans/${s7.id}/reopen`, 'POST', { force: true })   // Huỷ kế hoạch = mở lại mọi xe (đã hỏi) …
       const dl = await api(`/tms/dispatch/plans/${s7.id}`, 'DELETE')                         // … rồi bỏ
       const g1 = await gC()
-      const s8 = await build()                                                               // lập lại cùng ngày, cùng 3 đơn
-      const codes8 = s8.ok ? [s8.A, s8.B, s8.C].map(t => t.group_code) : []
-      const cf8 = s8.ok ? await api(`/tms/dispatch/plans/${s8.id}/confirm`, 'POST', {}) : { s: 0 }
+      // lập lại cùng ngày, xếp đơn theo thứ tự OD0 → OD2 → OD1: bản cũ đánh số 1 · 2 · 3 ⇒ OD1 (đơn KHÁC) rơi đúng Số xe của C (chuyến đang
+      // xuất sống lại dưới xe chở hàng khác). Đúng: OD2 (đơn của C) lấy lại số C — chuyến sống lại đúng hàng (luật 17/10); OD1 nhận số khác.
+      const c8 = await api('/tms/dispatch/plan', 'POST', { ...PLAN_BODY, allow_mix_channels: false })
+      const id8 = c8.j?.data?.id
+      let pl8 = c8.j?.data
+      for (const od of [OD[0], OD[2], OD[1]]) { const r = rowOf(pl8, od); if (r) pl8 = (await api(`/tms/dispatch/plans/${id8}/move`, 'POST', { ids: [r.id], to: 'new' })).j?.data ?? pl8 }
+      const t1 = tripOfOd(pl8, OD[1]), t2 = tripOfOd(pl8, OD[2])
+      for (const t of [tripOfOd(pl8, OD[0]), t1, t2].filter(Boolean)) await restWrite('dispatch_trip', 'PATCH', `id=eq.${t.id}`, { transport_company_id: DA.id, updated_at: nowIso() })
+      const cf8 = id8 ? await api(`/tms/dispatch/plans/${id8}/confirm`, 'POST', {}) : { s: 0 }
       const g2 = await gC()
-      check('21p. Mở khoá xe đã KHOÁ TAY ⇒ xe về nháp + hết khoá · HUỶ kế hoạch khi chuyến xe C ĐANG XUẤT ⇒ chuyến C ngừng · lập lại cùng ngày ⇒ KHÔNG xe mới nào lấy Số xe của C, Xác nhận 200 mà chuyến C vẫn ngừng (không sống lại dưới xe khác)',
+      check('21p. Mở khoá xe đã KHOÁ TAY ⇒ xe về nháp + hết khoá · HUỶ kế hoạch khi chuyến xe C ĐANG XUẤT ⇒ chuyến C ngừng · lập lại cùng ngày ⇒ xe chở ĐƠN KHÁC không lấy Số xe của C, xe chở lại đơn của C lấy lại đúng số C · Xác nhận 200, chuyến C sống lại CÙNG id',
         cf7.s === 200 && roA.s === 200 && aAfter?.status === 'DRAFT' && aAfter?.locked === false && cfA.s === 200
         && !!g0 && cx.s === 200 && dl.s === 200 && g1?.plan_dropped === true && g1?.status === 'IN_PROGRESS'
-        && s8.ok && codes8.length === 3 && !codes8.includes(C.group_code) && cf8.s === 200 && g2?.id === g0.id && g2?.plan_dropped === true,
-        `xn=${em(cf7)} mởA=${em(roA)} A=${aAfter?.status}/khoá=${aAfter?.locked} xnA=${em(cfA)} · huỷ=${em(cx)}/${em(dl)} C=${g1?.status}/ngừng=${g1?.plan_dropped} · lập lại=${s8.s} số=${codes8.map(c => c.slice(PREFIX.length)).join(',')} (C=${C.group_code.slice(PREFIX.length)}) xn=${em(cf8)} C sau=${g2?.plan_dropped}`)
+        && c8.s === 201 && !!t1 && !!t2 && t1.group_code !== C.group_code && t2.group_code === C.group_code && cf8.s === 200 && g2?.id === g0.id && g2?.plan_dropped === false,
+        `xn=${em(cf7)} mởA=${em(roA)} A=${aAfter?.status}/khoá=${aAfter?.locked} xnA=${em(cfA)} · huỷ=${em(cx)}/${em(dl)} C=${g1?.status}/ngừng=${g1?.plan_dropped} · lập lại=${c8.s} OD1→${t1?.group_code?.slice(PREFIX.length)} OD2→${t2?.group_code?.slice(PREFIX.length)} (C=${C.group_code.slice(PREFIX.length)}) xn=${em(cf8)} C sau: ngừng=${g2?.plan_dropped}`)
       if (g0) {
         await restWrite('reconcile_tasks', 'DELETE', `gdo_id=eq.${g0.id}`).catch(() => {})
         await restWrite('GroupDeliveryOrder', 'PATCH', `id=eq.${g0.id}`, { status: 'PENDING', started_at: null, updated_at: nowIso() })   // để cleanupTrips dọn như chuyến thường
       }
-      if (s8.ok) { await api(`/tms/dispatch/plans/${s8.id}/reopen`, 'POST', { force: true }); await api(`/tms/dispatch/plans/${s8.id}`, 'DELETE') }
+      if (id8) { await api(`/tms/dispatch/plans/${id8}/reopen`, 'POST', { force: true }); await api(`/tms/dispatch/plans/${id8}`, 'DELETE') }
     } else check('21p. Fixture: 3 OD, mỗi OD một xe qua ô Xe mới', false, `plan=${s7.s}`)
     await cleanupTrips()
     await Promise.all([0, 1, 2].map(i => setCust(i, { dispatch_vehicles: ALLV })))

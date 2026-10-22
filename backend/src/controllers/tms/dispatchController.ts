@@ -41,7 +41,7 @@ import {
   odStopsCap, modelDrops, condsOf, mainCatsOf, lineConditions, resolveAllowedModels, resolveMaxCustomers, type MaxCustomersCfg, mixBlockReason, dropsBlockReason, manualRuleBlocks, type RuleBlock, routeKind, type RouteKind, priceCombo, comboModel, splitLoad, basisOf,
   type TripVehicle, withLoadBands, type LoadBand, type EngineGeo, type UnderMin, type TooBig, routeOf,
 } from '../../services/dispatchEngine'
-import { splitPool, redoDispatchedOf, shareBaseRange, type ExcludedOd, type ExcludedDetail, type ExcludeKind, type PoolCandidateRow, type OtherDraft } from '../../services/dispatchPool'
+import { splitPool, redoDispatchedOf, shareBaseRange, seqTakenFor, odsOfDeliveryCode, type HeldSeq, type ExcludedOd, type ExcludedDetail, type ExcludeKind, type PoolCandidateRow, type OtherDraft } from '../../services/dispatchPool'
 import { applyWarehouseOverrides, loadWarehouseOverrides, multiVehicleOf, detourPctOf } from '../../services/vehicleModelScope'
 import { replanKhvcGroups } from '../wms/outboundController'
 import { classifyKhvcDelete, outboundHoldState } from '../external/khvcController'
@@ -575,35 +575,48 @@ async function loadConditionLabels(): Promise<Record<string, string>> {
  *  đánh số lại từ 1 ⇒ trùng Số xe của chuyến Xuất kho ĐÃ NGỪNG mà còn GIỮ HÀNG (đang xuất · tạm dừng · đã quét / giữ nhặt lẻ = có việc
  *  PLAN_PULLED mở) ⇒ chuyến cũ SỐNG LẠI dưới xe mới với hàng của xe khác (đang xuất thì nội dung không đổi theo). Giữ chỗ các số đó; chuyến
  *  ngừng đã trống hàng (PENDING, không việc mở) thì vẫn dùng lại số — số xe liền mạch (12/10). */
-async function heldDroppedCodes(prefix: string): Promise<string[]> {
+async function heldDropped(prefix: string): Promise<HeldSeq[]> {
   const [gd, rt] = await Promise.all([
     fetchAllRowsParallel(() => db.from('GroupDeliveryOrder').select('group_code').like('group_code', `${prefix}%`).eq('plan_dropped', true)
       .in('status', ['IN_PROGRESS', 'PAUSED']).order('group_code')) as Promise<{ group_code: string }[]>,
     fetchAllRowsParallel(() => db.from('reconcile_tasks').select('group_code').like('group_code', `${prefix}%`).eq('change_type', 'PLAN_PULLED')
       .eq('status', 'OPEN').order('id')) as Promise<{ group_code: string | null }[]>,
   ])
-  return [...gd.map(g => g.group_code), ...rt.map(r => r.group_code).filter((x): x is string => !!x)]
+  const codes = uniq([...gd.map(g => g.group_code), ...rt.map(r => r.group_code).filter((x): x is string => !!x)])
+  if (!codes.length) return []
+  // đơn của chuyến cũ (OutboundDelivery.delivery_code = các số OD nối ', ') — để xe chở lại đúng đơn đó được lấy lại đúng số
+  const gdos = await fetchAllByIdChunks(codes, c => db.from('GroupDeliveryOrder').select('id, group_code').in('group_code', c).order('id')) as { id: string; group_code: string }[]
+  const dos = gdos.length ? await fetchAllByIdChunks(gdos.map(g => g.id), c => db.from('OutboundDelivery').select('gdo_id, delivery_code').in('gdo_id', c).order('id')) as { gdo_id: string; delivery_code: string | null }[] : []
+  const codeOf = new Map(gdos.map(g => [g.id, g.group_code]))
+  const odsBy = new Map<string, string[]>()
+  for (const d of dos) { const gc = codeOf.get(d.gdo_id); if (gc) odsBy.set(gc, [...(odsBy.get(gc) ?? []), ...odsOfDeliveryCode(d.delivery_code)]) }
+  return codes.map(code => ({ seq: Number(code.slice(prefix.length)), ods: odsBy.get(code) ?? [] })).filter(h => Number.isFinite(h.seq) && h.seq > 0)
 }
-async function takenSeqs(prefix: string, excludeTripIds: string[] = []): Promise<Set<number>> {
-  const [kh, tr, held] = await Promise.all([
+async function baseSeqs(prefix: string, excludeTripIds: string[] = []): Promise<Set<number>> {
+  const [kh, tr] = await Promise.all([
     fetchAllRowsParallel(() => db.from('khvc_lines').select('group_code').like('group_code', `${prefix}%`).order('group_code')) as Promise<{ group_code: string }[]>,
     fetchAllRowsParallel(() => db.from('dispatch_trip').select('id, group_code').like('group_code', `${prefix}%`).neq('status', 'DISCARDED').order('group_code')) as Promise<{ id: string; group_code: string }[]>,
-    heldDroppedCodes(prefix),
   ])
   const ex = new Set(excludeTripIds)
   const taken = new Set<number>()
-  for (const code of [...kh.map(r => r.group_code), ...tr.filter(t => !ex.has(t.id)).map(t => t.group_code), ...held]) {
+  for (const code of [...kh.map(r => r.group_code), ...tr.filter(t => !ex.has(t.id)).map(t => t.group_code)]) {
     const n = Number(code.slice(prefix.length)); if (Number.isFinite(n) && n > 0) taken.add(n)
   }
   return taken
 }
-async function nextSeq(prefix: string): Promise<number> {
-  return Math.max(0, ...await takenSeqs(prefix)) + 1
+/** Số đang bận cho một xe mới (chở `ods` nếu biết) + số cũ xe đó được lấy lại (`seqTakenFor`, services/dispatchPool). */
+async function takenSeqs(prefix: string, excludeTripIds: string[] = [], ods?: string[]): Promise<{ taken: Set<number>; own: number | null }> {
+  const [base, held] = await Promise.all([baseSeqs(prefix, excludeTripIds), heldDropped(prefix)])
+  return seqTakenFor(base, held, ods)
+}
+async function nextSeq(prefix: string, ods?: string[]): Promise<number> {
+  const { taken, own } = await takenSeqs(prefix, [], ods)
+  return own ?? Math.max(0, ...taken) + 1
 }
 /** SỐ XE LIỀN MẠCH cho lượt ghép lại (12/10, đóng vai 12/10: khoá #1 #2 rồi Tối ưu lại ⇒ xe mới #11…#18, #3–#10 biến mất): các STT
  *  còn trống sau khi bỏ số của xe sắp làm lại (`excludeTripIds`) + STT nối tiếp. Xe khoá / đã chốt / Kế hoạch xuất / mảng kia giữ số. */
 async function seqPlan(prefix: string, excludeTripIds: string[], need: number): Promise<{ free_seqs: number[]; start_seq: number }> {
-  const taken = await takenSeqs(prefix, excludeTripIds)
+  const { taken } = await takenSeqs(prefix, excludeTripIds)
   const max = Math.max(0, ...taken)
   const free: number[] = []
   for (let n = 1; n < max && free.length < need; n++) if (!taken.has(n)) free.push(n)
@@ -1420,7 +1433,7 @@ async function moveOdInner(req: Request, res: Response) {
     } else {
       // tách ra chuyến MỚI: STT kế tiếp trong nháp, kế thừa dòng xe/ĐVVT của chuyến nguồn
       const params = (plan.params ?? {}) as { code_prefix?: string }
-      const seq = await nextSeq(params.code_prefix ?? '')   // đếm cả kế hoạch mảng kia cùng kho×ngày (03/10 tối)
+      const seq = await nextSeq(params.code_prefix ?? '', moving.map(o => o.od_number))   // đếm cả kế hoạch mảng kia cùng kho×ngày (03/10 tối)
       targetId = randomUUID()
       const { error } = await db.from('dispatch_trip').insert({
         id: targetId, plan_id: plan.id, seq, group_code: `${params.code_prefix ?? ''}${seq}`,
@@ -1622,8 +1635,8 @@ async function moveOdsInner(req: Request, res: Response) {
       const blocks = await ruleBlocksFor(plan, { vehicle_model_id: model?.id ?? null, extra_vehicle_model_ids: fleet.slice(1), allow_mix_categories: r?.allow_mix_categories ?? null, allow_extra_drops: r?.allow_extra_drops === true }, [], rows, { models: refs.models })
       if (blocks.length) return ruleFail(res, 'Xe mới: ', blocks)
       const prefix = engineParams(plan).code_prefix
-      const taken = await takenSeqs(prefix)   // đếm cả kế hoạch mảng kia cùng kho×ngày (03/10 tối)
-      const seq = r && !taken.has(r.seq) ? r.seq : Math.max(0, ...taken) + 1
+      const { taken, own } = await takenSeqs(prefix, [], rows.map(o => o.od_number))   // đếm cả kế hoạch mảng kia cùng kho×ngày (03/10 tối)
+      const seq = r && !taken.has(r.seq) ? r.seq : own ?? Math.max(0, ...taken) + 1
       targetId = randomUUID()
       const { error } = await db.from('dispatch_trip').insert({
         id: targetId, plan_id: plan.id, seq, group_code: `${prefix}${seq}`,

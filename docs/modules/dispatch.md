@@ -758,8 +758,10 @@ quan (như nút workflow trong SAP), bao gồm số chứng từ để đi searc
   đổi thật (dải % tải lấy bản LƯU CUỐI của kho — hộp thoại in sẵn để người xem).
 - **Huỷ kế hoạch rồi lập lại cùng ngày không được lấy trùng Số xe của chuyến còn GIỮ HÀNG**: Huỷ xoá dòng KH xuất + bỏ xe ⇒ bản cũ đánh số
   lại từ 1 ⇒ xe mới mang Số xe của chuyến ĐANG XUẤT đã ngừng ⇒ chuyến cũ sống lại dưới xe khác (đang xuất thì nội dung không đổi theo).
-  `takenSeqs` nay giữ chỗ số của chuyến `plan_dropped` đang xuất / tạm dừng / còn việc `PLAN_PULLED` mở; chuyến ngừng đã trống hàng thì
-  vẫn dùng lại số (liền mạch, 12/10). Gói 61 [21p].
+  Số của chuyến `plan_dropped` đang xuất / tạm dừng / còn việc `PLAN_PULLED` mở là "đã có chủ" (`heldDropped` + `seqTakenFor`): xe chở
+  ĐƠN KHÁC không lấy được; xe chở lại ít nhất một đơn của chính chuyến đó thì được ƯU TIÊN lấy lại đúng số (luật 17/10 — chuyến sống lại
+  đúng hàng; bản vá đầu giữ chỗ với MỌI xe đã chặn đường về này, gói 61 [21n] bắt). Tối ưu lại (chưa biết xe nào chở gì) coi mọi số giữ
+  hàng là bận. Chuyến ngừng đã trống hàng thì dùng lại số như cũ (liền mạch, 12/10). Gói 61 [21p] · test `seqTakenFor`.
 - **Mở khoá MỘT xe (`reopen trip_ids`) gỡ luôn cờ khoá tay** — RPC chỉ đưa về DRAFT, cờ `locked` đặt trước lúc chốt còn nguyên ⇒ xe vẫn tím
   + ổ khoá như chưa bấm (user: "mở khoá thì không thấy dấu hiệu"). "Mở lại" cả kế hoạch giữ cờ. Ổ khoá ở chế độ XEM có tooltip "bấm Sửa ở tab
   Kế hoạch". Hộp thoại Huỷ / Bỏ: nút thoát ghi "Không, giữ kế hoạch" / "Không, giữ lại" (bản cũ "Huỷ" đứng cạnh "Huỷ kế hoạch"); "Bỏ xe chưa

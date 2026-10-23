@@ -653,8 +653,8 @@ export default function Dispatch() {
             {/* Kho + Ngày CHUNG một hàng trên điện thoại (bản cũ Kho chiếm trọn một hàng riêng) */}
             {/* min-w: không có thì flex-1 co ô Kho về ~20 px khi hàng còn chỗ cho ô ngày (đo 390 px, 25/09) */}
             {/* ≥ 1280: hàng 1 không xuống dòng ⇒ ô Kho là phần DUY NHẤT được co (tới 140 px) khi màn hẹp + sidebar mở */}
-            <div className="flex-1 min-w-[150px] sm:flex-none sm:w-48 xl:shrink-[4] xl:min-w-[140px]"><WarehouseSingleSelect warehouses={whs} value={f.warehouseId} onChange={v => setF({ warehouseId: v, planId: '' })} /></div>
-            <Input type="date" value={day} onChange={e => setF({ planDate: e.target.value, planId: '' })} className="h-9 sm:h-7 w-[140px] text-xs shrink-0" title="Ngày giao (ngày xe chạy)" />
+            <div className="flex-1 min-w-[150px] sm:flex-none sm:w-48 xl:shrink-[4] xl:min-w-[112px]"><WarehouseSingleSelect warehouses={whs} value={f.warehouseId} onChange={v => setF({ warehouseId: v, planId: '' })} /></div>
+            <Input type="date" value={day} onChange={e => setF({ planDate: e.target.value, planId: '' })} className="h-9 sm:h-7 w-[128px] text-xs shrink-0" title="Ngày giao (ngày xe chạy)" />
             {/* MẢNG (03/10 tối): hai kế hoạch riêng cùng kho × ngày — switch nhỏ, nhớ theo người; ở Xem đơn còn có tab Trung chuyển | Bán hàng */}
             <div className="inline-flex shrink-0 rounded-md border border-slate-200 p-0.5" title="Mảng điều vận — mỗi mảng một kế hoạch riêng cùng kho × ngày. Khách tick 'Trung chuyển' ở Khách hàng thì đơn vào Trung chuyển, còn lại Bán hàng; lấy đơn sang mảng mình ở tab Xem đơn.">
               {(['SALES', 'TRANSFER'] as const).map(s => (

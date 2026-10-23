@@ -136,11 +136,12 @@ const tripCols = (desktop: boolean): RtColDef[] => [
 const poolCols = (desktop: boolean, lot: boolean): RtColDef[] => [
   { id: 'x', label: lot ? 'Lô · OD' : 'OD · Loại kho', w: desktop ? 190 : 180 },
   { id: 'cust', label: 'Khách', w: 140 },
+  // 22/10 (user: "trong row dòng chờ cũng có ngày tạo SO"): SO tạo SAU ngày đi hàng = chữ đỏ (đơn bù — không tự vào kế hoạch).
+  // 23/10 (user: "không thấy ngày tạo SO trong mục này"): cột đứng sau Pallet · Tấn nằm ngoài mép khung chờ hẹp ⇒ lên ngay sau Khách, gọn 64 px
+  { id: 'so', label: 'Tạo SO', w: 64 },
   ...(lot ? [{ id: 'load', label: 'Tải', w: 60, align: 'right' as const }] : []),
   { id: 'pal', label: 'Pallet', w: 60, align: 'right' },
   { id: 'ton', label: 'Tấn', w: 60, align: 'right' },
-  // 22/10 (user: "trong row dòng chờ cũng có ngày tạo SO"): SO tạo SAU ngày đi hàng = chữ đỏ (đơn bù — không tự vào kế hoạch)
-  { id: 'so', label: 'Ngày tạo SO', w: 82 },
   { id: 'ward', label: 'Phường', w: 120 },
   { id: 'region', label: 'Vùng', w: 110 },
   { id: 'note', label: 'Ghi chú giao hàng SAP', w: 220 },
@@ -597,7 +598,7 @@ export function DispatchBoardTable({ ops, toolbar, rail, poolHeader, poolExtras 
   const lotMode = f.boardGroup === 'lot'
   const tcols = useMemo(() => tripCols(desktop), [desktop]), pcols = useMemo(() => poolCols(desktop, lotMode), [desktop, lotMode])
   // bộ cột đổi theo cách gom ⇒ khoá độ rộng riêng + remount (useColumnResize chỉ đọc độ rộng lúc mount)
-  const pkey = `dispatch_board_pool_v5${lotMode ? '_lot' : ''}${desktop ? '' : '_m'}`   // v4 (19/10): cột Khách lên vị trí 2 · v5 (22/10): thêm cột Ngày tạo SO — bề rộng đã lưu của bản trước lệch cột
+  const pkey = `dispatch_board_pool_v6${lotMode ? '_lot' : ''}${desktop ? '' : '_m'}`   // v4 (19/10): cột Khách lên vị trí 2 · v5 (22/10): thêm cột Ngày tạo SO · v6 (23/10): Tạo SO lên sau Khách — bề rộng đã lưu của bản trước lệch cột
   // bản ops MỚI NHẤT cho thao tác lúc bấm / kéo trong các dòng xe không vẽ lại (TripRows memo)
   const live = useRef(ops)
   live.current = ops

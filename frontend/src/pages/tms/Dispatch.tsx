@@ -29,7 +29,7 @@ import { Switch } from '@/components/ui/switch'
 import { useWhTypeMetaMap } from '@/hooks/useWhTypeMeta'
 import { whTypeBadgeCls } from '@/utils/cargoCategory'
 import { DispatchPlansTable, groupPlanDays, type DispatchPlanDay } from '@/components/tms/DispatchPlansTable'
-import { editDirty } from '@/components/tms/dispatchEdit'
+import { editDirty, boardEditing } from '@/components/tms/dispatchEdit'
 import { DispatchHistoryTab } from '@/components/tms/DispatchHistoryTab'
 import { useDispatchPresence } from '@/hooks/useDispatchPresence'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
@@ -180,7 +180,10 @@ export default function Dispatch() {
   // khoá theo KHO + NGÀY (16/10 tối, tự soi): chỉ ngày thì đổi kho cùng ngày là kế hoạch đã chốt của kho kia vào chế độ sửa mà không ai bấm
   const editDay = f.editDay || null
   const setEditDay = (d: string | null) => setF({ editDay: d ? `${f.warehouseId}|${d}` : '' })
-  const editing = !!plan && plan.status !== 'DISCARDED' && (isOpen || editDay === `${plan.warehouse_id}|${plan.plan_date}`)
+  // 23/10 (user: "khi xem bàn điều lại không thấy các đơn chờ"): chế độ Sửa nhớ trong bộ lọc theo người — phiên sửa đã kết thúc ở nơi khác
+  // (Lưu / Khôi phục / về Xem, hoặc hôm qua) mà bàn vẫn nhớ "đang sửa" ⇒ khung chờ chỉ hiện đơn đã nạp (bước nạp chạy lúc bấm Sửa) = 0 OD,
+  // 95 đơn Chờ điều biến mất. Kế hoạch đã xác nhận chỉ ở Sửa khi CÒN bản sửa đang mở (`plan.edit`); không thì về Xem, thấy đủ đơn chờ.
+  const editing = boardEditing(plan, editDay)
   // CÓ THAY ĐỔI CHƯA LƯU (23/10, user: "switch qua Sửa rồi — có một sự thay đổi thì nút switch không dùng được, phải Lưu hoặc Khôi phục"):
   // so bàn với chữ ký bản đã lưu (server gửi kèm `edit`) — cùng luật với cửa 409 EDIT_DIRTY (mirror `dispatchEdit`)
   const dirty = useMemo(() => !!plan?.edit?.trips && editDirty(

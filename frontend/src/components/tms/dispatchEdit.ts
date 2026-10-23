@@ -2,6 +2,15 @@
 // bàn khoá công tắc Xem | Sửa khi bàn đã khác bản đã lưu; server chặn 409 `EDIT_DIRTY` cùng luật. Khung chờ không tính.
 export type EditSig = { trips: { id: string; status: string | null }[]; ods: { od_number: string; trip_id: string | null }[] }
 
+/** Bàn ở chế độ SỬA? Kế hoạch còn mở (nháp / chờ ĐVVT / có xe mở khoá) luôn sửa; kế hoạch đã xác nhận chỉ sửa khi người này bấm Sửa ngày đó
+ *  (`editDay` "kho|ngày" nhớ trong bộ lọc) VÀ còn bản sửa đang mở — phiên sửa kết thúc ở nơi khác mà bàn còn nhớ "đang sửa" thì khung chờ
+ *  chỉ hiện đơn đã nạp (0 OD), đơn Chờ điều biến mất (user 23/10). Test `backend/tests/unit/dispatchBoardMode.test.ts`. */
+export function boardEditing(plan: { status: string; warehouse_id: string; plan_date: string; edit?: unknown } | null, editDay: string | null): boolean {
+  if (!plan || plan.status === 'DISCARDED') return false
+  if (plan.status === 'DRAFT' || plan.status === 'TENDERED') return true
+  return !!plan.edit && editDay === `${plan.warehouse_id}|${plan.plan_date}`
+}
+
 export function editDirty(base: EditSig, cur: EditSig): boolean {
   const live = (s: EditSig) => new Map(s.trips.filter(t => (t.status ?? 'DRAFT') !== 'DISCARDED').map(t => [t.id, t.status ?? 'DRAFT']))
   const pairs = (s: EditSig, l: Map<string, string>) => new Set(s.ods.filter(o => o.trip_id && l.has(o.trip_id)).map(o => `${o.trip_id}|${o.od_number}`))

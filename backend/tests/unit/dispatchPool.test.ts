@@ -1,7 +1,7 @@
 // Điều vận v2 (25/09) — pool LŨY TIẾN + OD bị SO sửa THAY + cửa đặt lịch khi chuyển OD + máy chọn xe cho "xe mới".
 // Một phép kiểm cho một luật user chốt; oracle = viết tay từ câu chốt.
 import { describe, it, expect } from 'vitest'
-import { splitPool, findReplacedOds, holdsToCarry, redoDispatchedOf, shareBaseRange, seqTakenFor, odsOfDeliveryCode, type PoolCandidateRow } from '../../src/services/dispatchPool'
+import { splitPool, findReplacedOds, holdsToCarry, redoDispatchedOf, shareBaseRange, type PoolCandidateRow } from '../../src/services/dispatchPool'
 import { bookingFromCatLoads, catLoadOf, suggestVehicle, runDispatch, type EngineModel, type EngineCarrier, type EngineTariff, type EngineOd } from '../../src/services/dispatchEngine'
 
 const DAY = '2026-09-25'
@@ -213,33 +213,5 @@ describe('shareBaseRange — tỷ trọng ĐVVT không đếm chính ngày của
   })
   it('ngày đầu tháng ⇒ khoảng rỗng (from = before) — chưa có lịch sử, không lấy tháng trước', () => {
     expect(shareBaseRange('2026-11-01')).toEqual({ from: '2026-11-01', before: '2026-11-01' })
-  })
-})
-
-// 22/10 (C92): Huỷ kế hoạch rồi lập lại — Số xe của chuyến ĐÃ NGỪNG còn giữ hàng không được rơi vào xe chở ĐƠN KHÁC (chuyến cũ sống lại dưới
-// xe khác); xe chở lại đơn của chính chuyến đó thì LẤY LẠI đúng số (luật 17/10 "về đúng xe cũ thì chuyến sống lại").
-describe('seqTakenFor — số xe của chuyến ngừng còn giữ hàng', () => {
-  const held = [{ seq: 3, ods: ['OD3'] }]
-  it('xe chở đơn khác ⇒ số 3 bận, xe mới lấy số khác', () => {
-    const r = seqTakenFor(new Set(), held, ['OD1'])
-    expect(r.taken.has(3)).toBe(true); expect(r.own).toBeNull()
-  })
-  it('xe chở lại đơn của chính chuyến đó ⇒ được ưu tiên lấy lại số 3', () => {
-    const r = seqTakenFor(new Set([1]), held, ['OD3', 'OD9'])
-    expect(r.own).toBe(3); expect(r.taken.has(3)).toBe(false)
-  })
-  it('không biết xe chở gì (Tối ưu lại) ⇒ mọi số giữ hàng đều bận', () => {
-    expect(seqTakenFor(new Set(), held).taken.has(3)).toBe(true)
-  })
-  it('số đã có xe khác giữ ở KH xuất / nháp ⇒ không lấy lại được', () => {
-    expect(seqTakenFor(new Set([3]), held, ['OD3']).own).toBeNull()
-  })
-})
-
-describe('odsOfDeliveryCode — mã Delivery nối ", " trên đơn bên Xuất', () => {
-  it('tách + bỏ khoảng trắng / rỗng', () => {
-    expect(odsOfDeliveryCode('3000565497, 3000565498')).toEqual(['3000565497', '3000565498'])
-    expect(odsOfDeliveryCode(null)).toEqual([])
-    expect(odsOfDeliveryCode(' , ')).toEqual([])
   })
 })

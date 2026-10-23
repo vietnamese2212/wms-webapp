@@ -36,9 +36,9 @@ import { toast } from '@/components/ui/use-toast'
 import {
   useVehicleTypes, useMoveDispatchOds, previewDispatchMove, useUpdateDispatchTrip, useDeleteDispatchTrip, useReplaceDispatchOd, useReoptimizeDispatchPlan,
   useHoldDispatchOds, useResyncDispatchOd, useDispatchPlanReview, useVehicleModels, useTransportCompanies, tripRestoreOf, useDispatchFitCheck, useUpdateDispatchPlanParams,
-  type DispatchPlan, type DispatchTrip, type DispatchTripOd, type DispatchOdFlag, type DispatchMoveTo, type DispatchMovePreview, type DispatchTripRestore,
+  type DispatchPlan, type DispatchTrip, type DispatchTripOd, type DispatchOdFlag, type DispatchMoveTo, type DispatchMovePreview, type DispatchTripRestore, type DispatchOdWork, type DispatchTripWork,
 } from '@/api/hooks'
-import { DispatchBoardTable, RouteChip, TripRouteBadge, TickBox, ExtraDropsBadge, type BoardOps, type BoardDropAttrs, type BoardPoolGroup } from './DispatchBoardTable'
+import { DispatchBoardTable, RouteChip, TripRouteBadge, TickBox, ExtraDropsBadge, TripWorkChip, UnsavedChip, doneTip, type BoardOps, type BoardDropAttrs, type BoardPoolGroup } from './DispatchBoardTable'
 import { SapFlagIcon } from './SapFlagIcon'
 import { formatDate } from '@/utils/formatters'
 import { DispatchOdDetailSheet, type OdSummary } from './DispatchOdDetailSheet'
@@ -97,7 +97,9 @@ const groupKeyOf = (o: DispatchTripOd, g: string) =>
 const matches = (o: DispatchTripOd, q: string) =>
   !q || [o.od_number, o.ship_to_code, o.ship_to_name, o.ward_code, o.region_code, o.region_name, o.note].some(v => (v ?? '').toLowerCase().includes(q))
 
-export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds, onFocused, soat, onReopenTrip, onMoveDateTrip }: {
+export function DispatchBoard({ plan, editable, flags, work, onOpenTrip, focusTripIds, onFocused, soat, onReopenTrip, onMoveDateTrip }: {
+  /** 23/10 — bên Xuất đã làm gì (từ /sync): đơn đã thực thi trên xe · tình trạng chuyến của xe đã chốt */
+  work?: { ods: Map<string, DispatchOdWork>; trips: Map<string, DispatchTripWork> }
   onMoveDateTrip?: (t: DispatchTrip) => void   // 19/10: đổi ngày cả xe (giữ Số xe, nhả khung giờ) — quyền xác nhận
   plan: DispatchPlan; editable: boolean; flags: Map<string, DispatchOdFlag>; onOpenTrip: (id: string) => void
   onReopenTrip?: (t: DispatchTrip) => void   // 16/10: ổ khoá xanh trên xe ĐÃ VÀO KH XUẤT — mở lại riêng xe đó (quyền xác nhận)
@@ -126,6 +128,11 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
   const tripLabel = (id: string) => tripById.get(id)?.detail.vehicle_model?.name ?? ''
   const odLabel = (id: string) => { const o = rowBy.get(id); return o ? `${o.od_number} · ${o.ship_to_name ?? o.ship_to_code ?? ''} · ${nf(o.pallets, 1)} pl` : id }
   const editableTrip = (t: DispatchTrip) => editable && EDITABLE.includes(tripStatus(t))
+  // ĐƠN ĐÃ THỰC THI bên Xuất (23/10, user: "muốn xoá chỉ có thể xoá những đơn chưa thực thi"): đơn trên xe mà chuyến của chính Số xe đó đã
+  // quét / giữ nhặt lẻ — không tick, không kéo ra (Lưu ở server vẫn kiểm lại, đây chỉ là chặn sớm cho người thấy)
+  const workOf = (o: DispatchTripOd, t: DispatchTrip | null): DispatchOdWork | null => { const w = t ? work?.ods.get(o.od_number) : undefined; return w && w.group_code === t?.group_code ? w : null }
+  const tripWorkOf = (t: DispatchTrip): DispatchTripWork | null => work?.trips.get(t.group_code) ?? null
+  const lockedId = (id: string) => { const o = rowBy.get(id), tid = tripOf.get(id); return !!o && !!tid && !!workOf(o, tripById.get(tid) ?? null) }
 
   const move = useMoveDispatchOds(), patchTrip = useUpdateDispatchTrip(), delTrip = useDeleteDispatchTrip()
   const replace = useReplaceDispatchOd(), reopt = useReoptimizeDispatchPlan()
@@ -243,7 +250,7 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
   }, [undo, redo])
 
   // ── KÉO THẢ ──
-  const idsFor = (o: DispatchTripOd) => (sel.has(o.id) ? [...sel] : [o.id])
+  const idsFor = (o: DispatchTripOd) => (sel.has(o.id) ? [...sel] : [o.id]).filter(id => !lockedId(id))
   // ids = một đơn · các đơn đã tick · cả xe (gộp xe) · cả cụm khung chờ — dạng bảng
   const startDrag = (e: React.DragEvent, ids: string[], ghost?: boolean) => {
     dragIds.current = ids
@@ -366,8 +373,9 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
   }, [trips, q, f.issue, f.boardSort, ctx])
 
   const selIds = [...sel].filter(id => rowBy.has(id))
-  const toggle = (id: string) => setSel(p => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n })
-  const toggleMany = (ids: string[]) => setSel(p => { const all = ids.every(id => p.has(id)); const n = new Set(p); for (const id of ids) all ? n.delete(id) : n.add(id); return n })
+  const toggle = (id: string) => { if (!lockedId(id)) setSel(p => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n }) }
+  // tick cả xe / cả cụm: bỏ qua đơn đã thực thi bên Xuất (23/10)
+  const toggleMany = (ids0: string[]) => { const ids = ids0.filter(id => !lockedId(id)); setSel(p => { const all = ids.every(id => p.has(id)); const n = new Set(p); for (const id of ids) all ? n.delete(id) : n.add(id); return n }) }
 
   const doReplace = (od: string) => replace.mutateAsync({ plan_id: plan.id, od_number: od })
     .then(r => toast({ title: `Đã thay ${r.replaced.from} bằng ${r.replaced.to}`, description: 'Tải + cước của xe đã tính lại theo OD mới.' }))
@@ -458,17 +466,21 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
   const odRow = (o: DispatchTripOd, compact?: boolean) => {
     const fl = flags.get(o.od_number)
     const tr = o.trip_id ? plan.trips.find(t => t.id === o.trip_id) : null
-    const dragOk = canDrag && (!tr || editableTrip(tr))
+    const done = workOf(o, tr ?? null)
+    const dragOk = canDrag && (!tr || editableTrip(tr)) && !done
     return (
       <div key={o.id} draggable={dragOk} onDragStart={dragOk ? e => onDragStart(e, o) : undefined} onDragEnd={dragOk ? onDragEnd : undefined}
         className={`group flex items-start gap-1.5 rounded px-1.5 py-1 text-[11px] ${sel.has(o.id) ? 'bg-sky-100' : 'hover:bg-slate-50'} ${dragOk ? 'cursor-grab active:cursor-grabbing' : ''} ${fl ? 'ring-1 ring-red-200' : ''}`}>
-        {editable && (!tr || editableTrip(tr)) && (
-          <TickBox checked={sel.has(o.id)} onChange={() => toggle(o.id)} label={`Chọn ${o.od_number} — chuyển / kéo nhiều OD một lượt`} />
-        )}
+        {done
+          ? <span className="inline-flex shrink-0 p-1.5" title={doneTip(done)}><Lock className="h-3.5 w-3.5 text-orange-600" aria-label="Đơn đã thực thi bên Xuất" /></span>
+          : editable && (!tr || editableTrip(tr)) && (
+            <TickBox checked={sel.has(o.id)} onChange={() => toggle(o.id)} label={`Chọn ${o.od_number} — chuyển / kéo nhiều OD một lượt`} />
+          )}
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1 flex-wrap">
             {/* 22/10: SO tạo SAU ngày đi hàng (đơn bù) — số OD + ngày tạo SO chữ đỏ, cùng dấu hiệu dạng Bảng */}
-            <span className={`font-mono font-semibold ${isLateSo(o, plan.plan_date) ? 'text-red-600' : ''}`}>{o.od_number}</span>
+            <span className={`font-mono font-semibold ${isLateSo(o, plan.plan_date) ? 'text-red-600' : done ? 'text-orange-700' : ''}`}>{o.od_number}</span>
+            {done && <span className="rounded bg-orange-100 px-1 text-[9px] font-semibold text-orange-800" title={doneTip(done)}>Đã thực thi</span>}
             {o.so_created_date && <span className={`text-[9px] tabular-nums ${isLateSo(o, plan.plan_date) ? 'font-semibold text-red-600' : 'text-slate-400'}`} title="Ngày tạo SO">SO {formatDate(o.so_created_date, 'dd-MM')}</span>}
             {/* 16/10: tình trạng SAP = biểu tượng + tooltip, Loại kho ngay sau số OD — cùng dạng Bảng */}
             {fl && <SapFlagIcon flag={fl} />}
@@ -688,6 +700,8 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
             {t.allow_extra_drops && <ExtraDropsBadge />}
             {/* 19/10 (user: gọn row): xe ĐÃ CHỐT không còn badge chữ "Đã vào KH" — nút workflow xanh lá là dấu đã chốt, bấm mở popup tình trạng xe (cùng dạng Bảng) */}
             {st === 'CONFIRMED' && <TripFlow code={t.group_code} tone="done" title={`Xe đã chốt (đã vào Kế hoạch xuất) — bấm xem tình trạng xe ${t.group_code}`} />}
+            {st === 'DRAFT' && t.confirmed_at && <UnsavedChip />}
+            <TripWorkChip w={tripWorkOf(t)} />
             {(st === 'DECLINED' || st === 'TENDERED') && <StatusBadge tone={st === 'DECLINED' ? 'red' : 'blue'}>{st === 'DECLINED' ? 'Từ chối' : 'Chờ ĐVVT'}</StatusBadge>}
             {/* MỘT Ổ KHOÁ (19/10, user: "hai cái khoá bản chất giống nhau — gộp làm một"): tím = xe giữ nguyên. Nháp: bấm khoá / mở khoá
                 (máy không đụng, người vẫn kéo). Đã chốt: luôn khoá; trong chế độ Sửa bấm = Mở lại riêng xe này. Bỏ ổ khoá xanh (LockKeyhole). */}
@@ -699,7 +713,7 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
               </button>
             )}
             {!ed && st === 'CONFIRMED' && editable && onReopenTrip
-              ? <button type="button" className="rounded p-1 bg-violet-600 text-white hover:bg-violet-700" title={`Xe #${t.seq} đã chốt — khoá. Bấm để MỞ LẠI riêng xe này về nháp (hỏi lại trước)`} aria-label={`Mở lại xe #${t.seq}`}
+              ? <button type="button" className="rounded p-1 bg-violet-600 text-white hover:bg-violet-700" title={`Xe #${t.seq} đã chốt — khoá. Bấm để MỞ KHOÁ sửa riêng xe này (Kế hoạch xuất / bên Xuất giữ nguyên tới khi Lưu)`} aria-label={`Mở khoá xe #${t.seq}`}
                   onClick={() => onReopenTrip(t)}><Lock className="h-3.5 w-3.5" /></button>
               : !ed && lk && <span title={st === 'CONFIRMED' ? 'Xe đã chốt — khoá. Đang ở chế độ XEM: muốn mở khoá thì bấm Sửa ở tab Kế hoạch (cần quyền Xác nhận điều vận)' : 'Xe đã khoá'}><Lock className="h-3.5 w-3.5 text-violet-700" aria-label={st === 'CONFIRMED' ? 'Xe đã chốt — khoá' : 'Xe đã khoá'} /></span>}
             {/* 19/10: đổi ngày cả xe (giữ Số xe, nhả khung giờ, chuyến + lệnh VC theo) — cùng nút với dạng Bảng */}
@@ -923,7 +937,7 @@ export function DispatchBoard({ plan, editable, flags, onOpenTrip, focusTripIds,
       pallets: o.pallets == null ? null : Number(o.pallets), tons: o.tons == null ? null : Number(o.tons), planDate: plan.plan_date }
   }
   const ops: BoardOps = {
-    plan, editable, canDrag, desktop, q, flags, ctx, fresh, follow, sel, toggle, toggleMany, editableTrip,
+    plan, editable, canDrag, desktop, q, flags, ctx, fresh, follow, sel, toggle, toggleMany, editableTrip, workOf, tripWorkOf,
     matches: o => matches(o, q), idsFor, startDrag, endDrag: onDragEnd, dropProps,
     ownDrop: tid => dragIds.current.length > 0 && dragIds.current.every(id => tripOf.get(id) === tid),
     hover, justHit, busy,

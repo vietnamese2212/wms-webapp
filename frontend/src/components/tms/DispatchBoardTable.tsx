@@ -22,7 +22,7 @@ import { ListFooter } from '@/components/shared/ListPager'
 import { StatusBadge } from '@/components/shared/StatusBadge'
 import { TripFlow } from './TripFlow'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
-import type { DispatchPlan, DispatchTrip, DispatchTripOd, DispatchOdFlag, DispatchMoveTo, DispatchMovePreview } from '@/api/hooks'
+import type { DispatchPlan, DispatchTrip, DispatchTripOd, DispatchOdFlag, DispatchMoveTo, DispatchMovePreview, DispatchOdWork, DispatchTripWork } from '@/api/hooks'
 import { DispatchCarrierPicker } from './DispatchCarrierPicker'
 import { NewOdChip, LateSoChip, isLateSo } from './DispatchReviewTable'
 import { SapFlagIcon } from './SapFlagIcon'
@@ -89,6 +89,25 @@ export interface BoardOps {
   setCarrier: (t: DispatchTrip, carrierId: string) => void; tripBusy: boolean
   catChips: (cats: string[]) => ReactNode
   catsByLoad: (loads: (Record<string, number> | null | undefined)[]) => string[]
+  /** 23/10 — bên Xuất đã làm gì: đơn ĐÃ THỰC THI trên xe (đã quét / giữ nhặt lẻ — không tick / kéo để bỏ được) · tình trạng chuyến của xe đã chốt */
+  workOf: (o: DispatchTripOd, t: DispatchTrip | null) => DispatchOdWork | null
+  tripWorkOf: (t: DispatchTrip) => DispatchTripWork | null
+}
+
+/** Đơn đã thực thi bên Xuất (23/10, user: "trên bàn cần thể hiện đơn nào không thể xoá được — màu sắc") — câu rê chuột dùng chung Bảng + Thẻ */
+export const doneTip = (w: DispatchOdWork) => `Đơn ĐÃ THỰC THI bên Xuất kho (chuyến ${w.group_code}: đã quét / đang nhặt lẻ ${w.done.toLocaleString('vi-VN')} base) — không bỏ khỏi xe được. Muốn bỏ: trao đổi với kho xoá QR / gỡ nhặt lẻ trước. Thêm đơn / sửa xe vẫn được; Lưu cần kho Tạm dừng chuyến`
+/** Tình trạng chuyến bên Xuất của xe đã chốt (23/10) — chỉ khi kho ĐÃ đụng tới: đang xuất · tạm dừng · đã xong · đã quét / nhặt lẻ */
+export function TripWorkChip({ w }: { w: DispatchTripWork | null }) {
+  if (!w || (w.status === 'PENDING' && !w.scanned && !w.loose_held)) return null
+  const v = w.status === 'COMPLETED' ? { l: 'Đã xuất xong', c: 'bg-slate-200 text-slate-700', t: 'Chuyến bên Xuất ĐÃ HOÀN THÀNH — không sửa / xoá được nữa' }
+    : w.status === 'IN_PROGRESS' ? { l: 'Đang xuất', c: 'bg-orange-100 text-orange-800', t: 'Chuyến bên Xuất ĐANG XUẤT — sửa được trên bàn, nhưng muốn Lưu thì kho phải bấm Tạm dừng chuyến' }
+    : w.status === 'PAUSED' ? { l: 'Kho tạm dừng', c: 'bg-sky-100 text-sky-800', t: 'Kho đã Tạm dừng chuyến — Lưu được nếu kế hoạch mới không ít hơn phần kho đã quét / nhặt lẻ' }
+    : { l: 'Kho đã nhặt lẻ', c: 'bg-orange-100 text-orange-800', t: 'Chuyến chưa bắt đầu nhưng kho đã quét / giữ hàng nhặt lẻ — Lưu được nếu kế hoạch mới không ít hơn phần đó' }
+  return <span className={`shrink-0 rounded px-1 text-[9px] font-semibold ${v.c}`} title={v.t}>{v.l}</span>
+}
+/** Xe đã chốt đang MỞ KHOÁ sửa (23/10): Kế hoạch xuất / bên Xuất còn giữ bản cũ tới khi Lưu */
+export function UnsavedChip() {
+  return <span className="shrink-0 rounded bg-amber-100 px-1 text-[9px] font-semibold text-amber-900" title="Xe đã chốt đang mở khoá sửa — Kế hoạch xuất, chuyến bên Xuất, khung giờ vẫn là bản đã lưu cho tới khi bấm Lưu (Khôi phục = bỏ thay đổi)">chưa lưu</span>
 }
 
 // Hai bảng chung MỘT bộ cột (khung chờ bỏ ba cột chỉ xe mới có: Tải · Cước · ĐVVT). Điện thoại: cột đầu hẹp hơn, cột thao tác không
@@ -275,7 +294,8 @@ function odCells(ops: BoardOps, o: DispatchTripOd, t: DispatchTrip | null, tree?
   const route = t ? null : ops.routeOf(o.id)
   const share = t ? shareOf(o, t) : null
   const late = isLateSo(o, ops.plan.plan_date)
-  const warnText = [fl ? `${FLAG_VI[fl.kind]}${fl.info ? ` — ${fl.info}` : ''}` : '', noVeh ? 'Khách và kênh chưa khai Dòng xe được vào — máy không chọn xe' : '',
+  const done = t ? ops.workOf(o, t) : null
+  const warnText = [done ? doneTip(done) : '', fl ? `${FLAG_VI[fl.kind]}${fl.info ? ` — ${fl.info}` : ''}` : '', noVeh ? 'Khách và kênh chưa khai Dòng xe được vào — máy không chọn xe' : '',
     followOnly ? 'Chỉ có hàng đi kèm đơn — chờ đơn chính của khách, hoặc kéo tay lên xe của khách' : '',
     um ? `Máy không tạo xe: lô ${um.ods} OD trên ${um.vehicle} chỉ ${nf(um.pct, 1)} % < tối thiểu ${um.min} % — kéo lên xe / Xe mới, hoặc tick rồi "Trả về Chờ điều"; muốn máy vẫn tạo: Tối ưu lại, tick "Bỏ qua dải %"` : '',
     tb ? `Máy không tạo xe: đơn lớn hơn ${tb.vehicle} (${nf(tb.pct, 1)} % > trần ${tb.max} %) và loại xe này không ghép nhiều xe trên một thẻ — nới trần dải, đổi dòng xe được vào, bật "Ghép nhiều xe" cho loại xe, hoặc tách DO bên SAP` : ''].filter(Boolean).join(' · ')
@@ -285,9 +305,11 @@ function odCells(ops: BoardOps, o: DispatchTripOd, t: DispatchTrip | null, tree?
       node: (
         <div className={`flex min-w-0 items-center gap-1 ${t ? 'pl-5' : ''}`}>
           {tree && <TreeBranch rail={tree.rail} last={tree.last} />}
-          {can
-            ? <TickBox checked={ops.sel.has(o.id)} onChange={() => ops.toggle(o.id)} label={`Chọn ${o.od_number}`} />
-            : <span className="w-4 shrink-0" />}
+          {done
+            ? <span className="inline-flex w-4 shrink-0 justify-center" title={doneTip(done)}><Lock className="h-3.5 w-3.5 text-orange-600" aria-label="Đơn đã thực thi bên Xuất" /></span>
+            : can
+              ? <TickBox checked={ops.sel.has(o.id)} onChange={() => ops.toggle(o.id)} label={`Chọn ${o.od_number}`} />
+              : <span className="w-4 shrink-0" />}
           <span className="font-mono font-semibold">{o.od_number}</span>
           {/* 16/10 (user: "tình trạng SAP thể hiện qua biểu tượng, có màu và tooltip — Loại kho đưa lên vào vị trí chữ đó"): biểu tượng SAP +
               chip Loại kho ngay sau số OD; chữ đầy đủ của cờ ở tooltip + cột Lưu ý */}
@@ -322,6 +344,7 @@ function odCells(ops: BoardOps, o: DispatchTripOd, t: DispatchTrip | null, tree?
       cls: 'truncate', title: warnText, stop: !!fl && (fl.kind === 'CHANGED' || fl.kind === 'REPLACED') && canSap,
       node: warnText ? (
         <span className="inline-flex items-center gap-1.5">
+          {done && <span className="rounded bg-orange-100 px-1 text-[9px] font-semibold text-orange-800">Đã thực thi bên Xuất</span>}
           {fl && <span className={soft ? 'text-amber-800' : 'text-red-600'}>{FLAG_VI[fl.kind]}{fl.info ? ` — ${fl.info}` : ''}</span>}
           {fl?.kind === 'CHANGED' && canSap && <button type="button" className="inline-flex items-center gap-0.5 font-medium text-sky-700 hover:underline" disabled={ops.sapBusy}
             onClick={() => ops.resync(o.od_number)}><RotateCw className="h-3 w-3" />Cập nhật theo SAP</button>}
@@ -399,6 +422,8 @@ function tripCells(ops: BoardOps, t: DispatchTrip, hv: BoardHover, open: boolean
             {/* 19/10 (user: "Đã vào kế hoạch là gì? gọn gàng row này"): xe ĐÃ CHỐT (Xác nhận ⇒ đã có dòng Kế hoạch xuất) không còn badge chữ —
                 chính nút workflow (xanh lá) là dấu đã chốt, bấm mở popup tình trạng xe; chỉ hai trạng thái bất thường còn badge */}
             {st === 'CONFIRMED' && <TripFlow code={t.group_code} tone="done" title={`Xe đã chốt (đã vào Kế hoạch xuất) — bấm xem tình trạng xe ${t.group_code}`} />}
+            {st === 'DRAFT' && t.confirmed_at && <UnsavedChip />}
+            <TripWorkChip w={ops.tripWorkOf(t)} />
             {(st === 'DECLINED' || st === 'TENDERED') && <StatusBadge tone={st === 'DECLINED' ? 'red' : 'blue'}>{st === 'DECLINED' ? 'Từ chối' : 'Chờ ĐVVT'}</StatusBadge>}
             {/* 19/10: chip chữ "Khoá" bỏ — khối xe đã tô tím + MỘT ổ khoá ở cột thao tác (xem `act`) là đủ */}
             {t.allow_extra_drops && <ExtraDropsBadge />}
@@ -484,7 +509,7 @@ function tripCells(ops: BoardOps, t: DispatchTrip, hv: BoardHover, open: boolean
           {ed && <IconBtn title={t.locked ? 'Đang khoá — "Tối ưu lại" không đụng vào xe này (kéo tay vẫn được). Bấm để mở khoá' : 'Khoá xe để "Tối ưu lại" giữ nguyên (hỏi lại trước khi khoá)'} disabled={ops.tripBusy} onClick={() => ops.toggleLock(t)}>
             {t.locked ? <Lock className="h-3.5 w-3.5 text-violet-700" /> : <Unlock className="h-3.5 w-3.5" />}</IconBtn>}
           {!ed && st === 'CONFIRMED' && (ops.editable && ops.reopenTrip
-            ? <IconBtn title={`Xe #${t.seq} đã chốt — khoá. Bấm để MỞ LẠI riêng xe này về nháp (hỏi lại trước)`} disabled={ops.tripBusy} onClick={() => ops.reopenTrip!(t)}><Lock className="h-3.5 w-3.5 text-violet-700" /></IconBtn>
+            ? <IconBtn title={`Xe #${t.seq} đã chốt — khoá. Bấm để MỞ KHOÁ sửa riêng xe này (Kế hoạch xuất / bên Xuất giữ nguyên tới khi Lưu)`} disabled={ops.tripBusy} onClick={() => ops.reopenTrip!(t)}><Lock className="h-3.5 w-3.5 text-violet-700" /></IconBtn>
             : <span title="Xe đã chốt — khoá. Đang ở chế độ XEM: muốn mở khoá thì bấm Sửa ở tab Kế hoạch (cần quyền Xác nhận điều vận)"><Lock className="h-3.5 w-3.5 text-violet-700" aria-label="Xe đã chốt — khoá" /></span>)}
           {!ed && st !== 'CONFIRMED' && t.locked && <Lock className="h-3.5 w-3.5 text-violet-700" aria-label="Xe đã khoá" />}
           {/* 19/10 (user: "đổi ngày dễ như bên Kế hoạch xuất"): dời cả xe sang ngày khác — giữ Số xe, nhả khung giờ, chuyến + lệnh VC theo */}
@@ -496,6 +521,7 @@ function tripCells(ops: BoardOps, t: DispatchTrip, hv: BoardHover, open: boolean
   }
 }
 
+const workKey = (ops: BoardOps, t: DispatchTrip) => { const w = ops.tripWorkOf(t); return `${w?.status ?? ''}|${w?.scanned ?? 0}|${w?.loose_held ? 1 : 0}|${t.ods.filter(o => ops.workOf(o, t)).map(o => o.id).join(',')}` }
 /** Dòng xe + các dòng đơn của xe. Mọi dòng của xe là MỘT ô thả (thả lên dòng đơn nào cũng là thả vào xe đó).
  *  VẼ LẠI CHỈ KHI XE ĐÓ ĐỔI (`sameTripRows`): đo 06/10 Bàu Bàng 709 xe / 3.194 dòng — mỗi lần rê sang xe khác cả bảng vẽ lại, viền
  *  xe đích hiện sau 567 ms. Dữ liệu vẽ đọc từ props (đổi là vẽ lại); thao tác lúc bấm / kéo đọc `live.current` (bản MỚI NHẤT) — vd kéo
@@ -503,9 +529,10 @@ function tripCells(ops: BoardOps, t: DispatchTrip, hv: BoardHover, open: boolean
 type TripRowsProps = {
   ops: BoardOps; live: React.MutableRefObject<BoardOps>; t: DispatchTrip; open: boolean; onToggle: (id: string) => void; cols: RtColDef[]
   hv: BoardHover; hit: boolean; selKey: string; sig: string; flags: Map<string, DispatchOdFlag>; route: TripRouteTag | null
+  wk: string   // 23/10: dấu "bên Xuất đã làm gì" của xe — kho quét thêm thì xe vẽ lại (màu đơn đã thực thi)
 }
 const sameTripRows = (a: TripRowsProps, b: TripRowsProps) =>
-  a.t === b.t && a.open === b.open && a.hv === b.hv && a.hit === b.hit && a.selKey === b.selKey && a.sig === b.sig && a.cols === b.cols && a.flags === b.flags && a.route === b.route
+  a.t === b.t && a.open === b.open && a.hv === b.hv && a.hit === b.hit && a.selKey === b.selKey && a.sig === b.sig && a.cols === b.cols && a.flags === b.flags && a.route === b.route && a.wk === b.wk
 const TripRows = memo(function TripRows({ ops, live, t, open, onToggle, cols, hv, hit, route }: TripRowsProps) {
   const ed = ops.editableTrip(t)
   const drop = ed ? ops.dropProps('trip', t.id, t.id) : {}
@@ -534,14 +561,15 @@ const TripRows = memo(function TripRows({ ops, live, t, open, onToggle, cols, hv
         <RowCells cols={cols} cells={tripCells(ops, t, hv, open, () => onToggle(t.id), route)} bg={bg} />
       </TableRow>
       {shown.map((o, i) => {
-        const dragOk = ops.canDrag && ed
+        const done = ops.workOf(o, t)
+        const dragOk = ops.canDrag && ed && !done   // 23/10: đơn đã thực thi bên Xuất không kéo ra được
         const s = ops.sel.has(o.id)
         const rbg = s || hv ? 'bg-sky-50' : ops.q && ops.matches(o) ? 'bg-yellow-50' : lk ? 'bg-violet-50' : 'bg-white'
         const last = i === shown.length - 1
         return (
           <TableRow key={o.id} {...drop} draggable={dragOk}
             onDragStart={dragOk ? e => live.current.startDrag(e, live.current.idsFor(o), true) : undefined} onDragEnd={dragOk ? () => live.current.endDrag() : undefined}
-            className={`cursor-pointer ${rbg} ${isLateSo(o, ops.plan.plan_date) ? 'text-red-600' : ''} ${lk ? 'hover:bg-violet-100' : 'hover:bg-slate-50'} ${edgeR} ${last ? endB : ''} ${dragOk ? 'active:cursor-grabbing' : ''}`} onClick={() => live.current.onOpenOd(o)}>
+            className={`cursor-pointer ${rbg} ${isLateSo(o, ops.plan.plan_date) ? 'text-red-600' : done ? 'text-orange-700' : ''} ${lk ? 'hover:bg-violet-100' : 'hover:bg-slate-50'} ${edgeR} ${last ? endB : ''} ${dragOk ? 'active:cursor-grabbing' : ''}`} onClick={() => live.current.onOpenOd(o)}>
             <RowCells cols={cols} cells={odCells(ops, o, t, { rail, last })} bg={rbg} />
           </TableRow>
         )
@@ -743,7 +771,7 @@ export function DispatchBoardTable({ ops, toolbar, rail, poolHeader, poolExtras 
                             )}
                             <TripRows ops={ops} live={live} t={t} open={tripOpen(t.id)} onToggle={flipTrip} cols={tcols} flags={ops.flags} sig={sig}
                               hv={ops.hover?.target === t.id && !ops.ownDrop(t.id) ? ops.hover : null} hit={ops.justHit === t.id}
-                              selKey={ops.sel.size ? t.ods.filter(o => ops.sel.has(o.id)).map(o => o.id).join(',') : ''} route={ops.tripRoute(t.id)} />
+                              selKey={ops.sel.size ? t.ods.filter(o => ops.sel.has(o.id)).map(o => o.id).join(',') : ''} route={ops.tripRoute(t.id)} wk={workKey(ops, t)} />
                           </Fragment>
                         )
                       })}

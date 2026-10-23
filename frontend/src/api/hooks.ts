@@ -6187,8 +6187,13 @@ export interface DispatchPlan {
   in_plan?: { od_number: string; group_code: string }[]
   /** dấu phiên bản (06/10) — bàn nhận tín hiệu realtime thì hỏi dấu, trùng thì không tải lại cả kế hoạch */
   stamp?: string | null
+  /** 23/10: đang Sửa — có bản đã lưu để Khôi phục (ai bấm Sửa · lúc nào); null = không có thay đổi chưa Lưu */
+  edit?: { started_at: string; started_by: string | null } | null
 }
 export type DispatchPlanListItem = Omit<DispatchPlan, 'trips' | 'params' | 'unplanned'>
+/** 23/10 — bên Xuất đã làm gì trên chuyến của xe đã chốt: trạng thái chuyến + đơn đã thực thi (đã quét / giữ nhặt lẻ, số BASE) */
+export interface DispatchTripWork { group_code: string; status: string; scanned: number; loose_held: boolean }
+export interface DispatchOdWork { od_number: string; group_code: string; done: number }
 const invalidateDispatch = (qc: ReturnType<typeof useQueryClient>) => { qc.invalidateQueries({ queryKey: ['dispatch-plans'] }); qc.invalidateQueries({ queryKey: ['dispatch-plan'] }); qc.invalidateQueries({ queryKey: ['dispatch-sync'] }); qc.invalidateQueries({ queryKey: ['dispatch-trip-carriers'] }) }
 /** Thả OD xong server trả NGUYÊN kế hoạch ⇒ đặt thẳng vào cache (không chờ tải lại) rồi mới làm mới danh sách/cờ. */
 const putDispatchPlan = (qc: ReturnType<typeof useQueryClient>, p: DispatchPlan) => {
@@ -6201,7 +6206,7 @@ export function useDispatchPlanSync(id: string | null, enabled = true) {
   return useQuery({
     queryKey: ['dispatch-sync', id], enabled: !!id && enabled, staleTime: 30_000, refetchInterval: 120_000,
     queryFn: async () => {
-      const d = (await apiClient.get(`/tms/dispatch/plans/${id}/sync`)).data.data as { flags: DispatchOdFlag[]; new_ods: number; new_od_numbers?: string[]; healed?: { to_confirmed: number; to_draft: number } }
+      const d = (await apiClient.get(`/tms/dispatch/plans/${id}/sync`)).data.data as { flags: DispatchOdFlag[]; new_ods: number; new_od_numbers?: string[]; healed?: { to_confirmed: number; to_draft: number }; work?: { trips: DispatchTripWork[]; ods: DispatchOdWork[] } }
       // 11/10: server vừa chữa xe lệch Kế hoạch xuất (xe nháp có dòng ⇒ Đã vào KH; xe đã vào KH hết dòng ⇒ nháp) ⇒ bàn tải lại kế hoạch
       if (d.healed && (d.healed.to_confirmed || d.healed.to_draft)) { qc.invalidateQueries({ queryKey: ['dispatch-plan', id] }); qc.invalidateQueries({ queryKey: ['dispatch-plans'] }) }
       return d
@@ -6474,13 +6479,20 @@ export function useResyncDispatchOd() {
     onSuccess: p => putDispatchPlan(qc, p),
   })
 }
-/** MỞ LẠI xe đã vào Kế hoạch xuất (chuyến bên Xuất chưa bắt đầu) để sửa trên bàn ghép xe rồi xác nhận lại. */
+/** MỞ KHOÁ xe đã vào Kế hoạch xuất để sửa trên bàn (23/10: chỉ về nháp — Kế hoạch xuất / chuyến / khung giờ giữ nguyên tới khi Lưu). */
 export function useReopenDispatchPlan() {
   const qc = useQueryClient()
   return useMutation({
-    // 17/10: `force` = người đã xác nhận rút cả xe có chuyến đang xuất / đã quét (server hỏi một lần bằng 409 OUTBOUND_HOLD_CONFIRM)
-    mutationFn: ({ plan_id, trip_ids, force }: { plan_id: string; trip_ids?: string[]; force?: boolean }) => apiClient.post(`/tms/dispatch/plans/${plan_id}/reopen`, { ...(trip_ids ? { trip_ids } : {}), ...(force ? { force: true } : {}) }, { timeout: 120_000 }).then(r => r.data.data as DispatchPlan & { reopened: { trips: number; group_codes: string[]; blocked: { group_code: string; reason: string }[]; warned: { group_code: string; seq: number; status: string; scanned: number; loose_held: boolean }[]; plan_status: DispatchPlan['status']; replan_error: string | null } }),
-    onSuccess: p => { putDispatchPlan(qc, p); for (const k of [['khvc'], ['do-sap'], ['gdos'], ['gdos-paged']]) qc.invalidateQueries({ queryKey: k }) },
+    mutationFn: ({ plan_id, trip_ids }: { plan_id: string; trip_ids?: string[] }) => apiClient.post(`/tms/dispatch/plans/${plan_id}/reopen`, trip_ids ? { trip_ids } : {}, { timeout: 120_000 }).then(r => r.data.data as DispatchPlan & { reopened: { trips: number; group_codes: string[]; blocked: { group_code: string; reason: string }[]; plan_status: DispatchPlan['status'] } }),
+    onSuccess: p => putDispatchPlan(qc, p),
+  })
+}
+/** SỬA (chụp bản đã lưu) · KHÔI PHỤC (bỏ mọi thay đổi chưa Lưu, về bản đã lưu) — 23/10 */
+export function useEditDispatchPlan() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ plan_id, action }: { plan_id: string; action: 'begin' | 'restore' }) => apiClient.post(`/tms/dispatch/plans/${plan_id}/edit`, { action }, { timeout: 120_000 }).then(r => r.data.data as Partial<DispatchPlan> & { restored?: { trips: number; ods: number; plan_status: DispatchPlan['status'] } }),
+    onSuccess: () => invalidateDispatch(qc),
   })
 }
 /** Phần kế hoạch đi kèm cửa sửa / bỏ MỘT xe (06/10) — tổng kết + mốc + dấu, để vá thẳng vào kế hoạch đang giữ. */
@@ -6558,7 +6570,7 @@ export function useMoveDispatchOd() {
 export function useConfirmDispatchPlan() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (id: string) => apiClient.post(`/tms/dispatch/plans/${id}/confirm`, {}, { timeout: 120_000 }).then(r => r.data.data as { plan_id: string; status: DispatchPlan['status']; trips: number; tendered: number; tendered_group_codes: string[]; discarded_empty: number; lines: number; group_codes: string[]; replan: Record<string, unknown> | null; replan_error: string | null; derive_failed: boolean; derive_message: string | null; rolled_back?: boolean }),
+    mutationFn: (id: string) => apiClient.post(`/tms/dispatch/plans/${id}/confirm`, {}, { timeout: 120_000 }).then(r => r.data.data as { plan_id: string; status: DispatchPlan['status']; trips: number; tendered: number; tendered_group_codes: string[]; discarded_empty: number; lines: number; group_codes: string[]; unchanged?: number; removed?: number; replan: Record<string, unknown> | null; replan_error: string | null; derive_failed: boolean; derive_message: string | null; rolled_back?: boolean }),
     onSuccess: () => { invalidateDispatch(qc); for (const k of [['khvc'], ['do-sap'], ['gdos'], ['gdos-paged']]) qc.invalidateQueries({ queryKey: k }) },
   })
 }
@@ -6581,7 +6593,8 @@ export function useRespondDispatchTrip() {
 }
 export function useDiscardDispatchPlan() {
   const qc = useQueryClient()
-  return useMutation({ mutationFn: (id: string) => apiClient.delete(`/tms/dispatch/plans/${id}`).then(r => r.data.data as { id: string; status: DispatchPlan['status']; discarded_trips: number }), onSuccess: () => invalidateDispatch(qc) })
+  // 23/10: XOÁ KẾ HOẠCH (mọi trạng thái) — xe đã vào Kế hoạch xuất bị gỡ ⇒ chuyến bên Xuất ngừng, khung giờ nhả
+  return useMutation({ mutationFn: (id: string) => apiClient.delete(`/tms/dispatch/plans/${id}`, { timeout: 120_000 }).then(r => r.data.data as { id: string; status: DispatchPlan['status']; discarded_trips: number; removed_from_khvc?: number; replan_error?: string | null }), onSuccess: () => { invalidateDispatch(qc); for (const k of [['khvc'], ['do-sap'], ['gdos'], ['gdos-paged'], ['trip-flow']]) qc.invalidateQueries({ queryKey: k }) } })
 }
 
 export function useTransportCompanies(onlyActive = false, type?: 'NCC' | 'ĐVVT') {

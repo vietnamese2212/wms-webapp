@@ -777,3 +777,41 @@ quan (như nút workflow trong SAP), bao gồm số chứng từ để đi searc
 - **Sửa kế hoạch đã xác nhận — hành vi hiện tại (trả lời user, chưa đổi)**: bấm Sửa KHÔNG đụng xe đã chốt (KH xuất · chuyến · lệnh VC ·
   khung giờ giữ nguyên) — kế hoạch cũ vẫn hiệu lực tới khi bạn mở khoá xe nào; mở khoá là TÁC ĐỘNG NGAY (gỡ KH xuất, chuyến ngừng, nhả khung
   giờ); chưa có nút "thoát sửa / bỏ thay đổi" — xe đã mở khoá chỉ quay lại bằng Xác nhận lại (cùng Số xe sống lại, khung giờ đặt lại).
+
+## 23/10 — SỬA = BẢN NHÁP (Lưu · Khôi phục) · MỘT nút Xoá kế hoạch · Số xe không dùng lại · bên Xuất đã làm thì sao (user chốt — THAY 17/10 + C92 22/10)
+
+- **Sửa kế hoạch đã xác nhận = bản nháp** (user: "khi bấm Sửa ⇒ thay đổi gì sẽ có nút Lưu, lưu xong thì mới tính kế hoạch mới; nút Khôi phục —
+  chưa lưu bấm vào thì trở lại bản đã lưu"). Bấm Sửa (`POST /plans/:id/edit {action:'begin'}`) hoặc mở khoá xe đầu tiên chụp BẢN ĐÃ LƯU (xe +
+  đơn trên xe) vào `dispatch_plan_edit` (RPC `dispatch_edit_begin`, bảng riêng — GET kế hoạch `select *` không kéo bản chụp). **Mở khoá xe**
+  (`reopen`) chỉ đưa xe về NHÁP trên bàn: Kế hoạch xuất · chuyến bên Xuất · khung giờ KHÔNG đổi (bản 16/10–22/10: gỡ dòng ngay, chuyến ngừng,
+  nhả khung). Xe nháp mà `confirmed_at` có = xe đã chốt đang sửa (chip "chưa lưu"). RPC tự chữa `dispatch_trip_khvc_heal` bỏ qua kế hoạch có
+  bản chụp (không thì /sync khoá lại xe đang sửa sau ≤ 120 s).
+- **Lưu = cửa Xác nhận** (nhãn "Lưu" khi có bản chụp): so bản chụp — xe mở khoá không đổi (đơn · dòng xe · ĐVVT · xe phụ) chỉ khoá lại, không ghi;
+  xe đổi ghi đè CÙNG Số xe; xe đã chốt bị bỏ hết đơn / bị xoá (`removedSaved`) gỡ khỏi Kế hoạch xuất ⇒ chuyến ngừng, khung giờ nhả. Dòng Kế
+  hoạch xuất ghi bằng RPC `dispatch_commit_lines` (xoá + chèn một giao dịch / lô 60 xe); đường dội từ chối cả lô ⇒ trả lại NGUYÊN bản cũ. Xe đã
+  chốt không đi lại vòng chào ĐVVT. Lưu xong xoá bản chụp; chốt lẻ một xe / ĐVVT nhận / dời ngày cập nhật bản chụp (`rebaseEdit`).
+- **Khôi phục** (`{action:'restore'}`, RPC `dispatch_edit_restore`): xe + đơn trên xe về đúng bản chụp trong một giao dịch — xe mới bỏ, đơn kéo
+  lên xe về khung chờ, xe đã xoá dựng lại; Kế hoạch xuất / bên Xuất không đụng (chưa từng đổi).
+- **Bên Xuất đã làm thì sao** (user: "đơn Kho chưa động chạm thì áp thẳng; đã bắt đầu / nhặt lẻ / xuất thì cứ cho sửa, nhưng muốn Lưu thì kho phải
+  tạm dừng; tạm dừng rồi mà vướng — đơn cũ đã lên nhiều hàng hơn đơn mới — thì cảnh báo, không cho lưu; ví dụ đơn cũ 100, sửa còn 80, đã quét 90
+  thì không được, quét 20 thì được — không nhả 20 thùng đó"; "không có việc gửi yêu cầu — trao đổi ở ngoài"). `outboundBlocks` trước khi ghi:
+  chuyến chưa đụng ⇒ áp thẳng · ĐANG XUẤT ⇒ chặn "kho bấm Tạm dừng" · Tạm dừng / đã quét / giữ nhặt lẻ ⇒ đường GỘP giữ hàng (`keepWork` →
+  `processVehicleGroups` đưa cả chuyến chưa bắt đầu đang giữ nhặt lẻ vào `mergePausedGDO`) nếu `mergeKeepIssues` (services/outboundMergeKeep —
+  MỘT hàm cho cả cửa gộp chuyến Tạm dừng bên Xuất; khớp NPP + mã, đã quét + nhặt lẻ chưa xác nhận, test `outboundMergeKeep.test.ts`) không
+  vướng · đã hoàn thành ⇒ chặn. Một xe vướng ⇒ 409 `OUTBOUND_WORK_BLOCKS` nêu từng xe, KHÔNG ghi gì. Gộp đọc lại "đã làm" ngay trước khi xoá dòng
+  hàng (kho vừa quét ⇒ không xoá).
+- **Trên bàn**: /sync chạy cả ở chế độ XEM và trả `work` (`outboundWorkOf`: tình trạng chuyến + đơn đã thực thi theo `od_refs`) ⇒ đơn đã thực thi
+  chữ cam + ổ khoá cam, KHÔNG tick / kéo được (thanh nổi "Về khung chờ" không mang chúng); xe có chip "Đang xuất" / "Kho tạm dừng" / "Kho đã nhặt
+  lẻ" / "Đã xuất xong". Chế độ XEM: khung chờ hiện ĐỦ đơn Chờ điều (chỉ xem), đơn mới ZSD02 tự vào Chờ điều như khi sửa.
+- **MỘT nút "Xoá kế hoạch"** (user: "đơn giản là 1 nút để giải quyết lỡ tay tạo nhầm kế hoạch — xoá nó đi") thay Bỏ nháp · Bỏ xe chưa chốt · Huỷ kế
+  hoạch, cả trên bàn lẫn tab Kế hoạch. XOÁ MỀM: kế hoạch + xe ở lại trạng thái ĐÃ XOÁ, xe đã chốt giữ dòng đơn; khung chờ + xe chỉ ở bàn dọn. Xe đã
+  vào Kế hoạch xuất cần quyền `dispatch.confirm`; bên Xuất đã bắt đầu / quét / nhặt lẻ / hoàn thành ở BẤT KỲ xe nào ⇒ 409 `PLAN_HAS_OUTBOUND_WORK`
+  (user: "bắt buộc bên xuất phải gỡ ra thì bên Kế hoạch mới có thể xoá"). Bỏ đường 17/10 "rút xe đang có hàng, hỏi một lần rồi force" (`forceDrop`,
+  việc PLAN_PULLED) — lưới `SCANNED_OD_REMOVED` / cờ `WH_SCANNED` còn cho chuyến đã bị rút trước 23/10.
+- **Số xe đã có chuyến bên Xuất KHÔNG BAO GIỜ dùng lại** (user: "kế hoạch đã xoá thì chuyến bên Xuất vẫn phải giữ lại, không ghi đè, tạo lại thì
+  có số xe mới"): `takenSeqs` đếm cả mọi `GroupDeliveryOrder` của tiền tố kho × ngày. Thay C92 22/10 (`heldDropped` / `seqTakenFor` — xe chở lại
+  đơn cũ lấy lại số, chuyến sống lại): sửa nay ghi đè cùng Số xe nên không còn đường "rút rồi xác nhận lại". Số chỉ ở bàn (nháp chưa từng chốt) vẫn dùng lại.
+- **Lịch sử**: user giữ tab Lịch sử; Lưu ghi `PLAN_TRIP_UPDATED` (+ / − DO so bản đã lưu) · `PLAN_TRIP_DELETED`; Khôi phục `DISPATCH_PLAN_RESTORED`.
+- **SO tạo ĐÚNG ngày đi** không tính "sau ngày đi" (user xác nhận 23/10 — giữ `>`).
+- Gói 61: [11g][11h] mở khoá cả kế hoạch có xe đang xuất / Lưu không đổi · [20d] Xoá kế hoạch đã xác nhận · [21m] Lưu gỡ xe · Khôi phục · Xoá ·
+  [21n] xe bên Xuất đã làm (chặn · Khôi phục · Tạm dừng ⇒ gộp giữ hàng) · [21p] Xoá khi chuyến đã bắt đầu ⇒ 409, lập lại ⇒ Số xe mới.

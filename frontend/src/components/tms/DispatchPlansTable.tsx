@@ -4,12 +4,13 @@
 // Trung chuyển mang trạng thái + xe/đơn của từng mảng; số xe · đơn · khung chờ · pallet · cước cộng cả hai. Bấm dòng = mở ngày (bàn vẫn
 // chuyển mảng bằng công tắc Bán hàng | Trung chuyển); Sửa · Bỏ nháp · Huỷ áp cho CẢ HAI kế hoạch của ngày. Kế hoạch ĐÃ BỎ là lịch sử ⇒
 // mỗi bản một dòng riêng (chỉ xem), không gộp.
-// Nút trên dòng: "Sửa" (có kế hoạch đã xác nhận — nạp đơn chờ cả hai mảng, mở từng xe trên bàn) · "Bỏ nháp" / "Bỏ xe chưa chốt" (đang mở)
-// · "Huỷ kế hoạch" (có xe đã chốt, quyền xác nhận — mở lại mọi xe mở được rồi bỏ). Lọc nhanh: Đang mở · Đã xác nhận · Đã bỏ · Tất cả.
+// Nút trên dòng: "Sửa" (có kế hoạch đã xác nhận — nạp đơn chờ cả hai mảng, mở từng xe trên bàn) · "Xoá" (23/10, user: "1 nút để giải quyết
+// lỡ tay tạo nhầm kế hoạch — xoá nó đi": thay Bỏ nháp / Bỏ xe chưa chốt / Huỷ kế hoạch; xoá mềm, bên Xuất đã làm thì chặn). Lọc nhanh: Đang mở ·
+// Đã xác nhận · Đã xoá · Tất cả.
 // 19/10 (user hỏi "lịch sử với xoá chuyến, xoá kế hoạch thì sao") → 20/10 (user: "thay vì lịch sử ngày, cho lịch sử toàn bộ, có search /
 // filter"): nút "Lịch sử" trên MỌI dòng (kể cả đã bỏ) mở tab Lịch sử của Điều vận đã lọc sẵn ngày kế hoạch đó — vết kế hoạch + từng Số xe, kể cả xe đã bỏ / xoá.
 import { useEffect, useMemo, useState } from 'react'
-import { AlertTriangle, Ban, History, LayoutGrid, Pencil, Trash2 } from 'lucide-react'
+import { AlertTriangle, History, LayoutGrid, Pencil, Trash2 } from 'lucide-react'
 import { TableBody, TableCell, TableRow } from '@/components/ui/table'
 import { ResizableTable, type RtColDef } from '@/components/shared/ResizableTable'
 import { TableEmptyRow } from '@/components/shared/TableEmptyRow'
@@ -30,11 +31,11 @@ type Show = 'open' | 'confirmed' | 'discarded' | 'all'
 const SHOW: { k: Show; label: string; tip: string }[] = [
   { k: 'open', label: 'Đang mở', tip: 'Có mảng còn nháp / đang chờ ĐVVT — chưa vào Kế hoạch xuất hết' },
   { k: 'confirmed', label: 'Đã xác nhận', tip: 'Mọi xe của cả hai mảng đã vào Kế hoạch xuất — "Sửa" để mở từng xe' },
-  { k: 'discarded', label: 'Đã bỏ', tip: 'Chỉ xem — mỗi bản đã bỏ một dòng' },
+  { k: 'discarded', label: 'Đã xoá', tip: 'Chỉ xem — mỗi bản đã xoá một dòng' },
   { k: 'all', label: 'Tất cả', tip: 'Mọi kế hoạch của kho (200 gần nhất)' },
 ]
 const STATUS: Record<DispatchPlanListItem['status'], { label: string; tone: 'amber' | 'blue' | 'green' | 'slate' }> = {
-  DRAFT: { label: 'Bản nháp', tone: 'amber' }, TENDERED: { label: 'Chờ ĐVVT / mở một phần', tone: 'blue' }, CONFIRMED: { label: 'Đã xác nhận', tone: 'green' }, DISCARDED: { label: 'Đã bỏ', tone: 'slate' },
+  DRAFT: { label: 'Bản nháp', tone: 'amber' }, TENDERED: { label: 'Chờ ĐVVT / mở một phần', tone: 'blue' }, CONFIRMED: { label: 'Đã xác nhận', tone: 'green' }, DISCARDED: { label: 'Đã xoá', tone: 'slate' },
 }
 
 /** Một dòng của bảng = một NGÀY (hai mảng) — hoặc một kế hoạch đã bỏ (lịch sử, dòng riêng). */
@@ -103,15 +104,14 @@ function SegCell({ p, today }: { p: DispatchPlanListItem | null; today: string }
   )
 }
 
-export function DispatchPlansTable({ plans, loading, error, currentPlanId, canPlan, canConfirm, busyId, onOpen, onEdit, onDiscard, onCancel, onHistory }: {
+export function DispatchPlansTable({ plans, loading, error, currentPlanId, canPlan, canConfirm, busyId, onOpen, onEdit, onDelete, onHistory }: {
   plans: DispatchPlanListItem[]; loading: boolean; error: string | null
   currentPlanId: string | null   // kế hoạch đang mở trên bàn — tô nhẹ dòng ngày của nó để biết "mình đang ở đâu"
   canPlan: boolean; canConfirm: boolean; busyId: string | null
   onOpen: (d: DispatchPlanDay) => void
   onHistory: (d: DispatchPlanDay) => void    // 20/10: sang tab Lịch sử, lọc sẵn ngày kế hoạch này
   onEdit: (d: DispatchPlanDay) => void       // có kế hoạch đã xác nhận: nạp đơn chờ cả hai mảng + sang bàn, mở từng xe
-  onDiscard: (d: DispatchPlanDay) => void    // bỏ nháp / bỏ xe chưa chốt của mọi mảng đang mở
-  onCancel: (d: DispatchPlanDay) => void     // huỷ cả kế hoạch (cả hai mảng) đã có xe chốt — làm nhầm
+  onDelete: (d: DispatchPlanDay) => void     // 23/10: XOÁ kế hoạch của ngày (cả hai mảng) — làm nhầm
 }) {
   const desktop = useIsDesktop()
   const today = todayVN()
@@ -170,7 +170,6 @@ export function DispatchPlansTable({ plans, loading, error, currentPlanId, canPl
               const busy = d.plans.some(p => p.id === busyId)
               const hasConfirmed = !d.discarded && d.plans.some(p => p.status === 'CONFIRMED')
               const hasConfirmedTrips = !d.discarded && d.plans.some(p => (p.status === 'CONFIRMED' || p.status === 'TENDERED') && (p.summary?.confirmed ?? 0) > 0)
-              const partly = d.plans.some(p => p.status === 'TENDERED' || p.status === 'CONFIRMED')
               return (
                 <TableRow key={d.key} className={`cursor-pointer hover:bg-slate-50 ${bg} ${holds && !d.discarded ? '' : 'text-slate-400'}`} onClick={() => onOpen(d)}
                   title={d.discarded ? 'Kế hoạch đã bỏ — bấm để xem (chỉ xem)' : holds ? 'Bấm dòng để mở ngày này — bàn chuyển mảng bằng Bán hàng | Trung chuyển' : 'Nháp chỉ chứa đơn Chờ điều (bấm Xem đơn rồi để đó) — không giữ đơn nào'}>
@@ -193,10 +192,9 @@ export function DispatchPlansTable({ plans, loading, error, currentPlanId, canPl
                         title="Mở tab Lịch sử đã lọc ngày này — ai lập / xác nhận / mở lại / bỏ kế hoạch, và mọi thao tác trên từng Số xe (kể cả xe đã bỏ / đã xoá)"><History className="h-3 w-3" />Lịch sử</button>
                       {/* SỬA (16/10): nạp đơn chờ của CẢ HAI mảng vào khung chờ, sang bàn — xe đã chốt hiện ổ khoá, mở khoá xe nào thì xe đó về nháp */}
                       {canPlan && hasConfirmed && <button type="button" className="inline-flex items-center gap-1 font-medium text-sky-700 hover:underline disabled:opacity-50" disabled={busy} onClick={() => onEdit(d)} title="Nạp đơn chờ của ngày (cả Bán hàng lẫn Trung chuyển) vào khung chờ rồi sang Bàn ghép xe; xe đã vào Kế hoạch xuất tô tím + ổ khoá — mở khoá xe cần sửa"><Pencil className="h-3 w-3" />{busy ? 'Đang nạp…' : 'Sửa'}</button>}
-                      {canPlan && open && <button type="button" className="inline-flex items-center gap-1 font-medium text-red-700 hover:underline disabled:opacity-50" disabled={busy} onClick={() => onDiscard(d)} title="Bỏ mọi xe chưa chốt + khung chờ của cả hai mảng; xe đã vào Kế hoạch xuất giữ nguyên">
-                        <Trash2 className="h-3 w-3" />{busy ? 'Đang bỏ…' : partly ? 'Bỏ xe chưa chốt' : 'Bỏ nháp'}</button>}
-                      {/* HUỶ kế hoạch đã xác nhận (16/10, user: "kế hoạch làm nhầm, xoá toàn bộ") — cả hai mảng */}
-                      {canConfirm && hasConfirmedTrips && <button type="button" className="inline-flex items-center gap-1 font-medium text-red-700 hover:underline disabled:opacity-50" disabled={busy} onClick={() => onCancel(d)} title="Mở lại mọi xe mở được rồi bỏ cả kế hoạch của ngày (cả hai mảng) — đơn về Chờ điều, chuyến Xuất kho ngừng hoạt động, khung giờ nhả"><Ban className="h-3 w-3" />{busy ? 'Đang huỷ…' : 'Huỷ kế hoạch'}</button>}
+                      {/* XOÁ (23/10) — cả hai mảng; xe đã vào Kế hoạch xuất cần quyền xác nhận (gỡ dòng Kế hoạch xuất) */}
+                      {!d.discarded && canPlan && (!hasConfirmedTrips || canConfirm) && <button type="button" className="inline-flex items-center gap-1 font-medium text-red-700 hover:underline disabled:opacity-50" disabled={busy} onClick={() => onDelete(d)} title="Xoá kế hoạch làm nhầm (cả hai mảng) — đơn về Chờ điều; xe đã vào Kế hoạch xuất: chuyến bên Xuất ngừng (giữ lại), khung giờ nhả. Bên Xuất đã bắt đầu / quét / nhặt lẻ thì không xoá được — kho gỡ trước">
+                        <Trash2 className="h-3 w-3" />{busy ? 'Đang xoá…' : 'Xoá'}</button>}
                     </span>
                   </TableCell>
                 </TableRow>

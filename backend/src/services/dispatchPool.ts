@@ -186,18 +186,3 @@ export function findReplacedOds(
 export function shareBaseRange(day: string): { from: string; before: string } {
   return { from: `${day.slice(0, 7)}-01`, before: day }
 }
-
-/** SỐ XE của chuyến Xuất kho ĐÃ NGỪNG mà còn GIỮ HÀNG (22/10, C92): "đã có chủ" với mọi xe mới — TRỪ xe chở ít nhất một đơn của chính
- *  chuyến đó (luật 17/10: đơn đã quét về ĐÚNG xe cũ thì chuyến sống lại). `own` = số cũ xe này được ưu tiên lấy lại (nhỏ nhất, chưa bận ở
- *  KH xuất / xe nháp). `ods` không truyền (Tối ưu lại — chưa biết xe nào chở đơn nào) ⇒ mọi số giữ hàng đều bận. */
-export type HeldSeq = { seq: number; ods: string[] }
-export function seqTakenFor(base: Set<number>, held: HeldSeq[], ods?: string[]): { taken: Set<number>; own: number | null } {
-  const mine = new Set(ods ?? [])
-  const own = held.filter(h => !base.has(h.seq) && h.ods.some(o => mine.has(o))).map(h => h.seq).sort((a, b) => a - b)[0] ?? null
-  const taken = new Set(base)
-  for (const h of held) if (h.seq !== own) taken.add(h.seq)
-  return { taken, own }
-}
-
-/** Số OD của một đơn bên Xuất kho — `OutboundDelivery.delivery_code` lưu các mã Delivery nối ', ' (cửa dội Kế hoạch xuất). */
-export const odsOfDeliveryCode = (v: string | null | undefined): string[] => String(v ?? '').split(',').map(s => s.trim()).filter(Boolean)

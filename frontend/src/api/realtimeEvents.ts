@@ -86,6 +86,9 @@ const TABLE_QUERY_MAP: Record<string, string[][]> = {
   // kế hoạch ghép chuyến nháp (24/09). ['dispatch-plan'] của ba bảng này KHÔNG tải lại thẳng nữa (06/10) — `scheduleDispatchStampCheck`
   // hỏi dấu phiên bản từng kế hoạch đang mở, khác dấu mới tải: tiếng vọng thao tác của chính mình / kế hoạch kho khác không tải 3,9 MB
   dispatch_plan:         [['dispatch-plans']],
+  // 23/10: bản đã lưu khi Sửa (Lưu / Khôi phục hiện ở MỌI bàn đang mở kế hoạch đó) — hỏi dấu như ba bảng kế hoạch (RPC chụp / khôi phục
+  // chạm `dispatch_plan.updated_at` nên dấu đổi)
+  dispatch_plan_edit:    [],
   dispatch_trip:         [],
   // bàn ghép xe: hai người cùng kéo thả một kế hoạch thấy nhau. KHÔNG kéo theo dispatch-sync / dispatch-review (03/10, quota egress):
   // kéo thả không đổi dữ liệu SAP — hai cửa đó chỉ cần làm mới khi ZSD02 / Kế hoạch xuất / dấu hoãn đổi (erp_outbound_orders, khvc_lines…)
@@ -242,7 +245,7 @@ function coalescedInvalidate(key: string[]): void {
 // ghi (kể cả của chính người vừa kéo thả) làm MỌI bàn đang mở tải lại CẢ kế hoạch (709 xe = 3,9 MB). Nay gộp burst rồi hỏi DẤU PHIÊN
 // BẢN của từng kế hoạch đang mở (1 request nhỏ): trùng dấu đang giữ thì thôi, khác mới tải lại. Chính người này còn đang ghi (thao tác
 // chưa về) thì hoãn — phần thay đổi về tới sẽ mang dấu mới. Hỏi dấu hỏng ⇒ tải lại (an toàn hơn đứng im).
-const DISPATCH_PLAN_TABLES = new Set(['dispatch_plan', 'dispatch_trip', 'dispatch_trip_od'])
+const DISPATCH_PLAN_TABLES = new Set(['dispatch_plan', 'dispatch_trip', 'dispatch_trip_od', 'dispatch_plan_edit'])
 let dispatchCheckTimer: ReturnType<typeof setTimeout> | null = null
 function scheduleDispatchStampCheck(delay = COALESCE_MS): void {
   if (dispatchCheckTimer) return

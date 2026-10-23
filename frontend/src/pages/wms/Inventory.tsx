@@ -816,7 +816,8 @@ export default function Inventory() {
     tip: unitBreakdown.length ? `${QTY_CONVERTED_TIP}
 Gồm: ${unitBreakdown.join(' · ')}` : QTY_CONVERTED_TIP,
     value: unitBreakdown.length ? (
-      <span className="inline-block">
+      // max-w-full (23/10, đo 360 / 390): dòng "N thùng · M cái…" rộng 190 px trong ô ~180 px ⇒ CẢ TRANG trượt ngang 3–18 px; nay cắt "…" trong ô
+      <span className="inline-block max-w-full">
         {v.toLocaleString('vi-VN')}
         <span className="block text-[9px] font-normal leading-tight text-sky-200/90 truncate max-w-[190px]">
           {unitBreakdown.join(' · ')}

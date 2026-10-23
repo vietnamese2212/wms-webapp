@@ -1093,7 +1093,8 @@ export default function UserManagement() {
             <User2 className="h-4 w-4 text-slate-500" />
             <span className="hidden md:inline">Quản lý nhân sự &amp; phân quyền</span>
           </h1>
-          <TabsList className="shrink-0">
+          {/* 23/10 (đo 360 / 390: dải 4 tab rộng 447 px ⇒ CẢ TRANG trượt ngang 93–123 px): co + cuộn có mép mờ như mọi dải tab */}
+          <TabsList className="min-w-0 max-w-full overflow-x-auto">
             {tabs.map(t => (
               <TabsTrigger key={t.key} value={t.key} className="gap-1.5">
                 <t.icon className="h-3.5 w-3.5" /> {t.label}

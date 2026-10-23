@@ -32,7 +32,11 @@ const PAGES = ['/', '/wms/directed', '/wms/control-tower', '/wms/warehouse-costs
   '/wms/multi-scan', '/tms/bookings', '/tms/dispatch', '/tms/freight', '/tms/gate', '/wms/weigh-tickets', '/hr/assignments', '/hr/attendance', '/wms/inventory',
   '/wms/outbound/scan-log', '/wms/trace', '/tms/reports', '/external/do-sap', '/masterdata/materials', '/masterdata/customers', '/wms/locations', '/hr/org',
   '/wms/settings', '/tms/settings', '/masterdata/users', '/masterdata/integration-keys'].filter(p => !process.argv[2] || p.includes(process.argv[2]))
-const SIZES = [[1280, 800], [1536, 864], [1920, 1080]]
+// 23/10 (C81 lặp — Điều vận 1280 + menu mở: hàng đầu dài hơn khung 23 px, nút "Trung chuyển" bị cắt, bấm vào CẢ TRANG trượt ngang; máy tính
+// bảng 768: ghi chú chân bảng đẩy trang +200 px): bản cũ chỉ đo tràn của `document` ở 1280 — app cuộn trong <main> nên không bao giờ thấy.
+// Nay đo <main> tràn ngang ở MỌI cỡ máy tính (laptop 1280 / 1366, 1536, 24" 1920, 27" 2560) + máy tính bảng 768 + điện thoại 390.
+const SIZES = [[1280, 800], [1366, 768], [1536, 864], [1920, 1080], [2560, 1440]]
+const SMALL = [[768, 1024], [390, 844]]   // chỉ đo tràn ngang (dưới 1280 được xuống dòng)
 
 let email = process.env.QA_ADMIN_EMAIL, password = process.env.QA_ADMIN_PASSWORD, tag = null
 if (!email || !password) {
@@ -57,7 +61,7 @@ try {
       await page.goto(`${BASE}${path}`, { waitUntil: 'networkidle', timeout: 60000 }).catch(() => { /* trang có kết nối sống không bao giờ idle */ })
       await sleep(1500)
       const per = {}
-      for (const [w, h] of SIZES) {
+      for (const [w, h] of [...SIZES, ...SMALL]) {
         await page.setViewportSize({ width: w, height: h }); await sleep(700)
         per[w] = await page.evaluate(() => {
           const main = document.querySelector('main') ?? document.body
@@ -71,15 +75,18 @@ try {
           const rows = []; for (const y of [...ys].sort((a, b) => a - b)) if (!rows.length || y - rows[rows.length - 1] > 12) rows.push(y)
           const rowOf = y => rows.reduce((bi, ry, i) => Math.abs(ry - y) < Math.abs(rows[bi] - y) ? i : bi, 0)
           const map = {}; ctrls.forEach((el, i) => { const k = lab(el); if (!(k in map)) map[k] = rowOf(ys[i]) })
-          return { tableTop, rows: rows.length, map, overflowX: document.documentElement.scrollWidth > document.documentElement.clientWidth + 1 }
+          // tràn ngang = CẢ TRANG trượt: tài liệu, hoặc <main> (khung cuộn của app) — dải cuộn có chủ đích bên trong (tab, bảng) không tính
+          const over = Math.max(document.documentElement.scrollWidth - document.documentElement.clientWidth, main.scrollWidth - main.clientWidth)
+          return { tableTop, rows: rows.length, map, overflowX: over > 1 ? over : 0 }
         })
       }
       const a = per[1280], m = per[1536], z = per[1920]
       const moved = Object.keys(a.map).filter(k => k in z.map && a.map[k] !== z.map[k])
-      const flag = a.rows !== z.rows || a.rows !== m.rows || moved.length > 0 || a.overflowX
+      const spill = [...SIZES, ...SMALL].filter(([w]) => per[w].overflowX).map(([w]) => `${w}:+${per[w].overflowX}px`)
+      const flag = a.rows !== z.rows || a.rows !== m.rows || moved.length > 0 || spill.length > 0
         || (a.tableTop != null && z.tableTop != null && Math.abs(a.tableTop - z.tableTop) > 4)
       if (flag) bad++
-      console.log(`${flag ? '⚠' : '✓'} ${path.padEnd(28)} hàng ${a.rows}/${m.rows}/${z.rows} · đỉnh bảng ${a.tableTop}/${m.tableTop}/${z.tableTop}${moved.length ? ` · đổi hàng: ${moved.slice(0, 6).join(' | ')}` : ''}${a.overflowX ? ' · TRÀN NGANG 1280' : ''}`)
+      console.log(`${flag ? '⚠' : '✓'} ${path.padEnd(28)} hàng ${a.rows}/${m.rows}/${z.rows} · đỉnh bảng ${a.tableTop}/${m.tableTop}/${z.tableTop}${moved.length ? ` · đổi hàng: ${moved.slice(0, 6).join(' | ')}` : ''}${spill.length ? ` · TRÀN NGANG ${spill.join(' ')}` : ''}`)
       if (flag) for (const [w, h] of [[1280, 800], [1920, 1080]]) {
         await page.setViewportSize({ width: w, height: h }); await sleep(500)
         await page.screenshot({ path: join(OUT, `${path.replace(/\//g, '_') || '_root'}_${w}.png`), clip: { x: 0, y: 0, width: w, height: 330 } })

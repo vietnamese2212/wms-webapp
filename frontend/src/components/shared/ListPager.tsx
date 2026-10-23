@@ -87,7 +87,9 @@ export function ListFooter({ page, pageSize, total, unit, onPageSize, right, chi
           </select>
         </label>}
       </span>
-      {right && <span title={typeof right === 'string' ? right : undefined} className="text-slate-400 min-w-0 flex-1 truncate text-right sm:flex-none sm:shrink-0 xl:shrink">{right}</span>}
+      {/* max-w-full (23/10, đo máy tính bảng 768 / 1024): ở sm…xl ghi chú `shrink-0` rộng bằng cả câu ⇒ xuống dòng rồi vẫn dài hơn khung, đẩy
+          CẢ TRANG trượt ngang (Điều vận Xem đơn +200 px) — nay xuống dòng riêng và cắt "…" trong bề ngang khung */}
+      {right && <span title={typeof right === 'string' ? right : undefined} className="text-slate-400 min-w-0 max-w-full flex-1 truncate text-right sm:flex-none sm:shrink-0 xl:shrink">{right}</span>}
     </div>
   )
 }

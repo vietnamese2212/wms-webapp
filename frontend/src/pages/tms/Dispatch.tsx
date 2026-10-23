@@ -644,7 +644,7 @@ export default function Dispatch() {
             {/* Tab CẠNH tiêu đề (khuôn app — skill table-format 22); điện thoại chiếm trọn hàng đầu */}
             {/* 23/10 (đo 1280 + menu mở: hàng này dài hơn khung 23 px ⇒ nút "Trung chuyển" bị cắt, bấm vào cả trang trượt ngang): tab đệm px-2
                 (gọn 40 px ở mọi cỡ) + từ xl dải tab được CO — chỉ khi còn chật (nhãn "Kế hoạch · n nháp" dài thêm) mới cuộn có mép mờ, Kho co trước */}
-            <Tabs value={tab} onValueChange={v => setF({ tab: v })} className="w-full sm:w-auto order-first sm:order-none shrink-0 xl:shrink xl:min-w-0">
+            <Tabs value={tab} onValueChange={v => setF({ tab: v })} className="w-full sm:w-auto order-first sm:order-none shrink-0 xl:shrink-[0.01] xl:min-w-0">
               <TabsList className="h-8 max-w-full overflow-x-auto">
                 {tabs.map(t => <TabsTrigger key={t.key} value={t.key} className="gap-1 px-2 text-xs"><t.icon className="h-3.5 w-3.5" /> {t.label}</TabsTrigger>)}
               </TabsList>

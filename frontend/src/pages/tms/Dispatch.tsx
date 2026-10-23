@@ -639,14 +639,14 @@ export default function Dispatch() {
             hàng 1 = tiêu đề · tab · Kho · Ngày · Mảng; hàng 2 = kế hoạch · trạng thái · Khai thiếu · nút · dải chỉ số (flex-1) — KHÔNG xuống
             dòng ở bất kỳ màn nào ≥ 1280 (`xl:flex-nowrap`), màn rộng thì dải rộng ra. Dưới 1280 (máy tính bảng / điện thoại) vẫn wrap. */}
         <div className="border-b bg-white px-3 py-1.5 space-y-1 sm:py-2 sm:space-y-1.5 shrink-0 sm:rounded-t-xl">
-          <div className="flex items-center gap-2 flex-wrap xl:flex-nowrap">
+          <div className="flex items-center gap-2 xl:gap-1.5 flex-wrap xl:flex-nowrap">
             <h1 className="text-sm font-semibold text-slate-800 hidden sm:inline-flex items-center gap-1.5 shrink-0"><Waypoints className="h-4 w-4 text-sky-600" /> Điều vận</h1>
             {/* Tab CẠNH tiêu đề (khuôn app — skill table-format 22); điện thoại chiếm trọn hàng đầu */}
             {/* 23/10 (đo 1280 + menu mở: hàng này dài hơn khung 23 px ⇒ nút "Trung chuyển" bị cắt, bấm vào cả trang trượt ngang): tab đệm px-2
                 (gọn 40 px ở mọi cỡ) + từ xl dải tab được CO — chỉ khi còn chật (nhãn "Kế hoạch · n nháp" dài thêm) mới cuộn có mép mờ, Kho co trước */}
             <Tabs value={tab} onValueChange={v => setF({ tab: v })} className="w-full sm:w-auto order-first sm:order-none shrink-0 xl:shrink xl:min-w-0">
               <TabsList className="h-8 max-w-full overflow-x-auto">
-                {tabs.map(t => <TabsTrigger key={t.key} value={t.key} className="gap-1.5 px-2 text-xs"><t.icon className="h-3.5 w-3.5" /> {t.label}</TabsTrigger>)}
+                {tabs.map(t => <TabsTrigger key={t.key} value={t.key} className="gap-1 px-2 text-xs"><t.icon className="h-3.5 w-3.5" /> {t.label}</TabsTrigger>)}
               </TabsList>
               {tabs.map(t => <TabsContent key={t.key} value={t.key} className="hidden" />)}
             </Tabs>
@@ -659,7 +659,7 @@ export default function Dispatch() {
             <div className="inline-flex shrink-0 rounded-md border border-slate-200 p-0.5" title="Mảng điều vận — mỗi mảng một kế hoạch riêng cùng kho × ngày. Khách tick 'Trung chuyển' ở Khách hàng thì đơn vào Trung chuyển, còn lại Bán hàng; lấy đơn sang mảng mình ở tab Xem đơn.">
               {(['SALES', 'TRANSFER'] as const).map(s => (
                 <button key={s} type="button" onClick={() => setF({ segment: s, planId: '' })} aria-pressed={seg === s}
-                  className={`rounded px-2 h-8 sm:h-6 text-[11px] font-medium ${seg === s ? 'bg-slate-800 text-white' : 'text-slate-600 hover:bg-slate-100'}`}>{SEGMENT_VI[s]}</button>
+                  className={`rounded px-2 xl:px-1.5 h-8 sm:h-6 text-[11px] font-medium ${seg === s ? 'bg-slate-800 text-white' : 'text-slate-600 hover:bg-slate-100'}`}>{SEGMENT_VI[s]}</button>
               ))}
             </div>
           </div>

@@ -397,7 +397,7 @@ export default function Dispatch() {
     if (ok === null) return
     confirm.mutateAsync(plan.id).then(r => {
       if (saving && !r.derive_failed) {
-        setEditDay(null)
+        void afterSaved(plan.id)
         toast({
           title: `Đã lưu kế hoạch ngày ${formatDate(plan.plan_date)}`,
           description: [`${nf(r.trips - (r.unchanged ?? 0))} xe ghi vào Kế hoạch xuất`, r.unchanged ? `${nf(r.unchanged)} xe mở khoá không đổi — khoá lại` : '', r.removed ? `${nf(r.removed)} xe đã xoá — chuyến bên Xuất ngừng, khung giờ nhả` : '', r.tendered ? `${nf(r.tendered)} xe mới chờ ĐVVT phản hồi` : '', r.replan_error ? `chuyến chưa dội xuống: ${r.replan_error}` : ''].filter(Boolean).join(' · '),
@@ -495,7 +495,7 @@ export default function Dispatch() {
       body: 'Bỏ MỌI thay đổi chưa Lưu: xe mở khoá khoá lại như cũ, xe mới tạo bị bỏ, đơn kéo lên xe về khung chờ, xe đã xoá dựng lại. Kế hoạch xuất và bên Xuất không bị đụng (chúng chưa từng đổi).',
     }) === null) return
     editApi.mutateAsync({ plan_id: plan.id, action: 'restore' }).then(r => {
-      setEditDay(null)
+      void afterSaved(plan.id)
       toast({ title: `Đã khôi phục bản đã lưu — ${nf(r.restored?.trips ?? 0)} xe` })
     }).catch(e => err(e, 'Không khôi phục được'))
   }
@@ -506,13 +506,14 @@ export default function Dispatch() {
     const d = plan ? groupPlanDays(planListAll).find(x => !x.discarded && x.plan_date === plan.plan_date) : null
     if (d) startEdit(d)
   }
-  const toView = async () => {
+  // `skipId`: mảng vừa Lưu / Khôi phục (bản chụp của nó server đã xoá) — mảng kia chưa đổi gì thì bỏ bản chụp luôn, không thì ở lại Sửa
+  const endEditDay = async (skipId?: string) => {
     if (!plan) return
-    try {
-      for (const p of planListAll.filter(x => x.status !== 'DISCARDED' && x.plan_date === plan.plan_date)) await editApi.mutateAsync({ plan_id: p.id, action: 'end' })
-      setEditDay(null)
-    } catch (e) { err(e, 'Chưa về chế độ Xem được') }
+    for (const p of planListAll.filter(x => x.id !== skipId && x.status !== 'DISCARDED' && x.plan_date === plan.plan_date)) await editApi.mutateAsync({ plan_id: p.id, action: 'end' })
+    setEditDay(null)
   }
+  const toView = () => endEditDay().catch(e => err(e, 'Chưa về chế độ Xem được'))
+  const afterSaved = (id: string) => endEditDay(id).catch(e => toast({ title: 'Vẫn ở chế độ Sửa', description: apiMsg(e) }))
   const lockView = editing && (dirty || isOpen)
   const modeTip = !editing ? 'Đang XEM — bấm Sửa để nạp đơn chờ và sửa kế hoạch (mọi thay đổi chỉ áp khi bấm Lưu)'
     : dirty ? 'Có thay đổi chưa Lưu — bấm Lưu hoặc Khôi phục rồi mới về Xem được'

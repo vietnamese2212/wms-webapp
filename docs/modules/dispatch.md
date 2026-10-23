@@ -815,3 +815,11 @@ quan (như nút workflow trong SAP), bao gồm số chứng từ để đi searc
 - **SO tạo ĐÚNG ngày đi** không tính "sau ngày đi" (user xác nhận 23/10 — giữ `>`).
 - Gói 61: [11g][11h] mở khoá cả kế hoạch có xe đang xuất / Lưu không đổi · [20d] Xoá kế hoạch đã xác nhận · [21m] Lưu gỡ xe · Khôi phục · Xoá ·
   [21n] xe bên Xuất đã làm (chặn · Khôi phục · Tạm dừng ⇒ gộp giữ hàng) · [21p] Xoá khi chuyến đã bắt đầu ⇒ 409, lập lại ⇒ Số xe mới.
+- **Công tắc XEM | SỬA trên bàn** (23/10 chiều, user: "bổ sung nút Sửa ở bàn làm việc ở trạng thái Xem; switch qua Sửa rồi — có thay đổi thì
+  nút switch không dùng được, phải Lưu hoặc Khôi phục"): cạnh badge trạng thái, chỉ cho kế hoạch đã có bản lưu. Sửa = đúng nút Sửa ở tab Kế hoạch
+  (cả hai mảng của ngày). Về Xem = `POST /plans/:id/edit {action:'end'}` cho mọi mảng của ngày: bỏ bản chụp nếu bàn CHƯA khác bản đã lưu, có
+  khác ⇒ 409 `EDIT_DIRTY`. "Khác" = xe đổi trạng thái (mở khoá · xe mới có đơn) hoặc đơn đổi / rời / lên xe; khung chờ không tính — một hàm
+  `editDirty` (BE `services/dispatchEdit` ⇄ FE `components/tms/dispatchEdit`, mirror test). GET kế hoạch kèm CHỮ KÝ bản chụp (RPC
+  `dispatch_edit_sig`, migration 20261023b — chỉ id · trạng thái xe + cặp đơn–xe, không kéo `detail`). Gói 61 [21m].
+- **Tab Kế hoạch mặc định lọc "Đã xác nhận"** (user 23/10). **"Xem đơn" không lập nháp thứ hai cho mảng đã xác nhận** (C95): `reuse` nhận cả
+  bản đã xác nhận — Ba Vì 02/10 có nháp Trung chuyển thừa từ lỗi này, đã xoá mềm.

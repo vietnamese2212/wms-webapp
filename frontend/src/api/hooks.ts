@@ -17,6 +17,7 @@ import { useActiveInboundStore } from '@/stores/activeInboundStore'
 import { useActiveVehiclesStore } from '@/stores/activeVehiclesStore'
 import type { InboundOrder, PalletEntry, Department, JobTitle, EmployeeRecord, GDO, InventoryEntry, TmsVehicleType, SlotTemplate, TransportCompany, TmsVehicle, Material, DockStatus, DirectedBoard, DateRule, WorkInbox, DirectedSupervision } from '@/types'
 import type { WhTypeMeta } from '@/utils/cargoCategory'
+import type { EditSig } from '@/components/tms/dispatchEdit'
 import type { MatUnits } from '@/utils/qtyUnits'
 
 const delay = (ms = 600) => new Promise((r) => setTimeout(r, ms))
@@ -6188,7 +6189,7 @@ export interface DispatchPlan {
   /** dấu phiên bản (06/10) — bàn nhận tín hiệu realtime thì hỏi dấu, trùng thì không tải lại cả kế hoạch */
   stamp?: string | null
   /** 23/10: đang Sửa — có bản đã lưu để Khôi phục (ai bấm Sửa · lúc nào); null = không có thay đổi chưa Lưu */
-  edit?: { started_at: string; started_by: string | null } | null
+  edit?: ({ started_at: string; started_by: string | null } & Partial<EditSig>) | null
 }
 export type DispatchPlanListItem = Omit<DispatchPlan, 'trips' | 'params' | 'unplanned'>
 /** 23/10 — bên Xuất đã làm gì trên chuyến của xe đã chốt: trạng thái chuyến + đơn đã thực thi (đã quét / giữ nhặt lẻ, số BASE) */
@@ -6491,7 +6492,7 @@ export function useReopenDispatchPlan() {
 export function useEditDispatchPlan() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ plan_id, action }: { plan_id: string; action: 'begin' | 'restore' }) => apiClient.post(`/tms/dispatch/plans/${plan_id}/edit`, { action }, { timeout: 120_000 }).then(r => r.data.data as Partial<DispatchPlan> & { restored?: { trips: number; ods: number; plan_status: DispatchPlan['status'] } }),
+    mutationFn: ({ plan_id, action }: { plan_id: string; action: 'begin' | 'restore' | 'end' }) => apiClient.post(`/tms/dispatch/plans/${plan_id}/edit`, { action }, { timeout: 120_000 }).then(r => r.data.data as Partial<DispatchPlan> & { restored?: { trips: number; ods: number; plan_status: DispatchPlan['status'] } }),
     onSuccess: () => invalidateDispatch(qc),
   })
 }

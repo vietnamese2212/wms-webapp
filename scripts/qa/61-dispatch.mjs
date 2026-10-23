@@ -2564,6 +2564,9 @@ try {
       const D = tripOfOd(p3, OD[2])
       const cf3 = await api(`/tms/dispatch/plans/${s4.id}/confirm`, 'POST', {})                           // chỉ ghi xe nháp D
       const p4 = await P()
+      // XEM ĐƠN (reuse) trên ngày ĐÃ XÁC NHẬN (23/10, lỗi Ba Vì 02/10: lập thêm nháp thứ hai cùng mảng) ⇒ trả lại đúng kế hoạch đã xác nhận
+      const ru = await api('/tms/dispatch/plan', 'POST', { ...PLAN_BODY, reuse: true })
+      const ruDraft = (await restAll('dispatch_plan', `select=id&warehouse_id=eq.${WH}&plan_date=eq.${DAY}&segment=eq.SALES&status=eq.DRAFT`)).length
       // KHÔI PHỤC (23/10): Sửa → mở khoá D → kéo đơn của D về khung chờ (D hết đơn bị bỏ) → Khôi phục ⇒ D về đúng bản đã lưu, KH xuất không đổi
       const eb = await api(`/tms/dispatch/plans/${s4.id}/edit`, 'POST', { action: 'begin' })
       const ro2 = D ? await api(`/tms/dispatch/plans/${s4.id}/reopen`, 'POST', { trip_ids: [D.id] }) : { s: 0 }
@@ -2573,19 +2576,33 @@ try {
       const p5 = await P()
       const D5 = p5?.trips?.find(t => t.id === D?.id)
       const khD5 = D ? await kh(D.group_code) : -1
+      // CÔNG TẮC XEM | SỬA (23/10): Sửa chưa đổi gì ⇒ GET kèm chữ ký bản đã lưu, "end" 200 bỏ bản lưu · mở khoá D (có thay đổi) ⇒ "end" 409
+      // EDIT_DIRTY, bản lưu còn ⇒ Khôi phục
+      const edN = async () => (await restAll('dispatch_plan_edit', `select=plan_id&plan_id=eq.${s4.id}`)).length
+      await api(`/tms/dispatch/plans/${s4.id}/edit`, 'POST', { action: 'begin' })
+      const sig = (await P())?.edit
+      const en1 = await api(`/tms/dispatch/plans/${s4.id}/edit`, 'POST', { action: 'end' })
+      const edE1 = await edN()
+      await api(`/tms/dispatch/plans/${s4.id}/edit`, 'POST', { action: 'begin' })
+      const ro4 = D ? await api(`/tms/dispatch/plans/${s4.id}/reopen`, 'POST', { trip_ids: [D.id] }) : { s: 0 }
+      const en2 = await api(`/tms/dispatch/plans/${s4.id}/edit`, 'POST', { action: 'end' })
+      const edE2 = await edN()
+      const rs2 = await api(`/tms/dispatch/plans/${s4.id}/edit`, 'POST', { action: 'restore' })
       // XOÁ kế hoạch (23/10, một nút) ⇒ ĐÃ XOÁ, dòng KH xuất của A · B · D gỡ hết
       const dc2 = await api(`/tms/dispatch/plans/${s4.id}`, 'DELETE')
       const p6 = await P()
-      check('21m. SỬA KẾ HOẠCH ĐÃ XÁC NHẬN (23/10 Lưu / Khôi phục): xác nhận 3 xe · mở khoá RIÊNG C → C nháp, A·B chốt, KH xuất của C CHƯA đổi · C hết đơn ⇒ LƯU gỡ C (removed 1, KH xuất C = 0, chuyến C ngừng, bản đã lưu xoá) · xe MỚI từ khung chờ lấy Số xe KHÁC C · Xác nhận chỉ ghi xe mới (A giữ mốc chốt) · mở khoá D, kéo hết đơn, KHÔI PHỤC ⇒ D chốt lại đủ đơn, KH xuất D không đổi · XOÁ kế hoạch ⇒ ĐÃ XOÁ, KH xuất 0',
+      check('21m. SỬA KẾ HOẠCH ĐÃ XÁC NHẬN (23/10 Lưu / Khôi phục): xác nhận 3 xe · mở khoá RIÊNG C → C nháp, A·B chốt, KH xuất của C CHƯA đổi · C hết đơn ⇒ LƯU gỡ C (removed 1, KH xuất C = 0, chuyến C ngừng, bản đã lưu xoá) · xe MỚI từ khung chờ lấy Số xe KHÁC C · Xác nhận chỉ ghi xe mới (A giữ mốc chốt) · Xem đơn (reuse) ngày đã xác nhận ⇒ trả lại kế hoạch đó, 0 nháp mới · mở khoá D, kéo hết đơn, KHÔI PHỤC ⇒ D chốt lại đủ đơn, KH xuất D không đổi · công tắc Xem: chưa đổi ⇒ end 200 bỏ bản lưu, mở khoá D ⇒ end 409 EDIT_DIRTY · XOÁ kế hoạch ⇒ ĐÃ XOÁ, KH xuất 0',
         cf1.s === 200 && p1?.status === 'CONFIRMED' && rp.s === 200
         && ro1.s === 200 && ro1.j?.data?.reopened?.trips === 1 && tripSt(p2, C.id) === 'DRAFT' && tripSt(p2, A.id) === 'CONFIRMED' && tripSt(p2, B.id) === 'CONFIRMED' && p2?.status === 'TENDERED' && khC1 === 1 && khA2 === 1
         && mvP.s === 200 && rp0.s === 200 && rv0 === null && hd.s === 200 && rpH.s === 200 && rvH === null && uh.s === 200 && rp1.s === 200 && (rp1.j?.data?.refreshed?.reviewed ?? 0) >= 1 && rv1 !== null
         && cf2.s === 200 && cf2.j?.data?.removed === 1 && khC2 === 0 && gC2?.plan_dropped === true && ed2 === 0
         && mvN.s === 200 && !!D && D.status === 'DRAFT' && D.group_code !== C.group_code && p3?.status === 'TENDERED'
         && cf3.s === 200 && cf3.j?.data?.trips === 1 && p4?.status === 'CONFIRMED' && p4.trips.find(t => t.id === A.id)?.confirmed_at === p1.trips.find(t => t.id === A.id)?.confirmed_at
+        && ru.s === 200 && ru.j?.data?.reused === true && ru.j?.data?.id === s4.id && ruDraft === 0
         && eb.s === 200 && ro2.s === 200 && mvD.s === 200 && khD4 === 1 && rs.s === 200 && D5?.status === 'CONFIRMED' && (D5?.ods ?? []).some(o => o.od_number === OD[2]) && khD5 === 1
+        && Array.isArray(sig?.trips) && sig.trips.length > 0 && en1.s === 200 && edE1 === 0 && ro4.s === 200 && en2.s === 409 && en2.j?.error?.code === 'EDIT_DIRTY' && edE2 === 1 && rs2.s === 200
         && dc2.s === 200 && p6?.status === 'DISCARDED' && await kh(A.group_code) === 0 && await kh(B.group_code) === 0 && (D ? await kh(D.group_code) : 0) === 0,
-        `xn=${em(cf1)}/${p1?.status} nạp=${em(rp)} mởC=${em(ro1)}/${ro1.j?.data?.reopened?.trips} C=${tripSt(p2, C.id)} A=${tripSt(p2, A.id)} B=${tripSt(p2, B.id)} kh=${p2?.status} khC=${khC1} khA=${khA2} · về chờ=${em(mvP)} nạp0=${em(rp0)}/rv=${rv0} ẩn=${em(hd)} nạpẨn=${em(rpH)}/rv=${rvH} bỏẩn=${em(uh)} nạpAll=${em(rp1)}/${rp1.j?.data?.refreshed?.reviewed}/rv=${rv1 ? 'có' : 'null'} · lưu=${em(cf2)}/removed=${cf2.j?.data?.removed} khC=${khC2} gdoC=${gC2?.plan_dropped} bản=${ed2} · xe mới=${em(mvN)} D=${D?.status}/${D?.group_code?.slice(PREFIX.length)} (C=${C.group_code.slice(PREFIX.length)}) kh=${p3?.status} · xn3=${em(cf3)}/${cf3.j?.data?.trips} kh=${p4?.status} · sửa=${em(eb)} mởD=${em(ro2)} kéo=${em(mvD)} khD=${khD4} khôi phục=${em(rs)} D=${D5?.status}/${(D5?.ods ?? []).length} khD=${khD5} · xoá=${em(dc2)} kh=${p6?.status}`)
+        `xn=${em(cf1)}/${p1?.status} nạp=${em(rp)} mởC=${em(ro1)}/${ro1.j?.data?.reopened?.trips} C=${tripSt(p2, C.id)} A=${tripSt(p2, A.id)} B=${tripSt(p2, B.id)} kh=${p2?.status} khC=${khC1} khA=${khA2} · về chờ=${em(mvP)} nạp0=${em(rp0)}/rv=${rv0} ẩn=${em(hd)} nạpẨn=${em(rpH)}/rv=${rvH} bỏẩn=${em(uh)} nạpAll=${em(rp1)}/${rp1.j?.data?.refreshed?.reviewed}/rv=${rv1 ? 'có' : 'null'} · lưu=${em(cf2)}/removed=${cf2.j?.data?.removed} khC=${khC2} gdoC=${gC2?.plan_dropped} bản=${ed2} · xe mới=${em(mvN)} D=${D?.status}/${D?.group_code?.slice(PREFIX.length)} (C=${C.group_code.slice(PREFIX.length)}) kh=${p3?.status} · xn3=${em(cf3)}/${cf3.j?.data?.trips} kh=${p4?.status} · sửa=${em(eb)} mởD=${em(ro2)} kéo=${em(mvD)} khD=${khD4} khôi phục=${em(rs)} D=${D5?.status}/${(D5?.ods ?? []).length} khD=${khD5} · reuse=${em(ru)}/${ru.j?.data?.reused}/${ru.j?.data?.id === s4.id} nháp=${ruDraft} · sig=${sig?.trips?.length} end=${em(en1)}/bản=${edE1} mởD=${em(ro4)} end2=${em(en2)}/bản=${edE2} kp=${em(rs2)} · xoá=${em(dc2)} kh=${p6?.status}`)
     } else check('21m. Fixture: 3 OD, mỗi OD một xe qua ô Xe mới', false, `plan=${s4.s}`)
     // ── [21n] XE MÀ BÊN XUẤT ĐÃ LÀM (23/10, user chốt — thay luật 17/10 "bàn rút xe đã quét, hỏi một lần"): kho đã quét 2 (base) trên chuyến C ⇒
     //     /sync báo đơn đã thực thi · mở khoá C KHÔNG hỏi, KH xuất C giữ nguyên · bỏ hết đơn của C rồi Lưu ⇒ 409 OUTBOUND_WORK_BLOCKS, KHÔNG ghi gì ·

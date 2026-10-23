@@ -42,6 +42,7 @@ import {
   type TripVehicle, withLoadBands, type LoadBand, type EngineGeo, type UnderMin, type TooBig, routeOf,
 } from '../../services/dispatchEngine'
 import { splitPool, redoDispatchedOf, shareBaseRange, type ExcludedOd, type ExcludedDetail, type ExcludeKind, type PoolCandidateRow, type OtherDraft } from '../../services/dispatchPool'
+import { editDirty, type EditSig } from '../../services/dispatchEdit'
 import { applyWarehouseOverrides, loadWarehouseOverrides, multiVehicleOf, detourPctOf } from '../../services/vehicleModelScope'
 import { replanKhvcGroups, keepIssuesForGroups, type KhvcPlanRow } from '../wms/outboundController'
 import { classifyKhvcDelete, outboundHoldState } from '../external/khvcController'
@@ -793,10 +794,14 @@ export async function createPlan(req: Request, res: Response) {
     if (!wh) return fail(res, 'Không tìm thấy kho', 404)
     if (!wh.sap_plant) return fail(res, 422, 'PLANT_REQUIRED', `Kho ${wh.name} chưa khai "Plant SAP" (Cài đặt WMS → Kho) — không xác định được pool OD ZSD02 của kho.`)
     const seg: Segment = b.segment ?? 'SALES'
+    // 23/10 (lỗi thật, Ba Vì 02/10): "Xem đơn" nạp kèm mảng kia với `reuse` — trước chỉ nhận nháp / chờ ĐVVT nên mảng kia ĐÃ XÁC NHẬN bị lập
+    // thêm một nháp thứ hai cùng ngày (tab Kế hoạch hiện "Nháp" che bản đã xác nhận, ngày thành "Đang mở"). Nay nhận cả bản đã xác nhận;
+    // thêm đơn vào ngày đã xác nhận = "Sửa".
     if (b.reuse) {
-      const { data: cur, error: cErr } = await db.from('dispatch_plan').select('id').eq('warehouse_id', wh.id).eq('plan_date', b.plan_date).eq('segment', seg).in('status', ['DRAFT', 'TENDERED']).order('created_at', { ascending: false }).limit(1)
+      const { data: cur, error: cErr } = await db.from('dispatch_plan').select('id, status').eq('warehouse_id', wh.id).eq('plan_date', b.plan_date).eq('segment', seg).in('status', ['DRAFT', 'TENDERED', 'CONFIRMED']).order('created_at', { ascending: false }).limit(20)
       if (cErr) throw cErr
-      if (cur?.length) return ok(res, { ...(await readPlan(cur[0].id)), reused: true })
+      const hit = (cur ?? []).find(p => p.status !== 'CONFIRMED') ?? cur?.[0]
+      if (hit) return ok(res, { ...(await readPlan(hit.id)), reused: true })
     }
     // kế hoạch đang CHỜ ĐVVT phản hồi: OD của các xe chờ chưa nằm trong Kế hoạch xuất nên lập lại sẽ xếp trùng — xử lý xong (nhận / từ chối / bỏ xe chờ) rồi mới lập lại
     const { data: open } = await db.from('dispatch_plan').select('id, status').eq('warehouse_id', wh.id).eq('plan_date', b.plan_date).eq('segment', seg).eq('status', 'TENDERED').maybeSingle()
@@ -1006,8 +1011,9 @@ export async function getPlan(req: Request, res: Response) {
       db.from('Warehouse').select('id, code, name').eq('id', full.warehouse_id).maybeSingle().then(r => r.data ?? null),
       // "Không liên quan" của CHÍNH người đang xem (03/10 tối) — người khác không thấy dấu này
       db.from('dispatch_od_hidden').select('od_number').eq('plan_id', full.id).eq('user_id', userKey(req)).limit(1000).then(r => { if (r.error) throw r.error; return uniq((r.data ?? []).map(x => x.od_number)) }),
-      // 23/10: có bản đã lưu đang chờ (đang Sửa) ⇒ bàn hiện Lưu + Khôi phục — chỉ mốc, không kéo bản chụp
-      db.from('dispatch_plan_edit').select('started_at, started_by').eq('plan_id', full.id).maybeSingle().then(r => { if (r.error) throw r.error; return r.data ?? null }),
+      // 23/10: có bản đã lưu đang chờ (đang Sửa) ⇒ bàn hiện Lưu + Khôi phục; kèm CHỮ KÝ bản chụp (id · trạng thái xe + cặp đơn–xe, không
+      // kéo `detail`) để bàn tự biết đã có thay đổi chưa — khoá công tắc Xem | Sửa
+      editSigOf(full.id),
     ])
     return ok(res, { ...full, warehouse: wh, hidden, edit, stamp: st?.stamp ?? null })
   } catch (e) { return failAny(res, e) }
@@ -2366,6 +2372,12 @@ async function beginEdit(planId: string, actor: string | null) {
   const { error } = await db.rpc('dispatch_edit_begin', { p_plan_id: planId, p_actor: actor ?? '' })
   if (error) throw error
 }
+type EditSigRow = EditSig & { started_at: string; started_by: string | null }
+async function editSigOf(planId: string): Promise<EditSigRow | null> {
+  const { data, error } = await db.rpc('dispatch_edit_sig', { p_plan_id: planId })
+  if (error) throw error
+  return (data ?? null) as unknown as EditSigRow | null
+}
 async function dropEdit(planId: string) {
   const { error } = await db.from('dispatch_plan_edit').delete().eq('plan_id', planId)
   if (error) throw error
@@ -2754,7 +2766,7 @@ async function reopenPlanInner(req: Request, res: Response) {
 }
 
 // ── POST /tms/dispatch/plans/:id/edit — SỬA (chụp bản đã lưu) · KHÔI PHỤC (bỏ mọi thay đổi chưa Lưu) — 23/10 ──────────────────────────
-export const zEdit = z.object({ action: z.enum(['begin', 'restore']) })
+export const zEdit = z.object({ action: z.enum(['begin', 'restore', 'end']) })
 async function editPlanInner(req: Request, res: Response) {
   try {
     const b = req.body as z.infer<typeof zEdit>
@@ -2766,6 +2778,18 @@ async function editPlanInner(req: Request, res: Response) {
     if (b.action === 'begin') {
       await beginEdit(full.id, actor)
       return ok(res, { plan_id: full.id, edit: (await db.from('dispatch_plan_edit').select('started_at, started_by').eq('plan_id', full.id).maybeSingle()).data ?? null })
+    }
+    // VỀ CHẾ ĐỘ XEM (23/10, công tắc Xem | Sửa trên bàn): chỉ khi bàn CHƯA khác bản đã lưu — có thay đổi thì phải Lưu hoặc Khôi phục.
+    // Bỏ bản chụp (không còn gì để khôi phục); thuê kế hoạch (withPlanLease) nên không ai kéo thả chen giữa lúc so và lúc bỏ.
+    if (b.action === 'end') {
+      const sig = await editSigOf(full.id)
+      if (!sig) return ok(res, { plan_id: full.id, edit: null })
+      const cur: EditSig = { trips: full.trips.map(t => ({ id: t.id, status: t.status })), ods: full.trips.flatMap(t => t.ods.map(o => ({ od_number: o.od_number, trip_id: t.id }))) }
+      if (editDirty(sig, cur)) return fail(res, 409, 'EDIT_DIRTY', `${planLabel(full as PlanRow)} có thay đổi chưa Lưu — bấm Lưu hoặc Khôi phục rồi mới về chế độ Xem.`)
+      await dropEdit(full.id)
+      const { error: uErr } = await db.from('dispatch_plan').update({ updated_at: now() }).eq('id', full.id)   // dấu phiên bản đổi ⇒ bàn khác ẩn Lưu / Khôi phục
+      if (uErr) throw uErr
+      return ok(res, { plan_id: full.id, edit: null })
     }
     step(res, 'khôi phục bản đã lưu (RPC dispatch_edit_restore)')
     const { data, error } = await db.rpc('dispatch_edit_restore', { p_plan_id: full.id })

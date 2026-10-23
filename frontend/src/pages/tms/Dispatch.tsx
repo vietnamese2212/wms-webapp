@@ -17,7 +17,7 @@
 // làm lại từ đầu = Bỏ nháp rồi Xem đơn.
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { CheckCircle2, Trash2, Download, Waypoints, ArrowRightLeft, AlertTriangle, ThumbsUp, ThumbsDown, Send, LayoutGrid, ListChecks, RotateCcw, ChevronDown, ChevronUp, Map as MapIcon, FileText, Lock, Unlock, Users, CalendarClock, History } from 'lucide-react'
+import { CheckCircle2, Trash2, Download, Waypoints, ArrowRightLeft, AlertTriangle, ThumbsUp, ThumbsDown, Send, LayoutGrid, ListChecks, RotateCcw, ChevronDown, ChevronUp, Map as MapIcon, FileText, Lock, Unlock, Users, CalendarClock, History, Eye, Pencil } from 'lucide-react'
 import { DispatchMoveDateDialog, type MoveDateTarget } from '@/components/tms/DispatchMoveDateDialog'
 import { DispatchMap } from '@/components/tms/DispatchMap'
 import { TripRouteMap } from '@/components/tms/TripRouteMap'
@@ -28,7 +28,8 @@ import { SettingsGroup, SettingRow } from '@/components/shared/SettingRow'
 import { Switch } from '@/components/ui/switch'
 import { useWhTypeMetaMap } from '@/hooks/useWhTypeMeta'
 import { whTypeBadgeCls } from '@/utils/cargoCategory'
-import { DispatchPlansTable, type DispatchPlanDay } from '@/components/tms/DispatchPlansTable'
+import { DispatchPlansTable, groupPlanDays, type DispatchPlanDay } from '@/components/tms/DispatchPlansTable'
+import { editDirty } from '@/components/tms/dispatchEdit'
 import { DispatchHistoryTab } from '@/components/tms/DispatchHistoryTab'
 import { useDispatchPresence } from '@/hooks/useDispatchPresence'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
@@ -180,6 +181,12 @@ export default function Dispatch() {
   const editDay = f.editDay || null
   const setEditDay = (d: string | null) => setF({ editDay: d ? `${f.warehouseId}|${d}` : '' })
   const editing = !!plan && plan.status !== 'DISCARDED' && (isOpen || editDay === `${plan.warehouse_id}|${plan.plan_date}`)
+  // CÓ THAY ĐỔI CHƯA LƯU (23/10, user: "switch qua Sửa rồi — có một sự thay đổi thì nút switch không dùng được, phải Lưu hoặc Khôi phục"):
+  // so bàn với chữ ký bản đã lưu (server gửi kèm `edit`) — cùng luật với cửa 409 EDIT_DIRTY (mirror `dispatchEdit`)
+  const dirty = useMemo(() => !!plan?.edit?.trips && editDirty(
+    { trips: plan.edit.trips, ods: plan.edit.ods ?? [] },
+    { trips: plan.trips.map(t => ({ id: t.id, status: t.status ?? null })), ods: plan.trips.flatMap(t => t.ods.map(o => ({ od_number: o.od_number, trip_id: t.id }))) },
+  ), [plan])
   // AI ĐANG LÀM trên kế hoạch này (16/10 tối, user "hiện tên người đang làm ok") — presence realtime, không ghi DB; chip cạnh trạng thái
   const others = useDispatchPresence(planId, user ? { id: user.id, name: user.name } : null, editing)
   // Cờ SỐNG so với ZSD02 hiện tại (lũy tiến): OD bị SAP thay / bỏ / đã xuất / đã điều sau khi lập + số OD mới về
@@ -492,6 +499,25 @@ export default function Dispatch() {
       toast({ title: `Đã khôi phục bản đã lưu — ${nf(r.restored?.trips ?? 0)} xe` })
     }).catch(e => err(e, 'Không khôi phục được'))
   }
+  // CÔNG TẮC XEM | SỬA trên bàn (23/10, user: "bổ sung nút Sửa ở bàn làm việc ở trạng thái Xem; switch qua Sửa rồi — có thay đổi thì nút switch
+  // không dùng được, phải Lưu hoặc Khôi phục"). Sửa = đúng nút Sửa ở tab Kế hoạch (cả hai mảng của ngày). Về Xem: bỏ bản chụp của mọi mảng
+  // trong ngày — server so lại, mảng nào còn thay đổi thì 409 EDIT_DIRTY và bàn ở lại chế độ Sửa.
+  const toEdit = () => {
+    const d = plan ? groupPlanDays(planListAll).find(x => !x.discarded && x.plan_date === plan.plan_date) : null
+    if (d) startEdit(d)
+  }
+  const toView = async () => {
+    if (!plan) return
+    try {
+      for (const p of planListAll.filter(x => x.status !== 'DISCARDED' && x.plan_date === plan.plan_date)) await editApi.mutateAsync({ plan_id: p.id, action: 'end' })
+      setEditDay(null)
+    } catch (e) { err(e, 'Chưa về chế độ Xem được') }
+  }
+  const lockView = editing && (dirty || isOpen)
+  const modeTip = !editing ? 'Đang XEM — bấm Sửa để nạp đơn chờ và sửa kế hoạch (mọi thay đổi chỉ áp khi bấm Lưu)'
+    : dirty ? 'Có thay đổi chưa Lưu — bấm Lưu hoặc Khôi phục rồi mới về Xem được'
+    : isOpen ? 'Kế hoạch còn xe nháp / chờ ĐVVT — Xác nhận hoặc Xoá rồi mới về Xem được'
+    : 'Đang SỬA, chưa thay đổi gì — bấm Xem để về chế độ chỉ xem'
   // XOÁ KẾ HOẠCH (23/10, user: "đơn giản chỉ là 1 nút để giải quyết lỡ tay tạo nhầm kế hoạch — xoá nó đi"): thay Bỏ nháp · Bỏ xe chưa chốt ·
   // Huỷ kế hoạch. Xoá mềm — kế hoạch còn ở tab Kế hoạch (Đã xoá). Bên Xuất đã bắt đầu / quét / nhặt lẻ ở xe nào thì không xoá gì, nêu từng xe.
   type DeleteTarget = Pick<DispatchPlanListItem, 'id' | 'plan_date' | 'segment' | 'summary'>
@@ -643,6 +669,20 @@ export default function Dispatch() {
               {plan && s && planTab && (
                 <span className="inline-flex items-center gap-1 shrink-0">
                   <StatusBadge tone={s.tone}>{s.label}</StatusBadge>
+                  {/* công tắc XEM | SỬA (23/10) — chỉ cho kế hoạch đã có bản lưu (nháp nguyên thì luôn sửa); có thay đổi chưa Lưu ⇒ khoá ở Sửa */}
+                  {canPlan && plan.status !== 'DISCARDED' && (plan.status === 'CONFIRMED' || !!plan.edit) && (
+                    <span className="inline-flex shrink-0 rounded-md border border-slate-200 p-0.5" role="group" aria-label="Chế độ bàn" title={modeTip} data-edit-dirty={dirty ? '1' : '0'}>
+                      {([
+                        { k: 'view', label: 'Xem', icon: Eye, on: !editing, disabled: editing && (lockView || editApi.isPending), go: () => void toView() },
+                        { k: 'edit', label: 'Sửa', icon: Pencil, on: editing, disabled: !editing && (editApi.isPending || !!discardingId), go: toEdit },
+                      ] as const).map(o => (
+                        <button key={o.k} type="button" aria-pressed={o.on} disabled={o.disabled} onClick={o.on ? undefined : o.go}
+                          className={`inline-flex items-center gap-1 rounded px-2 h-8 sm:h-6 text-[11px] font-medium disabled:cursor-not-allowed disabled:opacity-40 ${o.on ? 'bg-slate-800 text-white' : 'text-slate-600 hover:bg-slate-100'}`}>
+                          <o.icon className="h-3.5 w-3.5" />{o.label}
+                        </button>
+                      ))}
+                    </span>
+                  )}
                   <InfoTip tip={<div className="space-y-0.5 text-xs">
                     <div><b>{plan.warehouse?.name}</b> · giao {formatDate(plan.plan_date)}</div>
                     <div>Lập {formatTimestampDate(plan.created_at)}{plan.created_by ? ` bởi ${plan.created_by}` : ''}</div>

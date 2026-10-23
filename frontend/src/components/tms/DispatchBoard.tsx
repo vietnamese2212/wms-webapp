@@ -97,7 +97,9 @@ const groupKeyOf = (o: DispatchTripOd, g: string) =>
 const matches = (o: DispatchTripOd, q: string) =>
   !q || [o.od_number, o.ship_to_code, o.ship_to_name, o.ward_code, o.region_code, o.region_name, o.note].some(v => (v ?? '').toLowerCase().includes(q))
 
-export function DispatchBoard({ plan, editable, flags, work, onOpenTrip, focusTripIds, onFocused, soat, onReopenTrip, onMoveDateTrip }: {
+export function DispatchBoard({ plan, editable, flags, work, onOpenTrip, focusTripIds, onFocused, soat, onReopenTrip, onMoveDateTrip, active = true }: {
+  /** 23/10: trang GIỮ bàn đã dựng khi sang tab khác (ẩn, không dựng lại 56 xe mỗi lần quay về) — đang ẩn thì tắt phím tắt Ctrl+Z / Ctrl+Y */
+  active?: boolean
   /** 23/10 — bên Xuất đã làm gì (từ /sync): đơn đã thực thi trên xe · tình trạng chuyến của xe đã chốt */
   work?: { ods: Map<string, DispatchOdWork>; trips: Map<string, DispatchTripWork> }
   onMoveDateTrip?: (t: DispatchTrip) => void   // 19/10: đổi ngày cả xe (giữ Số xe, nhả khung giờ) — quyền xác nhận
@@ -237,6 +239,7 @@ export function DispatchBoard({ plan, editable, flags, work, onOpenTrip, focusTr
     if (p) setUndo(s => [...s, { ...op, created: op.to === 'new' ? p.trips.find(t => t.ods.some(o => o.id === ids[0]))?.id : op.created }])
   }, [redoStack, busy, rowBy, plan.trips, run])
   useEffect(() => {
+    if (!active) return
     const h = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement | null
       if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return
@@ -247,7 +250,7 @@ export function DispatchBoard({ plan, editable, flags, work, onOpenTrip, focusTr
     }
     window.addEventListener('keydown', h)
     return () => window.removeEventListener('keydown', h)
-  }, [undo, redo])
+  }, [undo, redo, active])
 
   // ── KÉO THẢ ──
   const idsFor = (o: DispatchTripOd) => (sel.has(o.id) ? [...sel] : [o.id]).filter(id => !lockedId(id))

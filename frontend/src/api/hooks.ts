@@ -6493,7 +6493,13 @@ export function useEditDispatchPlan() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: ({ plan_id, action }: { plan_id: string; action: 'begin' | 'restore' | 'end' }) => apiClient.post(`/tms/dispatch/plans/${plan_id}/edit`, { action }, { timeout: 120_000 }).then(r => r.data.data as Partial<DispatchPlan> & { restored?: { trips: number; ods: number; plan_status: DispatchPlan['status'] } }),
-    onSuccess: () => invalidateDispatch(qc),
+    // 23/10 ("phần chuyển phải mượt"): Sửa / về Xem KHÔNG đổi xe hay đơn — vá chữ ký bản lưu + dấu phiên bản vào kế hoạch đang giữ (dấu khớp ⇒
+    // tín hiệu realtime của chính lần bấm này không kéo lại cả kế hoạch). Bản trước tải lại MỌI kế hoạch điều vận + danh sách + cờ SAP mỗi lần
+    // bấm ⇒ bàn 56 xe vẽ lại nhiều lượt. Khôi phục đổi xe / đơn thật ⇒ vẫn tải lại.
+    onSuccess: (r, v) => {
+      if (v.action === 'restore') { invalidateDispatch(qc); return }
+      qc.setQueryData(['dispatch-plan', v.plan_id], (old: DispatchPlan | undefined) => old ? { ...old, edit: r.edit ?? null, ...(r.stamp !== undefined ? { stamp: r.stamp } : {}) } : old)
+    },
   })
 }
 /** Phần kế hoạch đi kèm cửa sửa / bỏ MỘT xe (06/10) — tổng kết + mốc + dấu, để vá thẳng vào kế hoạch đang giữ. */

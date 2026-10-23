@@ -17,7 +17,7 @@
 // làm lại từ đầu = Bỏ nháp rồi Xem đơn.
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { CheckCircle2, Trash2, Download, Waypoints, ArrowRightLeft, AlertTriangle, ThumbsUp, ThumbsDown, Send, LayoutGrid, ListChecks, RotateCcw, ChevronDown, ChevronUp, Map as MapIcon, FileText, Lock, Unlock, Users, CalendarClock, History, Eye, Pencil } from 'lucide-react'
+import { CheckCircle2, Trash2, Download, Waypoints, ArrowRightLeft, AlertTriangle, ThumbsUp, ThumbsDown, Send, LayoutGrid, ListChecks, RotateCcw, ChevronDown, ChevronUp, Map as MapIcon, FileText, Lock, Unlock, Users, CalendarClock, History, Eye, Pencil, Loader2 } from 'lucide-react'
 import { DispatchMoveDateDialog, type MoveDateTarget } from '@/components/tms/DispatchMoveDateDialog'
 import { DispatchMap } from '@/components/tms/DispatchMap'
 import { TripRouteMap } from '@/components/tms/TripRouteMap'
@@ -184,6 +184,11 @@ export default function Dispatch() {
   // (Lưu / Khôi phục / về Xem, hoặc hôm qua) mà bàn vẫn nhớ "đang sửa" ⇒ khung chờ chỉ hiện đơn đã nạp (bước nạp chạy lúc bấm Sửa) = 0 OD,
   // 95 đơn Chờ điều biến mất. Kế hoạch đã xác nhận chỉ ở Sửa khi CÒN bản sửa đang mở (`plan.edit`); không thì về Xem, thấy đủ đơn chờ.
   const editing = boardEditing(plan, editDay)
+  // đang chuyển Xem → Sửa (chụp bản lưu + nạp đơn chờ, ~2 s): bàn giữ hình chế độ Xem tới khi nạp xong — chuyển một lần, không nháy (23/10)
+  const [entering, setEntering] = useState(false)
+  // bàn đã dựng lần nào chưa — dựng rồi thì giữ khi sang tab khác (23/10, "phần chuyển phải mượt")
+  const [boardSeen, setBoardSeen] = useState(false)
+  useEffect(() => { if (f.tab === 'board') setBoardSeen(true) }, [f.tab])
   // CÓ THAY ĐỔI CHƯA LƯU (23/10, user: "switch qua Sửa rồi — có một sự thay đổi thì nút switch không dùng được, phải Lưu hoặc Khôi phục"):
   // so bàn với chữ ký bản đã lưu (server gửi kèm `edit`) — cùng luật với cửa 409 EDIT_DIRTY (mirror `dispatchEdit`)
   const dirty = useMemo(() => !!plan?.edit?.trips && editDirty(
@@ -442,6 +447,7 @@ export default function Dispatch() {
     openDay(d)
     setEditDay(d.plan_date)   // sau openDay (openDay xoá editDay)
     setDiscardingId(targets[0].id)
+    setEntering(true)
     Promise.all(targets.map(p => (p.status !== 'DRAFT' ? editApi.mutateAsync({ plan_id: p.id, action: 'begin' }) : Promise.resolve(null))
       .then(() => refresh.mutateAsync({ id: p.id, review_all: p.status !== 'DRAFT' })).then(r => ({ p, r })))).then(rs => {
       const reviewed = rs.reduce((a, x) => a + (x.r.refreshed.reviewed ?? 0), 0), added = rs.reduce((a, x) => a + x.r.refreshed.added, 0)
@@ -450,7 +456,7 @@ export default function Dispatch() {
         title: reviewed ? `${nf(reviewed)} đơn chờ vào khung chờ${added ? ` (${nf(added)} mới từ ZSD02)` : ''}` : added ? `${nf(added)} OD mới từ ZSD02` : 'Không có đơn chờ',
         description: `${rs.map(x => `${SEGMENT_VI[x.p.segment ?? 'SALES']}: ${nf(x.r.refreshed.reviewed ?? 0)}`).join(' · ')}.${late ? ` ${nf(late)} đơn có SO tạo SAU ngày đi ở lại Chờ điều (chữ đỏ) — tick tay ở Xem đơn nếu đó là đơn bù.` : ''} Kéo đơn chờ lên xe mới; xe đã chốt tô tím — bấm ổ khoá để mở khoá xe cần sửa. Mọi thay đổi CHƯA đụng Kế hoạch xuất / bên Xuất cho tới khi bấm Lưu; Khôi phục = về bản đã lưu.`,
       })
-    }).catch(e => err(e, 'Không nạp được đơn chờ')).finally(() => setDiscardingId(null))
+    }).catch(e => err(e, 'Không nạp được đơn chờ')).finally(() => { setDiscardingId(null); setEntering(false) })
   }
   // ĐỔI NGÀY TỪNG ĐƠN (19/10, ca "đơn rớt không bốc" — user: "đổi ngày dễ như bên Kế hoạch xuất"): ba bước sẵn có nối liền —
   // mở khoá xe → hoãn đơn tới ngày chọn (rời xe, dấu hoãn + lý do) → chốt lại xe với phần còn lại (cùng Số xe, khung giờ giữ). Chốt lại đi qua
@@ -512,7 +518,8 @@ export default function Dispatch() {
   // `skipId`: mảng vừa Lưu / Khôi phục (bản chụp của nó server đã xoá) — mảng kia chưa đổi gì thì bỏ bản chụp luôn, không thì ở lại Sửa
   const endEditDay = async (skipId?: string) => {
     if (!plan) return
-    for (const p of planListAll.filter(x => x.id !== skipId && x.status !== 'DISCARDED' && x.plan_date === plan.plan_date)) await editApi.mutateAsync({ plan_id: p.id, action: 'end' })
+    // hai mảng gửi SONG SONG (bản đầu nối tiếp — mỗi mảng chờ một vòng máy chủ)
+    await Promise.all(planListAll.filter(x => x.id !== skipId && x.status !== 'DISCARDED' && x.plan_date === plan.plan_date).map(p => editApi.mutateAsync({ plan_id: p.id, action: 'end' })))
     setEditDay(null)
   }
   const toView = () => endEditDay().catch(e => err(e, 'Chưa về chế độ Xem được'))
@@ -679,12 +686,13 @@ export default function Dispatch() {
                   {canPlan && plan.status !== 'DISCARDED' && (plan.status === 'CONFIRMED' || !!plan.edit) && (
                     <span className="inline-flex shrink-0 rounded-md border border-slate-200 p-0.5" role="group" aria-label="Chế độ bàn" title={modeTip} data-edit-dirty={dirty ? '1' : '0'}>
                       {([
-                        { k: 'view', label: 'Xem', icon: Eye, on: !editing, disabled: editing && (lockView || editApi.isPending), go: () => void toView() },
-                        { k: 'edit', label: 'Sửa', icon: Pencil, on: editing, disabled: !editing && (editApi.isPending || !!discardingId), go: toEdit },
+                        { k: 'view', label: 'Xem', icon: Eye, spin: false, on: !editing && !entering, disabled: entering || (editing && (lockView || editApi.isPending)), go: () => void toView() },
+                        // đang mở Sửa (~2 s nạp đơn chờ): nút Sửa sáng NGAY + vòng xoay — bấm là thấy phản hồi, bàn chuyển một lần khi nạp xong
+                        { k: 'edit', label: entering ? 'Đang mở…' : 'Sửa', icon: entering ? Loader2 : Pencil, spin: entering, on: editing || entering, disabled: !editing && (editApi.isPending || !!discardingId), go: toEdit },
                       ] as const).map(o => (
                         <button key={o.k} type="button" aria-pressed={o.on} disabled={o.disabled} onClick={o.on ? undefined : o.go}
-                          className={`inline-flex items-center gap-1 rounded px-2 h-8 sm:h-6 text-[11px] font-medium disabled:cursor-not-allowed disabled:opacity-40 ${o.on ? 'bg-slate-800 text-white' : 'text-slate-600 hover:bg-slate-100'}`}>
-                          <o.icon className="h-3.5 w-3.5" />{o.label}
+                          className={`inline-flex items-center gap-1 rounded px-2 h-8 sm:h-6 text-[11px] font-medium disabled:cursor-not-allowed ${o.on ? 'bg-slate-800 text-white' : 'text-slate-600 hover:bg-slate-100 disabled:opacity-40'}`}>
+                          <o.icon className={`h-3.5 w-3.5 ${o.spin ? 'animate-spin' : ''}`} />{o.label}
                         </button>
                       ))}
                     </span>
@@ -816,23 +824,33 @@ export default function Dispatch() {
                 <p className="text-xs">Nháp trước{lastDiscarded.created_by ? ` (${lastDiscarded.created_by} lập)` : ''} đã bỏ lúc {formatTimestampDate(lastDiscarded.updated_at)} — <button type="button" className="text-sky-700 underline" onClick={() => setF({ planId: lastDiscarded.id })}>Xem nháp đã bỏ</button> (chỉ xem)</p>
               )}
             </div>
-          ) : showReview ? (
-            <DispatchReviewTable plan={plan} editable={editing && canPlan} flags={flags} onGrouped={ids => { setFocusTrips(ids); setF({ tab: 'board' }) }} canAct={canActKhvc}
-              hidden={hidden} otherPlanId={otherPlan?.id ?? null} otherPoolCount={otherPlan?.summary ? (otherPlan.summary.unreviewed_ods ?? otherPlan.summary.pool_ods ?? null) : null} onSwitchSegment={s => setF({ segment: s, planId: '', reviewTab: 'GO' })} />
-          ) : tab === 'board' && planEmpty ? (
-            <div className="flex flex-col items-center justify-center gap-2 py-20 text-slate-400">
-              <LayoutGrid className="h-10 w-10 opacity-30" />
-              <p className="text-sm font-medium text-slate-500">Kế hoạch <b>{SEGMENT_VI[seg]}</b> ngày {formatDate(plan.plan_date)} chưa có đơn nào</p>
-              <p className="text-xs">Vào Xem đơn, tick các đơn cần đi ngày này rồi bấm "Tạo kế hoạch" — máy ghép thành xe, bàn này hiện để soát / sửa.</p>
-              <Button size="sm" variant="outline" className="mt-2 h-8" onClick={() => setF({ tab: 'review', reviewTab: 'GO' })}><ListChecks className="h-3.5 w-3.5 mr-1" /> Mở Xem đơn</Button>
+          ) : (<>
+            {showReview && (
+              <DispatchReviewTable plan={plan} editable={editing && canPlan} flags={flags} onGrouped={ids => { setFocusTrips(ids); setF({ tab: 'board' }) }} canAct={canActKhvc}
+                hidden={hidden} otherPlanId={otherPlan?.id ?? null} otherPoolCount={otherPlan?.summary ? (otherPlan.summary.unreviewed_ods ?? otherPlan.summary.pool_ods ?? null) : null} onSwitchSegment={s => setF({ segment: s, planId: '', reviewTab: 'GO' })} />
+            )}
+            {tab === 'board' && planEmpty && (
+              <div className="flex flex-col items-center justify-center gap-2 py-20 text-slate-400">
+                <LayoutGrid className="h-10 w-10 opacity-30" />
+                <p className="text-sm font-medium text-slate-500">Kế hoạch <b>{SEGMENT_VI[seg]}</b> ngày {formatDate(plan.plan_date)} chưa có đơn nào</p>
+                <p className="text-xs">Vào Xem đơn, tick các đơn cần đi ngày này rồi bấm "Tạo kế hoạch" — máy ghép thành xe, bàn này hiện để soát / sửa.</p>
+                <Button size="sm" variant="outline" className="mt-2 h-8" onClick={() => setF({ tab: 'review', reviewTab: 'GO' })}><ListChecks className="h-3.5 w-3.5 mr-1" /> Mở Xem đơn</Button>
+              </div>
+            )}
+            {tab === 'map' && (
+              <div className="h-full min-h-0 overflow-y-auto lg:overflow-hidden pb-20 lg:pb-0"><DispatchMap plan={planView ?? plan} warehouseId={f.warehouseId} canPlan={canPlan} onOpenTrip={setOpenTripId} /></div>
+            )}
+          </>)}
+          {/* BÀN GHÉP XE ở MỘT chỗ cố định của cây (ngoài chuỗi điều kiện theo tab) — 23/10 (user: "phần chuyển phải mượt"): bàn đã dựng thì GIỮ
+              khi sang tab khác (ẩn), quay về không dựng lại 56 xe (đo: ~2 s trình duyệt bận mỗi lần). Chế độ XEM: khung chờ hiện ĐỦ đơn Chờ điều
+              (chỉ xem) — Sửa thì chỉ đơn của kế hoạch (boardPlanOf); đang mở Sửa (nạp đơn chờ ~2 s) giữ hình cũ tới khi xong, không nháy */}
+          {!!f.warehouseId && !!plan && !planEmpty && (tab === 'board' || boardSeen) && (
+            <div className={tab === 'board' ? 'contents' : 'hidden'}>
+              <DispatchBoard plan={editing && !entering ? (planView ?? plan) : plan} editable={editing && !entering && canPlan} flags={flags} work={work} onOpenTrip={setOpenTripId} focusTripIds={focusTrips} onFocused={() => setFocusTrips([])} soat={soatNode}
+                active={tab === 'board'}
+                onReopenTrip={canConfirm ? t => void reopenTrip(t) : undefined}
+                onMoveDateTrip={canConfirm && plan.status !== 'DISCARDED' ? t => setMoveDate({ kind: 'trips', trips: [t] }) : undefined} />
             </div>
-          ) : tab === 'board' ? (
-            // chế độ XEM (23/10): khung chờ hiện ĐỦ đơn Chờ điều (chỉ xem, không kéo) — sửa thì chỉ đơn của kế hoạch (boardPlanOf)
-            <DispatchBoard plan={editing ? (planView ?? plan) : plan} editable={editing && canPlan} flags={flags} work={work} onOpenTrip={setOpenTripId} focusTripIds={focusTrips} onFocused={() => setFocusTrips([])} soat={soatNode}
-              onReopenTrip={canConfirm ? t => void reopenTrip(t) : undefined}
-              onMoveDateTrip={canConfirm && plan.status !== 'DISCARDED' ? t => setMoveDate({ kind: 'trips', trips: [t] }) : undefined} />
-          ) : (
-            <div className="h-full min-h-0 overflow-y-auto lg:overflow-hidden pb-20 lg:pb-0"><DispatchMap plan={planView ?? plan} warehouseId={f.warehouseId} canPlan={canPlan} onOpenTrip={setOpenTripId} /></div>
           )}
         </div>
       </div>

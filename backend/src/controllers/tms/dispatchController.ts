@@ -2777,19 +2777,21 @@ async function editPlanInner(req: Request, res: Response) {
     const actor = actorOf(req)
     if (b.action === 'begin') {
       await beginEdit(full.id, actor)
-      return ok(res, { plan_id: full.id, edit: (await db.from('dispatch_plan_edit').select('started_at, started_by').eq('plan_id', full.id).maybeSingle()).data ?? null })
+      // trả chữ ký bản chụp + dấu phiên bản (23/10, "phần chuyển phải mượt"): bàn vá thẳng vào kế hoạch đang giữ, không tải lại cả kế hoạch
+      const [edit, st] = await Promise.all([editSigOf(full.id), planStamp(full.id)])
+      return ok(res, { plan_id: full.id, edit, stamp: st?.stamp ?? null })
     }
     // VỀ CHẾ ĐỘ XEM (23/10, công tắc Xem | Sửa trên bàn): chỉ khi bàn CHƯA khác bản đã lưu — có thay đổi thì phải Lưu hoặc Khôi phục.
     // Bỏ bản chụp (không còn gì để khôi phục); thuê kế hoạch (withPlanLease) nên không ai kéo thả chen giữa lúc so và lúc bỏ.
     if (b.action === 'end') {
       const sig = await editSigOf(full.id)
-      if (!sig) return ok(res, { plan_id: full.id, edit: null })
+      if (!sig) return ok(res, { plan_id: full.id, edit: null, stamp: (await planStamp(full.id))?.stamp ?? null })
       const cur: EditSig = { trips: full.trips.map(t => ({ id: t.id, status: t.status })), ods: full.trips.flatMap(t => t.ods.map(o => ({ od_number: o.od_number, trip_id: t.id }))) }
       if (editDirty(sig, cur)) return fail(res, 409, 'EDIT_DIRTY', `${planLabel(full as PlanRow)} có thay đổi chưa Lưu — bấm Lưu hoặc Khôi phục rồi mới về chế độ Xem.`)
       await dropEdit(full.id)
       const { error: uErr } = await db.from('dispatch_plan').update({ updated_at: now() }).eq('id', full.id)   // dấu phiên bản đổi ⇒ bàn khác ẩn Lưu / Khôi phục
       if (uErr) throw uErr
-      return ok(res, { plan_id: full.id, edit: null })
+      return ok(res, { plan_id: full.id, edit: null, stamp: (await planStamp(full.id))?.stamp ?? null })
     }
     step(res, 'khôi phục bản đã lưu (RPC dispatch_edit_restore)')
     const { data, error } = await db.rpc('dispatch_edit_restore', { p_plan_id: full.id })

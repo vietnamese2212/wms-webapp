@@ -231,43 +231,12 @@ export async function syncTmsPlanFromKhvc(req: Request, groupCodes: string[]): P
     }
   }
 
-  // ── ĐỔI ĐVVT / CỬA: nhả khung giờ + xoá biển số / tài xế của ĐVVT cũ (RPC nguyên tử đếm lại chỗ). Xe đã đăng ký cổng thì KHÔNG nhả —
-  //    xe đó đang ở bãi, ghi vết để người xử tay (đổi ĐVVT lúc xe đã tới cổng là chuyện phải trao đổi, không tự gỡ).
   if (rebookList.length) {
-    const ids = rebookList.map(r => r.orderId)
-    const slots: SlotRow[] = []
-    for (let i = 0; i < ids.length; i += 300) {
-      const { data, error } = await supabase.from('TmsVehicleSlot').select('id, order_id, slot_id, status, license_plate, gate_registration_id').in('order_id', ids.slice(i, i + 300))
-      if (error) { out.errors.push(`đọc khung giờ để đặt lại: ${error.message}`); continue }
-      slots.push(...((data ?? []) as SlotRow[]))
-    }
-    const byOrder = new Map<string, SlotRow[]>()
-    for (const s of slots) { const l = byOrder.get(s.order_id) ?? []; l.push(s); byOrder.set(s.order_id, l) }
-    for (const r of rebookList) {
-      const mine = byOrder.get(r.orderId) ?? []
-      const atGate = mine.filter(s => s.gate_registration_id)
-      const free = mine.filter(s => !s.gate_registration_id && (s.slot_id || s.license_plate))
-      let released = 0
-      for (const s of free) {
-        if (s.slot_id) {
-          const { error } = await supabase.rpc('book_vehicle_slot', { p_vslot_id: s.id, p_new_slot_id: null, p_plate: null, p_status: 'PENDING', p_actor: actor })
-          if (error) { out.errors.push(`nhả khung giờ ${r.gc}: ${error.message}`); continue }
-          released++
-        }
-        const { error: cErr } = await supabase.from('TmsVehicleSlot').update({ license_plate: null, driver_name: null, driver_phone: null, status: 'PENDING', updated_at: t }).eq('id', s.id)
-        if (cErr) out.errors.push(`xoá biển số / tài xế ${r.gc}: ${cErr.message}`)
-      }
-      if (free.length || atGate.length) {
-        out.rebooked++
-        out.slots_released += released
-        events.push({
-          group_code: r.gc, gdo_id: r.gdoId, event_type: 'TMS_PLAN_REBOOK', source: 'PLAN', actor,
-          detail: atGate.length
-            ? `Kế hoạch ${r.why} nhưng xe đã đăng ký cổng — KHÔNG tự nhả khung giờ / biển số; trao đổi với ĐVVT rồi xử tay ở Đặt lịch`
-            : `Kế hoạch ${r.why} — đã nhả ${released} khung giờ và xoá biển số / tài xế của bên cũ; ĐVVT mới đặt lại`,
-        })
-      }
-    }
+    const rb = await releaseBookingsFor(rebookList, actor)
+    out.rebooked += rb.rebooked
+    out.slots_released += rb.released
+    out.errors.push(...rb.errors)
+    events.push(...rb.events)
   }
 
   // ── LÔ: bỏ hàng loạt (điều vận bỏ cả ngày) ──────────────────────────────────
@@ -324,4 +293,49 @@ export async function syncTmsPlanFromKhvc(req: Request, groupCodes: string[]): P
 
   await logOutboundEvents(events)
   return out
+}
+
+/** ĐỔI ĐVVT / CỬA ĐẶT LỊCH trên lệnh VC đã có (24/10): nhả khung giờ + xoá biển số / tài xế của bên cũ (RPC nguyên tử đếm lại chỗ). Xe đã đăng
+ *  ký cổng thì KHÔNG nhả — xe đang ở bãi, ghi vết để người xử tay. MỘT hàm cho mọi cửa đổi ĐVVT: đồng bộ theo Kế hoạch xuất (trên) và đường
+ *  tắt đổi ĐVVT xe đã chốt của bàn ghép xe (`updateTripInner` ghi thẳng ncc_id) — gói 61 [11k] bắt cửa thứ hai đi vòng qua luật này.
+ *  Trả vết để cửa gọi tự ghi (đường đồng bộ ghi chung một lô). */
+export async function releaseBookingsFor(list: { orderId: string; gc: string; gdoId: string | null; why: string }[], actor: string | null): Promise<{ rebooked: number; released: number; errors: string[]; events: Parameters<typeof logOutboundEvents>[0] }> {
+  const res = { rebooked: 0, released: 0, errors: [] as string[], events: [] as Parameters<typeof logOutboundEvents>[0] }
+  if (!list.length) return res
+  const t = now()
+  const ids = list.map(r => r.orderId)
+  const slots: SlotRow[] = []
+  for (let i = 0; i < ids.length; i += 300) {
+    const { data, error } = await supabase.from('TmsVehicleSlot').select('id, order_id, slot_id, status, license_plate, gate_registration_id').in('order_id', ids.slice(i, i + 300))
+    if (error) { res.errors.push(`đọc khung giờ để đặt lại: ${error.message}`); continue }
+    slots.push(...((data ?? []) as SlotRow[]))
+  }
+  const byOrder = new Map<string, SlotRow[]>()
+  for (const s of slots) { const l = byOrder.get(s.order_id) ?? []; l.push(s); byOrder.set(s.order_id, l) }
+  for (const r of list) {
+    const mine = byOrder.get(r.orderId) ?? []
+    const atGate = mine.filter(s => s.gate_registration_id)
+    const free = mine.filter(s => !s.gate_registration_id && (s.slot_id || s.license_plate))
+    let released = 0
+    for (const s of free) {
+      if (s.slot_id) {
+        const { error } = await supabase.rpc('book_vehicle_slot', { p_vslot_id: s.id, p_new_slot_id: null, p_plate: null, p_status: 'PENDING', p_actor: actor ?? '' })
+        if (error) { res.errors.push(`nhả khung giờ ${r.gc}: ${error.message}`); continue }
+        released++
+      }
+      const { error: cErr } = await supabase.from('TmsVehicleSlot').update({ license_plate: null, driver_name: null, driver_phone: null, status: 'PENDING', updated_at: t }).eq('id', s.id)
+      if (cErr) res.errors.push(`xoá biển số / tài xế ${r.gc}: ${cErr.message}`)
+    }
+    if (free.length || atGate.length) {
+      res.rebooked++
+      res.released += released
+      res.events.push({
+        group_code: r.gc, gdo_id: r.gdoId, event_type: 'TMS_PLAN_REBOOK', source: 'PLAN', actor,
+        detail: atGate.length
+          ? `Kế hoạch ${r.why} nhưng xe đã đăng ký cổng — KHÔNG tự nhả khung giờ / biển số; trao đổi với ĐVVT rồi xử tay ở Đặt lịch`
+          : `Kế hoạch ${r.why} — đã nhả ${released} khung giờ và xoá biển số / tài xế của bên cũ; ĐVVT mới đặt lại`,
+      })
+    }
+  }
+  return res
 }

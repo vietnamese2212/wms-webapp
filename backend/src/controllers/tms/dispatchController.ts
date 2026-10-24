@@ -43,6 +43,7 @@ import {
 } from '../../services/dispatchEngine'
 import { splitPool, redoDispatchedOf, shareBaseRange, type ExcludedOd, type ExcludedDetail, type ExcludeKind, type PoolCandidateRow, type OtherDraft } from '../../services/dispatchPool'
 import { editDirty, type EditSig } from '../../services/dispatchEdit'
+import { releaseBookingsFor } from '../../services/tmsPlanSync'
 import { applyWarehouseOverrides, loadWarehouseOverrides, multiVehicleOf, detourPctOf } from '../../services/vehicleModelScope'
 import { replanKhvcGroups, keepIssuesForGroups, type KhvcPlanRow } from '../wms/outboundController'
 import { classifyKhvcDelete, outboundHoldState } from '../external/khvcController'
@@ -1341,7 +1342,15 @@ async function updateTripInner(req: Request, res: Response) {
     if (kl.error) throw kl.error
     if (gd.error) throw gd.error
     if (tm.error) throw tm.error
-    return ok(res, { ...updated, khvc_lines: (kl.data ?? []).length, derived: { gdo: (gd.data ?? []).length, tms: (tm.data ?? []).length }, _plan: await planAfterWrite(plan) })
+    // 24/10 (user chốt "không cần ĐVVT phản hồi"): đổi ĐVVT xe đã chốt ⇒ khung giờ / biển số / tài xế là của bên CŨ — nhả theo CÙNG luật với
+    // đường đồng bộ lệnh VC (`releaseBookingsFor`); đường tắt này trước ghi thẳng ncc_id nên đi vòng qua luật (gói 61 [11k] bắt)
+    let rebook: { released: number; errors: string[] } | null = null
+    if (trip.transport_company_id !== updated.transport_company_id && (tm.data ?? []).length) {
+      const rb = await releaseBookingsFor((tm.data ?? []).map(o => ({ orderId: o.id, gc: trip.group_code, gdoId: gdo?.id ?? null, why: `đổi ĐVVT ${d0.carrier?.name ?? '—'} → ${d.carrier?.name ?? '—'}` })), actor)
+      await logOutboundEvents(rb.events)
+      rebook = { released: rb.released, errors: rb.errors }
+    }
+    return ok(res, { ...updated, khvc_lines: (kl.data ?? []).length, derived: { gdo: (gd.data ?? []).length, tms: (tm.data ?? []).length }, ...(rebook ? { rebook } : {}), _plan: await planAfterWrite(plan) })
   } catch (e) { return failAny(res, e) }
 }
 /** Sau một lần sửa xe: tổng kết lại + dấu phiên bản — trình duyệt vá thẳng xe vào kế hoạch đang giữ, không tải lại cả kế hoạch (06/10). */
@@ -3324,7 +3333,7 @@ export const discardPlan = withPlanLease(discardPlanInner)
 // ── POST /tms/dispatch/plans/:id/resync-outbound — THỬ LẠI dội xuống chuyến Xuất kho + lệnh VC (24/10, rà chuỗi điều vận) ───────────────
 // Xoá kế hoạch / đổi ngày / Lưu trả `replan_error` ⇒ người bấm Thử lại. Dội lại MỌI Số xe của kế hoạch (kể cả xe đã bỏ — kế hoạch đã xoá
 // thì chuyến của nó phải ngừng) theo Kế hoạch xuất HIỆN TẠI: không đổi gì bên bàn, chạy lại nhiều lần vẫn ra cùng kết quả.
-export const zResyncOutbound = z.object({}).strict()
+export const zResyncOutbound = z.object({})   // không strict: mọi lệnh ghi của app gửi kèm qty_semantics (gói 61 [11k] bắt 400)
 async function resyncOutboundInner(req: Request, res: Response) {
   try {
     const full = await readPlan(String(req.params.id))

@@ -29,6 +29,9 @@ const QA61WH = '6a610000-0000-4000-8000-000000000061', GC_S = 'QA59_SHIPTO_GDO'
 const GC_K = 'QA59_KIN_GDO', PLANT_C = 'QA59P'
 
 await login(); await resolveFixtures()
+// [7i] Số xe kiểm thử ở kho QA61WH (khớp khuôn Số xe của kho để đường dựng chuyến bên Xuất nhận) — kho kiểm thử riêng, không phải kho thật
+const WH61_CODE = (await restAll('Warehouse', `select=code&id=eq.${QA61WH}`))[0]?.code ?? 'QA61WH'
+const GC_R = `${WH61_CODE}_X_${todayVN.slice(8, 10)}${todayVN.slice(5, 7)}${todayVN.slice(2, 4)}_958`
 const mat = (await restAll('Material', `select=material_code,base_unit,entry_unit,units_per_carton,short_name&material_code=eq.${FIX.MAT_POOL}`))[0]
 const upc = Number(mat?.units_per_carton) || 0
 const hasEntry = !!(mat?.entry_unit && upc > 0)
@@ -80,10 +83,17 @@ const shiftDay = (d, n) => new Date(Date.parse(`${d}T00:00:00Z`) + n * 86_400_00
 
 async function cleanup() {
   await restWrite('reconcile_tasks', 'DELETE', `group_code=eq.${GC_S}`).catch(() => {})
-  await restWrite('khvc_lines', 'DELETE', `group_code=eq.${GC_K}`).catch(() => {})
-  for (const g of await restAll('GroupDeliveryOrder', `select=id&group_code=in.(${GC},${GC_S},${GC_K})`)) {
+  await restWrite('khvc_lines', 'DELETE', `group_code=in.(${GC_K},${GC_R})`).catch(() => {})
+  for (const o of await restAll('TmsOrder', `select=id&order_code=eq.${GC_R}`)) {
+    await restWrite('TmsVehicleSlot', 'DELETE', `order_id=eq.${o.id}`).catch(() => {})
+    await restWrite('TmsOrder', 'DELETE', `id=eq.${o.id}`).catch(() => {})
+  }
+  await restWrite('outbound_events', 'DELETE', `group_code=in.(${GC_K},${GC_R})`).catch(() => {})
+  await restWrite('reconcile_tasks', 'DELETE', `group_code=in.(${GC_K},${GC_R})`).catch(() => {})
+  for (const g of await restAll('GroupDeliveryOrder', `select=id&group_code=in.(${GC},${GC_S},${GC_K},${GC_R})`)) {
     const dos = await restAll('OutboundDelivery', `select=id&gdo_id=eq.${g.id}`)
     if (dos.length) { await restWrite('OutboundItem', 'DELETE', `do_id=in.(${dos.map(x => x.id).join(',')})`).catch(() => {}); await restWrite('OutboundDelivery', 'DELETE', `gdo_id=eq.${g.id}`) }
+    await restWrite('wms_tasks', 'DELETE', `gdo_id=eq.${g.id}`).catch(() => {})   // [7i] dựng lại chuyến có thể lập việc kho
     await restWrite('GroupDeliveryOrder', 'DELETE', `id=eq.${g.id}`)
   }
   await restWrite('khvc_lines', 'DELETE', `group_code=eq.${GC}`).catch(() => {})
@@ -404,6 +414,41 @@ try {
     && (logP.j?.data?.items ?? []).some(x => x.kind === 'PARTIAL' && x.file_name === 'qa59-7a.xlsx')
     && vers7.s === 200 && (vers7.j?.data?.versions ?? []).length >= 1 && vers7.j?.data?.current?.[0]?.sync_status === 'OBSOLETE',
     `cov=${cov7.s} log=${log7.s}/${(log7.j?.data?.items ?? []).length} logP=${(logP.j?.data?.items ?? []).length} vers=${vers7.s}/${(vers7.j?.data?.versions ?? []).length}`)
+  // [7i–7j] (24/10, user: "SAP tách đơn cả trước và sau khi điều vận sắp lịch, và cả khi kho xếp hàng") — A 10 thùng trên Số xe đã vào Kế
+  //  hoạch xuất, kho Tạm dừng sau khi quét 8; SAP xoá A tạo B 8 + C 2 ⇒ Đổi số DO CHỌN DO ở lại xe: chọn C (2 < 8 đã quét) ⇒ 409 không ghi gì;
+  //  chọn B ⇒ đổi số, phần đã quét chuyển sang B (không quét lại), C về Chờ điều (cạnh phả hệ TO_POOL). Bản trước: chuyến đã bắt đầu ⇒ 409
+  //  "huỷ rồi điều lại", và đổi số luôn đưa CẢ B lẫn C lên xe.
+  {
+    const SO6 = 'QA59SO6', OD6 = 'QA59OD6'
+    const row6 = (od, q) => row({ so: SO6, od, mat: FIX.MAT_POOL, su: suThung, soq: q, factor, bunit: bu })
+    await upload('/external/do-sap/upload-zsd02', xlsxOf([row6(OD6, 10)]), 'qa59-7i0.xlsx', { kind: 'PARTIAL' })
+    const mat0 = (await restAll('Material', `select=id,material_code&material_code=eq.${FIX.MAT_POOL}`))[0]
+    const ts = new Date().toISOString()
+    const [g6] = await restWrite('GroupDeliveryOrder', 'POST', null, { id: randomUUID(), group_code: GC_R, warehouse_id: QA61WH, delivery_date: todayVN, planned_date: todayVN, status: 'PAUSED', started_at: ts, created_at: ts, updated_at: ts })
+    const [d6] = await restWrite('OutboundDelivery', 'POST', null, { id: randomUUID(), gdo_id: g6.id, delivery_code: OD6, distributor_name: 'QA59 KHÁCH TEST', ship_to_code: SHIPTO, created_at: ts, updated_at: ts })
+    const [i6] = await restWrite('OutboundItem', 'POST', null, { id: randomUUID(), do_id: d6.id, material_id: mat0.id, material_code_raw: mat0.material_code, cartons_ordered: 10 * factor, cartons_scanned: 8 * factor,
+      status: 'IN_PROGRESS', od_refs: [{ od_number: OD6, od_item: '10', qty_base: 10 * factor }], created_at: ts, updated_at: ts })
+    await restWrite('khvc_lines', 'POST', null, { id: randomUUID(), group_code: GC_R, do_no: OD6, npp: 'QA59 KHÁCH TEST', gdo_id: g6.id, export_date: todayVN, warehouse_code: WH61_CODE, source: 'EXCEL', sync_status: 'ACTIVE', updated_at: ts })
+    const up7i = await upload('/external/do-sap/upload-zsd02', xlsxOf([row6('QA59OD6B', 8), row6('QA59OD6C', 2)]), 'qa59-7i.xlsx', { kind: 'PARTIAL' })
+    const lin6 = await restAll('od_lineage', `select=new_od,kind&old_od=eq.${OD6}&order=new_od`)
+    const ren = (ods) => api('/tms/dispatch/khvc/renumber', 'POST', { warehouse_id: QA61WH, od_number: OD6, group_code: GC_R, new_ods: ods })
+    const bad = await ren(['QA59OD6C'])
+    const kh0 = await restAll('khvc_lines', `select=do_no&group_code=eq.${GC_R}&sync_status=neq.OBSOLETE`)
+    check('7i. SAP tách A (Tạm dừng, đã quét 8) thành B 8 + C 2 ⇒ A thay bởi B (2 cạnh SPLIT) · chọn C ở lại xe ⇒ 409 OUTBOUND_WORK_BLOCKS (kế hoạch mới ít hơn phần đã quét), Kế hoạch xuất vẫn A',
+      up7i.s === 200 && lin6.map(l => `${l.new_od}:${l.kind}`).join(',') === 'QA59OD6B:SPLIT,QA59OD6C:SPLIT'
+      && bad.s === 409 && bad.j?.error?.code === 'OUTBOUND_WORK_BLOCKS' && kh0.map(k => k.do_no).join(',') === OD6,
+      `up=${up7i.s} lin=${JSON.stringify(lin6)} bad=${bad.s}/${bad.j?.error?.code} ${(bad.j?.error?.message ?? '').slice(0, 120)} kh=${kh0.map(k => k.do_no)}`)
+    const good = await ren(['QA59OD6B'])
+    const kh1 = await restAll('khvc_lines', `select=do_no&group_code=eq.${GC_R}&sync_status=neq.OBSOLETE`)
+    const linC = (await restAll('od_lineage', `select=resolution,resolved_at&old_od=eq.${OD6}&new_od=eq.QA59OD6C`))[0]
+    const it6 = (await restAll('OutboundItem', `select=cartons_scanned,cartons_ordered,od_refs&id=eq.${i6.id}`))[0]
+    const dv6 = (await restAll('OutboundDelivery', `select=delivery_code&gdo_id=eq.${g6.id}`)).map(d => d.delivery_code)
+    check('7j. Chọn B ở lại xe ⇒ 200, Kế hoạch xuất chỉ còn B · C về Chờ điều (phả hệ TO_POOL) · chuyến Tạm dừng GIỮ 8 đã quét trên dòng hàng giờ mang B (đặt 8, không quét lại)',
+      good.s === 200 && !good.j?.data?.replan_error && kh1.map(k => k.do_no).join(',') === 'QA59OD6B' && linC?.resolution === 'TO_POOL' && !!linC?.resolved_at
+      && Number(it6?.cartons_scanned) === 8 * factor && Number(it6?.cartons_ordered) === 8 * factor && dv6.join(',') === 'QA59OD6B'
+      && (it6?.od_refs ?? []).some(r => r.od_number === 'QA59OD6B'),
+      `good=${good.s} ${good.j?.data?.replan_error ?? good.j?.error?.message ?? ''} kh=${kh1.map(k => k.do_no)} linC=${JSON.stringify(linC)} item=${it6?.cartons_scanned}/${it6?.cartons_ordered} refs=${JSON.stringify(it6?.od_refs)} dv=${dv6}`)
+  }
 } finally {
   await cleanup()
   check('9. Dọn sạch fixture QA59', (await restAll('erp_so_lines', `select=id&so_number=like.QA59SO*`)).length === 0

@@ -847,6 +847,19 @@ các lần nạp). Phần chạm bàn điều vận:
   cho TỪNG DO mới hai nút **"Phần đã đi"** (dấu Ngoài app kèm lý do "Phần đã đi theo xe X (DO A…)", cạnh resolved OUTSIDE_APP) / **"Giao thêm"**
   (resolved SUPPLEMENT, về Chờ điều như đơn thường); DO mới có số lượng = số đã quét được gợi ý "khớp số đã chở" (nút Phần đã đi là nút chính).
 - Gói 59 [7d] dựng chuyến hoàn thành chở A (SAP chưa post) ⇒ A giữ, hai cạnh AFTER_POST, việc KIN mang `shipped_base`.
-- **Còn trong Đợt 2 (user đã duyệt):** Đổi số DO chọn DO ở lại xe (DO còn lại về Chờ điều) · đổi số khi kho đã quét (Tạm dừng, phần đã quét
-  sang DO mới) · cờ "SAP sửa sau khi xuất" · hoãn từng đơn khi đơn máy chia 2 xe ⇒ chặn, mở khoá cả 2 xe. **Để sau:** nhập trả gắn chuyến gốc ·
-  cả xe quay về (user: "thi thoảng mới có").
+- **Đợt 2 (cùng ngày, user đã duyệt):**
+  - **SAP tách 1 → N ⇒ CHỌN DO ở lại xe.** Bàn (nháp / xe đang sửa): cờ REPLACED mang `replaced_all` (RPC phả hệ chưa quyết + `replaced_by_od`,
+    hàm `replacementsOf`) ⇒ một nút "Thay bằng OD mới X" cho TỪNG DO thay; `replace-od` nhận `new_od`, DO không chọn ở Chờ điều. Cần xử lý (xe
+    đã vào Kế hoạch xuất): "Đổi số DO (chọn DO ở lại xe)" mở hộp tick — mặc định KHÔNG tick sẵn; `khvc/renumber` nhận tập con `new_ods` (phải là
+    DO thay, 422 `NOT_A_REPLACEMENT`), DO không chọn ⇒ cạnh phả hệ resolved `TO_POOL`, về Chờ điều.
+  - **Đổi số khi kho đã quét**: `renumber` bỏ gác `classifyKhvcDelete` (chặn mọi chuyến đã bắt đầu), dùng ĐÚNG luật nút Lưu `outboundBlocks` trên
+    kế hoạch SAU khi đổi số — đang xuất ⇒ 409 "kho bấm Tạm dừng"; Tạm dừng / đã quét ⇒ đường gộp giữ hàng (`replanSafe keepWork` →
+    `mergePausedGDO`: khớp NPP + mã, `delivery_code` + `od_refs` sang DO mới, số đã quét giữ — KHÔNG quét lại); kế hoạch mới < phần đã quét
+    ⇒ 409 `OUTBOUND_WORK_BLOCKS`, không ghi gì; hoàn thành ⇒ chặn (đơn đã xuất quyết ở Cần xử lý). Cần xử lý hiện nút Đổi số cả khi chuyến Tạm dừng.
+  - **Hoãn / Ngoài app đơn máy chia nhiều xe**: hai cửa gỡ MỌI phần của đơn (một đơn một ngày) ⇒ phần trên xe ĐANG KHOÁ bị kéo theo không ai
+    mở xe đó — nay 409 `OD_SPLIT_ACROSS_TRIPS` "Đơn X đang chia N xe (#a, #b) — mở khoá cả N xe…" (luật thuần `dispatchPool.splitOnLocked`, test);
+    đổi ngày từng đơn trên bàn kiểm trước khi mở khoá xe.
+  - "SAP sửa sau khi xuất": đã có — bộ đối chiếu ghi việc `RECONCILE_ONLY` (chỉ đối soát, báo SAP) cho chuyến đã đóng + lịch sử phiên bản; không
+    thêm cờ mới để khỏi ngập hàng chờ.
+  - Gói 59 [7i–7j] (Tạm dừng đã quét 8 ⇒ chọn C 2 bị 409 · chọn B 8 ⇒ đổi số, giữ 8 đã quét, C TO_POOL) · test đơn vị splitOnLocked.
+- **Để sau:** nhập trả gắn chuyến gốc · cả xe quay về (user: "thi thoảng mới có").

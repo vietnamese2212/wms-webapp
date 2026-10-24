@@ -68,14 +68,25 @@ export function DispatchDecisionQueue({ warehouseId, planId, canAct, canPlan }: 
       toast({ title: `Đã gỡ DO ${dlg.od_number} khỏi Số xe ${dlg.group_code}`, description: r.replan_error ? `Chuyến bên Xuất chưa dựng lại được: ${r.replan_error}` : 'Chuyến bên Xuất dựng lại theo kế hoạch còn lại (hết dòng thì ngừng hoạt động). DO mới (nếu có) đã về tab Điều.' })
     } catch (e) { err(e, 'Không gỡ được') }
   }
-  const doRenumber = async (r: DispatchDecision) => {
-    const to = r.new_ods.map(n => n.od)
-    if (await ask({ title: `Đổi số DO ${r.od_number} → ${to.join(', ')} trên Số xe ${r.group_code}?`, confirmLabel: 'Đổi số DO',
-      body: `${r.same_content ? 'Cùng khách, cùng tổng số lượng.' : 'Khách hoặc số lượng KHÁC bản cũ — chuyến bên Xuất dựng lại theo DO mới, tải xe đổi.'}${to.length > 1 ? ` DO tách ${to.length} phần đều lên cùng xe này.` : ''} Phả hệ ghi ai đổi lúc nào.` }) === null) return
+  // ĐỔI SỐ DO (24/10): SAP tách 1 → N (A 100 ⇒ B 80 + C 20) ⇒ người chọn DO nào ở lại xe, DO không chọn về Chờ điều. Chuyến Tạm dừng / đã
+  // quét: phần đã quét chuyển sang DO mới (đường gộp giữ hàng), kế hoạch mới ít hơn phần đã quét thì BE từ chối.
+  const [ren, setRen] = useState<DispatchDecision | null>(null)
+  const [pick, setPick] = useState<Set<string>>(new Set())
+  const runRenumber = async (r: DispatchDecision, to: string[]) => {
     try {
       const res = await renumber.mutateAsync({ warehouse_id: warehouseId, od_number: r.od_number, group_code: r.group_code, new_ods: to })
-      toast({ title: `Đã đổi ${res.from} → ${res.to.join(', ')}`, description: res.replan_error ? `Chuyến bên Xuất chưa dựng lại được: ${res.replan_error}` : 'Kế hoạch xuất, chuyến và bàn điều vận cùng mang số DO mới.' })
+      setRen(null)
+      const rest = r.new_ods.map(n => n.od).filter(od => !to.includes(od))
+      toast({ title: `Đã đổi ${res.from} → ${res.to.join(', ')}`, description: res.replan_error ? `Chuyến bên Xuất chưa dựng lại được: ${res.replan_error}`
+        : `Kế hoạch xuất, chuyến và bàn điều vận cùng mang số DO mới${gdoStage(r.gdo_status).col === 'C' ? ' — phần kho đã quét giữ nguyên' : ''}.${rest.length ? ` ${rest.join(', ')} về Chờ điều.` : ''}` })
     } catch (e) { err(e, 'Không đổi số được') }
+  }
+  const doRenumber = async (r: DispatchDecision) => {
+    const to = r.new_ods.map(n => n.od)
+    if (to.length > 1) { setPick(new Set()); setRen(r); return }
+    if (await ask({ title: `Đổi số DO ${r.od_number} → ${to.join(', ')} trên Số xe ${r.group_code}?`, confirmLabel: 'Đổi số DO',
+      body: `${r.same_content ? 'Cùng khách, cùng tổng số lượng.' : 'Khách hoặc số lượng KHÁC bản cũ — chuyến bên Xuất dựng lại theo DO mới, tải xe đổi.'}${gdoStage(r.gdo_status).col === 'C' ? ' Kho đã làm: phần đã quét chuyển sang DO mới, không phải quét lại.' : ''} Phả hệ ghi ai đổi lúc nào.` }) === null) return
+    await runRenumber(r, to)
   }
   const doOutside = async (r: DispatchDecision, ods: string[]) => {
     if (!planId) return
@@ -152,18 +163,18 @@ export function DispatchDecisionQueue({ warehouseId, planId, canAct, canPlan }: 
                   <TableCell className={`${TD} tabular-nums whitespace-normal`}>{r.detected_at ? formatDateTime(r.detected_at) : '—'}</TableCell>
                   <TableCell className={`${TD} whitespace-normal`}>
                     {fromReconcile(r.kind) && <Link to="/external?tab=reconcile" className="text-sky-700 hover:underline">Mở Dữ liệu bên ngoài → Cần xử lý</Link>}
-                    {!fromReconcile(r.kind) && st.col === 'C' && (
-                      <span className="text-amber-800">Chuyến đang xuất — không có "giữ và chạy tiếp": {path}.</span>
+                    {!fromReconcile(r.kind) && st.col === 'C' && (r.kind !== 'REPLACED' || r.gdo_status !== 'PAUSED') && (
+                      <span className="text-amber-800">{r.kind === 'REPLACED' ? 'Kho đang xuất — kho bấm Tạm dừng chuyến rồi đổi số ở đây (phần đã quét giữ nguyên).' : `Chuyến đang xuất — không có "giữ và chạy tiếp": ${path}.`}</span>
                     )}
-                    {(r.kind === 'GONE' || r.kind === 'REPLACED') && st.col === 'B' && (
+                    {(r.kind === 'GONE' || r.kind === 'REPLACED') && (st.col === 'B' || (r.kind === 'REPLACED' && r.gdo_status === 'PAUSED')) && (
                       <div className="flex flex-wrap gap-1.5">
                         {r.kind === 'REPLACED' && canAct && (
-                          <Button size="sm" variant="outline" className="h-7 text-[11px]" disabled={busy || !r.all_free || r.any_merge} onClick={() => void doRenumber(r)}
-                            title={r.any_merge ? 'SAP gộp nhiều DO cũ thành một — gỡ từng DO cũ rồi điều DO mới' : !r.all_free ? 'DO mới không còn trống (đã vào KH xuất / đang trên xe nháp / Ngoài app / không ACTIVE)' : 'Kế hoạch xuất, chuyến và bàn cùng đổi sang số DO mới; chuyến dựng lại'}>
-                            Đổi số DO{r.new_ods.length > 1 ? ` (${r.new_ods.length} phần)` : ''}
+                          <Button size="sm" variant="outline" className="h-7 text-[11px]" disabled={busy || !freeNew.length || r.any_merge} onClick={() => void doRenumber(r)}
+                            title={r.any_merge ? 'SAP gộp nhiều DO cũ thành một — gỡ từng DO cũ rồi điều DO mới' : !freeNew.length ? 'DO mới không còn trống (đã vào KH xuất / đang trên xe nháp / Ngoài app / không ACTIVE)' : r.new_ods.length > 1 ? 'SAP tách — chọn DO nào ở lại xe, DO còn lại về Chờ điều' : 'Kế hoạch xuất, chuyến và bàn cùng đổi sang số DO mới; chuyến dựng lại'}>
+                            {r.new_ods.length > 1 ? `Đổi số DO (chọn DO ở lại xe)` : 'Đổi số DO'}
                           </Button>
                         )}
-                        {canAct && <Button size="sm" variant="outline" className="h-7 text-[11px]" disabled={busy} onClick={() => { setReason(r.kind === 'GONE' ? 'SAP đã bỏ DO' : `SAP thay bằng ${r.new_ods.map(n => n.od).join(', ')} — điều lại DO mới trên bàn`); setDlg(r) }}
+                        {canAct && st.col === 'B' && <Button size="sm" variant="outline" className="h-7 text-[11px]" disabled={busy} onClick={() => { setReason(r.kind === 'GONE' ? 'SAP đã bỏ DO' : `SAP thay bằng ${r.new_ods.map(n => n.od).join(', ')} — điều lại DO mới trên bàn`); setDlg(r) }}
                           title="Gỡ DO khỏi Số xe trong Kế hoạch xuất (có lý do, nhật ký chuyến). DO mới (nếu có) về tab Điều để ghép lại.">Gỡ khỏi kế hoạch</Button>}
                         {!canAct && <span className="text-slate-500">Cần quyền Xác nhận điều vận hoặc sửa Kế hoạch xuất.</span>}
                       </div>
@@ -214,6 +225,31 @@ export function DispatchDecisionQueue({ warehouseId, planId, canAct, canPlan }: 
           <DialogFooter>
             <Button size="sm" variant="outline" className="h-8" disabled={remove.isPending} onClick={() => setDlg(null)}>Huỷ</Button>
             <Button size="sm" className="h-8" disabled={remove.isPending} onClick={() => void doRemove()}>{remove.isPending ? 'Đang gỡ…' : 'Gỡ khỏi kế hoạch'}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      {/* SAP TÁCH 1 → N (24/10): chọn DO ở lại Số xe — mặc định KHÔNG tick sẵn (bấm vội "Đổi số" không được đưa lại đủ 100 lên xe chở 80) */}
+      <Dialog open={!!ren} onOpenChange={o => { if (!o && !renumber.isPending) setRen(null) }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader><DialogTitle className="text-sm">SAP tách DO {ren?.od_number} — DO nào ở lại Số xe {ren?.group_code}?</DialogTitle></DialogHeader>
+          <div className="space-y-2 text-xs">
+            <p className="text-slate-500">Tick DO đi trên xe này. DO không tick về <b>Chờ điều</b> để ghép ngày khác.{ren && gdoStage(ren.gdo_status).col === 'C' ? ' Kho đã quét: phần đã quét chuyển sang DO được tick — số của DO được tick phải ≥ phần đã quét.' : ''}</p>
+            {ren?.new_ods.map(n => {
+              const free = n.active && !n.in_khvc && !n.on_vehicle && !n.outside
+              return (
+                <label key={n.od} className={`flex items-center gap-2 ${free ? 'cursor-pointer' : 'opacity-50'}`}>
+                  <input type="checkbox" className="h-3.5 w-3.5 accent-sky-600" disabled={!free || renumber.isPending} checked={pick.has(n.od)}
+                    onChange={e => setPick(p => { const s = new Set(p); if (e.target.checked) s.add(n.od); else s.delete(n.od); return s })} />
+                  <span className="font-mono font-medium">{n.od}</span>
+                  {n.qty_base != null && <span className="text-slate-500 tabular-nums">{nf(n.qty_base, 3)} (đơn vị gốc)</span>}
+                  {!free && <span className="text-slate-500">— không còn trống</span>}
+                </label>
+              )
+            })}
+          </div>
+          <DialogFooter>
+            <Button size="sm" variant="outline" className="h-8" disabled={renumber.isPending} onClick={() => setRen(null)}>Huỷ</Button>
+            <Button size="sm" className="h-8" disabled={renumber.isPending || !pick.size} onClick={() => { if (ren) void runRenumber(ren, [...pick]) }}>{renumber.isPending ? 'Đang đổi…' : `Đổi số — ${pick.size} DO ở lại xe`}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

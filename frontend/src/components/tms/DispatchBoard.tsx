@@ -380,7 +380,7 @@ export function DispatchBoard({ plan, editable, flags, work, onOpenTrip, focusTr
   // tick cả xe / cả cụm: bỏ qua đơn đã thực thi bên Xuất (23/10)
   const toggleMany = (ids0: string[]) => { const ids = ids0.filter(id => !lockedId(id)); setSel(p => { const all = ids.every(id => p.has(id)); const n = new Set(p); for (const id of ids) all ? n.delete(id) : n.add(id); return n }) }
 
-  const doReplace = (od: string) => replace.mutateAsync({ plan_id: plan.id, od_number: od })
+  const doReplace = (od: string, newOd?: string) => replace.mutateAsync({ plan_id: plan.id, od_number: od, new_od: newOd })
     .then(r => toast({ title: `Đã thay ${r.replaced.from} bằng ${r.replaced.to}`, description: 'Tải + cước của xe đã tính lại theo OD mới.' }))
     .catch(e => err(e, 'Không thay được OD'))
   // TỐI ƯU LẠI — hộp thoại DẢI % TẢI theo dòng xe cha (01/10) đứng trước lượt ghép; dải chọn ở đây ghi vào kế hoạch + nhớ cho kho
@@ -528,10 +528,12 @@ export function DispatchBoard({ plan, editable, flags, work, onOpenTrip, focusTr
                 onClick={e => { e.stopPropagation(); void doResync(o.od_number) }}><RotateCw className="h-3 w-3" /> Cập nhật theo SAP</button>}
             </div>
           )}
-          {fl?.kind === 'REPLACED' && fl.replaced_by && editable && (!tr || editableTrip(tr) || tripStatus(tr) === 'TENDERED') && (
-            <button type="button" className="mt-0.5 inline-flex items-center gap-1 text-[10px] font-medium text-sky-700 hover:underline" disabled={replace.isPending}
-              onClick={e => { e.stopPropagation(); void doReplace(o.od_number) }}><Replace className="h-3 w-3" /> Thay bằng OD mới {fl.replaced_by}</button>
-          )}
+          {/* 24/10: SAP tách 1 → N ⇒ một nút cho TỪNG DO thay — DO được bấm ở lại chỗ của OD cũ, DO còn lại về Chờ điều */}
+          {fl?.kind === 'REPLACED' && fl.replaced_by && editable && (!tr || editableTrip(tr) || tripStatus(tr) === 'TENDERED') && (fl.replaced_all ?? [fl.replaced_by]).map(nod => (
+            <button key={nod} type="button" className="mt-0.5 mr-2 inline-flex items-center gap-1 text-[10px] font-medium text-sky-700 hover:underline" disabled={replace.isPending}
+              title={(fl.replaced_all?.length ?? 0) > 1 ? `${nod} thay OD cũ ở chỗ này; ${fl.replaced_all!.filter(x => x !== nod).join(', ')} về Chờ điều` : undefined}
+              onClick={e => { e.stopPropagation(); void doReplace(o.od_number, nod) }}><Replace className="h-3 w-3" /> Thay bằng OD mới {nod}</button>
+          ))}
         </div>
       </div>
     )
@@ -955,7 +957,7 @@ export function DispatchBoard({ plan, editable, flags, work, onOpenTrip, focusTr
     onOpenTrip, onOpenOd: setOdDetail,
     openRowVehicles: setVehRow, canCustVeh,
     routeOf: id => routeRows.get(id) ?? null, tripRoute: id => tripTags?.get(id) ?? null, tripLabel, odLabel,
-    resync: od => { void doResync(od) }, replace: od => { void doReplace(od) }, sapBusy: resync.isPending || replace.isPending,
+    resync: od => { void doResync(od) }, replace: (od, newOd) => { void doReplace(od, newOd) }, sapBusy: resync.isPending || replace.isPending,
     toggleLock: t => { void toggleLock(t) },
     reopenTrip: onReopenTrip,
     moveDate: onMoveDateTrip,

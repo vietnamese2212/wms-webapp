@@ -463,6 +463,12 @@ export default function Dispatch() {
   // cùng cửa Lưu (23/10): chuyến bên Xuất đã quét / đang xuất thì bị chặn kèm việc kho phải làm. Hỏng giữa chừng: xe đang ở nháp, Khôi phục được.
   const moveOdsDate = async (t: DispatchTrip, odNumbers: string[], date: string, reason?: string) => {
     if (!plan) return
+    // 24/10 (user duyệt): đơn máy chia sang xe khác đang khoá ⇒ chặn TRƯỚC khi mở khoá (BE cũng chặn 409 OD_SPLIT_ACROSS_TRIPS)
+    for (const od of odNumbers) {
+      const others = plan.trips.filter(x => x.id !== t.id && x.ods.some(o => o.od_number === od))
+      const lockedOthers = others.filter(x => tripStatus(x) === 'CONFIRMED')
+      if (lockedOthers.length) throw new Error(`Đơn ${od} đang chia ${others.length + 1} xe (#${t.seq}, ${others.map(x => `#${x.seq}`).join(', ')}) — mở khoá cả các xe đó trên bàn rồi đổi ngày đơn này.`)
+    }
     setEditDay(plan.plan_date)
     const r = await reopen.mutateAsync({ plan_id: plan.id, trip_ids: [t.id] })
     if (!r.reopened.trips) throw new Error(r.reopened.blocked[0]?.reason ?? 'Không mở khoá được xe')

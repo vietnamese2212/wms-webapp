@@ -6123,7 +6123,8 @@ export function useDispatchTripCarriers(tripId: string | null, enabled = true) {
   })
 }
 /** Cờ sống của OD so với ZSD02 hiện tại — phát sinh SAU khi lập nháp (pool lũy tiến, 25/09). */
-export interface DispatchOdFlag { od_number: string; kind: 'REPLACED' | 'GONE' | 'SHIPPED' | 'SAP_ASSIGNED' | 'IN_PLAN' | 'CHANGED' | 'KIN_SHIPPED' | 'WH_SCANNED'; info: string | null; replaced_by?: string | null }
+/** replaced_all (24/10): SAP tách 1 → N ⇒ mọi DO thay (bàn hiện một nút "Thay bằng …" cho từng DO; DO không chọn về Chờ điều) */
+export interface DispatchOdFlag { od_number: string; kind: 'REPLACED' | 'GONE' | 'SHIPPED' | 'SAP_ASSIGNED' | 'IN_PLAN' | 'CHANGED' | 'KIN_SHIPPED' | 'WH_SCANNED'; info: string | null; replaced_by?: string | null; replaced_all?: string[] }
 export interface DispatchExcludedDetail { ship_to_code: string | null; ship_to_name: string | null; ward_code: string | null; region_code: string | null; region_name: string | null; pallets: number | null; tons: number | null; delivery_date: string | null; note: string | null }
 /** OD KHÔNG nằm trên kế hoạch — HELD mang `until` (có ngày = Không điều ngày này · null = Không điều) + `reason`; `d` để bảng Xem đơn in dòng. */
 // NO_MATERIAL (03/10): OD có mã chưa khai trong Mã hàng — máy không ghép, nằm ở tab Điều dạng "Không lên xe" cho tới khi khai mã
@@ -6485,7 +6486,8 @@ export function useRefreshDispatchPool() {
 export function useReplaceDispatchOd() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ plan_id, od_number }: { plan_id: string; od_number: string }) => apiClient.post(`/tms/dispatch/plans/${plan_id}/replace-od`, { od_number }).then(r => r.data.data as DispatchPlan & { replaced: { from: string; to: string } }),
+    // new_od (24/10): SAP tách 1 → N ⇒ DO người chọn ở lại xe; DO còn lại ở Chờ điều
+    mutationFn: ({ plan_id, od_number, new_od }: { plan_id: string; od_number: string; new_od?: string }) => apiClient.post(`/tms/dispatch/plans/${plan_id}/replace-od`, { od_number, ...(new_od ? { new_od } : {}) }).then(r => r.data.data as DispatchPlan & { replaced: { from: string; to: string } }),
     onSuccess: p => putDispatchPlan(qc, p),
   })
 }

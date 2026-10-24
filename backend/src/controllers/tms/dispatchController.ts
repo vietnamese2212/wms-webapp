@@ -41,7 +41,7 @@ import {
   odStopsCap, modelDrops, condsOf, mainCatsOf, lineConditions, resolveAllowedModels, resolveMaxCustomers, type MaxCustomersCfg, mixBlockReason, dropsBlockReason, manualRuleBlocks, type RuleBlock, routeKind, type RouteKind, priceCombo, comboModel, splitLoad, basisOf,
   type TripVehicle, withLoadBands, type LoadBand, type EngineGeo, type UnderMin, type TooBig, routeOf,
 } from '../../services/dispatchEngine'
-import { splitPool, redoDispatchedOf, shareBaseRange, type ExcludedOd, type ExcludedDetail, type ExcludeKind, type PoolCandidateRow, type OtherDraft } from '../../services/dispatchPool'
+import { splitPool, redoDispatchedOf, shareBaseRange, splitOnLocked, type ExcludedOd, type ExcludedDetail, type ExcludeKind, type PoolCandidateRow, type OtherDraft } from '../../services/dispatchPool'
 import { editDirty, type EditSig } from '../../services/dispatchEdit'
 import { releaseBookingsFor } from '../../services/tmsPlanSync'
 import { applyWarehouseOverrides, loadWarehouseOverrides, multiVehicleOf, detourPctOf } from '../../services/vehicleModelScope'
@@ -167,7 +167,8 @@ export const zMove = z.object({
   }).optional(),
 }).refine(v => !v.restore || v.to === 'new', { message: 'restore chỉ đi với to = new', path: ['restore'] })
 export const zPreview =z.object({ ids: z.array(zId).min(1).max(300), to_trip_id: zId })
-export const zReplaceOd = z.object({ od_number: zText(1, 50) })
+// new_od (24/10): SAP TÁCH 1 → N (A 100 → B 80 + C 20) ⇒ người chọn DO nào thay A trên xe; DO còn lại ở Chờ điều. Vắng = DO mới đầu tiên.
+export const zReplaceOd = z.object({ od_number: zText(1, 50), new_od: zText(1, 50).optional() })
 export const zMoveOd = z.object({
   od_number: zText(1, 50),
   to_trip_id: zId.optional(),          // bỏ trống = tách ra chuyến MỚI
@@ -545,6 +546,22 @@ function odRow(planId: string, tripId: string | null, o: TripOd, m: OdMeta | und
  *  đơn bù để tính cước; có dấu hiệu nhận biết"): dòng OD mang `so_created_date` > ngày kế hoạch ⇒ Sửa (`refresh-pool review_all`) và
  *  Tối ưu lại (`review_all`) KHÔNG đặt mốc / không ghép; chỉ tick ở Xem đơn hoặc kéo tay trên bàn mới lên xe. Mirror FE `isLateSo`. */
 const lateSo = (o: { so_created_date: string | null }, planDate: string) => !!o.so_created_date && o.so_created_date > planDate
+/** DO SAP TẠO THAY cho mỗi DO cũ (24/10): `replaced_by_od` (DO mới đầu tiên) + mọi cạnh phả hệ chưa giải quyết (trừ AFTER_POST — cạnh
+ *  "đơn đã xuất" người quyết ở Cần xử lý). Tách 1 → N thì có nhiều DO ⇒ người chọn DO nào ở lại xe, DO còn lại về Chờ điều. */
+async function replacementsOf(olds: string[]): Promise<Map<string, string[]>> {
+  const out = new Map<string, string[]>()
+  if (!olds.length) return out
+  const [reps, edges] = await Promise.all([
+    fetchAllByIdChunks(uniq(olds), c => db.from('erp_outbound_orders').select('od_number, replaced_by_od').in('od_number', c).not('replaced_by_od', 'is', null).order('od_number')) as Promise<{ od_number: string; replaced_by_od: string }[]>,
+    fetchAllByIdChunks(uniq(olds), c => db.from('od_lineage').select('old_od, new_od').in('old_od', c).is('resolved_at', null).neq('kind', 'AFTER_POST').order('new_od')) as Promise<{ old_od: string; new_od: string }[]>,
+  ])
+  for (const r of [...reps.map(x => ({ old_od: x.od_number, new_od: x.replaced_by_od })), ...edges]) {
+    const l = out.get(r.old_od) ?? []
+    if (!l.includes(r.new_od)) l.push(r.new_od)
+    out.set(r.old_od, l)
+  }
+  return out
+}
 /** DO MỚI CÙNG DÒNG SO VỚI DO ĐÃ XUẤT (phả hệ AFTER_POST chưa quyết — 24/10, user: SAP xoá A đã đi, tạo B "phần đã đi" + C "phần còn lại"
  *  thì B KHÔNG được vào kế hoạch kẻo đi lần hai): Sửa / Tối ưu lại không tự ghép; người quyết "Phần đã đi" / "Giao thêm" ở Cần xử lý.
  *  Cạnh AFTER_POST chưa quyết là tập NHỎ (vài dòng) còn khung chờ có thể vài nghìn đơn ⇒ đọc cả tập cạnh (phân trang) rồi giao trong JS — một
@@ -1952,7 +1969,7 @@ async function updatePlanParamsInner(req: Request, res: Response) {
  *  SAP đã thay OD (sửa SO) · SAP đã bỏ OD · đã xuất kho · SAP đã điều cho ĐVVT khác · đã có người đưa vào Kế hoạch xuất. */
 // KIN_SHIPPED (03/10, user chốt (b)): OD mới cùng dòng SO với OD cũ ĐÃ ĐI (phả hệ AFTER_POST chưa giải quyết, OD cũ còn ở Kế hoạch xuất) —
 // rào DB không cho OD mới đi ngày khác tới khi người bấm "Xác nhận đơn bổ sung" (ghi resolved_* vào od_lineage). Cờ CỨNG: chặn Xác nhận.
-type OdFlag = { od_number: string; kind: 'REPLACED' | 'GONE' | 'SHIPPED' | 'SAP_ASSIGNED' | 'IN_PLAN' | 'CHANGED' | 'KIN_SHIPPED' | 'WH_SCANNED'; info: string | null; replaced_by?: string | null }
+type OdFlag = { od_number: string; kind: 'REPLACED' | 'GONE' | 'SHIPPED' | 'SAP_ASSIGNED' | 'IN_PLAN' | 'CHANGED' | 'KIN_SHIPPED' | 'WH_SCANNED'; info: string | null; replaced_by?: string | null; replaced_all?: string[] }
 /** HÀNG ĐÃ QUÉT bên Xuất kho trên chuyến của xe mà bàn đã RÚT (17/10): od_number → Số xe cũ + số đã quét. Chuyến `plan_dropped` cùng kho ×
  *  ngày xuất của kế hoạch (nhỏ — vài xe). Dùng cho cờ WH_SCANNED ở /sync (bàn tô đỏ xe mang đơn) và gác Xác nhận SCANNED_OD_REMOVED. */
 async function scannedOnDroppedTrips(full: Pick<FullPlan, 'warehouse_id' | 'plan_date'>): Promise<Map<string, { group_code: string; scanned: number }>> {
@@ -2051,6 +2068,12 @@ async function odFlags(odNos: string[], ownGroupCodes: string[], snaps: Map<stri
     if (sh) { out.push({ od_number: od, kind: 'SHIPPED', info: `đã xuất kho${sh.mat_doc ? ` (${sh.mat_doc})` : ''}` }); continue }
     const as = live.find(r => r.sap_dispatch_status === 'ASSIGNED')
     if (as) out.push({ od_number: od, kind: 'SAP_ASSIGNED', info: `SAP đã điều: ${[as.dvvt_raw, as.license_plate].filter(Boolean).join(' · ') || 'đã điều phối'}` })
+  }
+  // 24/10: SAP tách 1 → N ⇒ bàn hiện một nút "Thay bằng …" cho TỪNG DO thay (người chọn DO nào ở lại xe, DO còn lại về Chờ điều)
+  const repOds = out.filter(f => f.kind === 'REPLACED').map(f => f.od_number)
+  if (repOds.length) {
+    const all = await replacementsOf(repOds)
+    for (const f of out) if (f.kind === 'REPLACED') { const l = all.get(f.od_number) ?? []; if (l.length > 1) { f.replaced_all = l; f.info = `SAP tách thành ${l.join(', ')}` } }
   }
   return out
 }
@@ -2212,9 +2235,10 @@ async function replaceOdInner(req: Request, res: Response) {
     const tripId = olds[0].trip_id
     const tr = tripId ? full.trips.find(x => x.id === tripId) : null
     if (tr && !SAP_SYNC_TRIP.includes(statusOf(tr))) return fail(res, 409, 'TRIP_NOT_EDITABLE', `Xe ${tr.group_code} ${TRIP_STATUS_VI[statusOf(tr)]} — không thay OD ở đây.`)
-    const { data: repRow } = await db.from('erp_outbound_orders').select('replaced_by_od').eq('od_number', b.od_number).not('replaced_by_od', 'is', null).limit(1).maybeSingle()
-    const newOd = repRow?.replaced_by_od ?? null
-    if (!newOd) return fail(res, 422, 'NOT_REPLACED', `OD ${b.od_number} chưa được SAP thay bằng OD nào (ZSD02 chưa có OD mới cho dòng SO này).`)
+    const cands = (await replacementsOf([b.od_number])).get(b.od_number) ?? []
+    if (!cands.length) return fail(res, 422, 'NOT_REPLACED', `OD ${b.od_number} chưa được SAP thay bằng OD nào (ZSD02 chưa có OD mới cho dòng SO này).`)
+    if (b.new_od && !cands.includes(b.new_od)) return fail(res, 422, 'NOT_A_REPLACEMENT', `${b.new_od} không phải DO SAP tạo thay cho ${b.od_number} (DO thay: ${cands.join(', ')}).`)
+    const newOd = b.new_od ?? cands[0]
     const elsewhere = all.filter(o => o.od_number === newOd && o.trip_id && o.trip_id !== tripId)
     if (elsewhere.length) return fail(res, 409, 'NEW_OD_ON_OTHER_TRIP', `OD mới ${newOd} đang nằm ở xe ${full.trips.find(x => x.id === elsewhere[0].trip_id)?.group_code ?? '?'} — kéo về một xe trước.`)
     const t = now()
@@ -3127,6 +3151,9 @@ async function onOtherPlanTruck(plan: PlanRow, ods: string[]): Promise<string | 
   return `OD ${od}${hit.length > 1 ? ` và ${hit.length - 1} đơn khác` : ''} đang xếp trên ${where} — mở nháp đó để Kéo về đây hoặc chuyển trạng thái ở đó.`
 }
 
+/** ĐƠN MÁY CHIA NHIỀU XE (24/10, user duyệt) — luật thuần ở services/dispatchPool `splitOnLockedTrip` (có test) */
+const splitOnLockedTrip = (all: { od_number: string; trip_id: string | null }[], ods: string[], tripBy: Map<string, FullTrip>, what: string) =>
+  splitOnLocked(all, ods, new Map([...tripBy].map(([id, tr]) => [id, { seq: tr.seq, group_code: tr.group_code, locked: !EDITABLE_TRIP.includes(statusOf(tr)) }])), what)
 // POST /tms/dispatch/plans/:id/hold — chuyển OD sang "Không điều ngày này" / "Không điều": OD rời kế hoạch (mọi phần), xe bị đụng tính lại.
 // OD đang hoãn (od_numbers) thì chỉ đổi dấu — không nằm trên kế hoạch nên không xe nào phải tính lại.
 async function holdOdsInner(req: Request, res: Response) {
@@ -3148,6 +3175,8 @@ async function holdOdsInner(req: Request, res: Response) {
     const locked = picked.map(o => (o.trip_id ? tripBy.get(o.trip_id) : null)).find(t => t && !EDITABLE_TRIP.includes(statusOf(t)))
     if (locked) return fail(res, 409, 'TRIP_NOT_EDITABLE', `Xe ${locked.group_code} ${TRIP_STATUS_VI[statusOf(locked)]} — không hoãn OD của xe này ở đây.`)
     const planOds = uniq(picked.map(o => o.od_number))
+    const split = splitOnLockedTrip(all, planOds, tripBy, 'hoãn / đổi ngày')
+    if (split) return fail(res, 409, 'OD_SPLIT_ACROSS_TRIPS', split)
     const heldOds = odNums.filter(od => !planOds.includes(od))
     const onTruck = await onOtherPlanTruck(plan, heldOds)
     if (onTruck) return fail(res, 409, 'OD_ON_OTHER_PLAN', onTruck)
@@ -3410,6 +3439,8 @@ async function outsideOdsInner(req: Request, res: Response) {
     const locked = picked.map(o => (o.trip_id ? tripBy.get(o.trip_id) : null)).find(t => t && !EDITABLE_TRIP.includes(statusOf(t)))
     if (locked) return fail(res, 409, 'TRIP_NOT_EDITABLE', `Xe ${locked.group_code} ${TRIP_STATUS_VI[statusOf(locked)]} — không đánh dấu OD của xe này ở đây.`)
     const planOds = uniq(picked.map(o => o.od_number))
+    const split = splitOnLockedTrip(all, planOds, tripBy, 'đánh dấu Ngoài app')
+    if (split) return fail(res, 409, 'OD_SPLIT_ACROSS_TRIPS', split)
     const extra = odNums.filter(od => !planOds.includes(od))
     const bad = await odsOutsidePlant(plan.warehouse_id, extra)
     if (bad.length) return fail(res, 404, 'OD_NOT_FOUND', `${bad.slice(0, 5).join(', ')} không có trong ZSD02 của kho này (tải lại trang)`)
@@ -3762,10 +3793,14 @@ export async function removeFromKhvc(req: Request, res: Response) {
   } catch (e) { return failAny(res, e) }
 }
 
-// POST /tms/dispatch/khvc/renumber — ĐỔI SỐ DO trên Số xe đã vào Kế hoạch xuất: SAP thay DO cũ bằng DO mới (1→1, hoặc tách 1→N cùng xe),
-// chuyến CHƯA bắt đầu (cùng gác classifyKhvcDelete). Dòng KH xuất đổi do_no (rào DB kiểm họ hàng — cùng ngày xuất nên qua), phần tách thêm
-// ghi dòng mới cùng Số xe; cạnh phả hệ ghi resolved RENUMBER; dòng OD trên xe của bàn đổi theo; replan dựng lại chuyến với DO mới.
-// Gộp N→1 (MERGE) không đổi số được — DO mới gom nhiều DO cũ có thể ở nhiều xe / nhiều ngày ⇒ 422, gỡ từng DO cũ rồi điều DO mới.
+// POST /tms/dispatch/khvc/renumber — ĐỔI SỐ DO trên Số xe đã vào Kế hoạch xuất: SAP thay DO cũ bằng DO mới (1→1, hoặc tách 1→N).
+// 24/10 (user chốt, SAP tách đơn cả trước khi điều, sau khi điều và khi kho đang xếp — vd A 100 ⇒ B 80 + C 20, xe chỉ chở 80):
+//   • `new_ods` = DO NGƯỜI CHỌN ở lại xe (tập con các DO thay); DO thay còn lại về Chờ điều (cạnh phả hệ resolved TO_POOL).
+//   • Kho đã làm (đã quét / nhặt lẻ) ⇒ CÙNG luật với nút Lưu của bàn (`outboundBlocks`): chuyến đang xuất ⇒ kho bấm Tạm dừng; Tạm dừng ⇒ đường
+//     GỘP giữ hàng (khớp NPP + mã — phần đã quét chuyển sang DO mới, không quét lại), kế hoạch mới ít hơn phần đã làm ⇒ 409, không ghi gì;
+//     chuyến hoàn thành ⇒ chặn (đơn đã xuất: quyết ở Cần xử lý). Bản trước chặn mọi chuyến đã bắt đầu (kho phải xoá quét, quét lại).
+// Dòng KH xuất đổi do_no (rào DB kiểm họ hàng — cùng ngày xuất nên qua), phần tách thêm ghi dòng mới cùng Số xe; dòng OD trên xe của bàn
+// đổi theo; replan dựng lại chuyến với DO mới. Gộp N→1 (MERGE) không đổi số được ⇒ 422, gỡ từng DO cũ rồi điều DO mới.
 export const zKhvcRenumber = z.object({ warehouse_id: zId, od_number: zText(1, 50), group_code: zText(1, 80), new_ods: z.array(zText(1, 50)).min(1).max(20).optional() })
 export async function renumberKhvc(req: Request, res: Response) {
   try {
@@ -3773,8 +3808,6 @@ export async function renumberKhvc(req: Request, res: Response) {
     const got = await khvcLinesOf(req, b.warehouse_id, b.od_number, b.group_code)
     if ('err' in got) return sendErr(res, { err: got.err })
     const { lines, wh } = got
-    const { blocked } = await classifyKhvcDelete(lines.map(l => ({ id: l.id, group_code: l.group_code })))
-    if (blocked.length) return fail(res, 409, 'KHVC_LINE_LOCKED', `${blocked[0].reason}. Chuyến đã bắt đầu thì không đổi số DO — huỷ rồi điều lại (xoá QR đã quét → Bỏ bắt đầu → gỡ Số xe → ghép DO mới).`)
     // DO mới: người gửi, hoặc suy từ phả hệ chưa giải quyết + replaced_by_od
     const [{ data: edges, error: eErr }, { data: olds, error: oErr }] = await Promise.all([
       db.from('od_lineage').select('new_od, kind').eq('old_od', b.od_number).is('resolved_at', null).limit(50),
@@ -3787,6 +3820,9 @@ export async function renumberKhvc(req: Request, res: Response) {
     const derived = uniq([...edgeList.filter(e => e.kind !== 'AFTER_POST').map(e => e.new_od), ...((olds ?? []) as { replaced_by_od: string | null }[]).map(o => o.replaced_by_od).filter((x): x is string => !!x)])
     const newOds = uniq(b.new_ods ?? derived).filter(od => od !== b.od_number)
     if (!newOds.length) return fail(res, 422, 'NOT_REPLACED', `ZSD02 chưa có DO mới nào thay cho ${b.od_number} — nếu SAP chỉ bỏ DO thì dùng "Gỡ khỏi kế hoạch".`)
+    const notRep = derived.length ? newOds.filter(od => !derived.includes(od)) : []
+    if (notRep.length) return fail(res, 422, 'NOT_A_REPLACEMENT', `${notRep.join(', ')} không phải DO SAP tạo thay cho ${b.od_number} (DO thay: ${derived.join(', ')}).`)
+    const toPool = derived.filter(od => !newOds.includes(od))
     // DO mới phải còn ACTIVE thuộc plant kho, chưa ở Kế hoạch xuất, chưa trên xe nháp mở
     const bad = await odsOutsidePlant(wh.id, newOds)
     if (bad.length) return fail(res, 422, 'NEW_OD_NOT_ACTIVE', `${bad.join(', ')} không còn ACTIVE trong ZSD02 của kho này`)
@@ -3807,6 +3843,15 @@ export async function renumberKhvc(req: Request, res: Response) {
       const v0 = onRows.find(o => openPlans.has(o.plan_id) && o.trip_id && liveTrips.has(o.trip_id))
       if (v0) return fail(res, 409, 'NEW_OD_ON_DRAFT', `DO mới ${v0.od_number} đang xếp trên xe của một bản nháp — gỡ ở đó trước (Kéo về / Không điều) rồi đổi số.`)
     }
+    // Bên Xuất đã làm gì trên chuyến của Số xe này — kế hoạch SAU khi đổi số (DO cũ ⇒ các DO được chọn) phải ≥ phần kho đã làm theo NPP + mã
+    const { data: gl, error: gErr } = await db.from('khvc_lines').select('group_code, do_no, npp, export_date, veh_type, dvvt, priority, cs, note, vehicle_model_id, stop_seq')
+      .eq('group_code', b.group_code).neq('sync_status', 'OBSOLETE').limit(500)
+    if (gErr) throw gErr
+    const planRow = (l: NonNullable<typeof gl>[number], od: string): KhvcPlanRow => ({ group_code: l.group_code, do_no: od, npp: l.npp ?? '', export_date: l.export_date,
+      veh_type: l.veh_type ?? '', dvvt: l.dvvt ?? '', priority: l.priority ?? '', cs: l.cs ?? '', note: l.note ?? '', vehicle_model_id: l.vehicle_model_id ?? null, stop_seq: l.stop_seq ?? null })
+    const after = (gl ?? []).flatMap(l => (l.do_no === b.od_number ? newOds.map(od => planRow(l, od)) : [planRow(l, l.do_no)]))
+    const { blocks, keepWork } = await outboundBlocks([{ t: { group_code: b.group_code, seq: 0 }, kind: 'EDIT' }], after)
+    if (blocks.length) return fail(res, 409, 'OUTBOUND_WORK_BLOCKS', `Số xe ${b.group_code}: ${blocks[0].reason}.`)
     const t = now(), actor = actorOf(req)
     // dòng đầu đổi số sang DO mới thứ nhất; DO mới thêm (tách 1→N) = dòng mới cùng Số xe, chép thuộc tính xe
     const first = lines[0]
@@ -3817,14 +3862,20 @@ export async function renumberKhvc(req: Request, res: Response) {
     const { error: lErr } = await db.from('od_lineage').update({ resolved_at: t, resolved_by: actor, resolution: 'RENUMBER', updated_at: t })
       .eq('old_od', b.od_number).is('resolved_at', null).in('new_od', newOds.slice(0, 20))
     if (lErr) throw lErr
+    // DO thay KHÔNG chọn ⇒ về Chờ điều như đơn thường (phần còn lại của SO): cạnh phả hệ của chúng coi như đã quyết
+    for (let i = 0; i < toPool.length; i += 300) {
+      const { error } = await db.from('od_lineage').update({ resolved_at: t, resolved_by: actor, resolution: 'TO_POOL', updated_at: t })
+        .eq('old_od', b.od_number).is('resolved_at', null).neq('kind', 'AFTER_POST').in('new_od', toPool.slice(i, i + 300))
+      if (error) throw error
+    }
     // bàn điều vận: dòng OD trên xe đã xác nhận đổi số theo (chỉ DO mới thứ nhất — phần tách thêm nằm trong KH xuất, bàn không dựng lại xe đã chốt)
     const tripOds = await tripOdRowsOfGroup(b.group_code, b.od_number)
     if (tripOds.length) { const { error } = await db.from('dispatch_trip_od').update({ od_number: newOds[0], updated_at: t }).in('id', tripOds.map(o => o.id).slice(0, 100)); if (error) throw error }
     const gdo = (await gdosOfGroups([b.group_code])).get(b.group_code)
     await logOutboundEvents([{ group_code: b.group_code, gdo_id: gdo?.id ?? null, event_type: 'PLAN_DO_RENUMBERED', source: 'PLAN', actor, do_number: newOds[0],
-      old_value: b.od_number, new_value: newOds.join(', '), detail: `Điều vận đổi số DO ${b.od_number} → ${newOds.join(', ')} trên Số xe ${b.group_code} (SAP thay DO)` }])
-    const { replan, replan_error } = await replanSafe(req, [b.group_code], 'khvc renumber', { deriveErr: true })
-    return ok(res, { from: b.od_number, to: newOds, group_code: b.group_code, lines: lines.length + extra.length, trip_rows_renumbered: tripOds.length, replan, replan_error })
+      old_value: b.od_number, new_value: newOds.join(', '), detail: `Điều vận đổi số DO ${b.od_number} → ${newOds.join(', ')} trên Số xe ${b.group_code} (SAP thay DO)${toPool.length ? ` — ${toPool.join(', ')} về Chờ điều` : ''}${keepWork.length ? ' — giữ phần kho đã làm' : ''}` }])
+    const { replan, replan_error } = await replanSafe(req, [b.group_code], 'khvc renumber', { deriveErr: true, keepWork })
+    return ok(res, { from: b.od_number, to: newOds, to_pool: toPool, kept_work: keepWork.length > 0, group_code: b.group_code, lines: lines.length + extra.length, trip_rows_renumbered: tripOds.length, replan, replan_error })
   } catch (e) { return failAny(res, e) }
 }
 

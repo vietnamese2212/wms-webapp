@@ -178,6 +178,19 @@ export function soScopedChanges(
   return out
 }
 
+/** ĐƠN MÁY CHIA NHIỀU XE (24/10, user duyệt): cửa đưa đơn RỜI kế hoạch (hoãn · đổi ngày từng đơn · Ngoài app) gỡ MỌI phần của đơn — một đơn
+ *  một ngày. Phần nằm trên xe ĐANG KHOÁ (đã chốt, không mở) sẽ bị kéo đi theo mà không ai mở xe đó ⇒ trả câu chặn, bắt mở khoá mọi xe đang
+ *  chở đơn. Đơn chỉ ở một xe, hoặc mọi xe chở nó đều đang mở ⇒ null (cho đi). */
+export function splitOnLocked(rows: { od_number: string; trip_id: string | null }[], ods: string[], trips: Map<string, { seq: number; group_code: string; locked: boolean }>, what: string): string | null {
+  for (const od of ods) {
+    const on = [...new Set(rows.filter(o => o.od_number === od && o.trip_id).map(o => o.trip_id!))].map(id => trips.get(id)).filter((x): x is { seq: number; group_code: string; locked: boolean } => !!x)
+    const stuck = on.filter(t => t.locked)
+    if (on.length > 1 && stuck.length)
+      return `Đơn ${od} đang chia ${on.length} xe (${on.map(t => `#${t.seq} ${t.group_code}`).join(', ')}) — mở khoá cả ${on.length} xe rồi mới ${what} đơn này (xe ${stuck.map(t => `#${t.seq}`).join(', ')} đang khoá).`
+  }
+  return null
+}
+
 /** KHOẢNG NGÀY tính tỷ trọng ĐVVT đã chạy (22/10): đầu tháng → TRƯỚC ngày của kế hoạch (`.lt(before)`). Không đếm chính ngày đó — xoá
  *  rồi tạo lại / xác nhận mảng kia trước không được đổi kết quả ghép của cùng một ngày (dispatchController.loadShareActual). */
 export function shareBaseRange(day: string): { from: string; before: string } {

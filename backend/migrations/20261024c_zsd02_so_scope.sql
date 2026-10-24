@@ -34,21 +34,22 @@ CREATE INDEX IF NOT EXISTS idx_erp_od_versions_created ON public.erp_od_versions
 ALTER TABLE public.erp_od_versions ENABLE ROW LEVEL SECURITY;
 
 -- Khoá nhiễu: mốc giờ / raw (bản chép SAP, dọn theo hạn giữ) / cờ sửa tay không phải thay đổi nghiệp vụ.
-CREATE OR REPLACE FUNCTION public.erp_od_version_capture() RETURNS trigger
+-- THEO LÔ (bảng chuyển tiếp, MỘT câu INSERT cho cả câu UPDATE / upsert) — không từng dòng: một lượt nạp ZSD02 ghi tới hàng chục nghìn dòng
+-- (gói 00 [14d] gác trigger từng dòng ghi bảng khác — mẫu 20261011c). Bảng chuyển tiếp không đi cùng `UPDATE OF <cột>` ⇒ hàm tự lọc.
+DROP TRIGGER IF EXISTS trg_erp_od_version ON public.erp_outbound_orders;
+DROP FUNCTION IF EXISTS public.erp_od_version_capture();
+CREATE OR REPLACE FUNCTION public.erp_od_version_capture_stmt() RETURNS trigger
 LANGUAGE plpgsql AS $$
-DECLARE
-  o jsonb := to_jsonb(OLD) - 'raw' - 'updated_at' - 'last_synced_at' - 'manual_edited_at' - 'created_at';
-  n jsonb := to_jsonb(NEW) - 'raw' - 'updated_at' - 'last_synced_at' - 'manual_edited_at' - 'created_at';
 BEGIN
-  IF o IS DISTINCT FROM n THEN
-    INSERT INTO public.erp_od_versions (id, erp_id, od_number, od_item, so_number, changed_at, new_status, old_row, updated_at)
-    VALUES (gen_random_uuid(), OLD.id, OLD.od_number, OLD.od_item, OLD.so_number, now(), NEW.sync_status, to_jsonb(OLD) - 'raw', now());
-  END IF;
+  INSERT INTO public.erp_od_versions (id, erp_id, od_number, od_item, so_number, changed_at, new_status, old_row, updated_at)
+  SELECT gen_random_uuid(), o.id, o.od_number, o.od_item, o.so_number, now(), n.sync_status, to_jsonb(o) - 'raw', now()
+    FROM oldtab o JOIN newtab n ON n.id = o.id
+   WHERE (to_jsonb(o) - 'raw' - 'updated_at' - 'last_synced_at' - 'manual_edited_at' - 'created_at')
+         IS DISTINCT FROM (to_jsonb(n) - 'raw' - 'updated_at' - 'last_synced_at' - 'manual_edited_at' - 'created_at');
   RETURN NULL;
 END $$;
-DROP TRIGGER IF EXISTS trg_erp_od_version ON public.erp_outbound_orders;
 CREATE TRIGGER trg_erp_od_version AFTER UPDATE ON public.erp_outbound_orders
-  FOR EACH ROW EXECUTE FUNCTION public.erp_od_version_capture();
+  REFERENCING OLD TABLE AS oldtab NEW TABLE AS newtab FOR EACH STATEMENT EXECUTE FUNCTION public.erp_od_version_capture_stmt();
 
 -- ── (2) SỔ CÁC LẦN NẠP ZSD02 ──
 CREATE TABLE IF NOT EXISTS public.zsd02_upload_log (

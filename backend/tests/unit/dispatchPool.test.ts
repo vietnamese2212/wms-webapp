@@ -1,7 +1,7 @@
 // Điều vận v2 (25/09) — pool LŨY TIẾN + OD bị SO sửa THAY + cửa đặt lịch khi chuyển OD + máy chọn xe cho "xe mới".
 // Một phép kiểm cho một luật user chốt; oracle = viết tay từ câu chốt.
 import { describe, it, expect } from 'vitest'
-import { splitPool, soScopedChanges, holdsToCarry, redoDispatchedOf, shareBaseRange, type PoolCandidateRow } from '../../src/services/dispatchPool'
+import { splitPool, soScopedChanges, splitOnLocked, holdsToCarry, redoDispatchedOf, shareBaseRange, type PoolCandidateRow } from '../../src/services/dispatchPool'
 import { bookingFromCatLoads, catLoadOf, suggestVehicle, runDispatch, type EngineModel, type EngineCarrier, type EngineTariff, type EngineOd } from '../../src/services/dispatchEngine'
 
 const DAY = '2026-09-25'
@@ -111,6 +111,22 @@ describe('nạp ZSD02 theo SO — SO trong file là bản cuối, đã xuất (t
     const r = soScopedChanges([line('N')], ['S1'], [prior('O1'), prior('O2')], noShip)
     expect(r.replaced.map(x => x[0]).sort()).toEqual(['O1', 'O2'])
     expect(r.edges.map(e => [e.old_od, e.new_od, e.kind]).sort()).toEqual([['O1', 'N', 'MERGE'], ['O2', 'N', 'MERGE']])
+  })
+})
+
+// 24/10 (user duyệt): hoãn / Ngoài app gỡ MỌI phần của đơn — đơn máy chia sang xe đang khoá thì chặn, bắt mở khoá mọi xe chở đơn
+describe('đơn máy chia nhiều xe — không kéo phần trên xe đang khoá đi theo', () => {
+  const trips = new Map([['T1', { seq: 3, group_code: 'K_X_1_3', locked: false }], ['T2', { seq: 4, group_code: 'K_X_1_4', locked: true }], ['T3', { seq: 5, group_code: 'K_X_1_5', locked: false }]])
+  it('một phần trên xe đang mở, một phần trên xe đang khoá ⇒ chặn, nêu đủ hai xe và xe đang khoá', () => {
+    const m = splitOnLocked([{ od_number: 'A', trip_id: 'T1' }, { od_number: 'A', trip_id: 'T2' }], ['A'], trips, 'hoãn')
+    expect(m).toMatch(/Đơn A đang chia 2 xe \(#3 K_X_1_3, #4 K_X_1_4\)/)
+    expect(m).toMatch(/\(xe #4 đang khoá\)/)
+  })
+  it('mọi xe chở đơn đều đang mở ⇒ cho đi', () => {
+    expect(splitOnLocked([{ od_number: 'A', trip_id: 'T1' }, { od_number: 'A', trip_id: 'T3' }], ['A'], trips, 'hoãn')).toBeNull()
+  })
+  it('đơn chỉ ở một xe (kể cả nhiều dòng) hoặc ở khung chờ ⇒ cho đi', () => {
+    expect(splitOnLocked([{ od_number: 'A', trip_id: 'T1' }, { od_number: 'A', trip_id: 'T1' }, { od_number: 'B', trip_id: null }], ['A', 'B'], trips, 'hoãn')).toBeNull()
   })
 })
 

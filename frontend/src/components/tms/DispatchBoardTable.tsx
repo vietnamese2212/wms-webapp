@@ -79,7 +79,7 @@ export interface BoardOps {
    *  bật lọc (null = không lọc / xe không cùng tuyến với đơn đang lọc) · tên xe / đơn cho câu rê chuột */
   routeOf: (rowId: string) => PoolRoute | null; tripRoute: (tripId: string) => TripRouteTag | null
   tripLabel: (tripId: string) => string; odLabel: (rowId: string) => string
-  resync: (od: string) => void; replace: (od: string) => void; sapBusy: boolean
+  resync: (od: string) => void; replace: (od: string, newOd?: string) => void; sapBusy: boolean
   toggleLock: (t: DispatchTrip) => void; removeTrip: (t: DispatchTrip) => void
   /** 16/10 (Sửa kế hoạch đã xác nhận): mở lại RIÊNG một xe đã vào KH xuất — có khi người xem có quyền xác nhận */
   reopenTrip?: (t: DispatchTrip) => void
@@ -349,8 +349,10 @@ function odCells(ops: BoardOps, o: DispatchTripOd, t: DispatchTrip | null, tree?
           {fl && <span className={soft ? 'text-amber-800' : 'text-red-600'}>{FLAG_VI[fl.kind]}{fl.info ? ` — ${fl.info}` : ''}</span>}
           {fl?.kind === 'CHANGED' && canSap && <button type="button" className="inline-flex items-center gap-0.5 font-medium text-sky-700 hover:underline" disabled={ops.sapBusy}
             onClick={() => ops.resync(o.od_number)}><RotateCw className="h-3 w-3" />Cập nhật theo SAP</button>}
-          {fl?.kind === 'REPLACED' && fl.replaced_by && canSap && <button type="button" className="inline-flex items-center gap-0.5 font-medium text-sky-700 hover:underline" disabled={ops.sapBusy}
-            onClick={() => ops.replace(o.od_number)}><Replace className="h-3 w-3" />Thay bằng OD mới {fl.replaced_by}</button>}
+          {/* 24/10: SAP tách 1 → N ⇒ một nút cho TỪNG DO thay; DO không chọn về Chờ điều */}
+          {fl?.kind === 'REPLACED' && fl.replaced_by && canSap && (fl.replaced_all ?? [fl.replaced_by]).map(nod => <button key={nod} type="button" className="inline-flex items-center gap-0.5 font-medium text-sky-700 hover:underline" disabled={ops.sapBusy}
+            title={(fl.replaced_all?.length ?? 0) > 1 ? `${nod} thay OD cũ trên xe; ${fl.replaced_all!.filter(x => x !== nod).join(', ')} về Chờ điều` : undefined}
+            onClick={() => ops.replace(o.od_number, nod)}><Replace className="h-3 w-3" />Thay bằng OD mới {nod}</button>)}
           {noVeh && <span className="rounded bg-red-100 px-1 text-[9px] font-medium text-red-700">Chưa khai xe</span>}
           {followOnly && <span className="rounded bg-violet-100 px-1 text-[9px] font-medium text-violet-800">Chờ đơn chính</span>}
           {um && <span className="rounded bg-amber-100 px-1 text-[9px] font-medium text-amber-900">Dưới tối thiểu · {um.vehicle} {nf(um.pct, 1)} %</span>}

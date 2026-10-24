@@ -1112,6 +1112,34 @@ try {
       && evM.length >= 1 && !!evM[0]?.actor && back.s === 200 && (PR?.trips ?? []).some(t => t.id === tM?.id && t.status === 'CONFIRMED') && PR?.status === 'CONFIRMED',
       `busy=${mvBusy.s}/${mvBusy.j?.error?.code} · http=${mv.s} ${mv.j?.error?.message ?? ''} moved=${JSON.stringify(M ?? {}).slice(0, 160)} kh=${khM.map(l => l.export_date).join(',')} gdo=${gM?.delivery_date}/${gM?.plan_dropped} tms=${oM?.date} đích=${(PT?.trips ?? []).length} xe ev=${evM.length} về=${back.s} plan=${PR?.status}`)
   }
+  // ── [11k] RÀ CHUỖI ĐIỀU VẬN (24/10, user: "dữ liệu không bị mắc ở chỗ này chỗ kia"): chuyến đã BẮT ĐẦU rồi Tạm dừng không dời ngày được
+  //    (giữ cửa xuất / việc kho) · Thử lại dội xuống chuyến Xuất kho + lệnh VC (resync-outbound) chạy lại được · đổi ĐVVT trên xe đã chốt ⇒
+  //    biển số / tài xế của ĐVVT cũ bị xoá, vết TMS_PLAN_REBOOK (user chốt "không cần ĐVVT phản hồi") ──
+  {
+    const tK = (PR?.trips ?? []).find(t => t.group_code !== busyGc && t.status === 'CONFIRMED')
+    let paused = { s: 0, j: {} }, rs = { s: 0, j: {} }, sw = { s: 0, j: {} }, vsAfter = null, ev = []
+    if (tK) {
+      const gK = (await restAll('GroupDeliveryOrder', `select=id,status&group_code=eq.${tK.group_code}`))[0]
+      if (gK) await restWrite('GroupDeliveryOrder', 'PATCH', `id=eq.${gK.id}`, { status: 'PAUSED', updated_at: nowIso() })
+      paused = await api(`/tms/dispatch/plans/${PR.id}/move-date`, 'POST', { trip_ids: [tK.id], new_date: DAY3 })
+      if (gK) await restWrite('GroupDeliveryOrder', 'PATCH', `id=eq.${gK.id}`, { status: gK.status, updated_at: nowIso() })
+      rs = await api(`/tms/dispatch/plans/${PR.id}/resync-outbound`, 'POST', {})
+      const oK = (await restAll('TmsOrder', `select=id&order_code=eq.${tK.group_code}`))[0]
+      const vs = oK ? (await restAll('TmsVehicleSlot', `select=id&order_id=eq.${oK.id}`))[0] : null
+      if (vs) await restWrite('TmsVehicleSlot', 'PATCH', `id=eq.${vs.id}`, { license_plate: 'QA61REBOOK', driver_name: 'QA61 tài xế', updated_at: nowIso() })
+      const curCo = tK.transport_company_id
+      const other = curCo === HA?.id ? DA : HA
+      sw = await api(`/tms/dispatch/trips/${tK.id}`, 'PATCH', { transport_company_id: other?.id })
+      vsAfter = vs ? (await restAll('TmsVehicleSlot', `select=license_plate,driver_name&id=eq.${vs.id}`))[0] : null
+      ev = await restAll('outbound_events', `select=event_type&group_code=eq.${tK.group_code}&event_type=eq.TMS_PLAN_REBOOK`)
+      if (curCo) await api(`/tms/dispatch/trips/${tK.id}`, 'PATCH', { transport_company_id: curCo })   // trả ĐVVT cũ cho các phép sau
+      PR = await planOf(PR.id)
+    }
+    check('11k. RÀ CHUỖI (24/10): chuyến Tạm dừng không đổi ngày được (409 nêu Tạm dừng) · Thử lại dội xuống (resync-outbound) 200 không lỗi · đổi ĐVVT trên xe đã chốt ⇒ biển số / tài xế bên cũ xoá + vết TMS_PLAN_REBOOK',
+      !!tK && paused.s === 409 && /Tạm dừng/.test(paused.j?.error?.message ?? '') && rs.s === 200 && rs.j?.data?.replan_error === null && Number(rs.j?.data?.group_codes) > 0
+      && sw.s === 200 && vsAfter && vsAfter.license_plate == null && vsAfter.driver_name == null && ev.length >= 1,
+      `xe=${tK?.group_code ?? 'không có'} tạm dừng=${paused.s}/${paused.j?.error?.code ?? ''} «${(paused.j?.error?.message ?? '').slice(0, 80)}» · thử lại=${rs.s}/${rs.j?.data?.group_codes}/${rs.j?.data?.replan_error ?? rs.j?.error?.message ?? 'null'} · đổi ĐVVT=${sw.s} ${sw.j?.error?.message ?? ''} biển=${vsAfter?.license_plate ?? 'null'} tài xế=${vsAfter?.driver_name ?? 'null'} vết=${ev.length}`)
+  }
   // DO TẠO LẠI – ĐÃ ĐIỀU (user chốt 28/09): SO sửa ⇒ OD mới thay OD đã nằm Kế hoạch xuất ⇒ OD mới KHÔNG vào đợt ghép, sang tab Đã điều
   const khR = (await restAll('khvc_lines', `select=do_no,group_code&group_code=like.${PREFIX}*&order=do_no`))[0]
   const ODR = 'QA61ODR1'

@@ -2014,6 +2014,15 @@ export default function OutboundDetail() {
         <div className="mt-0.5">{inertReason}</div>
       </div>
     </div>
+  ) : gdo.sap_issue ? (
+    // 24/10 (rà chuỗi điều vận): cổng SAP trước chỉ lộ ra khi BẤM Bắt đầu / quét / Hoàn thành và bị chặn — nay hiện sẵn khi mở chuyến
+    <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800 flex items-start gap-2">
+      <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+      <div>
+        <div className="font-semibold">Đơn của chuyến bị SAP đổi — chưa làm tiếp được</div>
+        <div className="mt-0.5">{gdo.sap_issue}</div>
+      </div>
+    </div>
   ) : null
   const orderInfoJSX = (
     <div className="space-y-1">

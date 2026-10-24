@@ -1,5 +1,5 @@
 // FILE SINH TỰ ĐỘNG — `node scripts/gen-db-types.mjs` (từ information_schema STAGING). KHÔNG sửa tay.
-// Sinh lúc 2026-10-23T07:11:05.002Z · 105 bảng/view · 205 hàm · 0 enum
+// Sinh lúc 2026-10-24T02:24:32.180Z · 105 bảng/view · 208 hàm · 0 enum
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[]
 
 export type Database = {
@@ -5965,6 +5965,10 @@ export type Database = {
         Args: { p_warehouse_id: string | null; p_days?: number | null }
         Returns: Json
       }
+      dispatch_chain_audit: {
+        Args: Record<PropertyKey, never>
+        Returns: Json
+      }
       dispatch_commit_lines: {
         Args: { p_gcs: unknown | null; p_rows: Json | null }
         Returns: Json
@@ -6000,6 +6004,10 @@ export type Database = {
       dispatch_marked_ods: {
         Args: { p_warehouse_id: string | null; p_plant: string | null; p_day: string | null; p_slocs: unknown | null; p_flows: unknown | null; p_segment?: string | null; p_kind?: string | null; p_search?: string | null }
         Returns: Record<string, unknown>[]
+      }
+      dispatch_move_trips_date: {
+        Args: { p_trip_ids: unknown | null; p_seqs: unknown | null; p_target: string | null; p_gcs: unknown | null; p_date: string | null; p_actor: string | null }
+        Returns: number
       }
       dispatch_new_ods: {
         Args: { p_plant: string | null; p_from: string | null; p_to: string | null; p_day: string | null; p_slocs: unknown | null; p_warehouse_id: string | null; p_plan_id: string | null; p_segment: string | null }
@@ -6533,12 +6541,16 @@ export type Database = {
         Args: { p_order_id: string | null; p_rows: Json | null }
         Returns: number
       }
+      trip_overdue_counts: {
+        Args: { p_before: string | null; p_since: string | null; p_delivered_before: string | null }
+        Returns: Record<string, unknown>[]
+      }
       try_book_slot: {
         Args: { p_slot_id: string | null; p_delta: number | null }
         Returns: boolean
       }
       unaccent: {
-        Args: { arg1: string | null } | { arg1: unknown | null; arg2: string | null }
+        Args: { arg1: unknown | null; arg2: string | null } | { arg1: string | null }
         Returns: string
       }
       unaccent_init: {

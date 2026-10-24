@@ -6488,6 +6488,14 @@ export function useReopenDispatchPlan() {
     onSuccess: p => putDispatchPlan(qc, p),
   })
 }
+/** THỬ LẠI dội xuống chuyến Xuất kho + lệnh VC (24/10) — sau Xoá kế hoạch / đổi ngày / Lưu báo `replan_error`. Quyền dispatch.confirm. */
+export function useResyncDispatchOutbound() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (planId: string) => apiClient.post(`/tms/dispatch/plans/${planId}/resync-outbound`, {}, { timeout: 120_000 }).then(r => r.data.data as { plan_id: string; group_codes: number; replan_error: string | null }),
+    onSuccess: () => { invalidateDispatch(qc); for (const k of [['khvc'], ['gdos'], ['gdos-paged'], ['trip-flow']]) qc.invalidateQueries({ queryKey: k }) },
+  })
+}
 /** SỬA (chụp bản đã lưu) · KHÔI PHỤC (bỏ mọi thay đổi chưa Lưu, về bản đã lưu) — 23/10 */
 export function useEditDispatchPlan() {
   const qc = useQueryClient()

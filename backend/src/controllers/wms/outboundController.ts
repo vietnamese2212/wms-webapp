@@ -41,7 +41,7 @@ import { heldSlotsByVehicle, slotHeldBlockingCategory, slotHeldBlockingDate, del
 import { guardPutaway } from '../../services/putawayContext'
 import { notifyEmployees, sendPushToPerm } from '../../services/pushService'
 import {
-  planGdoTasks, cancelGdoTasks, markTaskDoneByScan, skipOnePendingOfItem, skipTasksOnForeignScan,
+  planGdoTasks, replanGdoTasks, cancelGdoTasks, markTaskDoneByScan, skipOnePendingOfItem, skipTasksOnForeignScan,
   servesCategory, dateRuleOf, describeDateRule, checkDateRuleStock, resetUntouchedTasksOfItems, palletMeetsDateRule, MAX_DATE_CHECK, MAX_RULE_PARTS,
   type DateRulePallet,
   type DateRule, type DateRulePart,
@@ -515,14 +515,32 @@ async function looseUnconfirmedByItem(itemIds: string[]): Promise<Map<string, nu
   for (const r of rows) out.set(r.item_id, (out.get(r.item_id) ?? 0) + Number(r.cartons_scanned))
   return out
 }
-/** Dòng hàng nào đang có hàng kho đã làm (đã quét / giữ nhặt lẻ) — đọc SỐNG ngay trước khi xoá dòng */
+/** 24/10 (rà chuỗi điều vận): số BASE kho ĐÃ HẠ / ĐÃ CHUYỂN cho dòng hàng theo Việc cần làm (việc PENDING có lowered_at / moved_at — pallet
+ *  đã rời ô nhưng chưa quét). Trước đây Lưu kế hoạch vào chuyến Tạm dừng xoá dòng hàng ⇒ việc bị xoá theo (FK cascade), pallet đã hạ nằm ở
+ *  bãi không ai biết phải trả về. Nay tính vào "phần kho đã làm" như đã quét / giữ nhặt lẻ. */
+async function loweredPendingByItem(itemIds: string[]): Promise<Map<string, number>> {
+  const out = new Map<string, number>()
+  if (!itemIds.length) return out
+  const rows = await fetchAllByIdChunks(itemIds, c => supabase.from('wms_tasks').select('item_id, qty_base')
+    .eq('status', 'PENDING').or('lowered_at.not.is.null,moved_at.not.is.null').in('item_id', c).order('id')) as { item_id: string | null; qty_base: number | null }[]
+  for (const r of rows) if (r.item_id) out.set(r.item_id, (out.get(r.item_id) ?? 0) + Number(r.qty_base ?? 0))
+  return out
+}
+/** Phần kho đang GIỮ trên từng dòng hàng ngoài số đã quét: nhặt lẻ chưa xác nhận + pallet đã hạ / đã chuyển (Việc cần làm) */
+async function heldWorkByItem(itemIds: string[]): Promise<Map<string, number>> {
+  const [loose, lowered] = await Promise.all([looseUnconfirmedByItem(itemIds), loweredPendingByItem(itemIds)])
+  const out = new Map(loose)
+  for (const [k, v] of lowered) out.set(k, (out.get(k) ?? 0) + v)
+  return out
+}
+/** Dòng hàng nào đang có hàng kho đã làm (đã quét / giữ nhặt lẻ / đã hạ theo Việc cần làm) — đọc SỐNG ngay trước khi xoá dòng */
 async function touchedItemIds(itemIds: string[]): Promise<string[]> {
   if (!itemIds.length) return []
-  const [its, loose] = await Promise.all([
+  const [its, held] = await Promise.all([
     fetchAllByIdChunks(itemIds, c => supabase.from('OutboundItem').select('id').gt('cartons_scanned', 0).in('id', c).order('id')) as Promise<{ id: string }[]>,
-    looseUnconfirmedByItem(itemIds),
+    heldWorkByItem(itemIds),
   ])
-  return [...new Set([...its.map(i => i.id), ...loose.keys()])]
+  return [...new Set([...its.map(i => i.id), ...held.keys()])]
 }
 const keepIssueText = (issues: KeepIssue[], mat: (code: string) => MatUnitsQ | null | undefined) => issues.slice(0, 6).map(i => {
   const mu = mat(i.material) ?? null
@@ -539,7 +557,7 @@ export async function keepIssuesForGroups(plans: KhvcPlanRow[], gdoByGc: Map<str
   const gdoIds = [...gdoByGc.values()]
   const dvs = await fetchAllByIdChunks(gdoIds, c => supabase.from('OutboundDelivery').select('id, gdo_id, distributor_name').in('gdo_id', c).order('id')) as { id: string; gdo_id: string; distributor_name: string | null }[]
   const its = dvs.length ? await fetchAllByIdChunks(dvs.map(d => d.id), c => supabase.from('OutboundItem').select('id, do_id, material_code_raw, cartons_scanned').in('do_id', c).order('id')) as { id: string; do_id: string; material_code_raw: string | null; cartons_scanned: number }[] : []
-  const loose = await looseUnconfirmedByItem(its.map(i => i.id))
+  const loose = await heldWorkByItem(its.map(i => i.id))
   const doOf = new Map(dvs.map(d => [d.id, d]))
   const mats = new Map<string, MatUnitsQ & { is_non_stock: boolean | null }>()
   const matCodes = [...new Set([...its.map(i => String(i.material_code_raw ?? '').trim()), ...[...byVehicle.values()].flat().map(r => String(r['Material'] ?? '').trim())].filter(Boolean))]
@@ -1276,9 +1294,14 @@ export async function getGDO(req: Request, res: Response) {
       return fail(res, CATEGORY_FORBIDDEN_MSG, 403)
     }
     // Cờ quét-tới-thùng: KHO bật VÀ Loại hàng của chuyến bật → FE mở panel multiscan thùng sau khi quét pallet
-    const r = result as { warehouse_id?: string | null; warehouse_type?: string | null }
-    const cartonPolicy = await warehouseCartonScanPolicy(r.warehouse_id, r.warehouse_type)
-    return ok(res, { ...result, carton_scan_enabled: cartonPolicy.enabled, carton_scan_require_full: cartonPolicy.requireFull })
+    const r = result as { warehouse_id?: string | null; warehouse_type?: string | null; status?: string | null; plan_dropped?: boolean | null }
+    // 24/10 (rà chuỗi điều vận): cổng SAP (DO bị SAP bỏ / thay, việc Cần xử lý) trước chỉ lộ ra khi kho BẤM nút và bị 409 — nay trang chi tiết
+    // hiện sẵn băng nhắc. Cùng một hàm với cổng chặn (nhớ 30 s) nên không lệch nhau.
+    const [cartonPolicy, sap_issue] = await Promise.all([
+      warehouseCartonScanPolicy(r.warehouse_id, r.warehouse_type),
+      r.status !== 'COMPLETED' && r.plan_dropped !== true ? sapIssueError(req.params.id, 'làm tiếp') : Promise.resolve(null),
+    ])
+    return ok(res, { ...result, carton_scan_enabled: cartonPolicy.enabled, carton_scan_require_full: cartonPolicy.requireFull, sap_issue })
   } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }
 
@@ -3661,7 +3684,7 @@ async function mergePausedGDO(
   // PHẦN KHO ĐÃ LÀM phải còn chỗ trong kế hoạch mới (`mergeKeepIssues` — cùng hàm với cửa Lưu của bàn ghép xe, 23/10): đã quét + đang giữ
   // nhặt lẻ chưa xác nhận, khớp NPP + mã, số mới ≥ số đã làm. Trước 23/10 chỉ đếm đã quét — chuyến tạm dừng đang giữ nhặt lẻ bị derive bỏ qua
   // từ trước (looseHeldGcs), nay bàn ghép xe gửi được tới đây nên phần nhặt lẻ cũng phải giữ.
-  const looseBy = await looseUnconfirmedByItem((existingItems ?? []).map((i: any) => i.id as string))
+  const looseBy = await heldWorkByItem((existingItems ?? []).map((i: any) => i.id as string))
   const keepIssues = mergeKeepIssues(
     (existingItems ?? []).map((i: any) => ({ npp: doIdToNpp.get(i.do_id) ?? '', material: String(i.material_code_raw ?? ''), done: Number(i.cartons_scanned) + (looseBy.get(i.id) ?? 0) })),
     [...mergedByNpp].flatMap(([npp, rows]) => rows.map(row => { const mc = String(row['Material'] ?? '').trim(); return { npp, material: mc, qty: uploadRowQtyBase(row, matMap.get(mc) ?? null) } })),
@@ -3776,6 +3799,14 @@ async function mergePausedGDO(
       await releaseScansForDOs(safeToDelete)   // nhả tồn trước cascade (an toàn — DO rỗng thường no-op)
       await deleteByIdsChunked('OutboundDelivery', safeToDelete)
     }
+  }
+
+  // 24/10 (rà chuỗi điều vận): chuyến đã có VIỆC CẦN LÀM (kho chế độ Hướng dẫn) — kế hoạch vừa gộp đổi dòng hàng: dòng MỚI chưa có việc, dòng
+  // bị giảm số còn việc cũ quá cỡ, và lúc Tiếp tục chuyến không lập lại. Sắp lại ngay: bỏ việc CHƯA AI ĐỤNG rồi lập theo dòng hàng hiện tại
+  // (giữ việc đã hạ / đã chuyển — `replanGdoTasks`). Không có việc nào (chế độ Thủ công) thì thôi.
+  {
+    const { count } = await supabase.from('wms_tasks').select('id', { count: 'exact', head: true }).eq('gdo_id', gdoId)
+    if (count) await replanGdoTasks(gdoId, dateCtx?.actor ?? 'Kế hoạch đổi', 'PLAN_CHANGED')
   }
 
   return { group_code, id: gdoId, merged: true }
@@ -4039,6 +4070,12 @@ async function processVehicleGroups(
     // Ship-to đã gán tay trên đơn PENDING — mang theo khi upload đè (xóa+tạo lại), không để mất âm thầm
     const shiptoByGroupCode  = new Map<string, string>()
 
+    // 24/10 (rà chuỗi điều vận): chuyến chưa bắt đầu mà ĐÃ có phiếu cân khớp tay — xoá + tạo lại (id mới) để phiếu cân trỏ vào chuyến không
+    // còn (gdo_id không có khoá ngoại), tụt khỏi chuỗi tình trạng xe và khớp lại thì bị chặn 409 ⇒ giữ nguyên bản ghi như chuyến đã phân công
+    const pendingIds = (existingGdos ?? []).filter(g => g.status === 'PENDING').map(g => g.id as string)
+    const weighedGdo = new Set(pendingIds.length
+      ? ((await fetchAllByIdChunks(pendingIds, c => supabase.from('WeighTicket').select('gdo_id').in('gdo_id', c).order('gdo_id'))) as { gdo_id: string | null }[]).map(w => w.gdo_id).filter((x): x is string => !!x)
+      : [])
     // Trạng thái TRƯỚC derive (derive có thể xóa+tạo lại chuyến PENDING → mất dấu vết cũ)
     const prevGdoState = new Map<string, PrevGdoState>()
     for (const g of (existingGdos ?? [])) {
@@ -4056,7 +4093,7 @@ async function processVehicleGroups(
         //  · plan_dropped  → user chốt 03/08: "chuyến KHÔNG bị xóa… kế hoạch có lại thì hoạt động
         //                    trở lại VỚI LỊCH SỬ ĐƯỢC BỔ SUNG" — đổi id là mất chính cái lịch sử đó
         // (đo 03/08: id đổi ⇒ trang đang mở 404 + vết sổ trỏ vào bản ghi đã chết)
-        if (g.assigned_at || g.awaiting_sap || g.plan_dropped) {
+        if (g.assigned_at || g.awaiting_sap || g.plan_dropped || weighedGdo.has(g.id as string)) {
           pendingPreserveMap.set(g.group_code as string, g.id)
           if (g.assigned_at) assignedGcs.add(g.group_code as string)
         } else {
@@ -4541,7 +4578,7 @@ async function processVehicleGroups(
     let tmsSync: Awaited<ReturnType<typeof syncTmsPlanFromKhvc>> | null = null
     if (autoLoosePallet) {
       try { tmsSync = await syncTmsPlanFromKhvc(req, allGroupCodes) }
-      catch (e) { console.error('[processVehicleGroups] đồng bộ Kế hoạch VC:', e) }
+      catch (e) { console.error('[processVehicleGroups] đồng bộ Kế hoạch VC:', e); tmsSync = { created: 0, updated: 0, dropped: 0, reopened: 0, slots_released: 0, rebooked: 0, errors: [`đồng bộ lệnh VC: ${e instanceof Error ? e.message : String(e)}`] } }
     }
 
     // TỰ CHỮA khi kế hoạch đổi GIỮA CHỪNG (2 người cùng sửa 1 xe / upload đè lúc người kia thêm DO):
@@ -4566,7 +4603,7 @@ async function processVehicleGroups(
     return ok(res, {
       created,
       ...(awaitingResult.awaiting || awaitingResult.cleared || awaitingResult.reopened ? { awaiting: awaitingResult } : {}),
-      ...(tmsSync && (tmsSync.created || tmsSync.updated || tmsSync.dropped) ? { tms_plan: tmsSync } : {}),
+      ...(tmsSync && (tmsSync.created || tmsSync.updated || tmsSync.dropped || tmsSync.rebooked || tmsSync.errors.length) ? { tms_plan: tmsSync } : {}),
       ...(healed ? { healed_drift: healed } : {}),
       ...(extraResult ?? {}),
     }, 201)
@@ -5008,6 +5045,9 @@ export async function replanKhvcGroups(req: Request, groupCodes: string[], healD
   const gcWithLines = new Set(lines.map(l => l.group_code))
 
   const report: Record<string, unknown>[] = []
+  // 24/10 (rà chuỗi điều vận): lỗi từng phần (ngừng chuyến · lệnh VC · dựng chuyến) trước chỉ console.error ⇒ Xoá kế hoạch / đổi ngày báo xong
+  // trong khi chuyến Xuất kho còn sống, lệnh VC còn giữ khung giờ. Gom vào `errors` — cửa gọi coi là replan_error, người bấm Thử lại.
+  const errors: string[] = []
   const tasks: Record<string, unknown>[] = []
   const mkTask = (gdo: { id: string; group_code: string }, detail: string) => tasks.push({
     id: randomUUID(), gdo_id: gdo.id, group_code: gdo.group_code,
@@ -5065,9 +5105,10 @@ export async function replanKhvcGroups(req: Request, groupCodes: string[], healD
         const doIds = (allDos ?? []).filter(d => dropIds.has(d.gdo_id)).map(d => d.id)
         await releaseScansForDOs(doIds)   // nhả tồn nhặt lẻ đã giữ chỗ (chuyến bất động không được ôm tồn)
         for (let i = 0; i < toDrop.length; i += 300) {
-          await supabase.from('GroupDeliveryOrder')
+          const { error } = await supabase.from('GroupDeliveryOrder')
             .update({ plan_dropped: true, plan_dropped_at: t, awaiting_sap: false, awaiting_dos: null, updated_by: actor, updated_at: t })
             .in('id', toDrop.slice(i, i + 300).map(g => g.id))
+          if (error) errors.push(`ngừng chuyến Xuất kho: ${error.message}`)
         }
         for (const g of toDrop) {
           events.push({ group_code: g.group_code, gdo_id: g.id, event_type: 'PLAN_VEHICLE_DROPPED', source: 'PLAN', actor,
@@ -5100,6 +5141,11 @@ export async function replanKhvcGroups(req: Request, groupCodes: string[], healD
       const facade = { statusCode: 200, payload: null as unknown, status(c: number) { this.statusCode = c; return this }, json(p: unknown) { this.payload = p; return this } }
       await processVehicleGroups(req, facade as unknown as Response, byVehicle, undefined, undefined, true, undefined, awaitingByGc, undefined, planFingerprints(lines), healDepth, opts.keepWork?.length ? new Set(opts.keepWork) : undefined)
       derive = { status: facade.statusCode, ...(typeof facade.payload === 'object' && facade.payload ? facade.payload as Record<string, unknown> : { raw: facade.payload }) }
+      {
+        // dựng chuyến bị từ chối (derive.status ≥ 400) KHÔNG gom ở đây — cửa Xác nhận / Lưu có luật riêng (derive_failed + gỡ lại)
+        const dp = facade.payload as { data?: { tms_plan?: { errors?: string[] } }; tms_plan?: { errors?: string[] } } | null
+        errors.push(...(dp?.data?.tms_plan?.errors ?? dp?.tms_plan?.errors ?? []))
+      }
       // Chuyến bị skip (đang xuất/đã hoàn thành) → kế hoạch đổi mà chuyến không nhận được → task.
       // ok() bọc payload {success,data} → created nằm ở data.created
       const pl = facade.payload as { created?: unknown; data?: { created?: unknown } } | null
@@ -5121,11 +5167,11 @@ export async function replanKhvcGroups(req: Request, groupCodes: string[], healD
   // lệnh vận chuyển ngừng hiệu lực + NHẢ khung giờ cho xe khác (user chốt 03/08).
   let tmsDrop: Awaited<ReturnType<typeof syncTmsPlanFromKhvc>> | null = null
   if (emptyGcs.length) {
-    try { tmsDrop = await syncTmsPlanFromKhvc(req, emptyGcs) }
-    catch (e) { console.error('[replanKhvcGroups] nhả khung giờ xe bị bỏ:', e) }
+    try { tmsDrop = await syncTmsPlanFromKhvc(req, emptyGcs); errors.push(...tmsDrop.errors) }
+    catch (e) { console.error('[replanKhvcGroups] nhả khung giờ xe bị bỏ:', e); errors.push(`ngừng lệnh VC + nhả khung giờ: ${e instanceof Error ? e.message : String(e)}`) }
   }
   const swept = await sweepOrphanDeliveries([...new Set(lines.map(l => l.do_no).filter(Boolean))])
-  return { replanned: replanGcs.length, deleted_or_tasked: report, derive, tasks: tasks.length, ...(tmsDrop ? { tms_plan_drop: tmsDrop } : {}), ...(swept ? { orphan_dos_cleaned: swept } : {}) }
+  return { replanned: replanGcs.length, deleted_or_tasked: report, derive, tasks: tasks.length, ...(tmsDrop ? { tms_plan_drop: tmsDrop } : {}), ...(swept ? { orphan_dos_cleaned: swept } : {}), ...(errors.length ? { errors } : {}) }
 }
 
 // DỌN DO MỒ CÔI (probe 02/08 C5b): replan/upload trên chuyến PENDING = XÓA chuyến cũ rồi TẠO lại.

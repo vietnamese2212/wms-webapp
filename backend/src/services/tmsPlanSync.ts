@@ -24,13 +24,15 @@ type GdoRow = {
   plan_dropped: boolean | null; awaiting_sap: boolean | null
 }
 type KLine = { group_code: string; npp: string | null; veh_type: string | null; dvvt: string | null; note: string | null; booking_category: string | null }
-type OrderRow = { id: string; order_code: string; origin: string | null; plan_dropped: boolean | null }
-type SlotRow = { id: string; order_id: string; slot_id: string | null; status: string; license_plate: string | null }
+type OrderRow = { id: string; order_code: string; origin: string | null; plan_dropped: boolean | null; ncc_id: string | null; booking_category: string | null }
+type SlotRow = { id: string; order_id: string; slot_id: string | null; status: string; license_plate: string | null; gate_registration_id?: string | null }
 
-export type TmsPlanSyncResult = { created: number; updated: number; dropped: number; reopened: number; slots_released: number }
+// errors (24/10, rà chuỗi điều vận): lỗi ghi từng phần trước chỉ console.error ⇒ cửa gọi (Xoá kế hoạch · đổi ngày …) báo "xong" trong khi
+// lệnh VC vẫn giữ khung giờ. Nay gom lại để cửa gọi trả `replan_error` + nút Thử lại.
+export type TmsPlanSyncResult = { created: number; updated: number; dropped: number; reopened: number; slots_released: number; rebooked: number; errors: string[] }
 
 export async function syncTmsPlanFromKhvc(req: Request, groupCodes: string[]): Promise<TmsPlanSyncResult> {
-  const out: TmsPlanSyncResult = { created: 0, updated: 0, dropped: 0, reopened: 0, slots_released: 0 }
+  const out: TmsPlanSyncResult = { created: 0, updated: 0, dropped: 0, reopened: 0, slots_released: 0, rebooked: 0, errors: [] }
   const gcs = [...new Set(groupCodes.map(g => String(g ?? '').trim()).filter(Boolean))]
   if (!gcs.length) return out
   const actor = actorOf(req, 'KHVC-SYNC')
@@ -104,7 +106,7 @@ export async function syncTmsPlanFromKhvc(req: Request, groupCodes: string[]): P
 
   // 5) Lệnh hiện có theo Số xe
   const orders = await fetchAllByIdChunks(gcs, chunk => supabase.from('TmsOrder')
-    .select('id, order_code, origin, plan_dropped').in('order_code', chunk).order('id')) as OrderRow[]
+    .select('id, order_code, origin, plan_dropped, ncc_id, booking_category').in('order_code', chunk).order('id')) as OrderRow[]
   const orderByCode = new Map((orders ?? []).map(o => [o.order_code, o]))
 
   const events: Parameters<typeof logOutboundEvents>[0] = []
@@ -115,6 +117,9 @@ export async function syncTmsPlanFromKhvc(req: Request, groupCodes: string[]): P
   const orderInserts: Record<string, unknown>[] = []
   const vslotInserts: Record<string, unknown>[] = []
   const orderUpdates: { id: string; fields: Record<string, unknown> }[] = []
+  // ĐỔI ĐVVT / CỬA ĐẶT LỊCH trên xe đã có lệnh (24/10, user chốt "không cần ĐVVT phản hồi"): khung giờ + biển số + tài xế là của ĐVVT CŨ
+  // (và của cửa cũ) ⇒ nhả để ĐVVT mới đặt lại; ĐVVT cũ mất quyền thấy xe nên không ai khác sửa được booking đó. Đổi dòng xe cùng ĐVVT giữ nguyên.
+  const rebookList: { orderId: string; gc: string; gdoId: string; why: string }[] = []
 
   for (const gc of gcs) {
     const g = gdoByGc.get(gc)
@@ -169,6 +174,11 @@ export async function syncTmsPlanFromKhvc(req: Request, groupCodes: string[]): P
     }
 
     const wasDropped = existing.plan_dropped === true
+    if (!wasDropped) {
+      const why = existing.ncc_id && derived.ncc_id && existing.ncc_id !== derived.ncc_id ? 'đổi ĐVVT'
+        : existing.booking_category && derived.booking_category && existing.booking_category !== derived.booking_category ? `đổi cửa đặt lịch ${existing.booking_category} → ${derived.booking_category}` : null
+      if (why) rebookList.push({ orderId: existing.id, gc, gdoId: g.id, why })
+    }
     orderUpdates.push({
       id: existing.id,
       fields: { ...derived, ...(wasDropped ? { plan_dropped: false, plan_dropped_at: null } : {}) },
@@ -200,14 +210,14 @@ export async function syncTmsPlanFromKhvc(req: Request, groupCodes: string[]): P
       for (const r of chunk) {
         const { error: e1 } = await supabase.from('TmsOrder').insert(r)
         if (!e1) okOrderIds.add(String(r.id))
-        else if (e1.code !== '23505') console.error('[tmsPlanSync] tạo lệnh:', e1.message)
+        else if (e1.code !== '23505') { console.error('[tmsPlanSync] tạo lệnh:', e1.message); out.errors.push(`tạo lệnh VC ${String(r.order_code)}: ${e1.message}`) }
       }
     }
     // 1 lệnh luôn có sẵn 1 dòng xe để đặt khung giờ — CHỈ cho lệnh đã tạo được (tránh dòng xe mồ côi)
     const vslots = vslotInserts.filter(v => okOrderIds.has(String(v.order_id)))
     for (let i = 0; i < vslots.length; i += 500) {
       const { error } = await supabase.from('TmsVehicleSlot').insert(vslots.slice(i, i + 500))
-      if (error) console.error('[tmsPlanSync] tạo dòng xe:', error.message)
+      if (error) { console.error('[tmsPlanSync] tạo dòng xe:', error.message); out.errors.push(`tạo dòng xe của lệnh VC: ${error.message}`) }
     }
     out.created -= orderInserts.length - okOrderIds.size
 
@@ -216,8 +226,47 @@ export async function syncTmsPlanFromKhvc(req: Request, groupCodes: string[]): P
     for (let i = 0; i < orderUpdates.length; i += 8) {
       await Promise.all(orderUpdates.slice(i, i + 8).map(async u => {
         const { error } = await supabase.from('TmsOrder').update(u.fields).eq('id', u.id)
-        if (error) console.error('[tmsPlanSync] cập nhật lệnh:', error.message)
+        if (error) { console.error('[tmsPlanSync] cập nhật lệnh:', error.message); out.errors.push(`cập nhật lệnh VC: ${error.message}`) }
       }))
+    }
+  }
+
+  // ── ĐỔI ĐVVT / CỬA: nhả khung giờ + xoá biển số / tài xế của ĐVVT cũ (RPC nguyên tử đếm lại chỗ). Xe đã đăng ký cổng thì KHÔNG nhả —
+  //    xe đó đang ở bãi, ghi vết để người xử tay (đổi ĐVVT lúc xe đã tới cổng là chuyện phải trao đổi, không tự gỡ).
+  if (rebookList.length) {
+    const ids = rebookList.map(r => r.orderId)
+    const slots: SlotRow[] = []
+    for (let i = 0; i < ids.length; i += 300) {
+      const { data, error } = await supabase.from('TmsVehicleSlot').select('id, order_id, slot_id, status, license_plate, gate_registration_id').in('order_id', ids.slice(i, i + 300))
+      if (error) { out.errors.push(`đọc khung giờ để đặt lại: ${error.message}`); continue }
+      slots.push(...((data ?? []) as SlotRow[]))
+    }
+    const byOrder = new Map<string, SlotRow[]>()
+    for (const s of slots) { const l = byOrder.get(s.order_id) ?? []; l.push(s); byOrder.set(s.order_id, l) }
+    for (const r of rebookList) {
+      const mine = byOrder.get(r.orderId) ?? []
+      const atGate = mine.filter(s => s.gate_registration_id)
+      const free = mine.filter(s => !s.gate_registration_id && (s.slot_id || s.license_plate))
+      let released = 0
+      for (const s of free) {
+        if (s.slot_id) {
+          const { error } = await supabase.rpc('book_vehicle_slot', { p_vslot_id: s.id, p_new_slot_id: null, p_plate: null, p_status: 'PENDING', p_actor: actor })
+          if (error) { out.errors.push(`nhả khung giờ ${r.gc}: ${error.message}`); continue }
+          released++
+        }
+        const { error: cErr } = await supabase.from('TmsVehicleSlot').update({ license_plate: null, driver_name: null, driver_phone: null, status: 'PENDING', updated_at: t }).eq('id', s.id)
+        if (cErr) out.errors.push(`xoá biển số / tài xế ${r.gc}: ${cErr.message}`)
+      }
+      if (free.length || atGate.length) {
+        out.rebooked++
+        out.slots_released += released
+        events.push({
+          group_code: r.gc, gdo_id: r.gdoId, event_type: 'TMS_PLAN_REBOOK', source: 'PLAN', actor,
+          detail: atGate.length
+            ? `Kế hoạch ${r.why} nhưng xe đã đăng ký cổng — KHÔNG tự nhả khung giờ / biển số; trao đổi với ĐVVT rồi xử tay ở Đặt lịch`
+            : `Kế hoạch ${r.why} — đã nhả ${released} khung giờ và xoá biển số / tài xế của bên cũ; ĐVVT mới đặt lại`,
+        })
+      }
     }
   }
 
@@ -234,15 +283,17 @@ export async function syncTmsPlanFromKhvc(req: Request, groupCodes: string[]): P
     // nên nó nằm im tới khi có người tình cờ phát hiện. Đặt cờ trước thì mọi booking tới sau bị
     // gác chặn, còn booking đã COMMIT trước đó nằm trong ảnh chụp ở dưới và được nhả đúng.
     for (let i = 0; i < orderIds.length; i += 300) {
-      await supabase.from('TmsOrder')
+      const { error } = await supabase.from('TmsOrder')
         .update({ plan_dropped: true, plan_dropped_at: t, origin: 'KHVC', updated_by: actor, updated_at: t })
         .in('id', orderIds.slice(i, i + 300))
+      if (error) out.errors.push(`ngừng lệnh VC: ${error.message}`)
     }
 
     const slotRows: SlotRow[] = []
     for (let i = 0; i < orderIds.length; i += 300) {
-      const { data } = await supabase.from('TmsVehicleSlot')
+      const { data, error } = await supabase.from('TmsVehicleSlot')
         .select('id, order_id, slot_id, status, license_plate').in('order_id', orderIds.slice(i, i + 300))
+      if (error) out.errors.push(`đọc khung giờ để nhả: ${error.message}`)
       slotRows.push(...((data ?? []) as SlotRow[]))
     }
     const booked = slotRows.filter(s => s.slot_id)
@@ -253,7 +304,7 @@ export async function syncTmsPlanFromKhvc(req: Request, groupCodes: string[]): P
         const { error } = await supabase.rpc('book_vehicle_slot', {
           p_vslot_id: s.id, p_new_slot_id: null, p_plate: null, p_status: 'PENDING', p_actor: actor,
         })
-        if (error) { console.error('[tmsPlanSync] nhả khung giờ:', error.message); return null }
+        if (error) { console.error('[tmsPlanSync] nhả khung giờ:', error.message); out.errors.push(`nhả khung giờ ${s.order_id}: ${error.message}`); return null }
         return s.order_id
       }))
       for (const oid of oks) if (oid) releasedByOrder.set(oid, (releasedByOrder.get(oid) ?? 0) + 1)

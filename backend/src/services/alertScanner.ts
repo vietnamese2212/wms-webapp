@@ -212,6 +212,28 @@ async function ruleTripLate(TH: AlertThresholds): Promise<AlertCandidate[]> {
       object_url: `/wms/outbound/${g.id}`,
     })
   }
+
+  // 24/10 (rà chuỗi điều vận): hai lỗ của R3 — (a) cảnh báo từng chuyến chỉ soi TRIP_LATE_DAYS ngày ⇒ chuyến kẹt lâu hơn TỰ BIẾN dù vẫn mở;
+  // (b) chuyến bán hàng hoàn thành mà tài xế / ĐVVT chưa xác nhận "Đã giao" không ai nhắc. Mỗi kho MỘT dòng tổng (không dội từng chuyến);
+  // đếm bằng RPC trip_overdue_counts (không kéo dòng). Đã giao: chỉ soi 30 ngày gần, quá UNDELIVERED_DAYS ngày.
+  const UNDELIVERED_DAYS = 2
+  const { data: od, error: e3 } = await supabase.rpc('trip_overdue_counts', {
+    p_before: floor, p_since: new Date(Date.now() - 30 * 86400_000).toISOString(), p_delivered_before: new Date(Date.now() - UNDELIVERED_DAYS * 86400_000).toISOString(),
+  })
+  if (e3) throw new Error(e3.message)
+  for (const r of ((od ?? []) as { warehouse_id: string | null; kind: string; n: number; oldest: string | null }[])) {
+    const n = Number(r.n)
+    if (!n) continue
+    out.push(r.kind === 'OLD_OPEN'
+      ? { rule: 'TRIP_LATE', dedup_key: `TRIP_OLD|${r.warehouse_id ?? '-'}`, severity: 'WARNING', warehouse_id: r.warehouse_id, category: null,
+          title: `${n} chuyến quá ngày xuất hơn ${TH.TRIP_LATE_DAYS} ngày vẫn chưa xong`,
+          detail: `Cũ nhất ${fmtDMY(r.oldest ?? '')} — cảnh báo từng chuyến chỉ soi ${TH.TRIP_LATE_DAYS} ngày gần nên các chuyến này không còn hiện riêng. Xuất tiếp, đổi ngày hoặc xoá kế hoạch ở Điều vận.`,
+          object_url: '/wms/outbound' }
+      : { rule: 'TRIP_LATE', dedup_key: `TRIP_UNDELIVERED|${r.warehouse_id ?? '-'}`, severity: 'WARNING', warehouse_id: r.warehouse_id, category: null,
+          title: `${n} chuyến bán hàng hoàn thành quá ${UNDELIVERED_DAYS} ngày chưa xác nhận "Đã giao"`,
+          detail: `Hoàn thành sớm nhất ${new Date(utcMs(r.oldest ?? '')).toLocaleDateString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' })} — tài xế / ĐVVT xác nhận ở Kế hoạch VC → Đặt lịch (nút Đã giao).`,
+          object_url: '/tms/bookings' })
+  }
   return out
 }
 

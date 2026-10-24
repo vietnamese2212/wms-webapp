@@ -821,5 +821,16 @@ quan (như nút workflow trong SAP), bao gồm số chứng từ để đi searc
   khác ⇒ 409 `EDIT_DIRTY`. "Khác" = xe đổi trạng thái (mở khoá · xe mới có đơn) hoặc đơn đổi / rời / lên xe; khung chờ không tính — một hàm
   `editDirty` (BE `services/dispatchEdit` ⇄ FE `components/tms/dispatchEdit`, mirror test). GET kế hoạch kèm CHỮ KÝ bản chụp (RPC
   `dispatch_edit_sig`, migration 20261023b — chỉ id · trạng thái xe + cặp đơn–xe, không kéo `detail`). Gói 61 [21m].
+- **24/10 — RÀ CHUỖI ĐIỀU VẬN** (user: "bàn làm việc có mối quan hệ zic zac tới rất nhiều module — đảm bảo dữ liệu không mắc chỗ này chỗ kia"):
+  soi 40+ phép trên staging (sạch ngoài dữ liệu dư bộ kiểm) + đọc code 4 đường ghi chéo; sửa: đổi ngày cả xe MỘT giao dịch (RPC
+  `dispatch_move_trips_date`) + chặn chuyến Tạm dừng + chặn đơn máy chia xe không cùng dời (409 `OD_SPLIT_ACROSS_TRIPS`) · lỗi dội xuống chuyến /
+  lệnh VC không còn nuốt (`replanSafe`, `replan.errors`, `TmsPlanSyncResult.errors`) + nút **Thử lại** (`POST /plans/:id/resync-outbound`,
+  quyền dispatch.confirm) sau Xoá kế hoạch / đổi ngày · **đổi ĐVVT / cửa đặt lịch trên xe đã chốt ⇒ nhả khung giờ + xoá biển số / tài xế bên cũ**
+  (user chốt "không cần ĐVVT phản hồi"; xe đã đăng ký cổng thì không tự nhả, ghi vết `TMS_PLAN_REBOOK`) · cờ SAP (thay / bỏ / sửa SL) hiện cả trên
+  xe đã chốt → mở khoá → Cập nhật theo SAP → Lưu · nạp ZSD02 dội lại Số xe chưa bắt đầu / tạm dừng có đơn SAP sửa / thêm dòng (dòng mới vào
+  chuyến, lệnh VC đúng số) · pallet đã hạ theo Việc cần làm tính vào "phần kho đã làm" khi Lưu · chuyến có phiếu cân không bị dựng lại id mới ·
+  băng cờ SAP ở trang chi tiết Xuất kho · cảnh báo tổng theo kho: chuyến quá ngày > 14 ngày + chuyến hoàn thành > 2 ngày chưa "Đã giao".
+  Lưới: gói 00 [14c2] `dispatch_chain_audit` (hằng đêm) + gói 61 [11k]. **Chưa làm, chờ user:** hoãn từng đơn khi đơn máy chia 2 xe (đề xuất chặn) ·
+  SAP tách đơn 100 → 80 + 20 (Đổi số DO chọn DO ở lại xe; xe đã quét cho đổi số khi Tạm dừng) — hỏi user SAP tách lúc nào.
 - **Tab Kế hoạch mặc định lọc "Đã xác nhận"** (user 23/10). **"Xem đơn" không lập nháp thứ hai cho mảng đã xác nhận** (C95): `reuse` nhận cả
   bản đã xác nhận — Ba Vì 02/10 có nháp Trung chuyển thừa từ lỗi này, đã xoá mềm.

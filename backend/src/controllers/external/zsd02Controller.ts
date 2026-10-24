@@ -15,13 +15,16 @@ import { isPreflight, buildPreflight, type PreflightExtra } from '../../utils/up
 import { expandMergedCells, readWorkbookSafe, parseSheetByHeader, BAD_EXCEL_MSG } from '../../utils/excelHeader'
 import { getSapDoSource, getZsd02CoverageMode } from '../../utils/settings'
 import { reconcileFromSap, type OdKey } from '../../services/outboundReconcile'
-import { sapScopeCheck, activateAwaitingForDos } from '../wms/outboundController'
+import { sapScopeCheck, activateAwaitingForDos, replanKhvcGroups } from '../wms/outboundController'
+import { syncTmsPlanFromKhvc } from '../../services/tmsPlanSync'
 import { loadSapFlowMap, makeDvvtResolver } from '../../services/sapFlow'
 import { upsertCustomerGeo } from '../../services/customerGeo'
 import { autoApplyAfterConfigChange, warehousesWithPolicyOn } from '../../services/dateRuleApply'
 import { parseZsd02, bizHash, isFlow, ZSD02_FIELDS, ZSD02_BIZ, SO_BIZ, LOADABLE_FLOWS, rawNeedsRefresh, type Zsd02Mat, type OdRecord } from '../../services/zsd02Parse'
 import { allowedPlants, plantOrFilter } from './erpOrderController'
 import { findReplacedOds, holdsToCarry, type ReplaceCandidate, type HoldRow } from '../../services/dispatchPool'
+
+const uniqStr = (a: string[]) => [...new Set(a.filter(Boolean))]
 
 const now = () => new Date().toISOString()
 const CHUNK = 500
@@ -157,9 +160,13 @@ export async function uploadZsd02(req: Request, res: Response) {
     let odInserted = 0, odUpdated = 0, odNoop = 0, rawRefreshed = 0
     const odWrite: (OdRecord & { id: string })[] = []
     const updatedKeys: OdKey[] = []
+    // 24/10 (rà chuỗi điều vận): dòng hàng MỚI của một OD ĐÃ CÓ (SAP thêm mã vào DO cũ) đi đường thêm mới ⇒ không vào danh sách "đổi" nên
+    // chuyến Xuất kho của OD đó không bao giờ nhận dòng này. Ghi riêng để dội lại chuyến (cuối hàm).
+    const priorDos = new Set(priorOd.map(p => String(p.od_number)))
+    const addedLineOds = new Set<string>()
     for (const rec of out.od) {
       const prior = priorByKey.get(`${rec.od_number}__${rec.od_item}`)
-      if (!prior) { odWrite.push({ id: randomUUID(), ...rec }); odInserted++; continue }
+      if (!prior) { odWrite.push({ id: randomUUID(), ...rec }); odInserted++; if (priorDos.has(String(rec.od_number))) addedLineOds.add(String(rec.od_number)); continue }
       if (prior.hash === bizHash(rec as Record<string, unknown>, ZSD02_BIZ)) {
         odNoop++
         if (prior.stale && !isPreflight(req)) { odWrite.push({ id: prior.id, ...rec, updated_at: prior.updated_at ?? rec.updated_at }); rawRefreshed++ }
@@ -309,8 +316,11 @@ export async function uploadZsd02(req: Request, res: Response) {
     // ── GHI SỔ OD (đã phân loại ở trên) — chunk 500 ghi song song, OBSOLETE dòng SAP bỏ ──
     await upsertChunksParallel('erp_outbound_orders', odWrite, 'od_number,od_item')
     if (removedKeys.length) {
-      await Promise.all(removedKeys.map(k => db.from('erp_outbound_orders')
+      // 24/10: lỗi từng câu trước bị bỏ qua (Promise.all không đọc .error) ⇒ dòng SAP đã bỏ vẫn ACTIVE, chuyến giữ dòng hàng cũ mà không ai biết
+      const rs = await Promise.all(removedKeys.map(k => db.from('erp_outbound_orders')
         .update({ sync_status: 'OBSOLETE', updated_at: t }).eq('od_number', k.od_number).eq('od_item', k.od_item)))
+      const bad = rs.find(r => r.error)
+      if (bad?.error) throw bad.error
     }
     // OD cũ bị thay: OBSOLETE + ghi OD thay thế (bàn ghép xe đọc cột này để hiện nút "Thay bằng OD mới")
     for (const [old, by] of repPairs) {
@@ -383,6 +393,34 @@ export async function uploadZsd02(req: Request, res: Response) {
       catch (e) { reconcile_error = String(e); console.error('[reconcileFromSap] uploadZsd02:', e) }
     }
     const activated = await activateAwaitingForDos(req, fileDos, 'uploadZsd02')
+    // 24/10 (rà chuỗi điều vận): SAP sửa số lượng / thêm dòng cho OD đã nằm trên xe ⇒ reconcile chỉ vá dòng hàng ĐÃ CÓ của chuyến; dòng mới
+    // không vào, lệnh VC giữ pallet / tấn cũ. Dội lại các Số xe chưa bắt đầu / tạm dừng chứa các OD đó (dựng lại dòng hàng theo ZSD02 hiện tại,
+    // giữ phần kho đã làm — luật gộp 23/10); chuyến đang xuất / đã xong không dội (kho đang cầm — reconcile + Cần xử lý lo) nhưng lệnh VC
+    // cập nhật số. Lỗi không làm hỏng lượt nạp: trả `chain_error` để màn báo.
+    let chain: { replanned: number; tms_updated: number } | null = null
+    let chain_error: string | null = null
+    {
+      const touchedOds = uniqStr([...updatedKeys.map(k => k.od_number), ...addedLineOds])
+      if (touchedOds.length && !isPreflight(req)) {
+        try {
+          const kl = (await fetchAllByIdChunks(touchedOds, c => db.from('khvc_lines').select('group_code').in('do_no', c).neq('sync_status', 'OBSOLETE').order('group_code'))) as { group_code: string }[]
+          const gcs = uniqStr(kl.map(k => k.group_code))
+          if (gcs.length) {
+            const gd = (await fetchAllByIdChunks(gcs, c => db.from('GroupDeliveryOrder').select('group_code, status, plan_dropped').in('group_code', c).order('group_code'))) as { group_code: string; status: string; plan_dropped: boolean | null }[]
+            const open = gd.filter(g => !g.plan_dropped && (g.status === 'PENDING' || g.status === 'PAUSED')).map(g => g.group_code)
+            const rest = gd.filter(g => !g.plan_dropped && !open.includes(g.group_code)).map(g => g.group_code)
+            const CAP = 150   // ~0,2 s / xe — nạp quá đông xe một lượt thì phần dư người bấm Thử lại ở Điều vận
+            const rp = open.length ? await replanKhvcGroups(req, open.slice(0, CAP)) : null
+            const tms = rest.length ? await syncTmsPlanFromKhvc(req, rest) : null
+            const errs = [...(((rp?.errors as string[] | undefined) ?? [])), ...(tms?.errors ?? [])]
+            if (open.length > CAP) errs.push(`${open.length - CAP} Số xe chưa dội (vượt ${CAP} xe một lượt) — vào Điều vận bấm Thử lại / mở kế hoạch ngày đó`)
+            chain = { replanned: Math.min(open.length, CAP), tms_updated: tms?.updated ?? 0 }
+            if (errs.length) chain_error = errs.join(' · ')
+          }
+        } catch (e) { chain_error = e instanceof Error ? e.message : String(e); console.error('[uploadZsd02] dội chuyến theo SAP đổi:', e) }
+      }
+      if (chain_error) warnings.push(`Chưa dội xong chuyến Xuất kho / lệnh VC theo đơn SAP đổi: ${chain_error}`)
+    }
     // Khoảng Ngày giao của file — tab "Chưa có OD" lọc theo Ngày giao (không có Ngày nạp) nên FE đặt bộ lọc theo đây
     // để dòng vừa nạp hiện ngay (user 29/09: "tab nào lấy dữ liệu ZSD02 thì làm tương tự")
     const days = out.so.map(r => r.delivery_date).filter((d): d is string => typeof d === 'string' && d.length === 10).sort()
@@ -397,7 +435,7 @@ export async function uploadZsd02(req: Request, res: Response) {
       flows: st.flows, not_loadable: st.not_loadable,
       routes: routesWritten, customers,
       sap_unmapped: scope.unmapped,
-      reconcile, reconcile_error, ...(activated ? { activated } : {}),
+      reconcile, reconcile_error, ...(activated ? { activated } : {}), ...(chain ? { chain } : {}), ...(chain_error ? { chain_error } : {}),
       warning_count: warnings.length, warnings: warnings.slice(0, 50),
     })
   } catch (e) { return failAny(res, e) }

@@ -58,6 +58,9 @@ async function cleanup() {
     await delRetry('OutboundDelivery', `gdo_id=eq.${g.id}`)
     await delRetry('GroupDeliveryOrder', `id=eq.${g.id}`)
   }
+  // Nhật ký chuyến (`outbound_events`, không khoá ngoại) của chuyến fixture — 24/10 rà chuỗi điều vận đếm 2.518 dòng mồ côi trỏ chuyến đã xoá,
+  // phần lớn của gói này (QA57_*), hiện ở tab Lịch sử như chuyến ma
+  await restWrite('outbound_events', 'DELETE', `group_code=like.${T}*`).catch(() => {})
   for (const w of await restAll('Warehouse', `select=id&code=like.${T}*`)) {
     // Chuyến Hoàn thành ⇒ tự sinh lệnh chuyển kho + DÒNG KẾ HOẠCH NHẬP ở kho đích; dòng đó trỏ
     // `warehouse_id` (FK không CASCADE) nên còn nó là không xoá được kho — lượt sau đỏ ở fixture.

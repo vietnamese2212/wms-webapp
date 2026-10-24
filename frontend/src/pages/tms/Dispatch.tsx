@@ -51,7 +51,7 @@ import { InfoTip } from '@/components/shared/InfoTip'
 import { useConfirmDialog } from '@/components/shared/ConfirmDialog'
 import { toast } from '@/components/ui/use-toast'
 import {
-  useDispatchPlans, useDispatchPlan, useCreateDispatchPlan, useUpdateDispatchTrip, useMoveDispatchOd, useConfirmDispatchPlan, useDiscardDispatchPlan, useReopenDispatchPlan, useEditDispatchPlan,
+  useDispatchPlans, useDispatchPlan, useCreateDispatchPlan, useUpdateDispatchTrip, useMoveDispatchOd, useConfirmDispatchPlan, useDiscardDispatchPlan, useReopenDispatchPlan, useEditDispatchPlan, useResyncDispatchOutbound,
   useSettleDispatchTrip, useRespondDispatchTrip, useDispatchPlanSync, useRefreshDispatchPool, useDeleteDispatchTrip, useHoldDispatchOds,
   useVehicleModels, useTransportCompanies, useStorageConditions, conditionLabel,
   type DispatchPlan, type DispatchPlanListItem, type DispatchTrip, type DispatchTripStatus, type StorageConditionRow, type DispatchSegment, SEGMENT_VI,
@@ -250,7 +250,7 @@ export default function Dispatch() {
   const needsTender = (t: DispatchTrip) => t.transport_company_id ? (tenderBy.get(t.transport_company_id) ?? t.detail.carrier?.tender_required === true) : false
 
   const patchTrip = useUpdateDispatchTrip(), moveOd = useMoveDispatchOd(), confirm = useConfirmDispatchPlan(), discard = useDiscardDispatchPlan()
-  const settle = useSettleDispatchTrip(), respond = useRespondDispatchTrip(), reopen = useReopenDispatchPlan(), delTrip = useDeleteDispatchTrip(), editApi = useEditDispatchPlan()
+  const settle = useSettleDispatchTrip(), respond = useRespondDispatchTrip(), reopen = useReopenDispatchPlan(), delTrip = useDeleteDispatchTrip(), editApi = useEditDispatchPlan(), resync = useResyncDispatchOutbound()
   const holdOds = useHoldDispatchOds()
   const [moveDate, setMoveDate] = useState<MoveDateTarget | null>(null)   // 19/10: hộp "Đổi ngày" (cả xe / từng đơn)
   const [openTripId, setOpenTripId] = useState<string | null>(null)
@@ -539,9 +539,26 @@ export default function Dispatch() {
     setDiscardingId(targets[0].id)
     try {
       let trips = 0
-      for (const p of targets) { const r = await discard.mutateAsync(p.id); trips += r.discarded_trips; if (p.id === planId) setF({ planId: '', editDay: '' }) }
+      const failed: { id: string; error: string }[] = []
+      for (const p of targets) {
+        const r = await discard.mutateAsync(p.id); trips += r.discarded_trips
+        if (r.replan_error) failed.push({ id: p.id, error: r.replan_error })
+        if (p.id === planId) setF({ planId: '', editDay: '' })
+      }
       toast({ title: `Đã xoá kế hoạch ${label} — ${nf(trips)} xe` })
+      for (const x of failed) await retryOutbound(x.id, x.error)
     } catch (e) { err(e, 'Chưa xoá được kế hoạch') } finally { setDiscardingId(null) }
+  }
+  // THỬ LẠI dội xuống chuyến Xuất kho + lệnh VC (24/10, rà chuỗi điều vận): Xoá kế hoạch / đổi ngày xong mà bước dội xuống lỗi thì trước đây
+  // màn báo "đã xoá" và im — chuyến Xuất kho còn sống, lệnh VC còn giữ khung giờ, không ai thử lại. Nay hỏi tới khi xong hoặc người bấm Để sau.
+  const retryOutbound = async (id: string, error: string) => {
+    let msg: string | null = error
+    while (msg) {
+      if (await ask({ title: 'Chưa đồng bộ xong sang Xuất kho / lệnh VC', danger: true, confirmLabel: 'Thử lại', cancelLabel: 'Để sau',
+        body: `${msg}\nKế hoạch đã ghi; phần dội xuống chuyến Xuất kho / lệnh VC / khung giờ bị lỗi. Thử lại an toàn (chạy lại theo Kế hoạch xuất hiện tại).` }) === null) return
+      try { msg = (await resync.mutateAsync(id)).replan_error } catch (e) { msg = apiMsg(e) }
+    }
+    toast({ title: 'Đã đồng bộ xong sang Xuất kho / lệnh VC' })
   }
   const deleteDay = (d: DispatchPlanDay) => {
     const targets = livePlans(d)
@@ -881,7 +898,7 @@ export default function Dispatch() {
           )}
         </SheetContent>
       </Sheet>
-      {plan && <DispatchMoveDateDialog plan={plan} target={moveDate} onClose={() => setMoveDate(null)} onMoveOds={moveOdsDate} />}
+      {plan && <DispatchMoveDateDialog plan={plan} target={moveDate} onClose={() => setMoveDate(null)} onMoveOds={moveOdsDate} onOutboundError={(id, e) => void retryOutbound(id, e)} />}
       {confirmNode}
     </div>
   )

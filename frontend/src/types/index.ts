@@ -799,6 +799,8 @@ export interface GDO {
   carton_scan_enabled?: boolean
   // Kho chọn "Bắt buộc quét đủ thùng" → BE chặn Hoàn thành chuyến khi pallet thiếu tem (15/07)
   carton_scan_require_full?: boolean
+  /** 24/10 — câu cổng SAP (DO bị SAP bỏ / thay · việc Cần xử lý) khi chuyến chưa xong; null = không vướng. Chỉ GET chi tiết trả. */
+  sap_issue?: string | null
   // Gate cân xe (01/08): duyệt bỏ qua cân + phiếu cân gắn chuyến + ước tính KL hàng (đối chiếu net cân)
   weigh_waived_at?:     string | null   // duyệt bỏ qua RULE 2 (cân)
   weigh_waived_by?:     string | null

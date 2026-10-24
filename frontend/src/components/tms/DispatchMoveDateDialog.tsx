@@ -19,8 +19,10 @@ const apiMsg = (e: unknown) => (e as AxiosError<{ error?: { message?: string } }
 const todayVN = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
 const nextDay = (d: string) => { const x = new Date(`${d}T00:00:00Z`); x.setUTCDate(x.getUTCDate() + 1); return x.toISOString().slice(0, 10) }
 
-export function DispatchMoveDateDialog({ plan, target, onClose, onMoveOds }: {
+export function DispatchMoveDateDialog({ plan, target, onClose, onMoveOds, onOutboundError }: {
   plan: DispatchPlan; target: MoveDateTarget | null; onClose: () => void
+  /** 24/10 — dời xong mà dội xuống chuyến Xuất kho / lệnh VC lỗi: trang cha hỏi Thử lại trên kế hoạch đích */
+  onOutboundError?: (planId: string, error: string) => void
   /** đổi ngày TỪNG ĐƠN — trang cha dàn: mở lại xe → hoãn đơn → xác nhận lại (ném lỗi thì hộp giữ nguyên để sửa) */
   onMoveOds?: (trip: DispatchTrip, odNumbers: string[], date: string, reason?: string) => Promise<void>
 }) {
@@ -52,9 +54,11 @@ export function DispatchMoveDateDialog({ plan, target, onClose, onMoveOds }: {
           m.blocked.map(b => `#${b.seq} ${b.group_code}: ${b.reason}`).join('\n'),
           m.replan_error ? `Lỗi dội chuyến: ${m.replan_error}` : '',
         ].filter(Boolean).join('\n'),
-        variant: m.blocked.length && !m.trips ? 'destructive' : undefined,
+        variant: (m.blocked.length && !m.trips) || m.replan_error ? 'destructive' : undefined,
       })
       onClose()
+      // 24/10: dội xuống chuyến / lệnh VC lỗi ⇒ hỏi Thử lại (trang lo) trên kế hoạch ĐÍCH — nơi các xe vừa tới
+      if (m.replan_error) onOutboundError?.(m.target_plan_id, m.replan_error)
     } catch (e) { toast({ variant: 'destructive', title: 'Không đổi được ngày', description: apiMsg(e) }) }
     finally { setBusy(false) }
   }

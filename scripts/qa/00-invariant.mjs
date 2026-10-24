@@ -381,6 +381,19 @@ if (process.env.QA_TIER === 'full') {
     n == null ? 'RPC dispatch_trip_khvc_mismatch chưa apply (migration 20261011a)' : `lệch=${n}`)
 }
 
+// 14c2. CHUỖI ĐIỀU VẬN KHÔNG KẸT GIỮA CÁC SỔ (24/10, user: "bàn làm việc có mối quan hệ zic zac tới rất nhiều module — đảm bảo dữ liệu không
+//       bị mắc ở chỗ này chỗ kia"; migration 20261024): bàn ↔ Kế hoạch xuất (đơn · ngày) ↔ chuyến Xuất kho (DO · còn sống) ↔ lệnh VC (còn sống ·
+//       ngày · khung giờ đã nhả) · một đơn một xe sống · xe mở khoá có bản lưu · một kế hoạch sống mỗi kho×ngày×mảng. Kho / Số xe QA* không tính.
+{
+  let a = null
+  try { a = await restRpc('dispatch_chain_audit') } catch { /* chưa apply migration → báo dưới */ }
+  const bad = a && typeof a === 'object' ? Object.entries(a) : null
+  check('Chuỗi điều vận khớp giữa bàn · Kế hoạch xuất · chuyến Xuất kho · lệnh VC / khung giờ (0 phép lệch)',
+    Array.isArray(bad) && bad.length === 0,
+    bad == null ? 'RPC dispatch_chain_audit chưa apply (migration 20261024)'
+      : bad.length ? bad.map(([k, v]) => `${k}=${v.n} (vd ${(v.sample ?? []).slice(0, 3).join(', ')})`).join(' · ') : '20 phép soi chuỗi')
+}
+
 // 14d. TRIGGER TỪNG DÒNG GHI BẢNG KHÁC KHÔNG ĐƯỢC MỌC THÊM (11/10, lớp C79, migration 20261011d): trigger FOR EACH ROW mà hàm có
 //      UPDATE / INSERT / DELETE bảng khác hoặc realtime.send ⇒ một câu N dòng hoá N câu con + N lần phát realtime. Đo 11/10: xoá 460
 //      dòng Kế hoạch xuất (Mở lại 150 xe) = 2,1 s chỉ vì trigger cờ in_khvc chạy từng dòng — lô đầu 503 quá hạn. Bản theo lô (bảng

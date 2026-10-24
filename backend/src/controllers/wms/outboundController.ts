@@ -4787,8 +4787,8 @@ export async function uploadVl06o(req: Request, res: Response) {
     const priorRows = await fetchAllByIdChunks(odNumbers, chunk => supabase.from('erp_outbound_orders')
       .select('id, od_number, od_item, sync_status, ' + BIZ.join(', '))
       .in('od_number', chunk).order('id')) as (Record<string, unknown> & { id: string; od_number: string; od_item: string; sync_status: string | null })[]
-    const priorByKey = new Map<string, { id: string; hash: string }>()
-    for (const p of (priorRows ?? [])) priorByKey.set(`${p.od_number}__${p.od_item}`, { id: p.id, hash: bizHash(p) })
+    const priorByKey = new Map<string, { id: string; hash: string; dead: boolean }>()
+    for (const p of (priorRows ?? [])) priorByKey.set(`${p.od_number}__${p.od_item}`, { id: p.id, hash: bizHash(p), dead: p.sync_status !== 'ACTIVE' })
 
     let inserted = 0, updated = 0, noop = 0
     const toWrite: Record<string, unknown>[] = []
@@ -4797,9 +4797,10 @@ export async function uploadVl06o(req: Request, res: Response) {
       const key = `${rec.od_number}__${rec.od_item}`
       const prior = priorByKey.get(key)
       if (!prior) { toWrite.push({ id: randomUUID(), ...rec }); inserted++; continue }
-      if (prior.hash === bizHash(rec)) { noop++; continue }   // NO-OP: giữ id/created_at/updated_at cũ (không ghi)
-      // UPDATE: GIỮ id cũ (không churn), created_at DB giữ (không đưa vào payload); SAP/Excel đè lại → gỡ cờ sửa tay
-      toWrite.push({ id: prior.id, ...rec, manual_edited_at: null }); updated++
+      if (!prior.dead && prior.hash === bizHash(rec)) { noop++; continue }   // NO-OP: giữ id/created_at/updated_at cũ (không ghi)
+      // UPDATE: GIỮ id cũ (không churn), created_at DB giữ (không đưa vào payload); SAP/Excel đè lại → gỡ cờ sửa tay.
+      // Dòng đã xoá mềm mà file lại có ⇒ sống lại (24/10, cùng luật cửa ZSD02)
+      toWrite.push({ id: prior.id, ...rec, manual_edited_at: null, ...(prior.dead ? { replaced_by_od: null, replaced_at: null } : {}) }); updated++
       updatedKeys.push({ od_number: String(rec.od_number), od_item: String(rec.od_item) })
     }
 

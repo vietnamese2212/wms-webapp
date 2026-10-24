@@ -151,7 +151,7 @@ export async function uploadZsd02(req: Request, res: Response) {
           const missing = missingCoverage(required, declared)
           const suggest = required.length ? { from: required[0].date, to: required[required.length - 1].date } : null
           plantCoverage.push({ plant, pending_ods: cov.pending_ods, required, missing, suggest, no_so_date: cov.no_so_date })
-          if (missing.length) coverageErrors.push(`Phủ ngày tạo SO — Plant ${plant}: file chưa phủ ngày tạo SO của ${missing.reduce((a, d) => a + d.ods, 0)} đơn chưa xuất: ${missing.slice(0, 8).map(d => `${dmyOf(d.date)} (${d.ods} OD)`).join(', ')}${missing.length > 8 ? ` … +${missing.length - 8} ngày` : ''}. Đổ lại ZSD02 với Ngày tạo SO từ ${suggest ? dmyOf(suggest.from) : '?'} đến ${suggest ? dmyOf(suggest.to) : '?'} (file này khai ${dmyOf(declared.from)} → ${dmyOf(declared.to)}), hoặc nạp kiểu Lẻ.`)
+          if (missing.length) coverageErrors.push(`Phủ ngày tạo SO — Plant ${plant}: file chưa phủ ngày tạo SO của ${missing.reduce((a, d) => a + d.ods, 0)} đơn chưa xuất: ${missing.slice(0, 8).map(d => `${dmyOf(d.date)} (${d.ods} OD)`).join(', ')}${missing.length > 8 ? ` … +${missing.length - 8} ngày` : ''}. Đổ lại ZSD02 với Ngày tạo SO từ ${suggest ? dmyOf(suggest.from) : '?'} đến ${suggest ? dmyOf(suggest.to) : '?'} (file này ${bodyDay('created_from') && bodyDay('created_to') ? 'khai' : 'chỉ có ngày tạo SO'} ${dmyOf(declared.from)} → ${dmyOf(declared.to)}), hoặc nạp kiểu Lẻ.${bodyDay('created_from') && bodyDay('created_to') ? '' : ' Nếu file ĐÃ lọc SAP đúng khoảng đó (ngày thiếu là do SAP xoá hết SO ngày ấy) thì chỉ cần điền khoảng vào ô "Ngày tạo SO từ … đến …" rồi kiểm lại.'}`)
           if (cov.no_so_date) warnings.push(`Plant ${plant}: ${cov.no_so_date} đơn chưa xuất không có ngày tạo SO (${cov.no_so_date_ods.slice(0, 8).join(', ')}${cov.no_so_date > 8 ? '…' : ''}) — bao phủ không kiểm được, app không tự xoá các đơn này. Nạp lẻ SO của chúng để có ngày.`)
         }
       }
@@ -175,7 +175,7 @@ export async function uploadZsd02(req: Request, res: Response) {
     const priorOd = await fetchAllByIdChunks(odNumbers, chunk => db.from('erp_outbound_orders')
       .select('id, od_number, od_item, sync_status, updated_at, raw_v:raw->>_v, ' + ZSD02_BIZ.join(', '))
       .in('od_number', chunk).order('id')) as unknown as (PriorRow & { od_number: string; od_item: string })[]
-    const priorByKey = new Map(priorOd.map(p => [`${p.od_number}__${p.od_item}`, { id: p.id, hash: bizHash(p, ZSD02_BIZ), updated_at: p.updated_at, stale: rawStale(p) }]))
+    const priorByKey = new Map(priorOd.map(p => [`${p.od_number}__${p.od_item}`, { id: p.id, hash: bizHash(p, ZSD02_BIZ), updated_at: p.updated_at, stale: rawStale(p), dead: p.sync_status !== 'ACTIVE' }]))
     let odInserted = 0, odUpdated = 0, odNoop = 0, rawRefreshed = 0
     const odWrite: (OdRecord & { id: string })[] = []
     const updatedKeys: OdKey[] = []
@@ -186,12 +186,14 @@ export async function uploadZsd02(req: Request, res: Response) {
     for (const rec of out.od) {
       const prior = priorByKey.get(`${rec.od_number}__${rec.od_item}`)
       if (!prior) { odWrite.push({ id: randomUUID(), ...rec }); odInserted++; if (priorDos.has(String(rec.od_number))) addedLineOds.add(String(rec.od_number)); continue }
-      if (prior.hash === bizHash(rec as Record<string, unknown>, ZSD02_BIZ)) {
+      // 24/10: dòng đã XOÁ MỀM mà file lại có ⇒ SO trong file là bản cuối ⇒ SỐNG LẠI (kể cả y hệt nội dung cũ — trước đây rơi vào NO-OP nên
+      // DO nằm OBSOLETE mãi, SO trong file không còn DO nào sống)
+      if (!prior.dead && prior.hash === bizHash(rec as Record<string, unknown>, ZSD02_BIZ)) {
         odNoop++
         if (prior.stale && !isPreflight(req)) { odWrite.push({ id: prior.id, ...rec, updated_at: prior.updated_at ?? rec.updated_at }); rawRefreshed++ }
         continue
       }
-      odWrite.push({ id: prior.id, ...rec, manual_edited_at: null }); odUpdated++
+      odWrite.push({ id: prior.id, ...rec, manual_edited_at: null, ...(prior.dead ? { replaced_by_od: null, replaced_at: null } : {}) }); odUpdated++
       updatedKeys.push({ od_number: String(rec.od_number), od_item: String(rec.od_item) })
     }
     const fileKeys = new Set(out.od.map(r => `${r.od_number}__${r.od_item}`))
@@ -239,13 +241,13 @@ export async function uploadZsd02(req: Request, res: Response) {
     const priorSo = await fetchAllByIdChunks(soNumbers, chunk => db.from('erp_so_lines')
       .select('id, so_number, so_item, sync_status, updated_at, raw_v:raw->>_v, ' + SO_BIZ.join(', '))
       .in('so_number', chunk).order('id')) as unknown as (PriorRow & { so_number: string; so_item: string; sync_status: string })[]
-    const priorSoByKey = new Map(priorSo.map(p => [`${p.so_number}__${p.so_item}`, { id: p.id, hash: bizHash(p, SO_BIZ), updated_at: p.updated_at, stale: rawStale(p) }]))
+    const priorSoByKey = new Map(priorSo.map(p => [`${p.so_number}__${p.so_item}`, { id: p.id, hash: bizHash(p, SO_BIZ), updated_at: p.updated_at, stale: rawStale(p), sync_status: p.sync_status }]))
     let soInserted = 0, soUpdated = 0, soNoop = 0
     const soWrite: (typeof out.so[number] & { id: string })[] = []
     for (const rec of out.so) {
       const prior = priorSoByKey.get(`${rec.so_number}__${rec.so_item}`)
       if (!prior) { soWrite.push({ id: randomUUID(), ...rec }); soInserted++; continue }
-      if (prior.hash === bizHash(rec as Record<string, unknown>, SO_BIZ)) {
+      if (prior.sync_status !== 'OBSOLETE' && prior.hash === bizHash(rec as Record<string, unknown>, SO_BIZ)) {   // xoá mềm mà file lại có ⇒ sống lại
         soNoop++
         if (prior.stale && !isPreflight(req)) { soWrite.push({ id: prior.id, ...rec, updated_at: prior.updated_at ?? rec.updated_at }); rawRefreshed++ }
         continue

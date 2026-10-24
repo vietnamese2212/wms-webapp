@@ -414,6 +414,13 @@ try {
     && (logP.j?.data?.items ?? []).some(x => x.kind === 'PARTIAL' && x.file_name === 'qa59-7a.xlsx')
     && vers7.s === 200 && (vers7.j?.data?.versions ?? []).length >= 1 && vers7.j?.data?.current?.[0]?.sync_status === 'OBSOLETE',
     `cov=${cov7.s} log=${log7.s}/${(log7.j?.data?.items ?? []).length} logP=${(logP.j?.data?.items ?? []).length} vers=${vers7.s}/${(vers7.j?.data?.versions ?? []).length}`)
+  // [7k] DO đã XOÁ MỀM (OD1B ở 7c) mà file sau lại có y hệt ⇒ SỐNG LẠI. Bản đầu 24/10 so NO-OP không xét sync_status ⇒ DO nằm OBSOLETE mãi
+  //      (đo bằng kịch bản "file lẻ bấm Bao phủ rồi nạp lại SO" — SO trong file không còn DO nào sống)
+  const up7k = await upload('/external/do-sap/upload-zsd02', xlsxOf([rowSo1('QA59OD1B')]), 'qa59-7k.xlsx', { kind: 'PARTIAL' })
+  const od1b7k = (await restAll('erp_outbound_orders', `select=sync_status,replaced_by_od&od_number=eq.QA59OD1B`))[0]
+  check('7k. DO đã xoá mềm xuất hiện lại y hệt trong file ⇒ ACTIVE trở lại, đếm "sửa" (không phải "không đổi")',
+    up7k.s === 200 && od1b7k?.sync_status === 'ACTIVE' && !od1b7k?.replaced_by_od && up7k.j?.data?.od?.updated === 1 && up7k.j?.data?.od?.noop === 0,
+    `http=${up7k.s} od1b=${JSON.stringify(od1b7k)} od=${JSON.stringify({ upd: up7k.j?.data?.od?.updated, noop: up7k.j?.data?.od?.noop })}`)
   // [7i–7j] (24/10, user: "SAP tách đơn cả trước và sau khi điều vận sắp lịch, và cả khi kho xếp hàng") — A 10 thùng trên Số xe đã vào Kế
   //  hoạch xuất, kho Tạm dừng sau khi quét 8; SAP xoá A tạo B 8 + C 2 ⇒ Đổi số DO CHỌN DO ở lại xe: chọn C (2 < 8 đã quét) ⇒ 409 không ghi gì;
   //  chọn B ⇒ đổi số, phần đã quét chuyển sang B (không quét lại), C về Chờ điều (cạnh phả hệ TO_POOL). Bản trước: chuyến đã bắt đầu ⇒ 409

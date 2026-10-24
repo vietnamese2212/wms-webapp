@@ -68,9 +68,10 @@ async function coverageOfPlant(plant: string): Promise<CoverageRpc> {
 function missingCoverage(required: CoverageDay[], declared: { from: string; to: string }): CoverageDay[] {
   return required.filter(d => d.date < declared.from || d.date > declared.to)
 }
-/** Nạp bao phủ mà quá nhiều SO "biến mất" so với đơn chưa xuất của plant ⇒ nhiều khả năng file lọc thêm điều kiện khác / khai sai khoảng
- *  chứ không phải SAP xoá hàng loạt — đòi người xác nhận tường minh (`confirm_gone=1`) thay vì xoá mềm cả loạt. */
-const GONE_SUSPECT = (pending: number) => Math.max(20, Math.ceil(pending * 0.1))
+/** Nạp bao phủ mà có SO chưa xuất "biến mất" ⇒ LUÔN đòi người xác nhận tường minh (`confirm_gone=1`) sau khi xem danh sách (user chốt 24/10
+ *  tối — bản đầu chỉ đòi khi vượt max(20, 10 % đơn chưa xuất): file LẺ bấm nhầm Bao phủ ở plant nhỏ xoá mềm vài chục SO chỉ với một ô vàng).
+ *  SAP xoá hẳn SO là việc hiếm nên nhìn danh sách không phiền. Danh sách trả tối đa GONE_LIST SO. */
+const GONE_LIST = 200
 /** DO ĐÃ XUẤT theo app (Số xe trên Kế hoạch xuất mà chuyến Xuất kho hoàn thành) — một lời gọi, danh sách đi POST body. */
 async function shippedInApp(ods: string[]): Promise<Set<string>> {
   if (!ods.length) return new Set()
@@ -138,7 +139,6 @@ export async function uploadZsd02(req: Request, res: Response) {
     })()
     const plantsInFile = uniqStr([...out.od.map(r => String(r.plant ?? '')), ...out.so.map(r => String(r.plant ?? ''))])
     const plantCoverage: PlantCoverage[] = []
-    let pendingTotal = 0
     if (kind === 'COVER') {
       if (!declared) coverageErrors.push('Nạp bao phủ — chưa khai khoảng Ngày tạo SO (Từ ≤ Đến) và file không có cột "Thời gian tạo SO" để tự lấy.')
       else {
@@ -146,7 +146,6 @@ export async function uploadZsd02(req: Request, res: Response) {
         if (outside.length) coverageErrors.push(`Nạp bao phủ — file có ${outside.length} dòng ngày tạo SO NGOÀI khoảng đã khai ${dmyOf(declared.from)} → ${dmyOf(declared.to)} (vd ${uniqStr(outside).slice(0, 5).map(dmyOf).join(', ')}). Khai đúng khoảng đã lọc ở SAP.`)
         for (const plant of plantsInFile) {
           const cov = await coverageOfPlant(plant)
-          pendingTotal += cov.pending_ods
           const required = cov.by_so_created
           const missing = missingCoverage(required, declared)
           const suggest = required.length ? { from: required[0].date, to: required[required.length - 1].date } : null
@@ -228,14 +227,18 @@ export async function uploadZsd02(req: Request, res: Response) {
       coverKeptShipped = Number(r.kept_shipped) || 0
       const goneSos = uniqStr(coverGone.map(x => x.so_number))
       if (goneSos.length) {
-        if (goneSos.length > GONE_SUSPECT(pendingTotal) && body.confirm_gone !== '1') {
+        if (body.confirm_gone !== '1') {
           goneBlocked = true
-          coverageErrors.push(`SAP xoá hàng loạt? — ${goneSos.length} SO chưa xuất có ngày tạo trong khoảng ${dmyOf(declared.from)} → ${dmyOf(declared.to)} không còn trong file (vd ${goneSos.slice(0, 6).join(', ')}). Nhiều hơn mức thường (${GONE_SUSPECT(pendingTotal)}) nên nghi file lọc thêm điều kiện khác (Sloc, kênh…) hoặc khai sai khoảng. Kiểm lại; nếu đúng là SAP xoá, tick "Đúng là SAP đã xoá các SO này" rồi nạp lại.`)
+          coverageErrors.push(`Nạp bao phủ sẽ XOÁ MỀM ${goneSos.length} SO chưa xuất (${uniqStr(coverGone.map(x => x.od_number)).length} DO) có ngày tạo trong khoảng ${dmyOf(declared.from)} → ${dmyOf(declared.to)} vì không có trong file (vd ${goneSos.slice(0, 6).join(', ')}). Xem danh sách: nếu file này chỉ là file LẺ thì huỷ và chọn kiểu Lẻ; nếu đúng là SAP đã xoá, tick "Đúng là SAP đã xoá các SO này".`)
         } else warnings.push(`${goneSos.length} SO chưa xuất (${uniqStr(coverGone.map(x => x.od_number)).length} DO) có ngày tạo trong khoảng phủ mà không còn trong file ⇒ SAP đã XOÁ, xoá mềm (xe đang chở sẽ được báo): ${goneSos.slice(0, 15).join(', ')}${goneSos.length > 15 ? '…' : ''}`)
       }
       if (coverKeptShipped) warnings.push(`${coverKeptShipped} DO ĐÃ XUẤT thuộc SO vắng file — giữ nguyên.`)
     }
     const coverGoneOds = uniqStr(coverGone.map(x => x.od_number))
+    // danh sách SO sẽ bị xoá mềm (bao phủ) để người nạp NHÌN trước khi tick xác nhận
+    const goneBySo = new Map<string, Set<string>>()
+    for (const x of coverGone) { const s = goneBySo.get(x.so_number) ?? new Set<string>(); s.add(x.od_number); goneBySo.set(x.so_number, s) }
+    const goneList = { total: goneBySo.size, items: [...goneBySo].sort(([a], [b]) => a.localeCompare(b)).slice(0, GONE_LIST).map(([so_number, ods]) => ({ so_number, ods: [...ods].sort() })) }
     // SỔ SO: cùng khuôn theo khoá (so_number, so_item)
     const soNumbers = [...new Set(out.so.map(r => String(r.so_number)))]
     const priorSo = await fetchAllByIdChunks(soNumbers, chunk => db.from('erp_so_lines')
@@ -305,13 +308,13 @@ export async function uploadZsd02(req: Request, res: Response) {
         { label: 'Phân loại', value: Object.entries(st.flows).map(([k, v]) => `${k} ${v}`).join(' · ') },
       ]
       return ok(res, { ...buildPreflight({ unit: 'dòng', total: st.rows, toInsert: odInserted + soInserted, toUpdate: odUpdated + soUpdated, skipped: st.skipped, errors: [...unitErrors, ...coverageErrors], warnings, extra }),
-        coverage: { kind, declared, file_range: fileRange, plants: plantCoverage, gone_blocked: goneBlocked } })
+        coverage: { kind, declared, file_range: fileRange, plants: plantCoverage, gone_blocked: goneBlocked, gone: goneList } })
     }
 
     // Lỗi phủ ngày tạo SO / dòng ngoài khoảng / nghi xoá hàng loạt chặn ở cả cửa ghi (kiểm-trước và ghi là CÙNG một đoạn kiểm — luật uploadPreflight)
     if (coverageErrors.length) {
       return res.status(422).json({ success: false, error: { code: goneBlocked ? 'COVERAGE_SUSPECT' : 'COVERAGE_MISSING', message: coverageErrors.join('\n') },
-        coverage: { kind, declared, file_range: fileRange, plants: plantCoverage, gone_blocked: goneBlocked } })
+        coverage: { kind, declared, file_range: fileRange, plants: plantCoverage, gone_blocked: goneBlocked, gone: goneList } })
     }
 
     if (out.unitErrs.size) {

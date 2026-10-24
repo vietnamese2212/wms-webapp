@@ -397,9 +397,19 @@ try {
 
   // [7g] Bao phủ khoảng OLD_SO → SO_CREATED: phủ đủ; QA59SOOLD (chưa xuất, tạo trong khoảng) vắng file ⇒ SAP đã xoá ⇒ xoá mềm
   const lo = OLD_SO < SO_CREATED ? OLD_SO : SO_CREATED, hi = OLD_SO < SO_CREATED ? SO_CREATED : OLD_SO
-  const up7g = await upload('/external/do-sap/upload-zsd02', xlsxOf(rowsC), 'qa59-7g.xlsx', { kind: 'COVER', created_from: lo, created_to: hi, file_name: 'qa59-7g.xlsx' })
+  // [7g0] (24/10 tối, user chốt) bao phủ sắp xoá mềm dù CHỈ 1 SO ⇒ LUÔN đòi tick xác nhận, kiểm trước trả danh sách SO · DO (bản đầu: chỉ đòi khi
+  //       vượt max(20, 10 %) ⇒ file lẻ bấm nhầm Bao phủ ở plant nhỏ xoá oan vài chục SO chỉ với một ô vàng)
+  const pf7g = await upload('/external/do-sap/upload-zsd02?preflight=1', xlsxOf(rowsC), 'qa59-7g.xlsx', { kind: 'COVER', created_from: lo, created_to: hi })
+  const wr7g = await upload('/external/do-sap/upload-zsd02', xlsxOf(rowsC), 'qa59-7g.xlsx', { kind: 'COVER', created_from: lo, created_to: hi })
+  const gone7g = pf7g.j?.data?.coverage?.gone
+  check('7g0. Bao phủ sắp xoá mềm 1 SO mà chưa tick ⇒ kiểm trước khoá (will_write 0, gone_blocked, danh sách có QA59SOOLD / QA59OLD) · ghi thật 422 COVERAGE_SUSPECT · QA59OLD vẫn ACTIVE',
+    pf7g.s === 200 && pf7g.j?.data?.will_write === 0 && pf7g.j?.data?.coverage?.gone_blocked === true
+    && gone7g?.total === 1 && gone7g?.items?.[0]?.so_number === 'QA59SOOLD' && gone7g?.items?.[0]?.ods?.[0] === 'QA59OLD'
+    && wr7g.s === 422 && wr7g.j?.error?.code === 'COVERAGE_SUSPECT' && (await restAll('erp_outbound_orders', `select=sync_status&od_number=eq.QA59OLD`))[0]?.sync_status === 'ACTIVE',
+    `pf=${pf7g.s} will=${pf7g.j?.data?.will_write} blocked=${pf7g.j?.data?.coverage?.gone_blocked} gone=${JSON.stringify(gone7g)} write=${wr7g.s}/${wr7g.j?.error?.code}`)
+  const up7g = await upload('/external/do-sap/upload-zsd02', xlsxOf(rowsC), 'qa59-7g.xlsx', { kind: 'COVER', created_from: lo, created_to: hi, file_name: 'qa59-7g.xlsx', confirm_gone: '1' })
   const old7g = (await restAll('erp_outbound_orders', `select=sync_status&od_number=eq.QA59OLD`))[0]
-  check('7g. Bao phủ đủ: SO chưa xuất tạo trong khoảng mà vắng file ⇒ SAP đã xoá cả SO ⇒ QA59OLD xoá mềm (cover_gone_sos 1); QA59OD5 vào sổ',
+  check('7g. Bao phủ đủ + đã tick xác nhận: SO chưa xuất tạo trong khoảng mà vắng file ⇒ SAP đã xoá cả SO ⇒ QA59OLD xoá mềm (cover_gone_sos 1); QA59OD5 vào sổ',
     up7g.s === 200 && old7g?.sync_status === 'OBSOLETE' && up7g.j?.data?.od?.cover_gone_sos === 1
     && (await restAll('erp_outbound_orders', `select=sync_status&od_number=eq.QA59OD5`))[0]?.sync_status === 'ACTIVE',
     `http=${up7g.s} ${up7g.j?.error?.message?.slice(0, 120) ?? ''} old=${old7g?.sync_status} gone_sos=${up7g.j?.data?.od?.cover_gone_sos}`)

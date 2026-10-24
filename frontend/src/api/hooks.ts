@@ -3834,7 +3834,9 @@ export interface UploadPreflight {
   coverage?: Zsd02Coverage
 }
 export interface Zsd02PlantCoverage { plant: string; pending_ods: number; required: { date: string; ods: number }[]; missing: { date: string; ods: number }[]; suggest: { from: string; to: string } | null; no_so_date: number }
-export interface Zsd02Coverage { kind: Zsd02UploadKind; declared: { from: string; to: string } | null; file_range: { from: string; to: string } | null; plants: Zsd02PlantCoverage[]; gone_blocked?: boolean }
+export interface Zsd02Coverage { kind: Zsd02UploadKind; declared: { from: string; to: string } | null; file_range: { from: string; to: string } | null; plants: Zsd02PlantCoverage[]; gone_blocked?: boolean
+  /** SO chưa xuất sẽ bị xoá mềm vì vắng file bao phủ (tối đa 200 SO, `total` = tất cả) — luôn đòi tick xác nhận */
+  gone?: { total: number; items: { so_number: string; ods: string[] }[] } }
 /** GET /external/do-sap/coverage — NGÀY TẠO SO cần phủ khi nạp Bao phủ cho một plant (đơn chưa xuất theo lịch sử app) + đơn cũ nhất. */
 export interface Zsd02CoverageNeed { plant: string; pending_ods: number; no_so_date: number; no_so_date_ods: string[]; by_so_created: { date: string; ods: number }[]; so_span: { from: string; to: string } | null; oldest: { od_number: string; so_number: string; so_created: string }[] }
 export function useZsd02Coverage(plant: string | null | undefined, enabled = true) {

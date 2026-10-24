@@ -87,6 +87,40 @@ function UploadHistory() {
   )
 }
 
+/** Nạp BAO PHỦ sẽ xoá mềm SO chưa xuất vắng file ⇒ LUÔN hiện danh sách + bắt tick (24/10 tối, user chốt — file lẻ bấm nhầm Bao phủ là chiều
+ *  nguy hiểm). Tick / bỏ tick = kiểm lại cùng file; chưa tick thì bảng kiểm trước khoá nút Xác nhận. */
+function CoverGoneBox({ gone, checked, busy, onToggle }: { gone: NonNullable<Zsd02Coverage['gone']>; checked: boolean; busy: boolean; onToggle: (v: boolean) => void }) {
+  const ods = gone.items.reduce((a, x) => a + x.ods.length, 0)
+  return (
+    <div className="shrink-0 mb-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 space-y-1.5">
+      <div className="text-xs text-red-800">
+        <b>Sẽ XOÁ MỀM {gone.total.toLocaleString('vi-VN')} SO chưa xuất</b> vì không có trong file bao phủ — đơn rời Chờ điều. File này chỉ là file LẺ thì bấm Huỷ và chọn kiểu <b>Lẻ</b>.
+      </div>
+      <div className="max-h-[22vh] overflow-auto rounded border border-red-100 bg-white">
+        <table className="w-full">
+          <thead className="bg-slate-50 sticky top-0"><tr>
+            <th className="px-2 py-1 text-left text-[9px] font-medium text-slate-500 whitespace-nowrap">SO</th>
+            <th className="px-2 py-1 text-left text-[9px] font-medium text-slate-500 whitespace-nowrap">DO</th>
+          </tr></thead>
+          <tbody>
+            {gone.items.map(x => (
+              <tr key={x.so_number} className="border-t border-slate-100">
+                <td className="px-2 py-1 text-[10px] font-mono font-semibold whitespace-nowrap">{x.so_number}</td>
+                <td className="px-2 py-1 text-[10px] font-mono whitespace-nowrap">{x.ods.join(', ')}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {gone.total > gone.items.length && <div className="text-[10px] text-slate-500">Hiện {gone.items.length} / {gone.total.toLocaleString('vi-VN')} SO ({ods.toLocaleString('vi-VN')} DO trong phần hiện).</div>}
+      <label className="inline-flex items-center gap-1.5 cursor-pointer text-xs font-medium text-red-700">
+        <input type="checkbox" className="h-4 w-4 accent-red-600" checked={checked} disabled={busy} onChange={e => onToggle(e.target.checked)} />
+        Đúng là SAP đã xoá các SO này{busy ? ' — đang kiểm lại…' : ''}
+      </label>
+    </div>
+  )
+}
+
 export type VcUploadMode = 'vl06o' | 'khvc' | 'zsd02'
 
 type UnitErr = { material_code: string; material_name: string; kind: string; file_value: string; system_value: string }
@@ -167,8 +201,8 @@ export function VcUploadDialog({ mode, onClose, onUploaded }: { mode: VcUploadMo
   const [confirmGone, setConfirmGone] = useState(false)
   const [lastErrCode, setLastErrCode] = useState<string | null>(null)
   const [lastFile, setLastFile] = useState<File | null>(null)
-  const zsFields = (file: File): Zsd02UploadFields | undefined => isZs ? {
-    kind: zsKind, file_name: file.name, confirm_gone: confirmGone ? '1' : undefined,
+  const zsFields = (file: File, confirm = confirmGone): Zsd02UploadFields | undefined => isZs ? {
+    kind: zsKind, file_name: file.name, confirm_gone: confirm ? '1' : undefined,
     ...(zsKind === 'COVER' ? { created_from: covFrom || undefined, created_to: covTo || undefined } : {}),
   } : undefined
   const fileRef = useRef<HTMLInputElement>(null)
@@ -202,6 +236,14 @@ export function VcUploadDialog({ mode, onClose, onUploaded }: { mode: VcUploadMo
     if (isVl) uploadVl06o({ file, preflight: true }, opts)
     else if (isZs) uploadZsd02({ file, preflight: true, fields: zsFields(file) }, opts)
     else uploadKhvc({ file, preflight: true }, opts)
+  }
+  // Bao phủ: tick / bỏ tick "SAP đã xoá" ngay trên bảng kiểm trước ⇒ kiểm lại CÙNG file (bảng giữ nguyên trong lúc chờ)
+  function recheckGone(file: File, confirm: boolean) {
+    setConfirmGone(confirm)
+    uploadZsd02({ file, preflight: true, fields: zsFields(file, confirm) }, {
+      onSuccess: (r: UploadPreflight) => setPf({ file, report: r }),
+      onError: (e: unknown) => { setPf(null); onErr('Lỗi kiểm file ZSD02')(e) },
+    })
   }
   function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]; if (!file) return
@@ -406,6 +448,9 @@ export function VcUploadDialog({ mode, onClose, onUploaded }: { mode: VcUploadMo
             </span>
           </div>
           <div className="flex-1 min-h-0 overflow-hidden p-3 flex flex-col">
+            {isZs && (pf.report.coverage?.gone?.total ?? 0) > 0 && pf.report.coverage?.gone && (
+              <CoverGoneBox gone={pf.report.coverage.gone} checked={confirmGone} busy={busy} onToggle={v => recheckGone(pf.file, v)} />
+            )}
             <UploadPreflightPanel report={pf.report} fileName={pf.file.name} busy={busy}
               onCancel={() => setPf(null)} onConfirm={() => doUpload(pf.file)} />
           </div>

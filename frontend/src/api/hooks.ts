@@ -3505,15 +3505,17 @@ export function useUploadVl06o() {
 export interface Zsd02UploadResult {
   rows: number; skipped_no_key: number
   delivery_range: { from: string; to: string } | null   // khoảng Ngày giao của file — tab "Chưa có OD" lọc theo đây sau khi nạp
-  od: { rows: number; deliveries: number; inserted: number; updated: number; noop: number; obsoleted: number; gone?: number; lineage_edges?: number; uncertain?: number }
+  od: { rows: number; deliveries: number; inserted: number; updated: number; noop: number; obsoleted: number; gone?: number; cover_gone_sos?: number; kept_shipped?: number; lineage_edges?: number; replaced?: { od_number: string; by: string }[] }
   so: { rows: number; orders: number; without_od: number; inserted: number; updated: number; noop: number; obsoleted: number; unresolved: number; cancelled: number }
   flows: Record<string, number>; not_loadable: number
   routes: number; customers: { created: number; filled: number; conflicts: number } | null
   sap_unmapped: number; warning_count: number; warnings: string[]
   coverage?: Zsd02Coverage
 }
-/** Trường kèm file ZSD02 (03/10 tối): khoảng Ngày tạo đã khai · xác nhận nạp file cũ hơn sổ · xác nhận SAP xoá hàng loạt */
-export type Zsd02UploadFields = { created_from?: string; created_to?: string; allow_old?: '1'; confirm_gone?: '1' }
+/** Trường kèm file ZSD02 (24/10): kiểu nạp (Bao phủ / Lẻ) · khoảng NGÀY TẠO SO đã lọc (chỉ Bao phủ) · xác nhận SAP xoá hàng loạt ·
+ *  tên file gốc (file lớn đi qua bucket mang tên ngẫu nhiên) cho sổ các lần nạp */
+export type Zsd02UploadKind = 'COVER' | 'PARTIAL'
+export type Zsd02UploadFields = { kind: Zsd02UploadKind; created_from?: string; created_to?: string; confirm_gone?: '1'; file_name?: string }
 export function useUploadZsd02() {
   const qc = useQueryClient()
   return useMutation({
@@ -3523,8 +3525,21 @@ export function useUploadZsd02() {
     },
     onSuccess: (_d, vars) => {
       if (vars.preflight) return
-      for (const key of [['do-sap'], ['do-sap-facets'], ['so-lines'], ['so-lines-summary'], ['customers'], ['gdos']]) qc.invalidateQueries({ queryKey: key })
+      for (const key of [['do-sap'], ['do-sap-facets'], ['so-lines'], ['so-lines-summary'], ['customers'], ['gdos'], ['zsd02-upload-log'], ['zsd02-coverage']]) qc.invalidateQueries({ queryKey: key })
     },
+  })
+}
+
+/** Sổ các lần nạp ZSD02 (24/10) — hộp upload hiện để người nạp biết đã nạp gì, lúc nào, kiểu nào. */
+export interface Zsd02UploadLogRow {
+  id: string; uploaded_at: string; uploaded_by: string | null; file_name: string | null; kind: Zsd02UploadKind; plants: string[]
+  so_from: string | null; so_to: string | null; so_count: number; od_count: number; row_count: number
+  summary: { od?: { inserted?: number; updated?: number; obsoleted?: number; gone?: number; replaced?: unknown[]; kept_shipped?: number }; warnings?: number } | null
+}
+export function useZsd02UploadLog(plant?: string | null, limit = 20) {
+  return useQuery({
+    queryKey: ['zsd02-upload-log', plant ?? null, limit], staleTime: 30_000,
+    queryFn: async () => (await apiClient.get('/external/do-sap/upload-log', { params: { plant: plant || undefined, limit } })).data.data.items as Zsd02UploadLogRow[],
   })
 }
 
@@ -3815,13 +3830,13 @@ export interface UploadPreflight {
   warnings: string[]
   warnings_total: number
   extra: { label: string; value: string | number; warn?: boolean }[]
-  /** ZSD02 (03/10 tối): khoảng ngày tạo đã khai · đơn chưa đi phải phủ theo từng plant · cờ nghi xoá hàng loạt */
+  /** ZSD02 (24/10): kiểu nạp · khoảng ngày tạo SO đã khai · đơn chưa xuất phải phủ theo từng plant · cờ nghi xoá hàng loạt */
   coverage?: Zsd02Coverage
 }
-export interface Zsd02PlantCoverage { plant: string; pending_ods: number; required: { date: string; ods: number }[]; missing: { date: string; ods: number }[]; suggest: { from: string; to: string } | null; sap_max_od_created: string | null }
-export interface Zsd02Coverage { mode: 'REQUIRE' | 'REMIND'; declared: { from: string; to: string } | null; file_range: { from: string; to: string } | null; plants: Zsd02PlantCoverage[]; gone_blocked?: boolean; uncertain?: { od_number: string; by: string; so: string }[] }
-/** GET /external/do-sap/coverage — ngày tạo cần phủ khi đổ ZSD02 cho một plant (đơn chưa đi theo lịch sử app). */
-export interface Zsd02CoverageNeed { plant: string; mode: 'REQUIRE' | 'REMIND'; pending_ods: number; sap_posted_ods: number; no_created_date: number; by_od_created: { date: string; ods: number }[]; by_so_created: { date: string; ods: number }[]; od_span: { from: string; to: string } | null; so_span: { from: string; to: string } | null; sap_max_od_created: string | null }
+export interface Zsd02PlantCoverage { plant: string; pending_ods: number; required: { date: string; ods: number }[]; missing: { date: string; ods: number }[]; suggest: { from: string; to: string } | null; no_so_date: number }
+export interface Zsd02Coverage { kind: Zsd02UploadKind; declared: { from: string; to: string } | null; file_range: { from: string; to: string } | null; plants: Zsd02PlantCoverage[]; gone_blocked?: boolean }
+/** GET /external/do-sap/coverage — NGÀY TẠO SO cần phủ khi nạp Bao phủ cho một plant (đơn chưa xuất theo lịch sử app) + đơn cũ nhất. */
+export interface Zsd02CoverageNeed { plant: string; pending_ods: number; no_so_date: number; no_so_date_ods: string[]; by_so_created: { date: string; ods: number }[]; so_span: { from: string; to: string } | null; oldest: { od_number: string; so_number: string; so_created: string }[] }
 export function useZsd02Coverage(plant: string | null | undefined, enabled = true) {
   return useQuery({
     queryKey: ['zsd02-coverage', plant], enabled: !!plant && enabled, staleTime: 60_000,
@@ -6389,6 +6404,8 @@ export interface DispatchDecision {
   od_number: string; kind: 'GONE' | 'REPLACED' | 'KIN' | 'QTY' | 'SHIPTO'; group_code: string; export_date: string | null; gdo_id: string | null; gdo_status: string | null
   detected_at: string | null; ship_to_code: string | null; ship_to_name: string | null; qty_base: number | string | null; sap_pallets: number | string | null; delivery_date: string | null
   new_ods: DispatchDecisionNewOd[]; all_free: boolean; same_content: boolean; any_merge: boolean; detail: string | null; task_id: string | null; action: string | null
+  /** KIN (24/10): số base kho ĐÃ QUÉT cho DO cũ trên chuyến — gợi ý DO mới nào là "phần đã đi" (cùng số lượng) */
+  shipped_base?: number | string | null
 }
 export function useDispatchDecisions(warehouseId: string | null, enabled = true) {
   return useQuery({

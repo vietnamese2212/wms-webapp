@@ -305,7 +305,8 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped, canAct =
   // vi người xem vẫn HIỆN (không giấu), chip đỏ ở Lưu ý, và "Chọn N đơn đang hiện" KHÔNG tick chúng — tick tay vẫn được
   const scope = useScopeCatSet()
   const outOf = (r: Row) => outOfScopeCats(r.cats, scope)
-  const pick = rows.filter(r => r.selectable && !outOf(r).length && !r.late)   // 20/10: SO sau ngày đi chỉ tick TAY
+  // 20/10: SO sau ngày đi chỉ tick TAY · 24/10: DO mới cùng dòng SO với đơn ĐÃ XUẤT (có thể chính là phần đã đi mang số mới) cũng không tự tick
+  const pick = rows.filter(r => r.selectable && !outOf(r).length && !r.late && flags.get(r.od)?.kind !== 'KIN_SHIPPED')
   const selRows = tabRows.filter(r => sel.has(r.key))
   const setTab = (k: St) => { setSel(new Set()); setNotesOnly(false); setSoftOnly(false); setF({ reviewTab: k }) }
   const toggle = (k: string) => setSel(p => { const n = new Set(p); n.has(k) ? n.delete(k) : n.add(k); return n })

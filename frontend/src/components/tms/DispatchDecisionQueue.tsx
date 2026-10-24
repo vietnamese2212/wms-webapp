@@ -4,7 +4,8 @@
 // mai thì hôm nay phải thấy. Mỗi dòng: DO cũ · việc · chuyến bị ảnh hưởng (tiến độ kho) · DO mới · nút đúng ô ma trận:
 //   • chưa bắt đầu (B): SAP bỏ → Gỡ khỏi kế hoạch · SAP thay → Đổi số DO (khi DO mới còn trống) / Gỡ khỏi kế hoạch
 //   • kho đang xuất (C): không có nút "giữ và chạy tiếp" (user chốt (c)) — in đường gỡ: xoá QR đã quét → Bỏ bắt đầu → gỡ Số xe → ghép lại
-//   • đã đi (D): DO mới = hàng đã đi dưới số cũ → Ngoài app; họ hàng đã đi (KIN) → Xác nhận đơn bổ sung / Ngoài app (user chốt (b))
+//   • đã đi (D): DO mới = hàng đã đi dưới số cũ → Ngoài app; DO mới cùng dòng SO với DO ĐÃ XUẤT (KIN) → quyết TỪNG DO: "Phần đã đi" /
+//     "Giao thêm", gợi ý theo số kho đã quét (24/10 — "đã xuất" theo app, không theo post SAP)
 //   • SAP đổi số lượng sau khi kho quét (QTY): việc của kho ở Dữ liệu bên ngoài → Cần xử lý — chỉ dẫn link, không nhân đôi nút.
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
@@ -30,7 +31,7 @@ const dmy = (d: string | null | undefined) => (d ? `${d.slice(8, 10)}/${d.slice(
 const KIND_VI: Record<DispatchDecision['kind'], { label: string; tone: BadgeTone; tip: string }> = {
   GONE:     { label: 'SAP đã bỏ DO',      tone: 'red',    tip: 'Mọi dòng ZSD02 của DO này đã OBSOLETE và không có DO nào thay — đơn vẫn nằm trong Kế hoạch xuất.' },
   REPLACED: { label: 'SAP thay DO',       tone: 'red',    tip: 'SAP bỏ DO này và sinh DO mới cho cùng dòng SO (sửa SO / tách / gộp) — Kế hoạch xuất còn cầm số cũ.' },
-  KIN:      { label: 'Họ hàng đã đi',     tone: 'amber',  tip: 'DO mới cùng dòng SO với DO đã đi (SAP post lại). Giao thêm thì "Xác nhận đơn bổ sung"; hàng đã đi dưới số cũ thì "Ngoài app".' },
+  KIN:      { label: 'Cùng SO với đơn đã xuất', tone: 'amber', tip: 'SAP bỏ / đổi số DO đã xuất (chuyến Xuất kho hoàn thành) và tạo DO mới cùng dòng SO. Từng DO mới: "Phần đã đi" = chính hàng xe đã chở, mang số mới (không giao nữa) · "Giao thêm" = phần còn lại / giao bổ sung (về Chờ điều như đơn thường).' },
   QTY:      { label: 'SAP đổi SL sau khi quét', tone: 'orange', tip: 'Số lượng / dòng hàng đổi sau khi kho đã quét — kho quyết ở Dữ liệu bên ngoài → Cần xử lý (Áp SAP / Giữ WMS / Đã xử lý tay).' },
   SHIPTO:   { label: 'SAP đổi khách',     tone: 'red',    tip: 'SAP đổi khách giao của DO đã lên chuyến — chuyến vẫn đi khách cũ, kho bị chặn tới khi quyết. Sửa NPP của DO ở Kế hoạch xuất (hoặc gỡ DO rồi điều lại) rồi "Đã xử lý tay"; giữ khách cũ thì "Giữ WMS" + báo SAP.' },
 }
@@ -78,15 +79,22 @@ export function DispatchDecisionQueue({ warehouseId, planId, canAct, canPlan }: 
   }
   const doOutside = async (r: DispatchDecision, ods: string[]) => {
     if (!planId) return
-    const why = r.kind === 'KIN' ? `Cùng dòng SO với DO ${r.od_number} đã đi — hàng đã đi, không giao thêm` : r.kind === 'GONE' ? `SAP xoá DO ${r.od_number} sau khi đã đi — đã báo SAP` : `Hàng đã đi dưới DO ${r.od_number} (SAP thay số sau khi đi)`
+    const why = r.kind === 'GONE' ? `SAP xoá DO ${r.od_number} sau khi đã đi — đã báo SAP` : `Hàng đã đi dưới DO ${r.od_number} (SAP thay số sau khi đi)`
     if (await ask({ title: `Ngoài app: ${ods.join(', ')}`, confirmLabel: 'Ngoài app', body: `${why}. Đơn rời tab Điều, không tính vào "ngày tạo cần phủ"; phả hệ ghi đã giải quyết. Bỏ dấu ở tab Ngoài app.` }) === null) return
     try { await outside.mutateAsync({ plan_id: planId, od_numbers: ods, reason: why }); toast({ title: `${ods.length} OD → Ngoài app` }) } catch (e) { err(e, 'Không đánh dấu được') }
   }
-  const doSupplement = async (r: DispatchDecision) => {
+  // KIN (24/10, user chốt): quyết TỪNG DO mới — "Phần đã đi" (hàng xe đã chở mang số mới ⇒ không giao, rời Chờ điều có lý do) hay
+  // "Giao thêm" (phần còn lại / bổ sung ⇒ về Chờ điều như đơn thường)
+  const doShippedPart = async (r: DispatchDecision, od: string) => {
     if (!planId) return
-    const ods = r.new_ods.map(n => n.od)
-    if (await ask({ title: `Xác nhận ${ods.join(', ')} là đơn bổ sung?`, confirmLabel: 'Xác nhận đơn bổ sung', body: `Giao THÊM cho cùng dòng SO với DO ${r.od_number} đã đi (không phải giao lại hàng đã đi). Rào "một đơn một ngày" thôi giữ, đơn mới điều như đơn thường.` }) === null) return
-    try { const res = await sup.mutateAsync({ plan_id: planId, od_numbers: ods }); toast({ title: `${res.supplement.ods} OD xác nhận là đơn bổ sung` }) } catch (e) { err(e, 'Không xác nhận được') }
+    const why = `Phần đã đi theo xe ${r.group_code} (DO ${r.od_number} đã xuất — SAP đổi số sau khi xuất)`
+    if (await ask({ title: `${od} là phần đã đi theo xe ${r.group_code}?`, confirmLabel: 'Phần đã đi', body: `${why}. DO ${od} không được giao nữa: rời Chờ điều, mang dấu Ngoài app kèm lý do (bỏ dấu ở tab Ngoài app nếu nhầm).` }) === null) return
+    try { await outside.mutateAsync({ plan_id: planId, od_numbers: [od], reason: why }); toast({ title: `${od} → phần đã đi theo xe ${r.group_code}` }) } catch (e) { err(e, 'Không ghi được') }
+  }
+  const doSupplement = async (r: DispatchDecision, od: string) => {
+    if (!planId) return
+    if (await ask({ title: `${od} là giao thêm?`, confirmLabel: 'Giao thêm', body: `Phần còn lại / giao bổ sung cho cùng dòng SO với DO ${r.od_number} đã xuất (không phải giao lại hàng đã đi). DO ${od} điều như đơn thường.` }) === null) return
+    try { await sup.mutateAsync({ plan_id: planId, od_numbers: [od] }); toast({ title: `${od} xác nhận giao thêm` }) } catch (e) { err(e, 'Không xác nhận được') }
   }
 
   const cols: RtColDef[] = [
@@ -168,11 +176,21 @@ export function DispatchDecisionQueue({ warehouseId, planId, canAct, canPlan }: 
                       </div>
                     )}
                     {r.kind === 'KIN' && (
-                      <div className="flex flex-wrap gap-1.5">
-                        {canPlan && planId ? <>
-                          <Button size="sm" variant="outline" className="h-7 text-[11px]" disabled={busy} onClick={() => void doSupplement(r)} title="Giao thêm cho cùng dòng SO — rào thôi giữ, đơn mới điều như đơn thường">Xác nhận đơn bổ sung</Button>
-                          <Button size="sm" variant="outline" className="h-7 text-[11px]" disabled={busy} onClick={() => void doOutside(r, r.new_ods.map(n => n.od))} title="Hàng đã đi dưới số DO cũ — đơn mới không giao">Ngoài app</Button>
-                        </> : <span className="text-slate-500">{planId ? 'Cần quyền Lập kế hoạch.' : 'Mở một kế hoạch của kho rồi quyết ở đây.'}</span>}
+                      <div className="space-y-1">
+                        {r.shipped_base != null && <div className="text-slate-600">Xe đã chở <b className="tabular-nums">{nf(r.shipped_base, 3)}</b> (đơn vị gốc) dưới DO {r.od_number}.</div>}
+                        {canPlan && planId ? r.new_ods.map(n => {
+                          // gợi ý: DO mới có số lượng ĐÚNG bằng số đã quét của DO cũ ⇒ nhiều khả năng là phần đã đi
+                          const likelyShipped = r.shipped_base != null && n.qty_base != null && Math.abs(Number(n.qty_base) - Number(r.shipped_base)) < 0.5
+                          return (
+                            <div key={n.od} className="flex flex-wrap items-center gap-1.5">
+                              <span className="font-mono">{n.od}</span>
+                              {n.qty_base != null && <span className="text-slate-500 tabular-nums">{nf(n.qty_base, 3)}</span>}
+                              {likelyShipped && <StatusBadge tone="blue" title="Số lượng DO mới bằng số kho đã quét cho DO cũ trên chuyến">khớp số đã chở</StatusBadge>}
+                              <Button size="sm" variant={likelyShipped ? 'default' : 'outline'} className="h-7 text-[11px]" disabled={busy} onClick={() => void doShippedPart(r, n.od)} title="Chính hàng xe đã chở, SAP đổi số — không giao nữa">Phần đã đi</Button>
+                              <Button size="sm" variant={likelyShipped ? 'outline' : 'default'} className="h-7 text-[11px]" disabled={busy} onClick={() => void doSupplement(r, n.od)} title="Phần còn lại / giao bổ sung — điều như đơn thường">Giao thêm</Button>
+                            </div>
+                          )
+                        }) : <span className="text-slate-500">{planId ? 'Cần quyền Lập kế hoạch.' : 'Mở một kế hoạch của kho rồi quyết ở đây.'}</span>}
                       </div>
                     )}
                   </TableCell>

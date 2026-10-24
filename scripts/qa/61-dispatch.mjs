@@ -2024,7 +2024,7 @@ try {
     check('17h. Ngoài app: đánh dấu → OD rời khung chờ, tab Ngoài app (sổ dấu, GET /marks) có OD kèm lý do, KHÔNG chép vào params.excluded · bảng dấu có dòng · GET /do-sap/coverage 200 · bỏ dấu → về khung chờ',
       outR.s === 200 && !rowOf(outR.j?.data, OD[2]) && exOut?.kind === 'OUTSIDE' && exOut?.reason === 'QA61 đã điều tay ngoài app' && !(outR.j?.data?.params?.excluded ?? []).some(x => x.od_number === OD[2])
       && outRow?.reason === 'QA61 đã điều tay ngoài app'
-      && covB.s === 200 && Array.isArray(covB.j?.data?.by_od_created) && unR.s === 200 && !!rowOf(unR.j?.data, OD[2]),
+      && covB.s === 200 && Array.isArray(covB.j?.data?.by_so_created) && unR.s === 200 && !!rowOf(unR.j?.data, OD[2]),
       `out=${outR.s} ${outR.j?.error?.message ?? ''} marks=${mkOut.s}/${JSON.stringify(exOut ?? null)?.slice(0, 120)} row=${!!outRow} cov=${covB.s} pending=${covB.j?.data?.pending_ods} un=${unR.s} back=${!!rowOf(unR.j?.data, OD[2])}`)
     const idB = rowOf(unR.j?.data, OD[2])?.id
     const outR2 = idB ? await api(`/tms/dispatch/plans/${BID}/outside`, 'POST', { ids: [idB], reason: 'QA61 SAP đã post' }) : { s: 0, j: null }

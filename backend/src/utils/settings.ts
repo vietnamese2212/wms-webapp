@@ -244,18 +244,8 @@ export const parseSapDoSource = (raw: unknown): SapDoSource | null =>
   typeof raw === 'string' && (SAP_DO_SOURCES as readonly string[]).includes(raw) ? (raw as SapDoSource) : null
 export const getSapDoSource = () => readSetting('sap_do_source', SAP_DO_SOURCE_DEFAULT, parseSapDoSource)
 
-// ── zsd02_coverage_mode — FILE ZSD02 PHẢI PHỦ NGÀY TẠO của đơn CHƯA ĐI (03/10, user: "app biết đơn nào còn pending ⇒ bắt buộc
-// file phải có ngày tạo của chúng; có switch Bắt buộc / Nhắc nhở"). SAP chỉ đổ ZSD02 theo NGÀY TẠO và không có cột "ngày sửa cuối",
-// nên DO cũ bị sửa chỉ lọt vào app khi file phủ ngày tạo của nó. 'REQUIRE': thiếu ngày của đơn chưa đi là từ chối nạp (422
-// COVERAGE_MISSING, nêu từng ngày + số OD). 'REMIND' (MẶC ĐỊNH từ 14/10, user chốt): chỉ cảnh báo vàng ở bảng kiểm trước, vẫn nạp —
-// ZSD02 được cập nhật 1–nhiều lần MỖI NGÀY (tay / API) và ngày nào cũng còn đơn không điều, nên file delta không bao giờ phủ hết
-// ngày tạo của đơn chưa đi; REQUIRE sẽ chặn mãi. Đơn ngoài khoảng phủ giữ nguyên ở Chờ điều.
-export const ZSD02_COVERAGE_MODES = ['REQUIRE', 'REMIND'] as const
-export type Zsd02CoverageMode = typeof ZSD02_COVERAGE_MODES[number]
-export const ZSD02_COVERAGE_MODE_DEFAULT: Zsd02CoverageMode = 'REMIND'
-export const parseZsd02CoverageMode = (raw: unknown): Zsd02CoverageMode | null =>
-  typeof raw === 'string' && (ZSD02_COVERAGE_MODES as readonly string[]).includes(raw) ? (raw as Zsd02CoverageMode) : null
-export const getZsd02CoverageMode = () => readSetting('zsd02_coverage_mode', ZSD02_COVERAGE_MODE_DEFAULT, parseZsd02CoverageMode)
+// (24/10) Công tắc `zsd02_coverage_mode` (Nhắc / Bắt buộc phủ ngày tạo) đã BỎ: người nạp chọn KIỂU NẠP mỗi lần — Bao phủ luôn bắt buộc
+// phủ ngày tạo SO của đơn chưa xuất, Lẻ không kiểm phủ (zsd02Controller).
 
 // ── geo_provider — NHÀ CUNG CẤP định vị địa chỉ / đo km cho điều vận trên bản đồ (01/10, user chốt Goong) ──
 // 'goong' (mặc định): gọi Goong với khoá dán ở trang Kết nối & API key (SystemSetting `geo_api` MÃ HOÁ, thuộc SECRET_SETTINGS

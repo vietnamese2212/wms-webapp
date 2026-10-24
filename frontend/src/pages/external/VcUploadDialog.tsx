@@ -11,39 +11,78 @@ import { Button } from '@/components/ui/button'
 import { ModalOverlay } from '@/components/shared/ModalOverlay'
 import { UploadPreflightPanel } from '@/components/shared/UploadPreflightPanel'
 import { saveWorkbook } from '@/utils/saveExcel'
-import { useUploadVl06o, useUploadKhvc, useUploadZsd02, useZsd02Coverage, UPLOAD_TOO_LARGE_MSG, type UploadPreflight, type Zsd02UploadResult, type Zsd02UploadFields, type Zsd02Coverage } from '@/api/hooks'
+import { useUploadVl06o, useUploadKhvc, useUploadZsd02, useZsd02Coverage, useZsd02UploadLog, UPLOAD_TOO_LARGE_MSG, type UploadPreflight, type Zsd02UploadResult, type Zsd02UploadFields, type Zsd02UploadKind, type Zsd02Coverage } from '@/api/hooks'
 import { useScopedWhTypes, useScopedWarehouses } from '@/hooks/useUserScope'
 import { InfoTip } from '@/components/shared/InfoTip'
+import { formatDateTime } from '@/utils/formatters'
 
 const todayVN = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
 const dmy = (d: string) => `${d.slice(8, 10)}/${d.slice(5, 7)}`
 
-/** NGÀY TẠO CẦN PHỦ của một plant (03/10 tối — user: "khi mở giao diện upload, app yêu cầu nên upload dữ liệu của ngày tạo của những
- *  dữ liệu cũ còn treo"). Đọc từ GET /external/do-sap/coverage; người đổ SAP theo đúng khoảng này. */
-function CoverageNeed({ plant, onSuggest }: { plant: string; onSuggest: (from: string) => void }) {
+/** NGÀY TẠO SO CẦN PHỦ của một plant khi nạp BAO PHỦ (24/10 — user: "bắt buộc ngày tạo SO của các SO chưa xuất của plant đó phải có trong
+ *  file upload, không có từ chối"). Đọc từ GET /external/do-sap/coverage; kèm đơn chưa xuất CŨ NHẤT để người nạp dọn tận gốc (một đơn
+ *  bị quên kéo khoảng lùi mãi). */
+function CoverageNeed({ plant, onSuggest }: { plant: string; onSuggest: (from: string, to: string) => void }) {
   const q = useZsd02Coverage(plant)
   const c = q.data
-  if (!c) return <div className="text-[11px] text-slate-400">Plant {plant}: đang tính ngày cần phủ…</div>
-  if (!c.pending_ods) return <div className="text-[11px] text-green-700">Plant {plant}: không còn đơn chưa đi nào cần phủ.</div>
-  const span = c.od_span
-  const soSpan = c.so_span
+  if (!c) return <div className="text-[11px] text-slate-400">Plant {plant}: đang tính ngày tạo SO cần phủ…</div>
+  if (!c.pending_ods) return <div className="text-[11px] text-green-700">Plant {plant}: không còn đơn chưa xuất nào — khoảng nào cũng được.</div>
+  const span = c.so_span
   return (
     <div className="text-[11px] text-slate-700 space-y-0.5">
-      <div>
-        <b>Plant {plant}</b>: {c.pending_ods.toLocaleString('vi-VN')} đơn chưa đi{c.sap_posted_ods ? <> (trong đó {c.sap_posted_ods.toLocaleString('vi-VN')} SAP đã post — đánh dấu Ngoài app ở Điều vận thì không phải phủ nữa)</> : null}.
-      </div>
+      <div><b>Plant {plant}</b>: {c.pending_ods.toLocaleString('vi-VN')} đơn chưa xuất.</div>
       {span && (
         <div className="flex flex-wrap items-center gap-1.5">
-          <span>{c.mode === 'REQUIRE' ? 'Bắt buộc' : 'Nên'} đổ <b>Ngày tạo OD</b> từ <b>{dmy(span.from)}</b> đến <b>{dmy(span.to)}</b> ({c.by_od_created.length} ngày tạo)</span>
-          <button type="button" className="text-sky-700 hover:underline" onClick={() => onSuggest(span.from)}>Điền vào ô khoảng ngày</button>
+          <span>File phải chứa <b>Ngày tạo SO</b> từ <b>{dmy(span.from)}</b> đến <b>{dmy(span.to)}</b> ({c.by_so_created.length} ngày tạo)</span>
+          <button type="button" className="text-sky-700 hover:underline" onClick={() => onSuggest(span.from, todayVN())}>Điền vào ô khoảng ngày</button>
           <InfoTip tip={<div className="space-y-1 text-xs">
-            <div>Từng ngày tạo có đơn chưa đi: {c.by_od_created.slice(0, 20).map(d => `${dmy(d.date)} (${d.ods})`).join(' · ')}{c.by_od_created.length > 20 ? ' …' : ''}</div>
-            {soSpan && <div>Nếu SAP lọc theo <b>Ngày tạo SO</b> thì khoảng là {dmy(soSpan.from)} → {dmy(soSpan.to)}.</div>}
-            {c.no_created_date > 0 && <div>{c.no_created_date} đơn không có ngày tạo (nhập tay / VL06O) — không kiểm phủ.</div>}
-            <div className="text-slate-500">Khoảng do đơn CŨ NHẤT chưa đi quyết định — đơn chỉ rời khoảng khi ĐÃ ĐI (chuyến Xuất kho hoàn thành) hoặc mang dấu Ngoài app; đơn Không điều / đã điều chưa đi vẫn phải phủ.</div>
+            <div>Từng ngày tạo SO có đơn chưa xuất: {c.by_so_created.slice(0, 20).map(d => `${dmy(d.date)} (${d.ods})`).join(' · ')}{c.by_so_created.length > 20 ? ' …' : ''}</div>
+            {c.oldest.length > 0 && <div>Đơn chưa xuất cũ nhất: {c.oldest.map(o => `SO ${o.so_number} · DO ${o.od_number} (${dmy(o.so_created)})`).join(' · ')} — đơn bị bỏ quên thì cho SAP xoá hoặc đánh dấu Ngoài app ở Điều vận để khoảng ngắn lại.</div>}
+            <div className="text-slate-500">Đơn chỉ rời khoảng khi ĐÃ XUẤT (chuyến Xuất kho hoàn thành) hoặc mang dấu Ngoài app.</div>
           </div>} />
         </div>
       )}
+      {c.no_so_date > 0 && <div className="text-amber-700">{c.no_so_date} đơn chưa xuất không có ngày tạo SO ({c.no_so_date_ods.slice(0, 5).join(', ')}{c.no_so_date > 5 ? '…' : ''}) — bao phủ không kiểm được, app không tự xoá; nạp lẻ SO của chúng để có ngày.</div>}
+    </div>
+  )
+}
+
+/** SỔ CÁC LẦN NẠP ZSD02 (24/10, user: "trong bảng up file hãy cho lịch sử để người ta biết mà up") — mới nhất trước. */
+function UploadHistory() {
+  const q = useZsd02UploadLog(null, 15)
+  const rows = q.data ?? []
+  const TH = 'px-2 py-1 text-left text-[9px] font-medium text-slate-500 whitespace-nowrap'
+  const TD = 'px-2 py-1 text-[10px] whitespace-nowrap'
+  return (
+    <div className="space-y-1">
+      <div className="text-[11px] font-semibold text-slate-700">Các lần nạp gần đây</div>
+      <div className="overflow-auto border rounded-lg max-h-[30vh]">
+        <table className="w-full">
+          <thead className="bg-slate-50 sticky top-0"><tr>
+            <th className={TH}>Lúc</th><th className={TH}>Người nạp</th><th className={TH}>Kiểu</th><th className={TH}>Plant</th>
+            <th className={TH}>Ngày tạo SO</th><th className={TH}>SO · DO</th><th className={TH}>Thêm · Sửa · Xoá mềm</th><th className={TH}>File</th>
+          </tr></thead>
+          <tbody>
+            {!rows.length && <tr><td colSpan={8} className={`${TD} text-slate-400`}>{q.isLoading ? 'Đang tải…' : 'Chưa có lần nạp nào.'}</td></tr>}
+            {rows.map(r => {
+              const od = r.summary?.od
+              const drop = (od?.obsoleted ?? 0) + (od?.gone ?? 0) + (od?.replaced?.length ?? 0)
+              return (
+                <tr key={r.id} className="border-t border-slate-100">
+                  <td className={`${TD} tabular-nums`}>{formatDateTime(r.uploaded_at)}</td>
+                  <td className={TD}>{r.uploaded_by ?? <span className="text-slate-300">—</span>}</td>
+                  <td className={TD}>{r.kind === 'COVER' ? <span className="text-sky-700 font-medium">Bao phủ</span> : 'Lẻ'}</td>
+                  <td className={`${TD} font-mono`}>{r.plants.join(', ') || '—'}</td>
+                  <td className={`${TD} tabular-nums`}>{r.so_from ? `${dmy(r.so_from)} → ${dmy(r.so_to ?? r.so_from)}` : '—'}</td>
+                  <td className={`${TD} tabular-nums`}>{nf(r.so_count)} · {nf(r.od_count)}</td>
+                  <td className={`${TD} tabular-nums`}>{nf(od?.inserted)} · {nf(od?.updated)} · <span className={drop ? 'text-amber-700' : ''}>{nf(drop)}</span></td>
+                  <td className={`${TD} max-w-[160px] truncate`} title={r.file_name ?? ''}>{r.file_name ?? '—'}</td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
     </div>
   )
 }
@@ -117,18 +156,21 @@ export function VcUploadDialog({ mode, onClose, onUploaded }: { mode: VcUploadMo
   const { mutate: uploadZsd02, isPending: zsBusy } = useUploadZsd02()
   const busy = isVl ? vlBusy : isZs ? zsBusy : khBusy
   const { data: whTypes = [] } = useScopedWhTypes()   // giá trị mẫu cột "Loại kho booking" của mẫu KH điều vận
-  // ZSD02 (03/10 tối): plant của các kho trong phạm vi ⇒ khối "ngày tạo cần phủ" + ô khai khoảng ngày tạo của file
+  // ZSD02 (24/10): KIỂU NẠP — Lẻ (chỉ SO trong file, mặc định: không bao giờ xoá SO vắng file) · Bao phủ (khai khoảng ngày tạo SO; plant
+  // của các kho trong phạm vi ⇒ khối "ngày tạo SO cần phủ")
   const { data: whsRaw = [] } = useScopedWarehouses(true)
   const plants = isZs ? [...new Set((whsRaw as { sap_plant?: string | null }[]).map(w => w.sap_plant).filter((p): p is string => !!p))].sort() : []
-  // Để trống = BE lấy đúng min/max ngày tạo OD có trong file. KHÔNG điền sẵn "hôm nay" (review 03/10): khai tới hôm nay cho một file
-  // xuất từ sáng là nói dối về khoảng phủ — phép "file cũ hơn sổ" không bao giờ bật và OD tạo sau giờ xuất file bị coi là SAP đã xoá.
+  const [zsKind, setZsKind] = useState<Zsd02UploadKind>('PARTIAL')
+  // Để trống = BE lấy đúng min/max ngày tạo SO có trong file
   const [covFrom, setCovFrom] = useState('')
   const [covTo, setCovTo] = useState('')
-  const [allowOld, setAllowOld] = useState(false)
   const [confirmGone, setConfirmGone] = useState(false)
   const [lastErrCode, setLastErrCode] = useState<string | null>(null)
   const [lastFile, setLastFile] = useState<File | null>(null)
-  const zsFields = (): Zsd02UploadFields | undefined => isZs ? { created_from: covFrom || undefined, created_to: covTo || undefined, allow_old: allowOld ? '1' : undefined, confirm_gone: confirmGone ? '1' : undefined } : undefined
+  const zsFields = (file: File): Zsd02UploadFields | undefined => isZs ? {
+    kind: zsKind, file_name: file.name, confirm_gone: confirmGone ? '1' : undefined,
+    ...(zsKind === 'COVER' ? { created_from: covFrom || undefined, created_to: covTo || undefined } : {}),
+  } : undefined
   const fileRef = useRef<HTMLInputElement>(null)
   const [okMsg, setOkMsg]   = useState<string | null>(null)
   const [errMsg, setErrMsg] = useState<string | null>(null)
@@ -158,14 +200,14 @@ export function VcUploadDialog({ mode, onClose, onUploaded }: { mode: VcUploadMo
     setOkMsg(null); setErrMsg(null); setUnitErrs(null); setGcErrs(null); setPf(null); setLastErrCode(null)
     const opts = { onSuccess: (r: UploadPreflight) => setPf({ file, report: r }), onError: onErr(`Lỗi kiểm file ${fileLabel}`) }
     if (isVl) uploadVl06o({ file, preflight: true }, opts)
-    else if (isZs) uploadZsd02({ file, preflight: true, fields: zsFields() }, opts)
+    else if (isZs) uploadZsd02({ file, preflight: true, fields: zsFields(file) }, opts)
     else uploadKhvc({ file, preflight: true }, opts)
   }
   function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]; if (!file) return
     e.target.value = ''
     setLastFile(file)
-    setAllowOld(false); setConfirmGone(false)   // xác nhận "file cũ" / "SAP đã xoá" là theo TỪNG file — không mang sang file kế
+    setConfirmGone(false)   // xác nhận "SAP đã xoá" là theo TỪNG file — không mang sang file kế
     runPreflight(file)
   }
 
@@ -185,13 +227,13 @@ export function VcUploadDialog({ mode, onClose, onUploaded }: { mode: VcUploadMo
         onError: onErr('Lỗi upload VL06O'),
       })
     } else if (isZs) {
-      uploadZsd02({ file, fields: zsFields() }, {
+      uploadZsd02({ file, fields: zsFields(file) }, {
         onSuccess: (r: Zsd02UploadResult) => {
           setPf(null); onUploaded?.({ delivery_range: r.delivery_range ?? null })
           // Hai sổ nói riêng — người nạp phải thấy dòng CHƯA OD đi đâu, không thì tưởng "mất dòng"
           const lines = [
-            `Sổ OD: ${nf(r.od.rows)} dòng · ${nf(r.od.deliveries)} OD — thêm ${nf(r.od.inserted)} · sửa ${nf(r.od.updated)} · giữ nguyên ${nf(r.od.noop)}${r.od.obsoleted ? ` · SAP bỏ dòng ${nf(r.od.obsoleted)}` : ''}${r.od.gone ? ` · SAP xoá DO ${nf(r.od.gone)}` : ''}${r.od.lineage_edges ? ` · phả hệ thay/tách/gộp ${nf(r.od.lineage_edges)}` : ''}${r.od.uncertain ? ` · chưa kết luận ${nf(r.od.uncertain)} (xem Điều vận)` : ''}`,
-            r.coverage?.declared ? `Khoảng ngày tạo đã khai: ${dmy(r.coverage.declared.from)} → ${dmy(r.coverage.declared.to)}${r.coverage.plants.some(p => p.missing.length) ? ` — ⚠ còn thiếu ngày của đơn chưa đi ở plant ${r.coverage.plants.filter(p => p.missing.length).map(p => p.plant).join(', ')}` : ' — phủ đủ đơn chưa đi'}` : null,
+            `Kiểu nạp: ${r.coverage?.kind === 'COVER' ? `Bao phủ${r.coverage.declared ? ` — ngày tạo SO ${dmy(r.coverage.declared.from)} → ${dmy(r.coverage.declared.to)}` : ''}` : 'Lẻ (chỉ các SO trong file)'}`,
+            `Sổ OD: ${nf(r.od.rows)} dòng · ${nf(r.od.deliveries)} OD — thêm ${nf(r.od.inserted)} · sửa ${nf(r.od.updated)} · giữ nguyên ${nf(r.od.noop)}${r.od.replaced?.length ? ` · SAP thay DO ${nf(r.od.replaced.length)}` : ''}${r.od.gone ? ` · SAP bỏ DO ${nf(r.od.gone)}` : ''}${r.od.obsoleted ? ` · SAP bỏ dòng ${nf(r.od.obsoleted)}` : ''}${r.od.kept_shipped ? ` · giữ ${nf(r.od.kept_shipped)} DO đã xuất` : ''} (DO / dòng SAP bỏ được xoá mềm, giữ lịch sử)`,
             `Sổ SO: ${nf(r.so.rows)} dòng · ${nf(r.so.orders)} SO — trong đó ${nf(r.so.without_od)} dòng CHƯA có OD (tab "Chưa có OD")${r.so.unresolved ? ` · ${nf(r.so.unresolved)} dòng không quy đổi được đơn vị` : ''}${r.so.cancelled ? ` · ${nf(r.so.cancelled)} dòng SAP đã huỷ` : ''}`,
             `Phân loại: ${Object.entries(r.flows ?? {}).map(([k, v]) => `${k} ${nf(v)}`).join(' · ')}${r.not_loadable ? ` — ${nf(r.not_loadable)} dòng KHÔNG lên xe (trả về / chiết khấu / chưa phân loại)` : ''}`,
             r.customers ? `Khách hàng: tạo ${nf(r.customers.created)} · điền địa lý ${nf(r.customers.filled)}${r.customers.conflicts ? ` · ${nf(r.customers.conflicts)} ô lệch giữ giá trị đang có` : ''} · tuyến SAP ${nf(r.routes)}` : null,
@@ -231,7 +273,7 @@ export function VcUploadDialog({ mode, onClose, onUploaded }: { mode: VcUploadMo
   const onTemplate = isVl ? downloadVl06oTemplate : isZs ? downloadZsd02Template : () => downloadKhvcTemplate(whTypes[0]?.value ?? '')
   return (
     <>
-      <ModalOverlay onClose={onClose} className={`w-full max-h-[90vh] ${wide ? 'max-w-[95vw] sm:max-w-[80vw]' : 'max-w-lg'}`}>
+      <ModalOverlay onClose={onClose} className={`w-full max-h-[90vh] ${wide ? 'max-w-[95vw] sm:max-w-[80vw]' : isZs ? 'max-w-3xl' : 'max-w-lg'}`}>
         <div className="flex items-center justify-between border-b px-4 py-3">
           <h3 className="text-sm font-semibold text-slate-700">
             {isVl ? 'Up VL06O (dữ liệu SAP)' : isZs ? 'Up ZSD02 (dữ liệu SAP — thay VL06O)' : 'Up KH điều vận (sinh chuyến xuất)'}
@@ -249,33 +291,45 @@ export function VcUploadDialog({ mode, onClose, onUploaded }: { mode: VcUploadMo
             </Button>
             <input ref={fileRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={handleFile} />
           </div>
-          {/* ZSD02 — KHOẢNG PHỦ NGÀY TẠO (03/10 tối): app nói phải đổ SAP từ ngày nào; người khai khoảng mình đã đổ; thiếu ngày của đơn chưa đi thì
-              công tắc Bắt buộc từ chối nạp. Đây là cách bù cho việc SAP chỉ đổ theo ngày tạo, không có "ngày sửa cuối". */}
+          {/* ZSD02 — KIỂU NẠP (24/10, user chốt): SO có trong file = bản cuối của SO đó (DO vắng ⇒ xoá mềm, đơn đã xuất giữ nguyên).
+              Lẻ = chỉ SO trong file. Bao phủ = file chứa TRỌN các SO tạo trong khoảng ngày tạo SO đã khai (phải phủ mọi đơn chưa xuất) ⇒
+              SO chưa xuất trong khoảng mà vắng file = SAP đã xoá. */}
           {isZs && (
             <div className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 space-y-1.5">
-              <div className="text-[11px] font-semibold text-sky-900">Khi đổ ZSD02 từ SAP, lọc Ngày tạo theo khoảng dưới đây</div>
-              {plants.length ? plants.map(p => <CoverageNeed key={p} plant={p} onSuggest={from => { setCovFrom(from); setCovTo(todayVN()) }} />)
-                : <div className="text-[11px] text-slate-500">Kho trong phạm vi chưa khai Plant SAP (Cài đặt WMS → Kho) nên không tính được ngày cần phủ.</div>}
-              <div className="flex flex-wrap items-center gap-2 pt-1 text-[11px] text-slate-700">
-                <span>File này lọc <b>Ngày tạo</b> từ</span>
-                <input type="date" value={covFrom} onChange={e => setCovFrom(e.target.value)} className="h-7 rounded border border-slate-300 px-1.5 text-[11px]" />
-                <span>đến</span>
-                <input type="date" value={covTo} onChange={e => setCovTo(e.target.value)} className="h-7 rounded border border-slate-300 px-1.5 text-[11px]" />
-                <InfoTip tip="Khai đúng khoảng bạn đã lọc ở SAP. App chỉ kết luận “SAP đã xoá / đã thay” cho DO có ngày tạo TRONG khoảng này; ngoài khoảng, vắng mặt không nói lên gì. Để trống thì app lấy khoảng ngày tạo thật có trong file." />
+              <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+                <span className="font-semibold text-sky-900">Kiểu nạp</span>
+                {([['PARTIAL', 'Lẻ — chỉ các SO trong file'], ['COVER', 'Bao phủ — đủ mọi SO theo ngày tạo SO']] as const).map(([k, label]) => (
+                  <button key={k} type="button" onClick={() => setZsKind(k)} disabled={busy}
+                    className={`h-7 rounded-full border px-2.5 ${zsKind === k ? 'border-sky-600 bg-sky-600 text-white' : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'}`}>{label}</button>
+                ))}
+                <InfoTip tip={<div className="space-y-1 text-xs">
+                  <div>Mọi kiểu nạp: SO nào có trong file thì file là <b>bản cuối</b> của SO đó — DO của SO đó không còn trong file bị <b>xoá mềm</b> (giữ lịch sử). Đơn <b>đã xuất</b> (chuyến Xuất kho hoàn thành) không bao giờ bị xoá.</div>
+                  <div><b>Lẻ</b>: SO không có trong file không bị đụng. Dùng khi chỉ đổ vài SO vừa sửa.</div>
+                  <div><b>Bao phủ</b>: lọc ZSD02 <b>chỉ theo Ngày tạo SO</b> (không lọc thêm Sloc / khách…). File phải chứa ngày tạo SO của mọi đơn chưa xuất, thiếu là từ chối. SO chưa xuất tạo trong khoảng mà không có trong file ⇒ SAP đã xoá ⇒ xoá mềm.</div>
+                </div>} />
               </div>
+              {zsKind === 'COVER' && <>
+                {plants.length ? plants.map(p => <CoverageNeed key={p} plant={p} onSuggest={(from, to) => { setCovFrom(from); setCovTo(to) }} />)
+                  : <div className="text-[11px] text-slate-500">Kho trong phạm vi chưa khai Plant SAP (Cài đặt WMS → Kho) nên không tính được ngày cần phủ.</div>}
+                <div className="flex flex-wrap items-center gap-2 pt-1 text-[11px] text-slate-700">
+                  <span>File này lọc <b>Ngày tạo SO</b> từ</span>
+                  <input type="date" value={covFrom} onChange={e => setCovFrom(e.target.value)} className="h-7 rounded border border-slate-300 px-1.5 text-[11px]" />
+                  <span>đến</span>
+                  <input type="date" value={covTo} onChange={e => setCovTo(e.target.value)} className="h-7 rounded border border-slate-300 px-1.5 text-[11px]" />
+                  <InfoTip tip="Khai đúng khoảng bạn đã lọc ở SAP. Để trống thì app lấy khoảng ngày tạo SO thật có trong file." />
+                </div>
+              </>}
               {(lastErrCode === 'COVERAGE_MISSING' || lastErrCode === 'COVERAGE_SUSPECT') && (
                 <div className="flex flex-wrap items-center gap-3 pt-1 text-[11px]">
-                  {/file cũ|cũ hơn sổ/i.test(errMsg ?? '') && (
-                    <label className="inline-flex items-center gap-1 cursor-pointer"><input type="checkbox" className="h-3.5 w-3.5 accent-sky-600" checked={allowOld} onChange={e => setAllowOld(e.target.checked)} /> Đúng là tôi muốn nạp file cũ hơn sổ</label>
-                  )}
                   {lastErrCode === 'COVERAGE_SUSPECT' && (
-                    <label className="inline-flex items-center gap-1 cursor-pointer text-red-700"><input type="checkbox" className="h-3.5 w-3.5 accent-red-600" checked={confirmGone} onChange={e => setConfirmGone(e.target.checked)} /> Đúng là SAP đã xoá các OD này</label>
+                    <label className="inline-flex items-center gap-1 cursor-pointer text-red-700"><input type="checkbox" className="h-3.5 w-3.5 accent-red-600" checked={confirmGone} onChange={e => setConfirmGone(e.target.checked)} /> Đúng là SAP đã xoá các SO này</label>
                   )}
-                  {lastFile && <Button size="sm" variant="outline" className="h-7 text-[11px]" disabled={busy} onClick={() => runPreflight(lastFile)}>Kiểm lại file với khoảng / lựa chọn mới</Button>}
+                  {lastFile && <Button size="sm" variant="outline" className="h-7 text-[11px]" disabled={busy} onClick={() => runPreflight(lastFile)}>Kiểm lại file với kiểu / khoảng / lựa chọn mới</Button>}
                 </div>
               )}
             </div>
           )}
+          {isZs && <UploadHistory />}
           {okMsg && (
             <div className="rounded-lg bg-green-50 border border-green-200 px-3 py-2 text-xs text-green-800 flex items-start gap-2">
               <CheckCircle2 className="h-4 w-4 shrink-0 mt-0.5" /><pre className="whitespace-pre-wrap font-sans">{okMsg}</pre>

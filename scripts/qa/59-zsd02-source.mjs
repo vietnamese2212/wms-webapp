@@ -24,6 +24,9 @@ const SHIPTO = 'QA59ST', SHIPTO2 = 'QA59ST2', ROUTE = 'BVQA59', WARD = 'QA59-Tes
 const GC = `${FIX.WH_QR.code}_X_${todayVN.slice(8, 10)}${todayVN.slice(5, 7)}${todayVN.slice(2, 4)}_959`
 // [4d] chuyến dựng thẳng ở kho kiểm thử riêng của gói 61 (bền, không phải kho thật)
 const QA61WH = '6a610000-0000-4000-8000-000000000061', GC_S = 'QA59_SHIPTO_GDO'
+// [7] (24/10) GC_K = chuyến ĐÃ XUẤT (hoàn thành) chở QA59OD4 · PLANT_C = plant giả riêng cho nạp BAO PHỦ (không chạm đơn chưa xuất của
+// plant QA61P mà gói 61 dùng)
+const GC_K = 'QA59_KIN_GDO', PLANT_C = 'QA59P'
 
 await login(); await resolveFixtures()
 const mat = (await restAll('Material', `select=material_code,base_unit,entry_unit,units_per_carton,short_name&material_code=eq.${FIX.MAT_POOL}`))[0]
@@ -48,12 +51,12 @@ const H = {
 const row = (o) => ({
   [H.so]: o.so, [H.od]: o.od ?? '', [H.st]: SHIPTO, [H.stn]: 'QA59 KHÁCH TEST', [H.mat]: o.mat, [H.matn]: 'QA59 hàng test',
   [H.plate]: o.plate ?? '', [H.disp]: o.od ? (o.plate ? 'Đã điều phối' : 'Chưa điều phối') : 'Chưa điều phối',
-  [H.sotype]: o.sotype ?? 'ZOR1-SO Standard', [H.addr]: 'Địa chỉ QA59', [H.plant]: PLANT, [H.sloc]: 'FG01', [H.note]: '',
+  [H.sotype]: o.sotype ?? 'ZOR1-SO Standard', [H.addr]: 'Địa chỉ QA59', [H.plant]: o.plant ?? PLANT, [H.sloc]: 'FG01', [H.note]: '',
   [H.dd]: dmy(DELIV), [H.item]: '10', [H.ic]: o.ic ?? 'ZTA1-IC Sales Standard', [H.su]: o.su, [H.soq]: o.soq, [H.socar]: o.socar ?? o.soq,
   [H.odq]: o.od ? o.soq : 0, [H.odcar]: o.od ? (o.socar ?? o.soq) : 0, [H.gi]: 0,
   [H.region]: '100-Thành phố Hà Nội', [H.route]: `BV-${WARD}`, [H.gw]: o.gw ?? 0, [H.ward]: WARD, [H.dvvt]: o.dvvt ?? 'Đông Á', [H.mroute]: ROUTE,
   [H.base]: o.od ? o.soq * o.factor : 0, [H.bunit]: o.bunit, [H.pal]: 0.1, [H.palod]: o.od ? 0.1 : 0, [H.cancel]: '',
-  [H.odc]: o.od ? dmy(OD_CREATED) : '', [H.soc]: dmy(SO_CREATED),
+  [H.odc]: o.od ? dmy(OD_CREATED) : '', [H.soc]: dmy(o.soc ?? SO_CREATED),
   // kênh bán SAP (28/09): khách tự sinh phải mang kênh theo mã đầu cột này — bỏ cột (QA59_NO_DC=1) để chứng minh phép 2h2 ĐỎ
   ...(process.env.QA59_NO_DC ? {} : { [H.dc]: o.dc ?? '20-Modern Trade' }),
 })
@@ -77,7 +80,8 @@ const shiftDay = (d, n) => new Date(Date.parse(`${d}T00:00:00Z`) + n * 86_400_00
 
 async function cleanup() {
   await restWrite('reconcile_tasks', 'DELETE', `group_code=eq.${GC_S}`).catch(() => {})
-  for (const g of await restAll('GroupDeliveryOrder', `select=id&group_code=in.(${GC},${GC_S})`)) {
+  await restWrite('khvc_lines', 'DELETE', `group_code=eq.${GC_K}`).catch(() => {})
+  for (const g of await restAll('GroupDeliveryOrder', `select=id&group_code=in.(${GC},${GC_S},${GC_K})`)) {
     const dos = await restAll('OutboundDelivery', `select=id&gdo_id=eq.${g.id}`)
     if (dos.length) { await restWrite('OutboundItem', 'DELETE', `do_id=in.(${dos.map(x => x.id).join(',')})`).catch(() => {}); await restWrite('OutboundDelivery', 'DELETE', `gdo_id=eq.${g.id}`) }
     await restWrite('GroupDeliveryOrder', 'DELETE', `id=eq.${g.id}`)
@@ -88,18 +92,14 @@ async function cleanup() {
   await restWrite('erp_outbound_orders', 'DELETE', `od_number=like.QA59*`)
   await restWrite('erp_so_lines', 'DELETE', `so_number=like.QA59SO*`)
   await restWrite('od_lineage', 'DELETE', `old_od=like.QA59*`).catch(() => {})
+  await restWrite('erp_od_versions', 'DELETE', `od_number=like.QA59*`).catch(() => {})
+  await restWrite('zsd02_upload_log', 'DELETE', `plants=ov.{${PLANT},${PLANT_C}}`).catch(() => {})
   await restWrite('sap_route', 'DELETE', `route_code=eq.${ROUTE}`).catch(() => {})
   await restWrite('Customer', 'DELETE', `ship_to_code=eq.${SHIPTO}&auto_created=is.true`).catch(() => {})
   await api('/wms/settings/sap_do_source', 'PUT', { value: 'BOTH' })
-  // 14/10: trả công tắc phủ ngày tạo về mặc định Nhắc nhở (user chốt 14/10 — ZSD02 nạp nhiều lần / ngày, file không phủ hết); trước đó
-  // cleanup trả REQUIRE ⇒ lượt đêm sẽ lật công tắc của người dùng trên staging
-  await api('/wms/settings/zsd02_coverage_mode', 'PUT', { value: 'REMIND' })
 }
 await cleanup()
 await api('/wms/settings/sap_do_source', 'PUT', { value: 'BOTH' })
-// Fixture tạo OD ở ngày xa tương lai ⇒ KHÔNG phủ ngày tạo của đơn chưa đi thật trên staging ⇒ chế độ Bắt buộc sẽ 422. Gói chạy ở chế
-// độ Nhắc nhở (mặc định từ 14/10; cảnh báo, vẫn nạp); riêng [7d] bật Bắt buộc để đo đúng hành vi chặn. Cleanup trả về REMIND.
-await api('/wms/settings/zsd02_coverage_mode', 'PUT', { value: 'REMIND' })
 await waitFor(async () => { const r = await upload('/external/do-sap/upload-zsd02?preflight=1', xlsxOf(ROWS)); return r.s === 200 && r.j?.data?.errors_total === 0 ? r : null })
 
 try {
@@ -312,46 +312,98 @@ try {
     }
   }
 
-  // ── [7] (03/10 tối) KHOẢNG PHỦ NGÀY TẠO · PHẢ HỆ DO · SAP XOÁ TRONG KHOẢNG · CÔNG TẮC BẮT BUỘC ──
-  // SAP chỉ đổ ZSD02 theo NGÀY TẠO, không có "ngày sửa cuối" ⇒ app chỉ được kết luận "thay / xoá" cho DO có ngày tạo TRONG khoảng
-  // file phủ (khai khi nạp, mặc định = khoảng thật của file). Fixture: mọi OD tạo OD_CREATED (xa tương lai, không đụng đơn thật).
+  // ── [7] (24/10, user chốt) NẠP THEO SO — SO trong file là BẢN CUỐI · SO vắng file không đụng (Lẻ) · đơn ĐÃ XUẤT theo app giữ nguyên ·
+  //        BAO PHỦ theo NGÀY TẠO SO (thiếu ngày của đơn chưa xuất ⇒ từ chối; SO chưa xuất vắng ⇒ SAP đã xoá) · xoá mềm có lịch sử phiên bản ·
+  //        sổ các lần nạp. Thay luật 03/10 "khoảng phủ ngày tạo OD" (OD cũ ngoài khoảng ⇒ cả A lẫn B + C cùng sống). ──
   const rowSo1 = (od) => row({ so: SO1, od, mat: FIX.MAT_POOL, su: suThung, soq: 10, factor, bunit: bu, gw: 50_000 })
-  const up7 = await upload('/external/do-sap/upload-zsd02', xlsxOf([rowSo1('QA59OD1B'), ROWS[2]]))
+  const up7 = await upload('/external/do-sap/upload-zsd02', xlsxOf([rowSo1('QA59OD1B'), ROWS[2]]), 'qa59-7a.xlsx', { kind: 'PARTIAL', file_name: 'qa59-7a.xlsx' })
   const od1x = (await restAll('erp_outbound_orders', `select=sync_status,replaced_by_od&od_number=eq.${OD1}`))[0]
   const lin = await restAll('od_lineage', `select=old_od,new_od,kind,so_number,resolved_at&old_od=eq.${OD1}`)
-  check('7a. SO1 đổi DO: OD1 vắng file, OD1B cùng SO Item, OD1 tạo TRONG khoảng phủ → OD1 OBSOLETE thay bởi OD1B · od_lineage ghi cạnh REPLACE',
+  const ver1 = await restAll('erp_od_versions', `select=od_number,new_status,old_row&od_number=eq.${OD1}&order=changed_at.desc`)
+  check('7a. Nạp Lẻ: SAP xoá OD1, tạo OD1B cùng dòng SO ⇒ OD1 XOÁ MỀM (OBSOLETE, giữ dòng) thay bởi OD1B · phả hệ REPLACE · lịch sử phiên bản có bản cũ (ACTIVE) của OD1',
     up7.s === 200 && up7.j?.data?.od?.replaced?.[0]?.od_number === OD1 && od1x?.sync_status === 'OBSOLETE' && od1x?.replaced_by_od === 'QA59OD1B'
-    && lin.length === 1 && lin[0].kind === 'REPLACE' && lin[0].new_od === 'QA59OD1B' && up7.j?.data?.od?.lineage_edges === 1,
-    `http=${up7.s} replaced=${JSON.stringify(up7.j?.data?.od?.replaced)} od1=${od1x?.sync_status}/${od1x?.replaced_by_od} lin=${JSON.stringify(lin)}`)
-  const DAY_AFTER = shiftDay(OD_CREATED, 1)
-  const up7b = await upload('/external/do-sap/upload-zsd02', xlsxOf([rowSo1('QA59OD1C')]), 'zsd02.xlsx', { created_from: DAY_AFTER, created_to: DAY_AFTER })
-  const od1bRow = (await restAll('erp_outbound_orders', `select=sync_status&od_number=eq.QA59OD1B`))[0]
-  check('7b. OD cũ (OD1B) tạo NGOÀI khoảng khai mà vắng file, SO Item có OD1C mới → KHÔNG kết luận thay (uncertain=1, cảnh báo), OD1B vẫn ACTIVE, không ghi phả hệ — đỏ bản 25/09 (coi là thay)',
-    up7b.s === 200 && up7b.j?.data?.od?.uncertain === 1 && od1bRow?.sync_status === 'ACTIVE' && (await restAll('od_lineage', 'select=id&new_od=eq.QA59OD1C')).length === 0
-    && (up7b.j?.data?.warnings ?? []).some(w => /chưa kết luận|KHÔNG kết luận/i.test(w)),
-    `http=${up7b.s} uncertain=${up7b.j?.data?.od?.uncertain} od1b=${od1bRow?.sync_status} warn=${(up7b.j?.data?.warnings ?? []).filter(w => /kết luận/i.test(w)).join(' | ').slice(0, 160)}`)
-  // E4: file chỉ còn OD3, khai khoảng = OD_CREATED ⇒ OD1B và OD1C (tạo OD_CREATED, ACTIVE, vắng, SO Item không có OD mới) = SAP đã XOÁ
-  const up7c = await upload('/external/do-sap/upload-zsd02', xlsxOf([ROWS[2]]), 'zsd02.xlsx', { created_from: OD_CREATED, created_to: OD_CREATED })
-  const goneRows = await restAll('erp_outbound_orders', `select=od_number,sync_status,replaced_by_od&od_number=in.(QA59OD1B,QA59OD1C)`)
-  check('7c. DO biến mất khỏi file dù ngày tạo TRONG khoảng khai, không DO thay → SAP đã xoá: OBSOLETE, không replaced_by (gone=2); OD3 còn trong file giữ ACTIVE',
-    up7c.s === 200 && up7c.j?.data?.od?.gone === 2 && goneRows.length === 2 && goneRows.every(r => r.sync_status === 'OBSOLETE' && !r.replaced_by_od)
+    && lin.length === 1 && lin[0].kind === 'REPLACE' && lin[0].new_od === 'QA59OD1B'
+    && ver1.length >= 1 && ver1[0].new_status === 'OBSOLETE' && ver1[0].old_row?.sync_status === 'ACTIVE' && !('raw' in (ver1[0].old_row ?? {})),
+    `http=${up7.s} replaced=${JSON.stringify(up7.j?.data?.od?.replaced)} od1=${od1x?.sync_status}/${od1x?.replaced_by_od} lin=${JSON.stringify(lin)} ver=${ver1.length}/${ver1[0]?.new_status}/${ver1[0]?.old_row?.sync_status}`)
+
+  // [7b] Nạp lẻ SO KHÁC (chỉ SO3) ⇒ SO1 không có trong file ⇒ OD1B KHÔNG bị đụng (bản 03/10: vắng trong khoảng phủ là "SAP xoá")
+  const up7b = await upload('/external/do-sap/upload-zsd02', xlsxOf([ROWS[2]]), 'qa59-7b.xlsx', { kind: 'PARTIAL' })
+  const od1b7b = (await restAll('erp_outbound_orders', `select=sync_status&od_number=eq.QA59OD1B`))[0]
+  check('7b. Nạp Lẻ chỉ SO3 ⇒ DO của SO1 (vắng file) GIỮ NGUYÊN ACTIVE, gone 0',
+    up7b.s === 200 && od1b7b?.sync_status === 'ACTIVE' && (up7b.j?.data?.od?.gone ?? -1) === 0,
+    `http=${up7b.s} od1b=${od1b7b?.sync_status} gone=${up7b.j?.data?.od?.gone}`)
+
+  // [7c] SO1 vẫn có trong file nhưng chỉ còn dòng CHƯA có DO (SAP xoá DO, dòng SO mở lại) ⇒ OD1B = SAP bỏ, xoá mềm, không replaced_by
+  const up7c = await upload('/external/do-sap/upload-zsd02', xlsxOf([row({ so: SO1, od: null, mat: FIX.MAT_POOL, su: suThung, soq: 10, factor, bunit: bu }), ROWS[2]]), 'qa59-7c.xlsx', { kind: 'PARTIAL' })
+  const od1b7c = (await restAll('erp_outbound_orders', `select=sync_status,replaced_by_od&od_number=eq.QA59OD1B`))[0]
+  check('7c. SO1 trong file chỉ còn dòng chưa có DO ⇒ OD1B SAP đã bỏ: OBSOLETE, không replaced_by (gone = 1); OD3 còn trong file giữ ACTIVE',
+    up7c.s === 200 && up7c.j?.data?.od?.gone === 1 && od1b7c?.sync_status === 'OBSOLETE' && !od1b7c?.replaced_by_od
     && (await restAll('erp_outbound_orders', `select=sync_status&od_number=eq.${OD3}`))[0]?.sync_status === 'ACTIVE',
-    `http=${up7c.s} gone=${up7c.j?.data?.od?.gone} rows=${JSON.stringify(goneRows)}`)
-  // Công tắc BẮT BUỘC: plant kiểm thử có MỘT đơn chưa đi tạo NGOÀI khoảng file (QA59OLD, 16/10 — bản cũ dựa vào đơn thật của Ba Vì)
-  // ⇒ kiểm trước có lỗi "Phủ ngày tạo" (will_write 0), ghi thật 422 COVERAGE_MISSING. Bước dọn xoá theo `QA59*`.
-  const OLD_CREATED = new Date(Date.now() + 20 * 86400000).toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })   // ≠ OD_CREATED, không trong file
-  await restWrite('erp_outbound_orders', 'POST', null, { id: randomUUID(), od_number: 'QA59OLD', od_item: '10', material_code: FIX.MAT_POOL, qty_base: 1, ship_to_code: SHIPTO, ship_to_name: 'QA59 KHÁCH TEST', ward_code: WARD, plant: PLANT, od_created_at: OLD_CREATED, flow: 'SALE', source: 'EXCEL', sync_status: 'ACTIVE', last_synced_at: new Date().toISOString(), updated_at: new Date().toISOString() })
-  await api('/wms/settings/zsd02_coverage_mode', 'PUT', { value: 'REQUIRE' })
-  const pf7 = await waitFor(async () => { const r = await upload('/external/do-sap/upload-zsd02?preflight=1', xlsxOf(ROWS)); return r.s === 200 && (r.j?.data?.errors_total ?? 0) > 0 ? r : null })
-  const wr7 = await upload('/external/do-sap/upload-zsd02', xlsxOf(ROWS))
-  const covPlant = pf7?.j?.data?.coverage?.plants?.find(p => p.plant === PLANT)
-  check(`7d. Công tắc Bắt buộc: file không phủ ngày tạo của đơn chưa đi QA59OLD (plant ${PLANT}) → kiểm trước lỗi "Phủ ngày tạo" nêu ngày + số OD + khoảng nên đổ, will_write 0 · ghi thật 422 COVERAGE_MISSING`,
-    !!pf7 && pf7.j?.data?.will_write === 0 && (pf7.j?.data?.errors ?? []).some(e => /Phủ ngày tạo/.test(e) && /Đổ lại ZSD02/.test(e)) && (covPlant?.missing?.length ?? 0) > 0 && pf7.j?.data?.coverage?.mode === 'REQUIRE'
-    && wr7.s === 422 && wr7.j?.error?.code === 'COVERAGE_MISSING',
-    `pf=${pf7?.s ?? 'timeout'} will=${pf7?.j?.data?.will_write} err0=${(pf7?.j?.data?.errors ?? [])[0]?.slice(0, 120)} missing=${covPlant?.missing?.length} write=${wr7.s}/${wr7.j?.error?.code}`)
-  const cov7 = await api(`/external/do-sap/coverage?plant=${PLANT}`)
-  check('7e. GET /external/do-sap/coverage?plant= → pending_ods · by_od_created[] · od_span · mode', cov7.s === 200 && typeof cov7.j?.data?.pending_ods === 'number' && Array.isArray(cov7.j?.data?.by_od_created) && cov7.j?.data?.mode === 'REQUIRE',
-    `http=${cov7.s} pending=${cov7.j?.data?.pending_ods} days=${cov7.j?.data?.by_od_created?.length} span=${JSON.stringify(cov7.j?.data?.od_span)}`)
+    `http=${up7c.s} gone=${up7c.j?.data?.od?.gone} od1b=${JSON.stringify(od1b7c)}`)
+
+  // [7d] ĐƠN ĐÃ XUẤT theo APP (Số xe trên Kế hoạch xuất + chuyến HOÀN THÀNH, SAP CHƯA post) mà SAP xoá A, tạo B 8 (phần đã đi) + C 2 ⇒ A GIỮ,
+  //      cạnh AFTER_POST tới B và C; hàng chờ "Cần xử lý" mang số kho đã quét của A (gợi ý B là phần đã đi)
+  const SO4 = 'QA59SO4', OD4 = 'QA59OD4'
+  const row4 = (od, q) => row({ so: SO4, od, mat: FIX.MAT_POOL, su: suThung, soq: q, factor, bunit: bu })
+  await upload('/external/do-sap/upload-zsd02', xlsxOf([row4(OD4, 10)]), 'qa59-7d0.xlsx', { kind: 'PARTIAL' })
+  {
+    const mat0 = (await restAll('Material', `select=id,material_code&material_code=eq.${FIX.MAT_POOL}`))[0]
+    const ts = new Date().toISOString()
+    const [g4] = await restWrite('GroupDeliveryOrder', 'POST', null, { id: randomUUID(), group_code: GC_K, warehouse_id: QA61WH, delivery_date: todayVN, planned_date: todayVN, status: 'COMPLETED', created_at: ts, updated_at: ts })
+    const [d4] = await restWrite('OutboundDelivery', 'POST', null, { id: randomUUID(), gdo_id: g4.id, delivery_code: OD4, distributor_name: 'QA59 KHÁCH TEST', ship_to_code: SHIPTO, created_at: ts, updated_at: ts })
+    await restWrite('OutboundItem', 'POST', null, { id: randomUUID(), do_id: d4.id, material_id: mat0.id, material_code_raw: mat0.material_code, cartons_ordered: 10 * factor, cartons_scanned: 8 * factor,
+      status: 'COMPLETED', od_refs: [{ od_number: OD4, od_item: '10', qty_base: 10 * factor }], created_at: ts, updated_at: ts })
+    await restWrite('khvc_lines', 'POST', null, { id: randomUUID(), group_code: GC_K, do_no: OD4, gdo_id: g4.id, export_date: todayVN, warehouse_code: FIX.WH_QR.code, source: 'EXCEL', sync_status: 'ACTIVE', updated_at: ts })
+  }
+  const up7d = await upload('/external/do-sap/upload-zsd02', xlsxOf([row4('QA59OD4B', 8), row4('QA59OD4C', 2)]), 'qa59-7d.xlsx', { kind: 'PARTIAL' })
+  const od4 = (await restAll('erp_outbound_orders', `select=sync_status&od_number=eq.${OD4}`))[0]
+  const lin4 = await restAll('od_lineage', `select=new_od,kind&old_od=eq.${OD4}&order=new_od`)
+  const dec = await api(`/tms/dispatch/decisions?warehouse_id=${QA61WH}`)
+  const kin = (dec.j?.data?.rows ?? []).find(r => r.kind === 'KIN' && r.od_number === OD4)
+  check('7d. A ĐÃ XUẤT theo app (chuyến hoàn thành, SAP chưa post) mà SAP xoá A tạo B + C ⇒ A GIỮ ACTIVE (kept_shipped 1) · cạnh AFTER_POST A→B, A→C · Cần xử lý có việc KIN mang số đã quét = 8 thùng',
+    up7d.s === 200 && od4?.sync_status === 'ACTIVE' && up7d.j?.data?.od?.kept_shipped === 1
+    && lin4.map(l => `${l.new_od}:${l.kind}`).join(',') === 'QA59OD4B:AFTER_POST,QA59OD4C:AFTER_POST'
+    && !!kin && Math.abs(Number(kin.shipped_base) - 8 * factor) < 0.01 && kin.new_ods?.length === 2,
+    `http=${up7d.s} od4=${od4?.sync_status} kept=${up7d.j?.data?.od?.kept_shipped} lin=${JSON.stringify(lin4)} dec=${dec.s} kin=${kin ? `${kin.shipped_base}/${kin.new_ods?.length}` : '✗'}`)
+
+  // [7e] BAO PHỦ thiếu ngày tạo SO của đơn chưa xuất (plant giả QA59P: QA59OLD tạo OLD_SO, file chỉ SO_CREATED) ⇒ kiểm trước lỗi, ghi 422
+  const OLD_SO = new Date(Date.now() + 20 * 86400000).toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })   // ≠ SO_CREATED
+  await restWrite('erp_outbound_orders', 'POST', null, { id: randomUUID(), od_number: 'QA59OLD', od_item: '10', so_number: 'QA59SOOLD', so_item: '10', material_code: FIX.MAT_POOL, qty_base: 1, ship_to_code: SHIPTO, ship_to_name: 'QA59 KHÁCH TEST', ward_code: WARD, plant: PLANT_C, so_created_at: OLD_SO, flow: 'SALE', source: 'EXCEL', sync_status: 'ACTIVE', last_synced_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+  const rowsC = [row({ so: 'QA59SO5', od: 'QA59OD5', mat: FIX.MAT_POOL, su: suThung, soq: 3, factor, bunit: bu, plant: PLANT_C })]
+  const coverOnly = { kind: 'COVER', created_from: SO_CREATED, created_to: SO_CREATED }
+  const pf7 = await upload('/external/do-sap/upload-zsd02?preflight=1', xlsxOf(rowsC), 'qa59-7e.xlsx', coverOnly)
+  const wr7 = await upload('/external/do-sap/upload-zsd02', xlsxOf(rowsC), 'qa59-7e.xlsx', coverOnly)
+  const covC = pf7.j?.data?.coverage?.plants?.find(p => p.plant === PLANT_C)
+  check(`7e. Bao phủ không chứa ngày tạo SO của đơn chưa xuất QA59OLD (plant ${PLANT_C}) ⇒ kiểm trước lỗi "Phủ ngày tạo SO", will_write 0 · ghi thật 422 COVERAGE_MISSING · QA59OLD vẫn ACTIVE`,
+    pf7.s === 200 && pf7.j?.data?.will_write === 0 && (pf7.j?.data?.errors ?? []).some(e => /Phủ ngày tạo SO/.test(e)) && (covC?.missing?.length ?? 0) > 0 && pf7.j?.data?.coverage?.kind === 'COVER'
+    && wr7.s === 422 && wr7.j?.error?.code === 'COVERAGE_MISSING' && (await restAll('erp_outbound_orders', `select=sync_status&od_number=eq.QA59OLD`))[0]?.sync_status === 'ACTIVE',
+    `pf=${pf7.s} will=${pf7.j?.data?.will_write} err0=${(pf7.j?.data?.errors ?? [])[0]?.slice(0, 120)} missing=${covC?.missing?.length} write=${wr7.s}/${wr7.j?.error?.code}`)
+
+  // [7f] Bao phủ khai khoảng KHÔNG chứa ngày tạo SO của dòng trong file ⇒ lỗi "NGOÀI khoảng" (file lọc khác khoảng khai)
+  const pf7f = await upload('/external/do-sap/upload-zsd02?preflight=1', xlsxOf(rowsC), 'qa59-7f.xlsx', { kind: 'COVER', created_from: OLD_SO, created_to: OLD_SO })
+  check('7f. Bao phủ: dòng file có ngày tạo SO NGOÀI khoảng khai ⇒ kiểm trước lỗi, will_write 0',
+    pf7f.s === 200 && pf7f.j?.data?.will_write === 0 && (pf7f.j?.data?.errors ?? []).some(e => /NGOÀI khoảng/.test(e)),
+    `pf=${pf7f.s} will=${pf7f.j?.data?.will_write} errs=${(pf7f.j?.data?.errors ?? []).join(' | ').slice(0, 160)}`)
+
+  // [7g] Bao phủ khoảng OLD_SO → SO_CREATED: phủ đủ; QA59SOOLD (chưa xuất, tạo trong khoảng) vắng file ⇒ SAP đã xoá ⇒ xoá mềm
+  const lo = OLD_SO < SO_CREATED ? OLD_SO : SO_CREATED, hi = OLD_SO < SO_CREATED ? SO_CREATED : OLD_SO
+  const up7g = await upload('/external/do-sap/upload-zsd02', xlsxOf(rowsC), 'qa59-7g.xlsx', { kind: 'COVER', created_from: lo, created_to: hi, file_name: 'qa59-7g.xlsx' })
+  const old7g = (await restAll('erp_outbound_orders', `select=sync_status&od_number=eq.QA59OLD`))[0]
+  check('7g. Bao phủ đủ: SO chưa xuất tạo trong khoảng mà vắng file ⇒ SAP đã xoá cả SO ⇒ QA59OLD xoá mềm (cover_gone_sos 1); QA59OD5 vào sổ',
+    up7g.s === 200 && old7g?.sync_status === 'OBSOLETE' && up7g.j?.data?.od?.cover_gone_sos === 1
+    && (await restAll('erp_outbound_orders', `select=sync_status&od_number=eq.QA59OD5`))[0]?.sync_status === 'ACTIVE',
+    `http=${up7g.s} ${up7g.j?.error?.message?.slice(0, 120) ?? ''} old=${old7g?.sync_status} gone_sos=${up7g.j?.data?.od?.cover_gone_sos}`)
+
+  const cov7 = await api(`/external/do-sap/coverage?plant=${PLANT_C}`)
+  const log7 = await api(`/external/do-sap/upload-log?plant=${PLANT_C}`)
+  const logP = await api(`/external/do-sap/upload-log?plant=${PLANT}&limit=50`)
+  const vers7 = await api(`/external/do-sap/versions?od_number=${OD1}`)
+  check('7h. GET coverage (theo ngày tạo SO) · sổ các lần nạp có lần Bao phủ (plant, khoảng, tên file) + lần Lẻ · lịch sử phiên bản OD1 có bản cũ',
+    cov7.s === 200 && Array.isArray(cov7.j?.data?.by_so_created) && typeof cov7.j?.data?.pending_ods === 'number'
+    && log7.s === 200 && (log7.j?.data?.items ?? []).some(x => x.kind === 'COVER' && x.file_name === 'qa59-7g.xlsx' && x.so_from === lo && x.so_to === hi)
+    && (logP.j?.data?.items ?? []).some(x => x.kind === 'PARTIAL' && x.file_name === 'qa59-7a.xlsx')
+    && vers7.s === 200 && (vers7.j?.data?.versions ?? []).length >= 1 && vers7.j?.data?.current?.[0]?.sync_status === 'OBSOLETE',
+    `cov=${cov7.s} log=${log7.s}/${(log7.j?.data?.items ?? []).length} logP=${(logP.j?.data?.items ?? []).length} vers=${vers7.s}/${(vers7.j?.data?.versions ?? []).length}`)
 } finally {
   await cleanup()
   check('9. Dọn sạch fixture QA59', (await restAll('erp_so_lines', `select=id&so_number=like.QA59SO*`)).length === 0

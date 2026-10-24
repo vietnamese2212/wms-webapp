@@ -545,6 +545,16 @@ function odRow(planId: string, tripId: string | null, o: TripOd, m: OdMeta | und
  *  đơn bù để tính cước; có dấu hiệu nhận biết"): dòng OD mang `so_created_date` > ngày kế hoạch ⇒ Sửa (`refresh-pool review_all`) và
  *  Tối ưu lại (`review_all`) KHÔNG đặt mốc / không ghép; chỉ tick ở Xem đơn hoặc kéo tay trên bàn mới lên xe. Mirror FE `isLateSo`. */
 const lateSo = (o: { so_created_date: string | null }, planDate: string) => !!o.so_created_date && o.so_created_date > planDate
+/** DO MỚI CÙNG DÒNG SO VỚI DO ĐÃ XUẤT (phả hệ AFTER_POST chưa quyết — 24/10, user: SAP xoá A đã đi, tạo B "phần đã đi" + C "phần còn lại"
+ *  thì B KHÔNG được vào kế hoạch kẻo đi lần hai): Sửa / Tối ưu lại không tự ghép; người quyết "Phần đã đi" / "Giao thêm" ở Cần xử lý.
+ *  Cạnh AFTER_POST chưa quyết là tập NHỎ (vài dòng) còn khung chờ có thể vài nghìn đơn ⇒ đọc cả tập cạnh (phân trang) rồi giao trong JS — một
+ *  request thay cho n/300. */
+async function kinPendingOds(ods: string[]): Promise<Set<string>> {
+  if (!ods.length) return new Set()
+  const rows = (await fetchAllRowsParallel(() => db.from('od_lineage').select('new_od').eq('kind', 'AFTER_POST').is('resolved_at', null).order('new_od'))) as { new_od: string }[]
+  const want = new Set(ods)
+  return new Set(rows.map(r => r.new_od).filter(od => want.has(od)))
+}
 /** Cả một OD (chưa tách) → TripOd — cho OD vào khung chờ (nạp OD mới / thay OD). */
 function wholeOd(od: EngineOd): TripOd {
   const s = sumLines(od.lines)
@@ -1809,7 +1819,9 @@ async function reoptimizePlanInner(req: Request, res: Response) {
     // (08/10) "đường vòng tối đa %" nay thuộc DÒNG XE — `loadRefs` đọc giá trị hiện tại mỗi lượt ghép, không chụp vào kế hoạch
     const full = (await readPlan(plan.id))!
     let redo = full.trips.filter(t => !t.locked && EDITABLE_TRIP.includes(statusOf(t)))
-    let src = b.review_all ? full.pool.filter(o => !lateSo(o, plan.plan_date)) : full.pool.filter(o => o.reviewed_at)   // 20/10: SO sau ngày đi không tự ghép
+    // 20/10: SO sau ngày đi không tự ghép · 24/10: DO mới cùng dòng SO với đơn đã xuất cũng không
+    const kin = b.review_all ? await kinPendingOds(full.pool.map(o => o.od_number)) : new Set<string>()
+    let src = b.review_all ? full.pool.filter(o => !lateSo(o, plan.plan_date) && !kin.has(o.od_number)) : full.pool.filter(o => o.reviewed_at)
     if (b.ids) {
       const want = new Set(b.ids)
       src = full.pool.filter(o => want.has(o.id))
@@ -2021,7 +2033,7 @@ async function odFlags(odNos: string[], ownGroupCodes: string[], snaps: Map<stri
     const k = khvc.find(x => x.do_no === od && !ownGroupCodes.includes(x.group_code))
     if (k) { out.push({ od_number: od, kind: 'IN_PLAN', info: `đã có trong Kế hoạch xuất (${k.group_code})` }); continue }
     const kk = kin.filter(e => e.new_od === od).map(e => kinKhvc.find(x => x.do_no === e.old_od)).find(Boolean)
-    if (kk) { out.push({ od_number: od, kind: 'KIN_SHIPPED', info: `cùng dòng SO với DO ${kk.do_no} đã đi${kk.export_date ? ` ngày ${dmyOf(kk.export_date)}` : ''} (xe ${kk.group_code}) — giao thêm thì bấm "Xác nhận đơn bổ sung", không thì Không điều / Ngoài app` }); continue }
+    if (kk) { out.push({ od_number: od, kind: 'KIN_SHIPPED', info: `cùng dòng SO với DO ${kk.do_no} đã xuất${kk.export_date ? ` ngày ${dmyOf(kk.export_date)}` : ''} (xe ${kk.group_code}) — có thể chính là phần đã đi mang số mới; quyết ở tab Cần xử lý: "Phần đã đi" hoặc "Giao thêm"` }); continue }
     // CÙNG OD mà SAP sửa (SL / dòng hàng / ghi chú giao hàng) sau khi chụp — kế hoạch đang tính tải + cước theo bản CŨ.
     // Xét TRƯỚC hai cờ tham chiếu bên dưới (02/10, gói 61 [10m] bắt): từ 03/10 SHIPPED / SAP_ASSIGNED không chặn Xác nhận nữa,
     // nên nếu để chúng `continue` trước thì một OD vừa "SAP đã gắn xe" vừa "SAP đã sửa số lượng" lọt qua cổng với tải cũ.
@@ -2160,7 +2172,9 @@ async function refreshPoolInner(req: Request, res: Response) {
       // lên khung chờ. Gỡ mốc vừa ghi (đúng mốc t) theo lô 300; thường rỗng ⇒ không thêm request
       const { data: hid, error: hErr } = await db.from('dispatch_od_hidden').select('od_number').eq('plan_id', plan.id).eq('user_id', userKey(req)).limit(1000)
       if (hErr) throw hErr
-      const hidden = uniq((hid ?? []).map(x => x.od_number))
+      // 24/10: DO mới cùng dòng SO với đơn ĐÃ XUẤT (chờ người quyết "Phần đã đi" / "Giao thêm") cũng ở lại Chờ điều
+      const kin = await kinPendingOds(uniq([...full.pool.map(o => o.od_number), ...loadable.map(o => o.od_number)]))
+      const hidden = uniq([...(hid ?? []).map(x => x.od_number), ...kin])
       for (let i = 0; i < hidden.length; i += 300) {
         const { data: back, error: bErr } = await db.from('dispatch_trip_od').update({ reviewed_at: null, reviewed_by: null, updated_at: t })
           .eq('plan_id', plan.id).is('trip_id', null).eq('reviewed_at', t).in('od_number', hidden.slice(i, i + 300)).select('id')

@@ -1,7 +1,7 @@
 // Điều vận v2 (25/09) — pool LŨY TIẾN + OD bị SO sửa THAY + cửa đặt lịch khi chuyển OD + máy chọn xe cho "xe mới".
 // Một phép kiểm cho một luật user chốt; oracle = viết tay từ câu chốt.
 import { describe, it, expect } from 'vitest'
-import { splitPool, findReplacedOds, holdsToCarry, redoDispatchedOf, shareBaseRange, type PoolCandidateRow } from '../../src/services/dispatchPool'
+import { splitPool, soScopedChanges, holdsToCarry, redoDispatchedOf, shareBaseRange, type PoolCandidateRow } from '../../src/services/dispatchPool'
 import { bookingFromCatLoads, catLoadOf, suggestVehicle, runDispatch, type EngineModel, type EngineCarrier, type EngineTariff, type EngineOd } from '../../src/services/dispatchEngine'
 
 const DAY = '2026-09-25'
@@ -61,60 +61,56 @@ describe('pool lũy tiến — OD đã được lo thì KHÔNG vào đợt ghép
   })
 })
 
-describe('SO sửa ⇒ OD mới — chỉ kết luận "đã thay" khi có bằng chứng trong file', () => {
-  const cand = (od: string, o: Partial<{ so_item: string; delivery_date: string; mat_doc: string | null; qty_issued_base: number }> = {}) =>
-    ({ od_number: od, od_item: o.so_item ?? '10', so_number: 'S1', so_item: o.so_item ?? '10', delivery_date: o.delivery_date ?? DAY, mat_doc: o.mat_doc ?? null, qty_issued_base: o.qty_issued_base ?? 0 })
-  const file = [{ od_number: 'NEW', so_number: 'S1', so_item: '10', delivery_date: DAY }]
-  it('OD cũ vắng file, cùng (SO, item) có OD mới, ngày trong khoảng file ⇒ thay', () => {
-    expect(findReplacedOds(file, [cand('OLD')]).replaced).toEqual([{ od_number: 'OLD', od_item: '10', by: 'NEW' }])
+// 24/10 (user chốt): SO là MẸ, DO là CON — SO có trong file là BẢN CUỐI của SO đó; SO vắng file không đụng; đã xuất chỉ tính theo APP.
+// Thay luật 03/10 "khoảng phủ ngày tạo OD" (OD cũ ngoài khoảng ⇒ uncertain, cả A lẫn B + C cùng sống).
+describe('nạp ZSD02 theo SO — SO trong file là bản cuối, đã xuất (theo app) không bao giờ bị xoá', () => {
+  const line = (od: string, item = '10', so = 'S1') => ({ od_number: od, od_item: item, so_number: so, so_item: item })
+  const prior = (od: string, item = '10', so = 'S1') => ({ id: `${od}-${item}`, ...line(od, item, so) })
+  const noShip = new Set<string>()
+  it('SAP xoá A, tạo B + C cùng dòng SO ⇒ A xoá mềm, thay bằng B; hai cạnh SPLIT — SO chỉ còn B, C', () => {
+    const r = soScopedChanges([line('B'), line('C')], ['S1'], [prior('A')], noShip)
+    expect(r.obsolete).toEqual([{ id: 'A-10', od_number: 'A', od_item: '10', by: 'B' }])
+    expect(r.replaced).toEqual([['A', 'B']])
+    expect(r.gone).toEqual([])
+    expect(r.edges.map(e => [e.old_od, e.new_od, e.kind])).toEqual([['A', 'B', 'SPLIT'], ['A', 'C', 'SPLIT']])
   })
-  it('OD cũ VẪN có trong file (SO tách hai lần giao) ⇒ KHÔNG thay', () => {
-    expect(findReplacedOds([...file, { od_number: 'OLD', so_number: 'S1', so_item: '10', delivery_date: DAY }], [cand('OLD')]).replaced).toEqual([])
-  })
-  it('ngày giao OD cũ ngoài khoảng ngày của file (file cắt ngắn) ⇒ KHÔNG kết luận', () => {
-    expect(findReplacedOds(file, [cand('OLD', { delivery_date: '2026-09-20' })]).replaced).toEqual([])
-  })
-  it('khác dòng SO ⇒ KHÔNG thay', () => {
-    expect(findReplacedOds(file, [cand('OLD', { so_item: '20' })]).replaced).toEqual([])
-  })
-  it('OD cũ ĐÃ post ⇒ không bỏ, báo xung đột + phả hệ AFTER_POST (rào DB chặn OD mới đi ngày khác)', () => {
-    const r = findReplacedOds(file, [cand('OLD', { mat_doc: '49' })])
-    expect(r.replaced).toEqual([])
-    expect(r.shipped_conflicts).toEqual([{ od_number: 'OLD', by: 'NEW', so: 'S1/10' }])
-    expect(r.edges).toEqual([{ old_od: 'OLD', new_od: 'NEW', kind: 'AFTER_POST', so_number: 'S1', so_item: '10' }])
-  })
-  // 03/10 tối — KHOẢNG PHỦ theo NGÀY TẠO (SAP đổ ZSD02 theo ngày tạo; file lọc 2 ngày không chứa DO cũ chưa post thì vắng mặt không nói lên gì)
-  const c2 = (od: string, created: string, o: Partial<{ so_item: string; mat_doc: string | null }> = {}) => ({ ...cand(od, o), od_created_at: created })
-  const COV = { from: '2026-09-24', to: '2026-09-25' }
-  it('khai khoảng phủ: OD cũ tạo TRONG khoảng mà vắng ⇒ thay (bất kể ngày giao)', () => {
-    const r = findReplacedOds(file, [c2('OLD', '2026-09-24', {})], COV)
-    expect(r.replaced).toEqual([{ od_number: 'OLD', od_item: '10', by: 'NEW' }])
-    expect(r.edges).toEqual([{ old_od: 'OLD', new_od: 'NEW', kind: 'REPLACE', so_number: 'S1', so_item: '10' }])
-  })
-  it('OD cũ tạo NGOÀI khoảng ⇒ KHÔNG kết luận thay, chỉ tín hiệu uncertain (giao thêm hay thay? người quyết) — đỏ bản 25/09', () => {
-    const r = findReplacedOds(file, [c2('OLD', '2026-09-10')], COV)
-    expect(r.replaced).toEqual([])
-    expect(r.uncertain).toEqual([{ od_number: 'OLD', by: 'NEW', so: 'S1/10' }])
+  it('SO KHÔNG có trong file (nạp lẻ SO khác) ⇒ không đụng DO của SO đó', () => {
+    const r = soScopedChanges([line('X', '10', 'S9')], ['S9'], [prior('A')], noShip)
+    expect(r.obsolete).toEqual([])
     expect(r.edges).toEqual([])
   })
-  it('khai khoảng phủ nhưng OD cũ KHÔNG có ngày tạo (dòng nạp trước khi có cột) ⇒ rơi về luật ngày giao, không kẹt uncertain (review 03/10)', () => {
-    const r = findReplacedOds(file, [cand('OLD')], COV)            // ngày giao = DAY, trong khoảng ngày giao của file
-    expect(r.replaced).toEqual([{ od_number: 'OLD', od_item: '10', by: 'NEW' }])
-    expect(r.uncertain).toEqual([])
-    const r2 = findReplacedOds(file, [cand('OLD', { delivery_date: '2026-09-20' })], COV)   // ngoài khoảng ngày giao ⇒ vẫn uncertain
-    expect(r2.replaced).toEqual([])
-    expect(r2.uncertain).toEqual([{ od_number: 'OLD', by: 'NEW', so: 'S1/10' }])
+  it('SO có trong file chỉ ở dòng CHƯA có DO (SAP xoá DO, dòng SO mở lại) ⇒ DO cũ = SAP đã bỏ', () => {
+    const r = soScopedChanges([], ['S1'], [prior('A')], noShip)
+    expect(r.obsolete).toEqual([{ id: 'A-10', od_number: 'A', od_item: '10', by: null }])
+    expect(r.gone).toEqual(['A'])
   })
-  it('TÁCH 1 → N: một OD cũ vắng, hai OD mới cùng SO Item ⇒ hai cạnh SPLIT; `replaced.by` = OD mới đầu tiên', () => {
-    const two = [{ od_number: 'N1', so_number: 'S1', so_item: '10', delivery_date: DAY }, { od_number: 'N2', so_number: 'S1', so_item: '10', delivery_date: DAY }]
-    const r = findReplacedOds(two, [c2('OLD', '2026-09-24')], COV)
-    expect(r.replaced).toEqual([{ od_number: 'OLD', od_item: '10', by: 'N1' }])
-    expect(r.edges.map(e => [e.old_od, e.new_od, e.kind])).toEqual([['OLD', 'N1', 'SPLIT'], ['OLD', 'N2', 'SPLIT']])
+  it('A ĐÃ XUẤT theo app mà SAP xoá A, tạo B + C ⇒ A GIỮ NGUYÊN, cạnh AFTER_POST tới B và C (người quyết phần đã đi / giao thêm)', () => {
+    const r = soScopedChanges([line('B'), line('C')], ['S1'], [prior('A')], new Set(['A']))
+    expect(r.obsolete).toEqual([])
+    expect(r.replaced).toEqual([])
+    expect(r.kept_shipped).toEqual(['A'])
+    expect(r.edges.map(e => [e.old_od, e.new_od, e.kind])).toEqual([['A', 'B', 'AFTER_POST'], ['A', 'C', 'AFTER_POST']])
   })
-  it('GỘP N → 1: hai OD cũ vắng, một OD mới ⇒ hai cạnh MERGE', () => {
-    const r = findReplacedOds(file, [c2('O1', '2026-09-24'), c2('O2', '2026-09-25')], COV)
-    expect(r.replaced.map(x => x.od_number).sort()).toEqual(['O1', 'O2'])
-    expect(r.edges.map(e => [e.old_od, e.new_od, e.kind]).sort()).toEqual([['O1', 'NEW', 'MERGE'], ['O2', 'NEW', 'MERGE']])
+  it('SAP sửa A từ 100 xuống 80 + tạo C 20 (A còn trong file) ⇒ không xoá, không phả hệ (C là đơn thường)', () => {
+    const r = soScopedChanges([line('A'), line('C')], ['S1'], [prior('A')], noShip)
+    expect(r.obsolete).toEqual([])
+    expect(r.edges).toEqual([])
+  })
+  it('DO còn trong file nhưng MẤT một dòng ⇒ chỉ dòng đó xoá mềm, không phả hệ, không tính "SAP bỏ DO"', () => {
+    const r = soScopedChanges([line('A', '10')], ['S1'], [prior('A', '10'), prior('A', '20')], noShip)
+    expect(r.obsolete).toEqual([{ id: 'A-20', od_number: 'A', od_item: '20', by: null }])
+    expect(r.gone).toEqual([])
+    expect(r.edges).toEqual([])
+  })
+  it('khác dòng SO ⇒ không phải thay (A vắng ⇒ SAP bỏ)', () => {
+    const r = soScopedChanges([line('B', '20')], ['S1'], [prior('A', '10')], noShip)
+    expect(r.replaced).toEqual([])
+    expect(r.gone).toEqual(['A'])
+  })
+  it('GỘP N → 1: hai DO cũ vắng, một DO mới ⇒ hai cạnh MERGE', () => {
+    const r = soScopedChanges([line('N')], ['S1'], [prior('O1'), prior('O2')], noShip)
+    expect(r.replaced.map(x => x[0]).sort()).toEqual(['O1', 'O2'])
+    expect(r.edges.map(e => [e.old_od, e.new_od, e.kind]).sort()).toEqual([['O1', 'N', 'MERGE'], ['O2', 'N', 'MERGE']])
   })
 })
 

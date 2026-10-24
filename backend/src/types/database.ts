@@ -1,5 +1,5 @@
 // FILE SINH TỰ ĐỘNG — `node scripts/gen-db-types.mjs` (từ information_schema STAGING). KHÔNG sửa tay.
-// Sinh lúc 2026-10-24T02:24:32.180Z · 105 bảng/view · 208 hàm · 0 enum
+// Sinh lúc 2026-10-24T08:15:08.527Z · 107 bảng/view · 210 hàm · 0 enum
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[]
 
 export type Database = {
@@ -3764,6 +3764,45 @@ export type Database = {
         }
         Relationships: []
       }
+      erp_od_versions: {
+        Row: {
+          id: string
+          erp_id: string
+          od_number: string | null
+          od_item: string | null
+          so_number: string | null
+          changed_at: string
+          new_status: string | null
+          old_row: Json
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id: string
+          erp_id: string
+          od_number?: string | null
+          od_item?: string | null
+          so_number?: string | null
+          changed_at: string
+          new_status?: string | null
+          old_row: Json
+          created_at?: string
+          updated_at: string
+        }
+        Update: {
+          id?: string
+          erp_id?: string
+          od_number?: string | null
+          od_item?: string | null
+          so_number?: string | null
+          changed_at?: string
+          new_status?: string | null
+          old_row?: Json
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       erp_outbound_orders: {
         Row: {
           id: string
@@ -5825,6 +5864,57 @@ export type Database = {
         }
         Relationships: []
       }
+      zsd02_upload_log: {
+        Row: {
+          id: string
+          uploaded_at: string
+          uploaded_by: string | null
+          file_name: string | null
+          kind: string
+          plants: string[]
+          so_from: string | null
+          so_to: string | null
+          so_count: number
+          od_count: number
+          row_count: number
+          summary: Json | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id: string
+          uploaded_at: string
+          uploaded_by?: string | null
+          file_name?: string | null
+          kind: string
+          plants?: string[]
+          so_from?: string | null
+          so_to?: string | null
+          so_count?: number
+          od_count?: number
+          row_count?: number
+          summary?: Json | null
+          created_at?: string
+          updated_at: string
+        }
+        Update: {
+          id?: string
+          uploaded_at?: string
+          uploaded_by?: string | null
+          file_name?: string | null
+          kind?: string
+          plants?: string[]
+          so_from?: string | null
+          so_to?: string | null
+          so_count?: number
+          od_count?: number
+          row_count?: number
+          summary?: Json | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
     }
@@ -6309,6 +6399,10 @@ export type Database = {
         Args: { p_od: string | null }
         Returns: unknown
       }
+      ods_shipped_in_app: {
+        Args: { p_ods: unknown | null }
+        Returns: unknown
+      }
       omni_location_ids: {
         Args: { term: string | null }
         Returns: Record<string, unknown>[]
@@ -6550,7 +6644,7 @@ export type Database = {
         Returns: boolean
       }
       unaccent: {
-        Args: { arg1: unknown | null; arg2: string | null } | { arg1: string | null }
+        Args: { arg1: string | null } | { arg1: unknown | null; arg2: string | null }
         Returns: string
       }
       unaccent_init: {
@@ -6652,6 +6746,10 @@ export type Database = {
       zone_used_pallets: {
         Args: { p_wh_ids: unknown | null }
         Returns: Record<string, unknown>[]
+      }
+      zsd02_cover_gone: {
+        Args: { p_plants: unknown | null; p_from: string | null; p_to: string | null; p_file_sos: unknown | null }
+        Returns: Json
       }
       zsd02_coverage: {
         Args: { p_plant: string | null }

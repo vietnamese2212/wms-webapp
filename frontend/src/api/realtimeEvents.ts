@@ -77,6 +77,7 @@ const TABLE_QUERY_MAP: Record<string, string[][]> = {
   // bàn điều vận (sync · Xem đơn · dấu tay · chi tiết OD · hàng chờ) KHÔNG tải thẳng nữa (06/10) — `scheduleDispatchInputsCheck` hỏi dấu đầu vào của kho
   erp_outbound_orders: [['do-sap'], ['do-sap-facets'], ['khvc'], ['gdos-paged'], ['gdo'], ['gdo-events']],   // VL06O/ZSD02 về → chuyến chờ tự kích hoạt (không cần F5)
   erp_so_lines:        [['so-lines'], ['so-lines-summary']],   // sổ SO (dòng ZSD02 chưa có OD) — tab "Chưa có OD"
+  zsd02_upload_log:    [['zsd02-upload-log']],   // 24/10: sổ các lần nạp ZSD02 — hộp upload của người khác thấy lần nạp mới ngay
   vehicle_model:         [['vehicle-models']],                   // dòng xe CON mã SAP (23/09)
   warehouse_vehicle_model: [['vehicle-models']],                 // cấu hình riêng của KHO cho dòng xe (03/10) — cùng danh sách
   freight_tariff:        [['freight-tariffs']],                  // bảng cước

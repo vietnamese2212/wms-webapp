@@ -834,3 +834,19 @@ quan (như nút workflow trong SAP), bao gồm số chứng từ để đi searc
   SAP tách đơn 100 → 80 + 20 (Đổi số DO chọn DO ở lại xe; xe đã quét cho đổi số khi Tạm dừng) — hỏi user SAP tách lúc nào.
 - **Tab Kế hoạch mặc định lọc "Đã xác nhận"** (user 23/10). **"Xem đơn" không lập nháp thứ hai cho mảng đã xác nhận** (C95): `reuse` nhận cả
   bản đã xác nhận — Ba Vì 02/10 có nháp Trung chuyển thừa từ lỗi này, đã xoá mềm.
+
+## 24/10 chiều — ZSD02 THEO SO · "ĐÃ XUẤT" theo app · DO mới cùng dòng SO với đơn đã xuất (user chốt)
+
+Luật nạp ZSD02 mới ở [external_do_sap.md](external_do_sap.md) mục 24/10 (SO trong file = bản cuối, xoá mềm, Lẻ / Bao phủ theo NGÀY TẠO SO, sổ
+các lần nạp). Phần chạm bàn điều vận:
+- **"Đã xuất" chỉ theo APP** (chuyến Xuất kho hoàn thành) — Mat Doc / post SAP không có nghĩa. SAP xoá DO A ĐÃ XUẤT (vd xe chở 80 / 100) rồi
+  tạo B 80 + C 20 ⇒ A giữ nguyên, cạnh phả hệ AFTER_POST A→B, A→C ⇒ cờ cứng KIN_SHIPPED trên B, C (chặn Xác nhận, rào một ngày cho cả họ).
+- **B, C KHÔNG tự vào kế hoạch** (`kinPendingOds`): Sửa (`refresh-pool review_all`) để chúng ở Chờ điều, Tối ưu lại `review_all` bỏ qua, "Chọn N
+  đơn" ở Xem đơn không tick (tick tay vẫn được, nhưng cờ cứng chặn Xác nhận).
+- **Xem đơn → Cần xử lý**: việc "Cùng SO với đơn đã xuất" in số kho ĐÃ QUÉT cho A (`shipped_base`, RPC `dispatch_decisions` migration 20261024d) và
+  cho TỪNG DO mới hai nút **"Phần đã đi"** (dấu Ngoài app kèm lý do "Phần đã đi theo xe X (DO A…)", cạnh resolved OUTSIDE_APP) / **"Giao thêm"**
+  (resolved SUPPLEMENT, về Chờ điều như đơn thường); DO mới có số lượng = số đã quét được gợi ý "khớp số đã chở" (nút Phần đã đi là nút chính).
+- Gói 59 [7d] dựng chuyến hoàn thành chở A (SAP chưa post) ⇒ A giữ, hai cạnh AFTER_POST, việc KIN mang `shipped_base`.
+- **Còn trong Đợt 2 (user đã duyệt):** Đổi số DO chọn DO ở lại xe (DO còn lại về Chờ điều) · đổi số khi kho đã quét (Tạm dừng, phần đã quét
+  sang DO mới) · cờ "SAP sửa sau khi xuất" · hoãn từng đơn khi đơn máy chia 2 xe ⇒ chặn, mở khoá cả 2 xe. **Để sau:** nhập trả gắn chuyến gốc ·
+  cả xe quay về (user: "thi thoảng mới có").

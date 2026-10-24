@@ -11,7 +11,6 @@ import { reconcileFromSap, type OdKey } from '../../services/outboundReconcile'
 import { qtyIntegerError, type MatUnits } from '../../utils/qtyUnits'
 import { parseListParam } from '../../utils/httpQuery'
 import { isFlow } from '../../services/zsd02Parse'
-import { getZsd02CoverageMode } from '../../utils/settings'
 
 const now = () => new Date().toISOString()
 
@@ -280,7 +279,7 @@ export async function listDoSap(req: Request, res: Response) {
 
 // GET /external/do-sap/coverage?plant= — NGÀY TẠO CẦN PHỦ khi đổ ZSD02 (03/10 tối, user: "app biết đơn nào còn pending ⇒ bắt buộc file
 // phải có ngày tạo của chúng"). Đơn chưa đi theo lịch sử app (RPC zsd02_coverage): còn hiệu lực · lên xe được · chưa có chuyến Xuất
-// kho hoàn thành · chưa mang dấu Ngoài app. Trả theo cả ngày tạo OD lẫn ngày tạo SO (SAP lọc theo cột nào thì người đổ file biết).
+// kho hoàn thành · chưa mang dấu Ngoài app. Theo NGÀY TẠO SO (24/10) — dùng cho kiểu nạp Bao phủ.
 // GET coverage là GỢI Ý trên màn upload (không phải cửa gác — cửa gác nằm trong uploadZsd02 và đọc tươi): nhớ 60 s theo plant vì
 // RPC quét cả plant (Ba Vì 16k dòng) và trên staging bận đã 3 lần vượt 8 s trong ngày 03/10; mở hộp thoại hai lần không cần đếm lại.
 const coverageCache = new Map<string, { at: number; data: Record<string, unknown> }>()
@@ -299,11 +298,11 @@ export async function doSapCoverage(req: Request, res: Response) {
       cov = (data ?? {}) as Record<string, unknown>
       coverageCache.set(plant, { at: Date.now(), data: cov })
     }
-    const byOd = (cov.by_od_created ?? []) as { date: string; ods: number }[]
+    // 24/10: chỉ NGÀY TẠO SO (user chốt "mọi tính toán với ZSD02 dùng ngày tạo SO"); đơn chưa xuất cũ nhất để người nạp dọn tận gốc
     const bySo = (cov.by_so_created ?? []) as { date: string; ods: number }[]
     const span = (l: { date: string }[]) => (l.length ? { from: l[0].date, to: l[l.length - 1].date } : null)
-    return ok(res, { plant, mode: await getZsd02CoverageMode(), pending_ods: Number(cov.pending_ods) || 0, sap_posted_ods: Number(cov.sap_posted_ods) || 0, no_created_date: Number(cov.no_created_date) || 0,
-      by_od_created: byOd, by_so_created: bySo, od_span: span(byOd), so_span: span(bySo), sap_max_od_created: (cov.sap_max_od_created as string | null) ?? null })
+    return ok(res, { plant, pending_ods: Number(cov.pending_ods) || 0, no_so_date: Number(cov.no_so_date) || 0, no_so_date_ods: (cov.no_so_date_ods ?? []) as string[],
+      by_so_created: bySo, so_span: span(bySo), oldest: (cov.oldest ?? []) as { od_number: string; so_number: string; so_created: string }[] })
   } catch (e) { return failAny(res, e) }
 }
 

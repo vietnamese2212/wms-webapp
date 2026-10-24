@@ -14,6 +14,9 @@ router.get('/do-sap',              requirePerm('external_do_sap', 'view'),   erp
 router.get('/do-sap/facets',       requirePerm('external_do_sap', 'view'),   erp.doSapFacets)
 // 03/10 tối — ngày tạo cần phủ khi đổ ZSD02 (đơn chưa đi theo lịch sử app); màn upload và bàn điều vận cùng đọc
 router.get('/do-sap/coverage',     requireAnyPerm(['external_do_sap', 'view'], ['dispatch', 'view']), erp.doSapCoverage)
+// 24/10 — sổ các lần nạp ZSD02 (hộp upload + nhãn "bao phủ gần nhất" ở Điều vận) · lịch sử phiên bản một DO (xoá mềm / SAP sửa)
+router.get('/do-sap/upload-log',   requireAnyPerm(['external_do_sap', 'view'], ['dispatch', 'view']), validate({ query: zsd.zUploadLogQuery }), zsd.zsd02UploadLog)
+router.get('/do-sap/versions',     requireAnyPerm(['external_do_sap', 'view'], ['dispatch', 'view']), validate({ query: zsd.zVersionsQuery }), zsd.doSapVersions)
 // Nạp ZSD02 (22/09) — nguồn DO thay VL06O; cùng quyền với cửa VL06O (outbound.import hoặc external_do_sap.create)
 router.post('/do-sap/upload-zsd02', requireAnyPerm(['outbound', 'import'], ['external_do_sap', 'create']),
   validate({ query: z.object({ preflight: z.enum(['1']).optional() }) }), excelUpload.single('file'), excelFromStorage, zsd.uploadZsd02)

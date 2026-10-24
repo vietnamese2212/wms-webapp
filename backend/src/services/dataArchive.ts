@@ -22,7 +22,7 @@ import type { Json } from '../types/database'
 export const ARCHIVE_BUCKET = 'ledger-archive'
 export type ArchiveGroup = 'ledger' | 'logs' | 'sap_lines'
 export type ArchiveTask = ArchiveGroup | 'sap_raw'
-export type ArchiveTable = 'outbound_events' | 'admin_audit_events' | 'alert_events' | 'erp_outbound_orders' | 'erp_so_lines'
+export type ArchiveTable = 'outbound_events' | 'admin_audit_events' | 'alert_events' | 'erp_outbound_orders' | 'erp_so_lines' | 'erp_od_versions'
 type Spec = { table: ArchiveTable; group: ArchiveGroup; time: string; label: string }
 export const ARCHIVE_SPECS: readonly Spec[] = [
   { table: 'outbound_events',     group: 'ledger',    time: 'created_at',  label: 'Sổ vết điều vận' },
@@ -30,6 +30,7 @@ export const ARCHIVE_SPECS: readonly Spec[] = [
   { table: 'alert_events',        group: 'logs',      time: 'resolved_at', label: 'Cảnh báo đã đóng' },
   { table: 'erp_outbound_orders', group: 'sap_lines', time: 'created_at',  label: 'Dòng DO SAP (ZSD02 / VL06O)' },
   { table: 'erp_so_lines',        group: 'sap_lines', time: 'created_at',  label: 'Dòng SO chưa có OD (ZSD02)' },
+  { table: 'erp_od_versions',     group: 'sap_lines', time: 'created_at',  label: 'Lịch sử phiên bản dòng DO SAP' },   // 24/10 — xoá mềm / SAP sửa
 ]
 const PART_ROWS = 20_000, PAGE_ROWS = 5_000, RAW_BATCH = 2_000, LEASE_S = 180
 const PART_RE = /^(\d{4}-\d{2})(?:\.p(\d+))?\.csv\.gz$/

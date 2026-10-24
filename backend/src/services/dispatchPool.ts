@@ -120,65 +120,62 @@ export function holdsToCarry(oldHolds: HoldRow[], pairs: [string, string][], exi
   return out
 }
 
-/** SO sửa ⇒ SAP bỏ OD cũ, sinh OD mới cho CÙNG (SO, item). Chỉ kết luận "đã thay" khi có bằng chứng trong CHÍNH file:
- *  OD cũ vắng file · cùng (SO, item) có OD mới trong file · OD cũ NẰM TRONG KHOẢNG PHỦ của file · OD cũ chưa xuất kho (đã xuất thì
- *  không "thay" được, chỉ cảnh báo).
- *  KHOẢNG PHỦ (03/10 tối): SAP đổ ZSD02 theo NGÀY TẠO, nên khoảng phủ = khoảng ngày tạo OD người khai khi nạp (`coverage`). OD cũ tạo
- *  NGOÀI khoảng mà vắng file thì vắng mặt không nói lên điều gì ⇒ chỉ là TÍN HIỆU `uncertain` ("cùng SO Item có DO mới — thay hay giao
- *  thêm?") cho người quyết — bản cũ kết luận "thay" ngay nên đơn GIAO THÊM (DO cũ chưa post vẫn còn ở SAP) bị đánh bỏ oan. Không có
- *  `coverage` thì rơi về luật cũ: ngày giao OD cũ trong khoảng ngày giao của file.
- *  PHẢ HỆ (`edges`): mỗi cặp (OD cũ → OD mới) kèm loại — REPLACE 1→1 · SPLIT 1→N · MERGE N→1 · AFTER_POST (OD cũ đã post) — để ghi
- *  `od_lineage`; rào DB chống một đơn đi hai ngày kiểm trên cả họ. */
-export interface ReplaceCandidate { od_number: string; od_item: string; so_number: string | null; so_item: string | null; delivery_date: string | null; mat_doc: string | null; qty_issued_base: number | string | null; od_created_at?: string | null }
+/** NẠP ZSD02 THEO SO (24/10, user chốt — thay luật "khoảng phủ ngày tạo OD" 03/10): SO là MẸ, DO là CON. SO nào CÓ trong file thì file
+ *  là BẢN CUỐI của SO đó ⇒ dòng DO (od, item) của SO đó mà vắng file bị XOÁ MỀM; SO không có trong file thì không đụng (nạp lẻ vài SO là
+ *  bình thường). Ngoại lệ DUY NHẤT: DO ĐÃ XUẤT theo APP (chuyến Xuất kho hoàn thành — `shipped`; Mat Doc / post SAP không có nghĩa) thì
+ *  không bao giờ bị xoá mềm.
+ *  • DO vắng HẲN file mà cùng (SO, item) có DO mới ⇒ "SAP thay" (`by` = DO mới đầu tiên) + cạnh phả hệ: REPLACE 1→1 · SPLIT 1→N ·
+ *    MERGE N→1; DO cũ đã xuất ⇒ cạnh AFTER_POST (DO mới cùng dòng SO với DO đã đi — có thể là CHÍNH phần đã đi mang số mới, có thể là
+ *    giao thêm: người quyết ở Điều vận, rào DB giữ một ngày cho cả họ tới khi quyết).
+ *  • DO vắng hẳn, không DO mới ⇒ SAP đã bỏ (`by` null).
+ *  • DO còn trong file nhưng mất dòng ⇒ chỉ dòng đó xoá mềm, không phả hệ (DO vẫn sống).
+ *  `fileSos` = mọi SO trong file, kể cả dòng SO CHƯA có DO (SAP xoá DO thì dòng SO vẫn còn, chỉ không còn số DO). */
+export interface PriorLine { id: string; od_number: string; od_item: string; so_number: string | null; so_item: string | null }
 export type LineageKind = 'REPLACE' | 'SPLIT' | 'MERGE' | 'AFTER_POST'
 export interface LineageEdge { old_od: string; new_od: string; kind: LineageKind; so_number: string; so_item: string }
-export function findReplacedOds(
-  fileOds: { od_number: string; so_number: string | null; so_item: string | null; delivery_date: string | null }[],
-  prior: ReplaceCandidate[],
-  coverage?: { from: string; to: string } | null,
-): { replaced: { od_number: string; od_item: string; by: string }[]; shipped_conflicts: { od_number: string; by: string; so: string }[]; edges: LineageEdge[]; uncertain: { od_number: string; by: string; so: string }[] } {
-  const fileDos = new Set(fileOds.map(r => r.od_number))
+export interface SoScopedChanges {
+  obsolete: { id: string; od_number: string; od_item: string; by: string | null }[]
+  replaced: [string, string][]          // (DO cũ, DO mới đầu tiên) — DO cũ vắng hẳn file, chưa xuất
+  gone: string[]                        // DO vắng hẳn file, chưa xuất, không DO mới
+  kept_shipped: string[]                // DO vắng file nhưng ĐÃ XUẤT ⇒ giữ nguyên
+  edges: LineageEdge[]
+}
+export function soScopedChanges(
+  fileLines: { od_number: string; od_item: string; so_number: string | null; so_item: string | null }[],
+  fileSos: Iterable<string>,
+  prior: PriorLine[],
+  shipped: ReadonlySet<string>,
+): SoScopedChanges {
+  const sos = new Set(fileSos)
+  const fileKeys = new Set(fileLines.map(r => `${r.od_number}__${r.od_item}`))
+  const fileDos = new Set(fileLines.map(r => r.od_number))
   const newBySo = new Map<string, string[]>()
-  for (const r of fileOds) if (r.so_number && r.so_item) { const k = `${r.so_number}__${r.so_item}`; const l = newBySo.get(k) ?? []; if (!l.includes(r.od_number)) l.push(r.od_number); newBySo.set(k, l) }
-  const dates = fileOds.map(r => r.delivery_date).filter((x): x is string => !!x).sort()
-  const lo = dates[0], hi = dates[dates.length - 1]
-  // OD cũ không có ngày tạo (dòng nạp trước khi có cột — staging 03/10: 14 OD Ba Vì) thì rơi về luật ngày giao, không thì nó
-  // mãi mãi chỉ là `uncertain`: OD cũ giữ ACTIVE, không có cạnh phả hệ ⇒ rào DB mù với họ đó (review 03/10)
-  const byDelivery = (p: ReplaceCandidate) => !!lo && !!p.delivery_date && p.delivery_date >= lo && p.delivery_date <= hi
-  const covered = (p: ReplaceCandidate) => coverage
-    ? (p.od_created_at ? p.od_created_at >= coverage.from && p.od_created_at <= coverage.to : byDelivery(p))
-    : byDelivery(p)
-  const replaced: { od_number: string; od_item: string; by: string }[] = []
-  const shipped_conflicts: { od_number: string; by: string; so: string }[] = []
-  const uncertain: { od_number: string; by: string; so: string }[] = []
-  // gom OD cũ vắng file theo SO Item để biết thay 1→1 · tách 1→N · gộp N→1
-  const oldsBySo = new Map<string, ReplaceCandidate[]>()
+  for (const r of fileLines) if (r.so_number && r.so_item) { const k = `${r.so_number}__${r.so_item}`; const l = newBySo.get(k) ?? []; if (!l.includes(r.od_number)) l.push(r.od_number); newBySo.set(k, l) }
+  const out: SoScopedChanges = { obsolete: [], replaced: [], gone: [], kept_shipped: [], edges: [] }
+  const oldsBySo = new Map<string, string[]>()   // (SO, item) → DO cũ vắng hẳn file (chưa xuất + đã xuất)
+  const goneCand = new Set<string>(), repl = new Map<string, string>(), kept = new Set<string>()
   for (const p of prior) {
-    if (fileDos.has(p.od_number) || !p.so_number || !p.so_item) continue
-    const k = `${p.so_number}__${p.so_item}`
-    const news = (newBySo.get(k) ?? []).filter(n => n !== p.od_number)
-    if (!news.length) continue
-    const so = `${p.so_number}/${p.so_item}`
-    if (!covered(p)) { if (!uncertain.some(x => x.od_number === p.od_number)) uncertain.push({ od_number: p.od_number, by: news[0], so }); continue }
-    if ((p.mat_doc && String(p.mat_doc).trim()) || Number(p.qty_issued_base ?? 0) > 0) {
-      if (!shipped_conflicts.some(x => x.od_number === p.od_number)) shipped_conflicts.push({ od_number: p.od_number, by: news[0], so })
-      const l = oldsBySo.get(k) ?? []; if (!l.some(x => x.od_number === p.od_number)) l.push(p); oldsBySo.set(k, l)
-      continue
-    }
-    replaced.push({ od_number: p.od_number, od_item: p.od_item, by: news[0] })
-    const l = oldsBySo.get(k) ?? []; if (!l.some(x => x.od_number === p.od_number)) l.push(p); oldsBySo.set(k, l)
+    if (!p.so_number || !sos.has(p.so_number) || fileKeys.has(`${p.od_number}__${p.od_item}`)) continue
+    const k = `${p.so_number}__${p.so_item ?? ''}`
+    const whole = !fileDos.has(p.od_number)
+    const news = whole && p.so_item ? (newBySo.get(k) ?? []).filter(n => n !== p.od_number) : []
+    if (whole && news.length) { const l = oldsBySo.get(k) ?? []; if (!l.includes(p.od_number)) l.push(p.od_number); oldsBySo.set(k, l) }
+    if (shipped.has(p.od_number)) { kept.add(p.od_number); continue }
+    out.obsolete.push({ id: p.id, od_number: p.od_number, od_item: p.od_item, by: news[0] ?? null })
+    if (!whole) continue
+    if (news.length) { if (!repl.has(p.od_number)) repl.set(p.od_number, news[0]) } else goneCand.add(p.od_number)
   }
-  const edges: LineageEdge[] = []
   for (const [k, olds] of oldsBySo) {
-    const news = (newBySo.get(k) ?? []).filter(n => !olds.some(o => o.od_number === n))
+    const news = (newBySo.get(k) ?? []).filter(n => !olds.includes(n))
     const [so_number, so_item] = k.split('__')
     const kind: LineageKind = news.length > 1 && olds.length === 1 ? 'SPLIT' : olds.length > 1 && news.length === 1 ? 'MERGE' : 'REPLACE'
-    for (const o of olds) {
-      const posted = (o.mat_doc && String(o.mat_doc).trim()) || Number(o.qty_issued_base ?? 0) > 0
-      for (const n of news) edges.push({ old_od: o.od_number, new_od: n, kind: posted ? 'AFTER_POST' : kind, so_number, so_item })
-    }
+    for (const o of olds) for (const n of news) out.edges.push({ old_od: o, new_od: n, kind: shipped.has(o) ? 'AFTER_POST' : kind, so_number, so_item })
   }
-  return { replaced, shipped_conflicts, edges, uncertain }
+  out.replaced = [...repl.entries()]
+  // một DO nhiều dòng: có dòng được thay thì DO là "thay", không đếm thêm vào "SAP bỏ"
+  out.gone = [...goneCand].filter(od => !repl.has(od))
+  out.kept_shipped = [...kept]
+  return out
 }
 
 /** KHOẢNG NGÀY tính tỷ trọng ĐVVT đã chạy (22/10): đầu tháng → TRƯỚC ngày của kế hoạch (`.lt(before)`). Không đếm chính ngày đó — xoá

@@ -307,7 +307,10 @@ export async function uploadZsd02(req: Request, res: Response) {
         ...plantCoverage.map(p => ({ label: `Đơn chưa xuất plant ${p.plant}`, value: p.missing.length ? `${p.pending_ods} · thiếu ${p.missing.length} ngày tạo SO` : `${p.pending_ods} · phủ đủ`, warn: p.missing.length > 0 })),
         { label: 'Phân loại', value: Object.entries(st.flows).map(([k, v]) => `${k} ${v}`).join(' · ') },
       ]
-      return ok(res, { ...buildPreflight({ unit: 'dòng', total: st.rows, toInsert: odInserted + soInserted, toUpdate: odUpdated + soUpdated, skipped: st.skipped, errors: [...unitErrors, ...coverageErrors], warnings, extra }),
+      // XOÁ MỀM cũng là ghi — đếm vào "cập nhật" (24/10 tối: file bao phủ y hệt hôm qua trừ 1 SO SAP đã xoá ⇒ will_write 0 ⇒ nút Xác nhận
+      // tắt "Không có gì mới", SO đó không bao giờ xoá được)
+      const softDrops = sc.obsolete.length + soObsoleteIds.length + coverGone.length
+      return ok(res, { ...buildPreflight({ unit: 'dòng', total: st.rows, toInsert: odInserted + soInserted, toUpdate: odUpdated + soUpdated + softDrops, skipped: st.skipped, errors: [...unitErrors, ...coverageErrors], warnings, extra }),
         coverage: { kind, declared, file_range: fileRange, plants: plantCoverage, gone_blocked: goneBlocked, gone: goneList } })
     }
 

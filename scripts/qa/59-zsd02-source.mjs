@@ -414,6 +414,14 @@ try {
     && (await restAll('erp_outbound_orders', `select=sync_status&od_number=eq.QA59OD5`))[0]?.sync_status === 'ACTIVE',
     `http=${up7g.s} ${up7g.j?.error?.message?.slice(0, 120) ?? ''} old=${old7g?.sync_status} gone_sos=${up7g.j?.data?.od?.cover_gone_sos}`)
 
+  // [7g1] lượt nạp CHỈ có xoá mềm (file y hệt lần trước, 1 SO SAP đã xoá) ⇒ kiểm trước phải đếm phần xoá vào will_write — bản đầu 0 ⇒ nút
+  //       Xác nhận tắt "Không có gì mới", SO đó không bao giờ xoá được (C102)
+  await restWrite('erp_outbound_orders', 'POST', null, { id: randomUUID(), od_number: 'QA59OLD2', od_item: '10', so_number: 'QA59SOOLD2', so_item: '10', material_code: FIX.MAT_POOL, qty_base: 1, ship_to_code: SHIPTO, ship_to_name: 'QA59 KHÁCH TEST', ward_code: WARD, plant: PLANT_C, so_created_at: OLD_SO, flow: 'SALE', source: 'EXCEL', sync_status: 'ACTIVE', last_synced_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+  const pf7g1 = await upload('/external/do-sap/upload-zsd02?preflight=1', xlsxOf(rowsC), 'qa59-7g1.xlsx', { kind: 'COVER', created_from: lo, created_to: hi, confirm_gone: '1' })
+  check('7g1. Bao phủ y hệt lần trước chỉ có 1 SO SAP đã xoá + đã tick ⇒ kiểm trước will_write ≥ 1 (nút Xác nhận bấm được), 0 lỗi',
+    pf7g1.s === 200 && (pf7g1.j?.data?.errors_total ?? -1) === 0 && pf7g1.j?.data?.to_insert === 0 && pf7g1.j?.data?.will_write >= 1 && pf7g1.j?.data?.coverage?.gone?.total === 1,
+    `pf=${pf7g1.s} errors=${pf7g1.j?.data?.errors_total} ins=${pf7g1.j?.data?.to_insert} will=${pf7g1.j?.data?.will_write} gone=${pf7g1.j?.data?.coverage?.gone?.total}`)
+
   const cov7 = await api(`/external/do-sap/coverage?plant=${PLANT_C}`)
   const log7 = await api(`/external/do-sap/upload-log?plant=${PLANT_C}`)
   const logP = await api(`/external/do-sap/upload-log?plant=${PLANT}&limit=50`)

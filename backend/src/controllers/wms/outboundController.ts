@@ -4845,7 +4845,7 @@ export async function uploadVl06o(req: Request, res: Response) {
       // Báo cáo CHUẨN (utils/uploadPreflight) — cùng khuôn với mọi upload khác. Lỗi đơn vị lệch hệ
       // thống là lỗi CHẶN (all-or-nothing) nên đưa vào errors → nút Xác nhận tự tắt.
       return ok(res, buildPreflight({
-        unit: 'dòng', total: rows.length, toInsert: inserted, toUpdate: updated, skipped: skippedNoKey,
+        unit: 'dòng', total: rows.length, toInsert: inserted, toUpdate: updated + removedKeys.length, skipped: skippedNoKey,   // xoá mềm dòng SAP bỏ cũng là ghi (C102)
         errors: [...unitErrs.values()].map(u =>
           `Mã ${u.material_code} (${u.material_name}) — ${u.kind} trong file "${u.file_value}" ≠ hệ thống "${u.system_value}"`),
         warnings,

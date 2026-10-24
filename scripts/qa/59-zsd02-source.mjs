@@ -438,6 +438,16 @@ try {
       up7i.s === 200 && lin6.map(l => `${l.new_od}:${l.kind}`).join(',') === 'QA59OD6B:SPLIT,QA59OD6C:SPLIT'
       && bad.s === 409 && bad.j?.error?.code === 'OUTBOUND_WORK_BLOCKS' && kh0.map(k => k.do_no).join(',') === OD6,
       `up=${up7i.s} lin=${JSON.stringify(lin6)} bad=${bad.s}/${bad.j?.error?.code} ${(bad.j?.error?.message ?? '').slice(0, 120)} kh=${kh0.map(k => k.do_no)}`)
+    // dòng Kế hoạch xuất thiếu loại xe ⇒ chuyến bên Xuất TỪ CHỐI dựng lại theo DO mới ⇒ cửa đổi số phải HOÀN TÁC (bản đầu 24/10: trả 200 kèm
+    // replan_error, Kế hoạch xuất mang B trong khi chuyến Tạm dừng vẫn mang A — đo ở lượt chạy đầu của chính phép này)
+    const rej = await ren(['QA59OD6B'])
+    const khRej = await restAll('khvc_lines', `select=do_no&group_code=eq.${GC_R}&sync_status=neq.OBSOLETE`)
+    const linRej = await restAll('od_lineage', `select=new_od,resolved_at&old_od=eq.${OD6}`)
+    check('7j0. Chuyến bên Xuất từ chối dựng lại theo DO mới (dòng thiếu loại xe) ⇒ 409 DERIVE_REJECTED, HOÀN TÁC: Kế hoạch xuất vẫn A, phả hệ chưa giải quyết',
+      rej.s === 409 && rej.j?.error?.code === 'DERIVE_REJECTED' && khRej.map(k => k.do_no).join(',') === OD6 && linRej.length === 2 && linRej.every(l => !l.resolved_at),
+      `rej=${rej.s}/${rej.j?.error?.code} ${(rej.j?.error?.message ?? '').slice(0, 140)} kh=${khRej.map(k => k.do_no)} lin=${JSON.stringify(linRej)}`)
+    const veh = (await restAll('VehicleType', 'select=name&is_active=eq.true&order=name&limit=1'))[0]?.name
+    await restWrite('khvc_lines', 'PATCH', `group_code=eq.${GC_R}`, { veh_type: veh, updated_at: new Date().toISOString() })
     const good = await ren(['QA59OD6B'])
     const kh1 = await restAll('khvc_lines', `select=do_no&group_code=eq.${GC_R}&sync_status=neq.OBSOLETE`)
     const linC = (await restAll('od_lineage', `select=resolution,resolved_at&old_od=eq.${OD6}&new_od=eq.QA59OD6C`))[0]

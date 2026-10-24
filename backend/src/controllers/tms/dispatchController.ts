@@ -3871,10 +3871,24 @@ export async function renumberKhvc(req: Request, res: Response) {
     // bàn điều vận: dòng OD trên xe đã xác nhận đổi số theo (chỉ DO mới thứ nhất — phần tách thêm nằm trong KH xuất, bàn không dựng lại xe đã chốt)
     const tripOds = await tripOdRowsOfGroup(b.group_code, b.od_number)
     if (tripOds.length) { const { error } = await db.from('dispatch_trip_od').update({ od_number: newOds[0], updated_at: t }).in('id', tripOds.map(o => o.id).slice(0, 100)); if (error) throw error }
+    const { replan, replan_error } = await replanSafe(req, [b.group_code], 'khvc renumber', { deriveErr: true, keepWork })
+    // 24/10: chuyến bên Xuất TỪ CHỐI dựng lại theo DO mới (thiếu dữ liệu dòng xe / kho đã làm vừa đổi…) ⇒ HOÀN TÁC, không để Kế hoạch xuất mang
+    // DO mới trong khi chuyến (có thể đang Tạm dừng, đã quét) vẫn mang DO cũ — cổng SAP sẽ khoá kho mà không ai biết vì sao
+    const der = replan?.derive as { status?: number } | null | undefined
+    if (der?.status && der.status >= 400) {
+      const undo = [
+        db.from('khvc_lines').update({ do_no: b.od_number, updated_at: now() }).in('id', lines.map(l => l.id).slice(0, 50)),   // ≤50: đọc limit 50
+        ...(extra.length ? [db.from('khvc_lines').delete().in('id', extra.map(x => x.id).slice(0, 20))] : []),   // ≤20: new_ods tối đa 20 (zod)
+        db.from('od_lineage').update({ resolved_at: null, resolved_by: null, resolution: null, updated_at: now() }).eq('old_od', b.od_number).eq('resolved_at', t),
+        ...(tripOds.length ? [db.from('dispatch_trip_od').update({ od_number: b.od_number, updated_at: now() }).in('id', tripOds.map(o => o.id).slice(0, 100))] : []),   // ≤100: đọc limit 100
+      ]
+      const bad = (await Promise.all(undo)).find(r => r.error)
+      if (bad?.error) throw bad.error
+      return fail(res, 409, 'DERIVE_REJECTED', `Chuyến bên Xuất của Số xe ${b.group_code} không dựng lại được theo DO mới — đã hoàn tác, Kế hoạch xuất giữ DO ${b.od_number}. Lý do: ${replan_error ?? 'không rõ'}`)
+    }
     const gdo = (await gdosOfGroups([b.group_code])).get(b.group_code)
     await logOutboundEvents([{ group_code: b.group_code, gdo_id: gdo?.id ?? null, event_type: 'PLAN_DO_RENUMBERED', source: 'PLAN', actor, do_number: newOds[0],
       old_value: b.od_number, new_value: newOds.join(', '), detail: `Điều vận đổi số DO ${b.od_number} → ${newOds.join(', ')} trên Số xe ${b.group_code} (SAP thay DO)${toPool.length ? ` — ${toPool.join(', ')} về Chờ điều` : ''}${keepWork.length ? ' — giữ phần kho đã làm' : ''}` }])
-    const { replan, replan_error } = await replanSafe(req, [b.group_code], 'khvc renumber', { deriveErr: true, keepWork })
     return ok(res, { from: b.od_number, to: newOds, to_pool: toPool, kept_work: keepWork.length > 0, group_code: b.group_code, lines: lines.length + extra.length, trip_rows_renumbered: tripOds.length, replan, replan_error })
   } catch (e) { return failAny(res, e) }
 }

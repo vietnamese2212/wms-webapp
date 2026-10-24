@@ -856,6 +856,9 @@ các lần nạp). Phần chạm bàn điều vận:
     kế hoạch SAU khi đổi số — đang xuất ⇒ 409 "kho bấm Tạm dừng"; Tạm dừng / đã quét ⇒ đường gộp giữ hàng (`replanSafe keepWork` →
     `mergePausedGDO`: khớp NPP + mã, `delivery_code` + `od_refs` sang DO mới, số đã quét giữ — KHÔNG quét lại); kế hoạch mới < phần đã quét
     ⇒ 409 `OUTBOUND_WORK_BLOCKS`, không ghi gì; hoàn thành ⇒ chặn (đơn đã xuất quyết ở Cần xử lý). Cần xử lý hiện nút Đổi số cả khi chuyến Tạm dừng.
+    Chuyến bên Xuất TỪ CHỐI dựng lại theo DO mới (vd dòng Kế hoạch xuất thiếu loại xe) ⇒ cửa đổi số HOÀN TÁC (Kế hoạch xuất · phả hệ · dòng
+    bàn về DO cũ) và trả 409 `DERIVE_REJECTED` — bản đầu trả 200 + `replan_error`, để Kế hoạch xuất mang B trong khi chuyến Tạm dừng vẫn mang A
+    (gói 59 [7j0] bắt ở lượt chạy đầu).
   - **Hoãn / Ngoài app đơn máy chia nhiều xe**: hai cửa gỡ MỌI phần của đơn (một đơn một ngày) ⇒ phần trên xe ĐANG KHOÁ bị kéo theo không ai
     mở xe đó — nay 409 `OD_SPLIT_ACROSS_TRIPS` "Đơn X đang chia N xe (#a, #b) — mở khoá cả N xe…" (luật thuần `dispatchPool.splitOnLocked`, test);
     đổi ngày từng đơn trên bàn kiểm trước khi mở khoá xe.

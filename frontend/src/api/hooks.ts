@@ -6402,13 +6402,19 @@ export function useConfirmSupplementDispatchOds() {
 }
 /** HÀNG CHỜ "CẦN XỬ LÝ" của điều vận (03/10 đợt 2): DO đã vào Kế hoạch xuất mà SAP bỏ (GONE) / thay (REPLACED) · họ hàng của DO đã
  *  đi (KIN) · SAP đổi số lượng sau khi kho quét (QTY, việc ở Dữ liệu bên ngoài). Tính sống theo KHO, không theo kế hoạch. */
-export interface DispatchDecisionNewOd { od: string; kind: string | null; active: boolean; in_khvc: boolean; outside: boolean; on_vehicle: boolean; delivery_date: string | null; qty_base: number | string | null; same_customer: boolean }
+/** Quy cách của mã khi DO chỉ có MỘT mã (25/10) — để in "N thùng + M hộp"; null = nhiều mã ⇒ in số quy đổi */
+export interface DispatchDecisionMat { base_unit: string | null; entry_unit: string | null; units_per_carton: number | null }
+export interface DispatchDecisionNewOd { od: string; kind: string | null; active: boolean; in_khvc: boolean; outside: boolean; on_vehicle: boolean; delivery_date: string | null; qty_base: number | string | null; same_customer: boolean
+  /** 25/10: Σ base ÷ thùng của TỪNG mã (mã không entry giữ base) */
+  qty_entry?: number | string | null; mat?: DispatchDecisionMat | null }
 export interface DispatchDecision {
   od_number: string; kind: 'GONE' | 'REPLACED' | 'KIN' | 'QTY' | 'SHIPTO'; group_code: string; export_date: string | null; gdo_id: string | null; gdo_status: string | null
   detected_at: string | null; ship_to_code: string | null; ship_to_name: string | null; qty_base: number | string | null; sap_pallets: number | string | null; delivery_date: string | null
   new_ods: DispatchDecisionNewOd[]; all_free: boolean; same_content: boolean; any_merge: boolean; detail: string | null; task_id: string | null; action: string | null
   /** KIN (24/10): số base kho ĐÃ QUÉT cho DO cũ trên chuyến — gợi ý DO mới nào là "phần đã đi" (cùng số lượng) */
   shipped_base?: number | string | null
+  /** 25/10: cùng số đó quy đổi thùng TỪNG mã + quy cách khi DO một mã — để hiển thị (shipped_base chỉ dùng so khớp) */
+  shipped_entry?: number | string | null; shipped_mat?: DispatchDecisionMat | null
 }
 export function useDispatchDecisions(warehouseId: string | null, enabled = true) {
   return useQuery({

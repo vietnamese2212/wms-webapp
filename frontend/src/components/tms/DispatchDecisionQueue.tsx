@@ -19,11 +19,15 @@ import { StatusBadge, type BadgeTone } from '@/components/shared/StatusBadge'
 import { ListFooter } from '@/components/shared/ListPager'
 import { useConfirmDialog } from '@/components/shared/ConfirmDialog'
 import { toast } from '@/components/ui/use-toast'
-import { useDispatchDecisions, useRemoveKhvcOd, useRenumberKhvcOd, useOutsideDispatchOds, useConfirmSupplementDispatchOds, type DispatchDecision } from '@/api/hooks'
+import { useDispatchDecisions, useRemoveKhvcOd, useRenumberKhvcOd, useOutsideDispatchOds, useConfirmSupplementDispatchOds, type DispatchDecision, type DispatchDecisionMat } from '@/api/hooks'
 import { formatDateTime } from '@/utils/formatters'
+import { qtyLabel, QTY_CONVERTED_TIP } from '@/utils/qtyUnits'
 import { useCanSeePath } from '@/hooks/useCanSeePath'
 
 const nf = (n: number | string | null | undefined, d = 0) => (n == null ? '—' : Number(n).toLocaleString('vi-VN', { maximumFractionDigits: d }))
+/** Số của việc KIN (25/10, luật BASE UNIT): DO một mã ⇒ "N thùng + M hộp"; nhiều mã ⇒ số quy đổi thùng TỪNG mã rồi cộng (không in base thô) */
+const kinQty = (base: number | string | null | undefined, entry: number | string | null | undefined, mat: DispatchDecisionMat | null | undefined) =>
+  mat ? { text: qtyLabel(Number(base ?? 0), mat), tip: undefined } : { text: `${nf(entry ?? base, 2)} (SL quy đổi)`, tip: QTY_CONVERTED_TIP }
 const apiMsg = (e: unknown) => (e as AxiosError<{ error?: { message?: string } }>)?.response?.data?.error?.message ?? 'Không thực hiện được'
 const TD = 'px-2 py-1 text-[10px] align-top'
 const dmy = (d: string | null | undefined) => (d ? `${d.slice(8, 10)}/${d.slice(5, 7)}/${d.slice(2, 4)}` : '—')
@@ -167,14 +171,14 @@ export function DispatchDecisionQueue({ warehouseId, planId, canAct, canPlan }: 
                     )}
                     {r.kind === 'KIN' && (
                       <div className="space-y-1">
-                        {r.shipped_base != null && <div className="text-slate-600">Xe đã chở <b className="tabular-nums">{nf(r.shipped_base, 3)}</b> (đơn vị gốc) dưới DO {r.od_number}.</div>}
+                        {r.shipped_base != null && (() => { const q = kinQty(r.shipped_base, r.shipped_entry, r.shipped_mat); return <div className="text-slate-600">Xe đã chở <b className="tabular-nums" title={q.tip}>{q.text}</b> dưới DO {r.od_number}.</div> })()}
                         {canPlan && planId ? r.new_ods.map(n => {
                           // gợi ý: DO mới có số lượng ĐÚNG bằng số đã quét của DO cũ ⇒ nhiều khả năng là phần đã đi
                           const likelyShipped = r.shipped_base != null && n.qty_base != null && Math.abs(Number(n.qty_base) - Number(r.shipped_base)) < 0.5
                           return (
                             <div key={n.od} className="flex flex-wrap items-center gap-1.5">
                               <span className="font-mono">{n.od}</span>
-                              {n.qty_base != null && <span className="text-slate-500 tabular-nums">{nf(n.qty_base, 3)}</span>}
+                              {n.qty_base != null && (() => { const q = kinQty(n.qty_base, n.qty_entry, n.mat); return <span className="text-slate-500 tabular-nums" title={q.tip}>{q.text}</span> })()}
                               {likelyShipped && <StatusBadge tone="blue" title="Số lượng DO mới bằng số kho đã quét cho DO cũ trên chuyến">khớp số đã chở</StatusBadge>}
                               <Button size="sm" variant={likelyShipped ? 'default' : 'outline'} className="h-7 text-[11px]" disabled={busy} onClick={() => void doShippedPart(r, n.od)} title="Chính hàng xe đã chở, SAP đổi số — không giao nữa">Phần đã đi</Button>
                               <Button size="sm" variant={likelyShipped ? 'outline' : 'default'} className="h-7 text-[11px]" disabled={busy} onClick={() => void doSupplement(r, n.od)} title="Phần còn lại / giao bổ sung — điều như đơn thường">Giao thêm</Button>

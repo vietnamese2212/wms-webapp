@@ -373,8 +373,10 @@ try {
   check('7d. A ĐÃ XUẤT theo app (chuyến hoàn thành, SAP chưa post) mà SAP xoá A tạo B + C ⇒ A GIỮ ACTIVE (kept_shipped 1) · cạnh AFTER_POST A→B, A→C · Cần xử lý có việc KIN mang số đã quét = 8 thùng',
     up7d.s === 200 && od4?.sync_status === 'ACTIVE' && up7d.j?.data?.od?.kept_shipped === 1
     && lin4.map(l => `${l.new_od}:${l.kind}`).join(',') === 'QA59OD4B:AFTER_POST,QA59OD4C:AFTER_POST'
-    && !!kin && Math.abs(Number(kin.shipped_base) - 8 * factor) < 0.01 && kin.new_ods?.length === 2,
-    `http=${up7d.s} od4=${od4?.sync_status} kept=${up7d.j?.data?.od?.kept_shipped} lin=${JSON.stringify(lin4)} dec=${dec.s} kin=${kin ? `${kin.shipped_base}/${kin.new_ods?.length}` : '✗'}`)
+    && !!kin && Math.abs(Number(kin.shipped_base) - 8 * factor) < 0.01 && kin.new_ods?.length === 2
+    // 25/10: số HIỂN THỊ quy đổi thùng từng mã (8 thùng, không phải 8 × hệ số hộp) + quy cách mã để FE in "N thùng + M hộp"
+    && Math.abs(Number(kin.shipped_entry) - 8) < 0.01 && !!kin.shipped_mat && kin.new_ods.every(n => n.mat && Number(n.qty_entry) > 0),
+    `http=${up7d.s} od4=${od4?.sync_status} kept=${up7d.j?.data?.od?.kept_shipped} lin=${JSON.stringify(lin4)} dec=${dec.s} kin=${kin ? `${kin.shipped_base}/${kin.shipped_entry}/${JSON.stringify(kin.shipped_mat)}/${kin.new_ods?.map(n => n.qty_entry).join('+')}` : '✗'}`)
 
   // [7e] BAO PHỦ thiếu ngày tạo SO của đơn chưa xuất (plant giả QA59P: QA59OLD tạo OLD_SO, file chỉ SO_CREATED) ⇒ kiểm trước lỗi, ghi 422
   const OLD_SO = new Date(Date.now() + 20 * 86400000).toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })   // ≠ SO_CREATED

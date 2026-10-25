@@ -1960,7 +1960,12 @@ try {
     const syS = await api(`/tms/dispatch/plans/${SID}/sync`)
     const flS = (syS.j?.data?.flags ?? []).find(x => x.od_number === ODSUP)
     const rS = rowOf(pS.j?.data, ODSUP)
-    const mvS = rS ? await api(`/tms/dispatch/plans/${SID}/reoptimize`, 'POST', { review_all: true }) : { s: 0, j: null }   // máy ghép ODSUP lên xe (có dòng xe/ĐVVT) rồi mới thử Xác nhận
+    // 24/10 (user chốt): máy KHÔNG tự ghép đơn họ hàng đã đi (kinPendingOds) — "Tối ưu lại" xem hết để ODSUP ở khung chờ; người kéo tay
+    // vào "Xe mới" + Tối ưu lại (giữ đơn đã kéo, gán dòng xe) thì Xác nhận vẫn chặn 409. Bản 03/10 để máy tự ghép ODSUP lên xe.
+    const roAll = rS ? await api(`/tms/dispatch/plans/${SID}/reoptimize`, 'POST', { review_all: true }) : { s: 0, j: null }
+    const supOnTrip = ((await planOf(SID))?.trips ?? []).some(t => t.ods.some(o => o.od_number === ODSUP))
+    const mvS0 = rS ? await api(`/tms/dispatch/plans/${SID}/move`, 'POST', { ids: [rS.id], to: 'new' }) : { s: 0, j: null }
+    const mvS = mvS0.s === 200 ? await api(`/tms/dispatch/plans/${SID}/reoptimize`, 'POST', {}) : mvS0
     const cfS = await api(`/tms/dispatch/plans/${SID}/confirm`, 'POST', {})
     const eS1 = await railErr('khvc_lines', khRow(ODSUP, 'QA61RAIL_S1', DAY2))
     const sup404 = await api(`/tms/dispatch/plans/${SID}/confirm-supplement`, 'POST', { od_numbers: ['QA61KHONGCO'] })
@@ -1977,12 +1982,13 @@ try {
       decK.s === 200 && !!kinRow && kinRow.group_code === gcA && (kinRow.new_ods ?? []).some(n => n.od === ODSUP) && decK2.s === 200 && !qa61(decK2).some(r => r.kind === 'KIN' && r.od_number === OD[0]),
       `dec=${decK.s} row=${JSON.stringify(kinRow ?? null)?.slice(0, 200)} after=${qa61(decK2).filter(r => r.kind === 'KIN').length}`)
     check('17c2. HỌ HÀNG ĐÃ ĐI: OD mới cùng dòng SO với OD đã đi → khung chờ nháp ngày khác, cờ KIN_SHIPPED nêu DO cũ + xe · Xác nhận 409 OD_CHANGED_IN_SAP · rào DB chặn vào KH xuất ngày khác · OD lạ 404 · không cạnh 422 NOT_KIN · "Xác nhận đơn bổ sung" → cạnh resolved SUPPLEMENT có người, cờ tắt, rào cho qua',
-      pS.s === 201 && !!rS && flS?.kind === 'KIN_SHIPPED' && (flS?.info ?? '').includes(OD[0]) && mvS.s === 200
+      pS.s === 201 && !!rS && flS?.kind === 'KIN_SHIPPED' && (flS?.info ?? '').includes(OD[0]) && !supOnTrip && mvS0.s === 200 && mvS.s === 200
       && cfS.s === 409 && cfS.j?.error?.code === 'OD_CHANGED_IN_SAP' && /OD_ALREADY_PLANNED/.test(eS1 ?? '')
       && sup404.s === 404 && sup422.s === 422 && sup422.j?.error?.code === 'NOT_KIN'
       && supOk.s === 200 && supOk.j?.data?.supplement?.edges === 1 && !!edge?.resolved_at && edge?.resolution === 'SUPPLEMENT' && !!edge?.resolved_by
       && !(syS2.j?.data?.flags ?? []).some(x => x.od_number === ODSUP) && eS2 === null,
-      `plan=${pS.s} inPool=${!!rS} flag=${JSON.stringify(flS ?? null)?.slice(0, 160)} move=${mvS.s} confirm=${cfS.s}/${cfS.j?.error?.code} rail1=${(eS1 ?? 'KHÔNG CHẶN').slice(0, 60)} 404=${sup404.s} 422=${sup422.s}/${sup422.j?.error?.code} ok=${supOk.s} ${supOk.j?.error?.message ?? ''} edge=${JSON.stringify(edge ?? null)} flagAfter=${(syS2.j?.data?.flags ?? []).some(x => x.od_number === ODSUP)} rail2=${eS2 ? eS2.slice(0, 60) : 'ok'}`)
+      `plan=${pS.s} inPool=${!!rS} flag=${JSON.stringify(flS ?? null)?.slice(0, 160)} roAll=${roAll.s} supOnTrip=${supOnTrip} move=${mvS0.s}/${mvS.s} ${mvS.j?.error?.message?.slice(0, 80) ?? ''} confirm=${cfS.s}/${cfS.j?.error?.code} ${cfS.s !== 409 ? (cfS.j?.error?.message ?? '').slice(0, 100) : ''}`
+      + ` rail1=${(eS1 ?? 'KHÔNG CHẶN').slice(0, 60)} 404=${sup404.s} 422=${sup422.s}/${sup422.j?.error?.code} ok=${supOk.s} ${supOk.j?.error?.message ?? ''} edge=${JSON.stringify(edge ?? null)} flagAfter=${(syS2.j?.data?.flags ?? []).some(x => x.od_number === ODSUP)} rail2=${eS2 ? eS2.slice(0, 60) : 'ok'}`)
     await restWrite('erp_outbound_orders', 'DELETE', `od_number=eq.${ODSUP}`).catch(() => {})
     await cleanupTrips()
     // khung chờ TỰ DO, xe thì khoá: nháp 16/03 và nháp 17/03 cùng kho đều thấy OD1 ở khung chờ; ghép ở A ⇒ OD rời khung chờ B

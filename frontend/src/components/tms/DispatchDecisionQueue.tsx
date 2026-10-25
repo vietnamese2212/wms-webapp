@@ -108,15 +108,17 @@ export function DispatchDecisionQueue({ warehouseId, planId, canAct, canPlan }: 
     try { await sup.mutateAsync({ plan_id: planId, od_numbers: [od] }); toast({ title: `${od} xác nhận giao thêm` }) } catch (e) { err(e, 'Không xác nhận được') }
   }
 
+  // 25/10 (thử nghiệm thu ở 1280): cột "Xử lý" đứng CUỐI thì bảng 1.508 px đẩy nút "Phần đã đi / Giao thêm" ra ngoài vùng nhìn (~1.015 px) —
+  // đưa lên ngay sau "Việc" để DO · việc · nút luôn thấy ở mọi cỡ màn (ghim phải 360 px sẽ đè gần hết bảng ở điện thoại)
   const cols: RtColDef[] = [
     { id: 'od', label: 'DO', w: 104 },
     { id: 'kind', label: 'Việc', w: 160 },
+    { id: 'act', label: 'Xử lý', w: 360 },
     { id: 'trip', label: 'Chuyến bên Xuất', w: 220 },
     { id: 'date', label: 'Ngày xuất', w: 84 },
     { id: 'cust', label: 'Khách', w: 200 },
     { id: 'new', label: 'DO mới', w: 260 },
     { id: 'at', label: 'Phát hiện', w: 120 },
-    { id: 'act', label: 'Xử lý', w: 360 },
   ]
   const path = 'xoá các QR đã quét (hoàn tồn) → Bỏ bắt đầu → rồi gỡ Số xe ở đây → ghép DO mới trên bàn'
 
@@ -127,7 +129,7 @@ export function DispatchDecisionQueue({ warehouseId, planId, canAct, canPlan }: 
         {q.isError && <button type="button" className="rounded bg-amber-100 px-2 h-7 text-amber-900" onClick={() => void q.refetch()} disabled={q.isFetching}>{q.isFetching ? 'Đang tải…' : 'Chưa tải được (hệ thống bận) · Thử lại'}</button>}
       </div>
       <div className="flex-1 min-h-0 overflow-auto pb-4">
-        <ResizableTable storageKey="dispatch_decisions_cols_v1" cols={cols}>
+        <ResizableTable storageKey="dispatch_decisions_cols_v2" cols={cols}>
           <TableBody>
             {!rows.length && <TableEmptyRow colSpan={cols.length}>{q.isLoading ? 'Đang tải…' : 'Không có việc nào cần xử lý — mọi đơn đã vào Kế hoạch xuất vẫn khớp ZSD02.'}</TableEmptyRow>}
             {rows.map(r => {
@@ -138,29 +140,6 @@ export function DispatchDecisionQueue({ warehouseId, planId, canAct, canPlan }: 
                 <TableRow key={key} className="hover:bg-slate-50">
                   <TableCell className={`${TD} font-mono font-semibold sticky left-0 z-10 bg-white`}>{r.od_number}</TableCell>
                   <TableCell className={TD}><StatusBadge tone={k.tone} title={k.tip}>{k.label}</StatusBadge>{fromReconcile(r.kind) && r.detail && <div className="mt-0.5 text-slate-600 whitespace-normal">{r.detail}</div>}</TableCell>
-                  <TableCell className={TD}>
-                    <div className="font-mono">{r.group_code}</div>
-                    <StatusBadge tone={st.tone}>{st.label}</StatusBadge>
-                    {r.gdo_id && canOutbound && <Link to={`/wms/outbound/${r.gdo_id}`} className="ml-1.5 text-sky-700 hover:underline">Mở chuyến</Link>}
-                  </TableCell>
-                  <TableCell className={`${TD} tabular-nums`}>{dmy(r.export_date)}</TableCell>
-                  <TableCell className={`${TD} whitespace-normal`}>{r.ship_to_name ?? r.ship_to_code ?? <span className="text-slate-300">—</span>}{r.sap_pallets != null && Number(r.sap_pallets) > 0 && <span className="ml-1 text-slate-500">· {nf(r.sap_pallets, 1)} pallet</span>}</TableCell>
-                  <TableCell className={`${TD} whitespace-normal`}>
-                    {r.new_ods.length ? r.new_ods.map(n => (
-                      <div key={n.od} className="flex flex-wrap items-center gap-1">
-                        <span className="font-mono font-medium">{n.od}</span>
-                        {n.kind && <span className="text-slate-500">{n.kind === 'SPLIT' ? 'tách' : n.kind === 'MERGE' ? 'gộp' : n.kind === 'PARTIAL' ? 'tách một phần' : n.kind === 'AFTER_POST' ? 'sau khi post' : 'thay'}</span>}
-                        {n.delivery_date && <span className="text-slate-500">· giao {dmy(n.delivery_date)}</span>}
-                        {!n.same_customer && <StatusBadge tone="red">khác khách</StatusBadge>}
-                        {!n.active && <StatusBadge tone="slate">không còn ACTIVE</StatusBadge>}
-                        {n.in_khvc && <StatusBadge tone="green">đã vào KH xuất</StatusBadge>}
-                        {n.on_vehicle && <StatusBadge tone="purple">đang trên xe nháp</StatusBadge>}
-                        {n.outside && <StatusBadge tone="slate">Ngoài app</StatusBadge>}
-                      </div>
-                    )) : <span className="text-slate-300">—</span>}
-                    {r.kind === 'REPLACED' && r.same_content && <div className="text-green-700">cùng khách · cùng tổng SL</div>}
-                  </TableCell>
-                  <TableCell className={`${TD} tabular-nums whitespace-normal`}>{r.detected_at ? formatDateTime(r.detected_at) : '—'}</TableCell>
                   <TableCell className={`${TD} whitespace-normal`}>
                     {fromReconcile(r.kind) && <Link to="/external?tab=reconcile" className="text-sky-700 hover:underline">Mở Dữ liệu bên ngoài → Cần xử lý</Link>}
                     {!fromReconcile(r.kind) && st.col === 'C' && (r.kind !== 'REPLACED' || r.gdo_status !== 'PAUSED') && (
@@ -205,6 +184,29 @@ export function DispatchDecisionQueue({ warehouseId, planId, canAct, canPlan }: 
                       </div>
                     )}
                   </TableCell>
+                  <TableCell className={TD}>
+                    <div className="font-mono">{r.group_code}</div>
+                    <StatusBadge tone={st.tone}>{st.label}</StatusBadge>
+                    {r.gdo_id && canOutbound && <Link to={`/wms/outbound/${r.gdo_id}`} className="ml-1.5 text-sky-700 hover:underline">Mở chuyến</Link>}
+                  </TableCell>
+                  <TableCell className={`${TD} tabular-nums`}>{dmy(r.export_date)}</TableCell>
+                  <TableCell className={`${TD} whitespace-normal`}>{r.ship_to_name ?? r.ship_to_code ?? <span className="text-slate-300">—</span>}{r.sap_pallets != null && Number(r.sap_pallets) > 0 && <span className="ml-1 text-slate-500">· {nf(r.sap_pallets, 1)} pallet</span>}</TableCell>
+                  <TableCell className={`${TD} whitespace-normal`}>
+                    {r.new_ods.length ? r.new_ods.map(n => (
+                      <div key={n.od} className="flex flex-wrap items-center gap-1">
+                        <span className="font-mono font-medium">{n.od}</span>
+                        {n.kind && <span className="text-slate-500">{n.kind === 'SPLIT' ? 'tách' : n.kind === 'MERGE' ? 'gộp' : n.kind === 'PARTIAL' ? 'tách một phần' : n.kind === 'AFTER_POST' ? 'sau khi post' : 'thay'}</span>}
+                        {n.delivery_date && <span className="text-slate-500">· giao {dmy(n.delivery_date)}</span>}
+                        {!n.same_customer && <StatusBadge tone="red">khác khách</StatusBadge>}
+                        {!n.active && <StatusBadge tone="slate">không còn ACTIVE</StatusBadge>}
+                        {n.in_khvc && <StatusBadge tone="green">đã vào KH xuất</StatusBadge>}
+                        {n.on_vehicle && <StatusBadge tone="purple">đang trên xe nháp</StatusBadge>}
+                        {n.outside && <StatusBadge tone="slate">Ngoài app</StatusBadge>}
+                      </div>
+                    )) : <span className="text-slate-300">—</span>}
+                    {r.kind === 'REPLACED' && r.same_content && <div className="text-green-700">cùng khách · cùng tổng SL</div>}
+                  </TableCell>
+                  <TableCell className={`${TD} tabular-nums whitespace-normal`}>{r.detected_at ? formatDateTime(r.detected_at) : '—'}</TableCell>
                 </TableRow>
               )
             })}

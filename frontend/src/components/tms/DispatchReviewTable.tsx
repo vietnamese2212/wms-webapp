@@ -85,7 +85,7 @@ type Row = {
 const when = (at: string | null | undefined) => (at ? `${formatTimestampDate(at, true)} ${formatTimestampTime(at, false)}` : '')
 const KHVC_SRC_VI: Record<string, string> = { DISPATCH: 'xác nhận điều vận', EXCEL: 'upload Kế hoạch xuất', MANUAL: 'nhập / sửa tay' }
 const noVehOf = (o: { allowed_models?: string[] | null }) => Array.isArray(o.allowed_models) && !o.allowed_models.length
-const EX_VI: Record<string, string> = { IN_PLAN: 'Đã có trong KH xuất', OTHER_DRAFT: 'Đang xếp ở nháp khác', SAP_ASSIGNED: 'SAP đã gắn xe', SHIPPED: 'SAP đã post', REDO_DISPATCHED: 'DO tạo lại – đã điều', NO_MATERIAL: 'Mã chưa khai trong Mã hàng', OUTSIDE_APP: 'Ngoài app' }
+const EX_VI: Record<string, string> = { IN_PLAN: 'Đã có trong KH xuất', OTHER_DRAFT: 'Đang xếp ở nháp khác', SAP_ASSIGNED: 'SAP đã gắn xe', SHIPPED: 'Posted', REDO_DISPATCHED: 'DO tạo lại – đã điều', NO_MATERIAL: 'Mã chưa khai trong Mã hàng', OUTSIDE_APP: 'Ngoài app' }
 /** Cờ SAP chỉ THAM CHIẾU (03/10 tối) — vàng, không đỏ: SAP nói đã post / đã gắn xe, app vẫn điều vì chưa ai đánh dấu Ngoài app.
  *  MỘT nguồn với bộ đếm "cần xử lý" + cửa Xác nhận (06/10, C53 lặp: dispatchIssues còn đếm cờ mềm) */
 const SOFT_FLAG = SOFT_FLAG_KINDS
@@ -598,7 +598,7 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped, canAct =
             <button type="button" onClick={() => setSoftOnly(v => !v)} aria-pressed={softOnly}
               className={`inline-flex items-center gap-1 rounded-md px-2 h-9 sm:h-7 text-[11px] ${softOnly ? 'bg-amber-600 text-white' : 'bg-amber-50 text-amber-900 hover:bg-amber-100'}`}
               title="Đơn SAP báo ĐÃ POST (Mat Doc) hoặc ĐÃ GẮN XE — chỉ là tham chiếu. Đúng là đã đi thì lọc, bấm 'Chọn N đơn đang hiện' rồi 'Ngoài app' một lần.">
-              {softOnly ? 'Đang xem' : 'Chỉ'} {nf(softN)} đơn SAP đã post / gắn xe
+              {softOnly ? 'Đang xem' : 'Chỉ'} {nf(softN)} đơn Posted / SAP đã gắn xe
             </button>
           )}
           {st === 'DONE' && (
@@ -730,7 +730,7 @@ export function DispatchReviewTable({ plan, editable, flags, onGrouped, canAct =
         {st !== 'DAY' && <Button size="sm" variant="outline" className={FLOATING_BTN} disabled={busy} onClick={() => openDlg('DAY')}><CalendarClock className="h-3.5 w-3.5 mr-1" />Không điều ngày này</Button>}
         {st === 'DAY' && <Button size="sm" variant="outline" className={FLOATING_BTN} disabled={busy} onClick={() => openDlg('DAY')}><CalendarClock className="h-3.5 w-3.5 mr-1" />Đổi ngày điều lại</Button>}
         {st !== 'NEVER' && <Button size="sm" variant="outline" className={FLOATING_BTN} disabled={busy} onClick={() => openDlg('NEVER')}><Ban className="h-3.5 w-3.5 mr-1" />Không điều</Button>}
-        {st !== 'OUTSIDE' && <Button size="sm" variant="outline" className={FLOATING_BTN} disabled={busy} onClick={() => openDlg('OUTSIDE')} title="Đơn đã xử lý ngoài app (SAP tự gắn xe · điều tay · trước khi dùng app) — rời tab Điều, không tính vào ngày tạo cần phủ"><Ban className="h-3.5 w-3.5 mr-1" />Ngoài app{selPosted ? ` (${selPosted} SAP đã post)` : ''}</Button>}
+        {st !== 'OUTSIDE' && <Button size="sm" variant="outline" className={FLOATING_BTN} disabled={busy} onClick={() => openDlg('OUTSIDE')} title="Đơn đã xử lý ngoài app (SAP tự gắn xe · điều tay · trước khi dùng app) — rời tab Điều, không tính vào ngày tạo cần phủ"><Ban className="h-3.5 w-3.5 mr-1" />Ngoài app{selPosted ? ` (${selPosted} Posted)` : ''}</Button>}
         <Button size="sm" variant="outline" className={FLOATING_BTN} onClick={() => setSel(new Set())}>Bỏ chọn</Button>
       </FloatingActionBar>
       </>}

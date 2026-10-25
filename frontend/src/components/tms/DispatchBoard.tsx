@@ -449,7 +449,7 @@ export function DispatchBoard({ plan, editable, flags, work, onOpenTrip, focusTr
   // 05/10: đơn mang dấu tay (Không điều · Ngoài app) không còn chép vào kế hoạch — xem / chuyển ở tab Xem đơn; dòng cũ của kế hoạch lập trước đó bỏ qua
   const excluded = (plan.params.excluded ?? []).filter(x => x.kind !== 'HELD' && x.kind !== 'OUTSIDE_APP')
   const exBy = excluded.reduce<Record<string, number>>((m, x) => { m[x.kind] = (m[x.kind] ?? 0) + 1; return m }, {})
-  const EX_VI: Record<string, string> = { IN_PLAN: 'đã có trong Kế hoạch xuất', OTHER_DRAFT: 'nằm ở nháp ngày khác', SAP_ASSIGNED: 'SAP đã điều', SHIPPED: 'đã xuất kho', REDO_DISPATCHED: 'DO tạo lại – đã điều', NO_MATERIAL: 'mã chưa khai trong Mã hàng' }
+  const EX_VI: Record<string, string> = { IN_PLAN: 'đã có trong Kế hoạch xuất', OTHER_DRAFT: 'nằm ở nháp ngày khác', SAP_ASSIGNED: 'SAP đã điều', SHIPPED: 'Posted trong SAP', REDO_DISPATCHED: 'DO tạo lại – đã điều', NO_MATERIAL: 'mã chưa khai trong Mã hàng' }
 
   // (29/09: chip Pallet / Xá của OD bỏ — kiểu đi không còn là cấu hình; dòng xe khách được vào quyết tất cả)
 

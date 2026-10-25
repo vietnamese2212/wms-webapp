@@ -2065,7 +2065,8 @@ async function odFlags(odNos: string[], ownGroupCodes: string[], snaps: Map<stri
       if (qty || note || ship) { out.push({ od_number: od, kind: 'CHANGED', info: [qty ? 'SAP đã sửa số lượng / dòng hàng' : null, note ? `ghi chú giao hàng đổi thành «${cur ?? 'trống'}»` : null, ship ? `SAP đổi khách giao ${normShipTo(snap.ship_to)} → ${shipNow[0]}` : null].filter(Boolean).join(' · ') }); continue }
     }
     const sh = live.find(r => (r.mat_doc && String(r.mat_doc).trim()) || Number(r.qty_issued_base ?? 0) > 0)
-    if (sh) { out.push({ od_number: od, kind: 'SHIPPED', info: `đã xuất kho${sh.mat_doc ? ` (${sh.mat_doc})` : ''}` }); continue }
+    // 25/10 (user): nhãn "Posted" — chỉ là tình trạng SAP; "đã xuất" chỉ tính theo chuyến Xuất kho hoàn thành trong app
+    if (sh) { out.push({ od_number: od, kind: 'SHIPPED', info: `đã post trong SAP${sh.mat_doc ? ` (Mat Doc ${sh.mat_doc})` : ''} — chỉ là tình trạng SAP; đơn đã xuất hay chưa tính theo chuyến Xuất kho hoàn thành trong app` }); continue }
     const as = live.find(r => r.sap_dispatch_status === 'ASSIGNED')
     if (as) out.push({ od_number: od, kind: 'SAP_ASSIGNED', info: `SAP đã điều: ${[as.dvvt_raw, as.license_plate].filter(Boolean).join(' · ') || 'đã điều phối'}` })
   }
@@ -2254,7 +2255,7 @@ async function replaceOdInner(req: Request, res: Response) {
       const od = cand.ods.find(o => o.od_number === newOd)
       if (!od) {
         const ex = cand.excluded.find(x => x.od_number === newOd)
-        return fail(res, 409, 'NEW_OD_NOT_AVAILABLE', `OD mới ${newOd} không đưa vào được${ex ? ` — ${ex.kind === 'SAP_ASSIGNED' ? 'SAP đã điều' : ex.kind === 'SHIPPED' ? 'đã xuất kho' : ex.kind === 'IN_PLAN' ? 'đã có trong Kế hoạch xuất' : 'đang nằm ở nháp khác'}${ex.info ? ` (${ex.info})` : ''}` : ' (chưa có trong ZSD02 hoặc không thuộc kho này)'}.`)
+        return fail(res, 409, 'NEW_OD_NOT_AVAILABLE', `OD mới ${newOd} không đưa vào được${ex ? ` — ${ex.kind === 'SAP_ASSIGNED' ? 'SAP đã điều' : ex.kind === 'SHIPPED' ? 'Posted trong SAP' : ex.kind === 'IN_PLAN' ? 'đã có trong Kế hoạch xuất' : 'đang nằm ở nháp khác'}${ex.info ? ` (${ex.info})` : ''}` : ' (chưa có trong ZSD02 hoặc không thuộc kho này)'}.`)
       }
       await insertOdRows([odRow(plan.id, tripId, wholeOd(od), cand.meta.get(newOd), t, rev)])
     }

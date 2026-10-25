@@ -288,7 +288,8 @@ export const lockAsk = (t: Pick<DispatchTrip, 'seq' | 'pallets' | 'ods' | 'detai
 })
 export const FLAG_VI: Record<DispatchOdFlag['kind'], string> = {
   // 03/10 tối: SHIPPED / SAP_ASSIGNED là cờ THAM CHIẾU (không loại đơn, không chặn Xác nhận) — chữ phải nói "SAP nói vậy", không khẳng định hàng đã đi
-  REPLACED: 'SAP đã thay', GONE: 'SAP đã bỏ', SHIPPED: 'SAP đã post', SAP_ASSIGNED: 'SAP đã gắn xe', IN_PLAN: 'Đã vào KH xuất', CHANGED: 'SAP đã sửa',
+  // 25/10 (user): SHIPPED ghi "Posted", tooltip giải thích là post trong SAP (info từ BE)
+  REPLACED: 'SAP đã thay', GONE: 'SAP đã bỏ', SHIPPED: 'Posted', SAP_ASSIGNED: 'SAP đã gắn xe', IN_PLAN: 'Đã vào KH xuất', CHANGED: 'SAP đã sửa',
   KIN_SHIPPED: 'Họ hàng đã đi',   // 03/10: OD cùng dòng SO với OD đã đi — cờ CỨNG, người bấm "Xác nhận đơn bổ sung" ở tab Xem đơn mới đi được
   WH_SCANNED: 'Kho đã quét',      // 17/10: hàng đã quét bên Xuất trên chuyến của xe đã rút — về đúng xe cũ hoặc kho trả hàng
 }

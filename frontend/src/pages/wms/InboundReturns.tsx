@@ -74,10 +74,11 @@ export default function InboundReturns() {
 
   const defs: FilterDef[] = [
     { key: 'date', label: 'Ngày', type: 'daterange', from: f.dateFrom, to: f.dateTo, onChange: (a, b) => setF({ dateFrom: a, dateTo: b, page: 1 }), pinned: true },
-    { key: 'wh', label: 'Kho', type: 'single', options: (warehouses as { id: string; name: string }[]).map(w => ({ value: w.id, label: w.name })), value: f.warehouseId || '__all__', onChange: v => setF({ warehouseId: v === '__all__' ? '' : v, page: 1 }) },
-    { key: 'kind', label: 'Dạng', type: 'single', options: [{ value: 'RT', label: KIND_VI.RT }, { value: 'NPP', label: KIND_VI.NPP }], value: f.kind || '__all__', onChange: v => setF({ kind: v === '__all__' ? '' : v, page: 1 }) },
-    { key: 'reason', label: 'Lý do', type: 'single', options: [...reasons.map(r => ({ value: r.value, label: r.meta?.label?.trim() || r.value })), { value: '__NONE__', label: 'Chưa gắn lý do' }], value: f.reason || '__all__', onChange: v => setF({ reason: v === '__all__' ? '' : v, page: 1 }) },
-    { key: 'recall', label: 'Đợt thu hồi', type: 'single', options: recalls.map(r => ({ value: r.id, label: `${r.code}${r.status === 'CLOSED' ? ' (đã đóng)' : ''}` })), value: f.recallId || '__all__', onChange: v => setF({ recallId: v === '__all__' ? '' : v, page: 1 }), pinned: true },
+    // single: '' = tất cả (hợp đồng FilterBar)
+    { key: 'wh', label: 'Kho', type: 'single', options: (warehouses as { id: string; name: string }[]).map(w => ({ value: w.id, label: w.name })), value: f.warehouseId, onChange: v => setF({ warehouseId: v, page: 1 }) },
+    { key: 'kind', label: 'Dạng', type: 'single', options: [{ value: 'RT', label: KIND_VI.RT }, { value: 'NPP', label: KIND_VI.NPP }], value: f.kind, onChange: v => setF({ kind: v, page: 1 }) },
+    { key: 'reason', label: 'Lý do', type: 'single', options: [...reasons.map(r => ({ value: r.value, label: r.meta?.label?.trim() || r.value })), { value: '__NONE__', label: 'Chưa gắn lý do' }], value: f.reason, onChange: v => setF({ reason: v, page: 1 }) },
+    { key: 'recall', label: 'Đợt thu hồi', type: 'single', options: recalls.map(r => ({ value: r.id, label: `${r.code}${r.status === 'CLOSED' ? ' (đã đóng)' : ''}` })), value: f.recallId, onChange: v => setF({ recallId: v, page: 1 }), pinned: true },
   ]
 
   function exportExcel() {
@@ -109,16 +110,15 @@ export default function InboundReturns() {
           <div className="hidden sm:flex"><FilterBar defs={defs} /></div>
         </div>
         {recallSel && <RecallStrip recall={recallSel} />}
+        {/* RT / NPP tách theo bộ lọc "Dạng" — dải giữ 7 ô để nhãn không bị cắt ở 1280 */}
         <SummaryBand tiles={[
-          { label: 'Phiếu', value: nf(sum?.phieu) },
-          { label: 'RT', value: nf(sum?.rt), tip: 'Phiếu kho lập (theo chuyến gốc / lập tay)' },
-          { label: 'NPP chuyển về', value: nf(sum?.npp), tip: 'Chuyến NPP xuất về kho chính (phiếu nhận chuyển kho từ kho loại NPP)' },
-          { label: `Khai ${QTY_CONVERTED_LABEL}`, value: nf(sum?.declared), tip: QTY_CONVERTED_TIP },
-          { label: `Thực nhận ${QTY_CONVERTED_LABEL}`, value: nf(sum?.received), tip: QTY_CONVERTED_TIP },
-          { label: 'Thừa', value: nf(sum?.surplus), tip: 'Nhận vượt số tem đã xuất trên chuyến gốc (thùng quy đổi) — chuyến chỉ tính trả về tới số đã xuất' },
-          { label: 'Pallet giữ QA', value: nf(sum?.held_pallets) },
+          { label: 'Phiếu', value: nf(sum?.phieu), tip: `${nf(sum?.rt)} phiếu RT (kho lập) · ${nf(sum?.npp)} chuyến NPP chuyển về` },
+          { label: 'Khai', value: nf(sum?.declared), tip: `${QTY_CONVERTED_LABEL} — ${QTY_CONVERTED_TIP}` },
+          { label: 'Thực nhận', value: nf(sum?.received), tip: `${QTY_CONVERTED_LABEL} — ${QTY_CONVERTED_TIP}` },
+          { label: 'Thừa', value: nf(sum?.surplus), tip: `${QTY_CONVERTED_LABEL} — nhận vượt số tem đã xuất trên chuyến gốc; chuyến chỉ tính trả về tới số đã xuất` },
+          { label: 'Giữ QA', value: nf(sum?.held_pallets), tip: 'Số pallet của phiếu trả đang giữ QA (chưa xuất được)' },
           { label: 'Đang nhận', value: nf(sum?.open) },
-          { label: 'Chưa gắn lý do', value: nf(sum?.no_reason), tip: 'Thường là hàng NPP chuyển về chưa gắn — mở phiếu để gắn lý do / đợt' },
+          { label: 'Chưa lý do', value: nf(sum?.no_reason), danger: Number(sum?.no_reason ?? 0) > 0, tip: 'Thường là hàng NPP chuyển về chưa gắn — mở phiếu để gắn lý do / đợt' },
         ]} />
         <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
           <ResizableTable storageKey="inbound_returns_cols_v1" cols={COLS}>

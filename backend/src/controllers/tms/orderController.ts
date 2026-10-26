@@ -1494,6 +1494,9 @@ export async function createOneInbound(req: Request, res: Response) {
       const n = parseInt(r.import_code.slice(prefix.length), 10)
       return isNaN(n) ? max : Math.max(max, n)
     }, 0)
+    // Hàng NPP chuyển về đã gắn lý do trả cho chuyến ⇒ phiếu thêm KẾ THỪA lý do / ghi chú / đợt (C107)
+    const { data: tagged } = await supabase.from('ProductionImport').select('return_reason_code, return_note, recall_id')
+      .eq('from_gdo_id', tmsOrder.transfer_gdo_id).neq('status', 'CANCELLED').not('return_reason_code', 'is', null).limit(1).maybeSingle()
 
     const { data: created, error } = await supabase.from('ProductionImport').insert(lines.map((l, idx) => ({
       id:              randomUUID(),
@@ -1509,6 +1512,7 @@ export async function createOneInbound(req: Request, res: Response) {
       from_gdo_id:     tmsOrder.transfer_gdo_id,
       tms_order_id:    id,
       transfer_production_date: l.nsx,
+      ...(tagged ?? {}),
       updated_at:      t,
     }))).select('id, import_code, status, material_id')
     if (error) throw error

@@ -588,9 +588,12 @@ export async function getNppReturn(req: Request, res: Response) {
     if (!t) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy chuyến')
     const mine = t.imports.filter(i => inScope(req, i.warehouse_id))
     if (!mine.length) return fail(res, 404, 'NOT_FOUND', 'Không có phiếu nhập của chuyến này trong phạm vi kho')
-    const first = mine[0]
+    // lý do lấy từ phiếu ĐÃ gắn + đếm phiếu còn thiếu (C107): phiếu sinh thêm sau khi gắn (thêm dòng NSX…) chưa mang lý do — bản cũ
+    // đọc phiếu đầu theo id ⇒ có lúc báo "đã gắn", nút Lưu khoá mà Hoàn thành vẫn 422
+    const tagged = mine.find(i => i.return_reason_code) ?? mine[0]
     return ok(res, { gdo_id: t.gdo.id, group_code: t.gdo.group_code, is_npp: t.isNpp, npp_name: t.nppName, imports: mine.length,
-      reason_code: first.return_reason_code, note: first.return_note, recall_id: first.recall_id })
+      missing: mine.filter(i => !i.return_reason_code).length,
+      reason_code: tagged.return_reason_code, note: tagged.return_note, recall_id: tagged.recall_id })
   } catch (e) { return failAny(res, e) }
 }
 // PATCH /wms/inbound-returns/npp/:gdoId — gắn lý do / ghi chú / đợt cho MỌI phiếu nhập của chuyến NPP (quyền inbound.create)

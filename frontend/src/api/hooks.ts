@@ -1295,7 +1295,7 @@ export function useReturnReport(p: ReturnReportParams) {
     queryFn: async () => (await apiClient.get('/wms/inbound-returns/report', { params: p })).data.data as { rows: ReturnReportRow[]; total: number; summary: ReturnReportSummary | null },
   })
 }
-export interface NppReturnTag { gdo_id: string; group_code: string | null; is_npp: boolean; npp_name: string | null; imports: number; reason_code: string | null; note: string | null; recall_id: string | null }
+export interface NppReturnTag { gdo_id: string; group_code: string | null; is_npp: boolean; npp_name: string | null; imports: number; missing: number; reason_code: string | null; note: string | null; recall_id: string | null }
 export function useNppReturn(gdoId: string | null | undefined) {
   return useQuery({
     queryKey: ['inbound-return-npp', gdoId], enabled: !!gdoId, staleTime: 30_000,

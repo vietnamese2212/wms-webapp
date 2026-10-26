@@ -235,6 +235,16 @@ try {
   check('8f. Chuyến từ kho NPP ⇒ is_npp; gắn lý do Thu hồi + đợt cho phiếu TF ⇒ 200 (1 phiếu) · chuyến kho chính ⇒ 422 NOT_NPP_TRANSFER',
     nG.s === 200 && nG.j?.data?.is_npp === true && nTag.s === 200 && nTag.j?.data?.updated === 1 && nBad.s === 422 && nBad.j?.error?.code === 'NOT_NPP_TRANSFER',
     `get=${nG.s} npp=${nG.j?.data?.is_npp} tag=${nTag.s} ${nTag.j?.error?.message ?? ''} upd=${nTag.j?.data?.updated} bad=${nBad.s}/${nBad.j?.error?.code}`)
+  // [8f2] phiếu sinh THÊM sau khi đã gắn (C107): khối NPP phải đếm phiếu còn thiếu lý do + giữ lý do đã gắn — bản cũ đọc phiếu ĐẦU
+  // theo id ngẫu nhiên ⇒ có lúc báo "đã gắn", nút Lưu khoá, Hoàn thành 422 ⇒ người nhận kẹt
+  const [impN2] = await restWrite('ProductionImport', 'POST', null, { id: randomUUID(), import_code: `QA62NPP_${Date.now()}b`, warehouse_id: WH, material_id: mat.id, planned_cartons: F, status: 'OPEN', source_type: 'TRANSFER', from_gdo_id: gN.id, warehouse_type: FIX.MAT_POOL_CAT ?? null, import_date: todayVN, created_at: tsN, updated_at: tsN })
+  const nMiss = await api(`/wms/inbound-returns/npp/${gN.id}`)
+  const nRetag = await api(`/wms/inbound-returns/npp/${gN.id}`, 'PATCH', { reason_code: 'THU_HOI', note: 'QA62 NPP gom', recall_id: rcId })
+  const nMiss2 = await api(`/wms/inbound-returns/npp/${gN.id}`)
+  const nDone2 = await api(`/wms/inbound-orders/${impN2.id}/complete`, 'POST', {})
+  check('8f2. Phiếu sinh thêm sau khi gắn ⇒ khối NPP báo missing=1 + vẫn hiện lý do đã gắn · Lưu lại ⇒ missing=0, hoàn thành 200 (C107)',
+    nMiss.j?.data?.missing === 1 && nMiss.j?.data?.reason_code === 'THU_HOI' && nRetag.s === 200 && nMiss2.j?.data?.missing === 0 && nDone2.s === 200,
+    `missing=${nMiss.j?.data?.missing} reason=${nMiss.j?.data?.reason_code} retag=${nRetag.s} missing2=${nMiss2.j?.data?.missing} done=${nDone2.s} ${nDone2.j?.error?.code ?? ''}`)
 
   // ── [8g] thống kê + đợt đã thu ──
   const rep = await api(`/wms/inbound-returns/report?warehouse_id=${WH}&recall_id=${rcId}`)

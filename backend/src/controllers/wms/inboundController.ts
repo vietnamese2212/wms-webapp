@@ -582,7 +582,7 @@ export async function listOrdersSummary(req: Request, res: Response) {
     const ctx = await getListCtx(req)
     if (ctx.tooBroad) return fail(res, ctx.tooBroad, 400)
     if (ctx.emptyScope) {
-      ok(res, { total_orders: 0, sx: 0, ncc: 0, tf: 0, completed: 0, total_pallets: 0, total_cartons: 0, locations: [] })
+      ok(res, { total_orders: 0, sx: 0, ncc: 0, tf: 0, rt: 0, completed: 0, total_pallets: 0, total_cartons: 0, locations: [] })
       return
     }
     const { data, error } = await supabase.rpc('inbound_orders_summary', await inboundRpcFilterParams(ctx))

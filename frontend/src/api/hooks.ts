@@ -1036,7 +1036,7 @@ export function useInboundOrders(params?: { warehouse_id?: string; status?: stri
 // không thể trả toàn bộ. BE: RPC inbound_orders_page chọn trang id dưới DB. ──
 export interface InboundListPage { items: InboundOrder[]; total: number; page: number; limit: number }
 export interface InboundSummary {
-  total_orders: number; sx: number; ncc: number; tf: number; completed: number
+  total_orders: number; sx: number; ncc: number; tf: number; rt: number; completed: number
   total_pallets: number; total_cartons: number
   locations: { loc: string; pallets: number; cartons: number }[]
 }

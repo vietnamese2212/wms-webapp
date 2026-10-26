@@ -3,7 +3,7 @@
 //     (không vượt đã xuất − đã khai trả). "Cả xe quay về" = điền hết phần còn trả được.
 //   • LẬP TAY khi không tìm được chuyến: khách + mã + số + lý do.
 //   • Công tắc QA THEO PHIẾU, mặc định KHÔNG giữ; bật ⇒ hàng quét nhận gắn QA "X" (giữ, không xuất được tới khi QA duyệt).
-// Lập xong: mỗi mã thành một phiếu nhập (nguồn "TV") — quét / lưu thủ công / hoàn thành ở màn chi tiết phiếu nhập như thường.
+// Lập xong: mỗi mã thành một phiếu nhập (nguồn "RT") — quét / lưu thủ công / hoàn thành ở màn chi tiết phiếu nhập như thường.
 // Giao lại hàng trả = ĐƠN RIÊNG (SAP tạo DO mới), form không hỏi.
 import { useEffect, useMemo, useState } from 'react'
 import type { AxiosError } from 'axios'

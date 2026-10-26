@@ -210,9 +210,9 @@ export async function createReturn(req: Request, res: Response) {
 
     const t0 = nowIso(), today = vnDate(), ddmmyy = ddmmyyOf(today)
     const actor = resolveActorId(req)
-    // ĐẦU PHIẾU — số phiếu `<kho>_TV_ddmmyy_NN`
+    // ĐẦU PHIẾU — số phiếu `<kho>_RT_ddmmyy_NN`
     const returnId = randomUUID()
-    const rPrefix = `${wh.code}_TV_${ddmmyy}_`
+    const rPrefix = `${wh.code}_RT_${ddmmyy}_`
     let returnCode = ''
     for (let attempt = 0; attempt < 8 && !returnCode; attempt++) {
       const code = `${rPrefix}${String((await nextReturnSeq(rPrefix)) + 1).padStart(2, '0')}`

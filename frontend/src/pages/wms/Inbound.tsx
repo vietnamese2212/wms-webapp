@@ -1470,7 +1470,7 @@ export default function Inbound() {
   // quy đổi thùng per-mã như qtyEntryDecimal). Cộng trên trang hiện tại = SỐ SAI (thiếu các trang kia).
   const totalPallets = Number(summary?.total_pallets ?? 0)
   const totalCartons = Number(summary?.total_cartons ?? 0)
-  const srcCounts = { sx: summary?.sx ?? 0, ncc: summary?.ncc ?? 0, tf: summary?.tf ?? 0 }
+  const srcCounts = { sx: summary?.sx ?? 0, ncc: summary?.ncc ?? 0, tf: summary?.tf ?? 0, rt: summary?.rt ?? 0 }
   const locationSummary = summary?.locations ?? []
 
   // Date label
@@ -1508,7 +1508,7 @@ export default function Inbound() {
     { key: 'category', label: 'Loại kho',   type: 'single', options: categoryOptions, value: f.materialCategory || '', allLabel: 'Tất cả loại',
       onChange: v => setInbound({ materialCategory: v, filterMaterials: [], filterCycles: [], filterMachines: [], page: 1 }) },
     { key: 'source',   label: 'Nguồn gốc',  type: 'multi', searchable: false, selected: filterSourceTypes,
-      options: [{ value: 'FACTORY', label: 'SX' }, { value: 'NCC', label: 'NCC' }, { value: 'TRANSFER', label: 'TF' }, { value: 'RETURN', label: 'TV (trả về)' }],
+      options: [{ value: 'FACTORY', label: 'SX' }, { value: 'NCC', label: 'NCC' }, { value: 'TRANSFER', label: 'TF' }, { value: 'RETURN', label: 'RT (trả về)' }],
       onChange: v => setInbound({ filterSourceTypes: v, page: 1 }) },
     { key: 'shift',    label: 'Ca',         type: 'multi', options: shiftOptions,    selected: filterShiftIds, searchable: false,
       onChange: v => setInbound({ filterShiftIds: v, page: 1 }) },
@@ -1662,7 +1662,8 @@ export default function Inbound() {
         { label: 'SX',         value: srcCounts.sx },
         { label: 'NCC',        value: srcCounts.ncc },
         { label: 'TF',         value: srcCounts.tf },
-        { label: 'Pallet',     value: totalPallets },
+        { label: 'RT',         value: srcCounts.rt },
+        { label: 'Pallet',    value: totalPallets },
         { label: 'Thực nhập',  value: totalCartons.toLocaleString('vi-VN', { maximumFractionDigits: 1 }) },
         { label: 'Hoàn thành', value: summary?.completed ?? 0 },
         ...(totalPages > 1 ? [{ label: 'Trang', value: `${page}/${totalPages}` }] : []),
@@ -1770,7 +1771,7 @@ export default function Inbound() {
       <InboundReturnSheet open={showReturn} onClose={() => setShowReturn(false)}
         onCreated={r => {
           setShowReturn(false)
-          // một mã ⇒ mở thẳng phiếu nhập để quét; nhiều mã ⇒ ở lại danh sách (các phiếu "TV" vừa lập hiện đầu ngày hôm nay)
+          // một mã ⇒ mở thẳng phiếu nhập để quét; nhiều mã ⇒ ở lại danh sách (các phiếu "RT" vừa lập hiện đầu ngày hôm nay)
           if (r.imports.length === 1) navigate(`/wms/inbound/${r.imports[0].id}`)
           else toast({ title: `Đã lập phiếu trả ${r.return_code}`, description: `${r.imports.length} phiếu nhập: ${r.imports.map(i => i.import_code).join(', ')}` })
         }} />
@@ -1888,7 +1889,7 @@ function InboundRow({ order, onClick, onDoubleClick, onScan, onEditGroup, onPin,
             : order.source_type === 'RETURN'   ? 'bg-rose-100 text-rose-700'
             : 'bg-blue-100 text-blue-600'
           }`} title={order.source_type === 'RETURN' && order.inbound_return ? `Trả về ${order.inbound_return.return_code}${order.inbound_return.group_code ? ` · chuyến ${order.inbound_return.group_code}` : ' (lập tay)'} · ${order.inbound_return.reason}` : undefined}>
-            {order.source_type === 'NCC' ? 'NCC' : order.source_type === 'TRANSFER' ? 'TF' : order.source_type === 'RETURN' ? 'TV' : 'SX'}</span>
+            {order.source_type === 'NCC' ? 'NCC' : order.source_type === 'TRANSFER' ? 'TF' : order.source_type === 'RETURN' ? 'RT' : 'SX'}</span>
           {onEditGroup && (
             <button onClick={onEditGroup} title="Sửa nhóm"
               className="text-slate-300 hover:text-blue-500 transition-colors ml-1">

@@ -84,15 +84,19 @@ try {
   // ── [3] lập phiếu trả 4 thùng, GIỮ QA ──
   const cr = await api('/wms/inbound-returns', 'POST', { warehouse_id: WH, gdo_id: g.id, reason: 'QA62 khách từ chối', qa_hold: true, lines: [{ od_number: OD, material_id: mat.id, qty_base: 4 * F }] })
   const imp = cr.j?.data?.imports?.[0]
-  const impRow = imp ? (await restAll('ProductionImport', `select=id,source_type,status,planned_cartons,from_gdo_id,return_id&id=eq.${imp.id}`))[0] : null
-  check('3a. Lập phiếu trả theo chuyến ⇒ 201, số phiếu <kho>_TV_…, MỘT phiếu nhập nguồn RETURN mở, khai 4 thùng, KHÔNG gắn from_gdo_id',
-    cr.s === 201 && /_TV_/.test(cr.j?.data?.return_code ?? '') && cr.j?.data?.imports?.length === 1 && impRow?.source_type === 'RETURN' && impRow?.status === 'OPEN'
+  const impRow = imp ? (await restAll('ProductionImport', `select=id,import_code,source_type,status,planned_cartons,from_gdo_id,return_id&id=eq.${imp.id}`))[0] : null
+  check('3a. Lập phiếu trả theo chuyến ⇒ 201, số phiếu <kho>_RT_…, MỘT phiếu nhập nguồn RETURN mở, khai 4 thùng, KHÔNG gắn from_gdo_id',
+    cr.s === 201 && /_RT_/.test(cr.j?.data?.return_code ?? '') && cr.j?.data?.imports?.length === 1 && impRow?.source_type === 'RETURN' && impRow?.status === 'OPEN'
     && Number(impRow?.planned_cartons) === 4 * F && !impRow?.from_gdo_id && impRow?.return_id === cr.j?.data?.return_id,
     `http=${cr.s} ${cr.j?.error?.message ?? ''} code=${cr.j?.data?.return_code} imp=${JSON.stringify(impRow)}`)
   const t2 = await api(`/wms/inbound-returns/trips/${g.id}`)
   const over2 = await api('/wms/inbound-returns', 'POST', { warehouse_id: WH, gdo_id: g.id, reason: 'QA62 lần 2', qa_hold: false, lines: [{ od_number: OD, material_id: mat.id, qty_base: 7 * F }] })
   check('3b. Chuyến ghi đã khai trả 4 thùng · lần trả thứ hai 7 thùng > còn 6 ⇒ 422',
     (t2.j?.data?.lines ?? []).find(l => l.od_number === OD)?.returned_base === 4 * F && over2.s === 422, `ret=${(t2.j?.data?.lines ?? [])[0]?.returned_base} over2=${over2.s}`)
+  const sm = await api(`/wms/inbound-orders/summary?warehouse_id=${WH}&search=${encodeURIComponent(impRow?.import_code ?? '-')}`)
+  check('3c. Dải tổng Nhập kho đếm phiếu trả ở ô RT, KHÔNG vào SX',
+    sm.s === 200 && sm.j?.data?.total_orders === 1 && sm.j?.data?.rt === 1 && sm.j?.data?.sx === 0,
+    `http=${sm.s} ${JSON.stringify({ t: sm.j?.data?.total_orders, rt: sm.j?.data?.rt, sx: sm.j?.data?.sx })}`)
 
   // ── [4] quét nhận: P1 (đã xuất hết) ⇒ dòng tồn mới; P2 (còn tồn) ⇒ cộng dồn; QA giữ ⇒ X ──
   const sc1 = await api(`/wms/inbound-orders/${imp.id}/scan`, 'POST', { qr_code: P1, location_id: LOC, stack_layer: 2, cartons_override: 2 * F })

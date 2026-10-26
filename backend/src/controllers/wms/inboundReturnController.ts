@@ -320,6 +320,20 @@ export async function getReturnByOrder(req: Request, res: Response) {
   } catch (e) { return failAny(res, e) }
 }
 
+/** Số tem này ĐÃ XUẤT trên chuyến gốc (0 = tem không đi trên chuyến đó). Phiếu trả theo chuyến chỉ nhận tem của chuyến (user 26/10). */
+export async function tripPalletShipped(gdoId: string, materialId: string, palletCode: string): Promise<number> {
+  const { data: dos } = await db.from('OutboundDelivery').select('id').eq('gdo_id', gdoId).order('id')
+  const doIds = ((dos ?? []) as { id: string }[]).map(d => d.id)
+  if (!doIds.length) return 0
+  const items = (await fetchAllByIdChunks(doIds, c => db.from('OutboundItem').select('id').in('do_id', c).eq('material_id', materialId).order('id'))) as { id: string }[]
+  if (!items.length) return 0
+  const scans = (await fetchAllByIdChunks(items.map(i => i.id), c => db.from('OutboundScanEntry')
+    .select('cartons_scanned').in('item_id', c).eq('pallet_code', palletCode).order('id'))) as { cartons_scanned: number | null }[]
+  return scans.reduce((s, x) => s + Number(x.cartons_scanned ?? 0), 0)
+}
+export const foreignPalletMsg = (palletCode: string, groupCode: string | null) =>
+  `Tem ${palletCode} không đi trên chuyến ${groupCode ?? 'gốc'} của phiếu trả này. Hàng của chuyến khác ⇒ lập phiếu trả theo đúng chuyến đó; không rõ chuyến ⇒ lập phiếu trả lập tay.`
+
 // POST /wms/inbound-orders/:id/return-loose — NHẬN HÀNG LẺ trả về theo TEM GỐC: sinh tem con ".N" mang lô / NSX / HSD gốc
 export const zReturnLoose = z.object({
   qty_semantics: z.literal('base'),
@@ -329,29 +343,33 @@ export const zReturnLoose = z.object({
   stack_layer: z.number().int().min(1).max(5).optional(),
   putaway_override_reason: zText(0, 200).optional(),
 })
-export async function receiveReturnLoose(req: Request, res: Response) {
-  try {
-    if (!requireBaseQty(req, res)) return
-    const b = req.body as z.infer<typeof zReturnLoose>
+type ChildIn = { orderId: string; source_pallet_code: string; qty_base: number; location_id: string; stack_layer?: number; putaway_override_reason?: string; note?: string }
+type ChildOut = { ok: true; entryId: string; childCode: string; warnings: string[] } | { ok: false; status: number; code: string; message: string } | { ok: false; pg: unknown }
+const no = (status: number, code: string, message: string): ChildOut => ({ ok: false, status, code, message })
+/** Nhận hàng trả về thành TEM CON ".N" của tem gốc (mang lô / NSX / HSD gốc). Dùng cho: hàng lẻ (nút "Nhận hàng lẻ") và
+ *  phiếu GIỮ QA quét tem còn tồn (không cộng dồn vào pallet đang OK — user 26/10 "tách pallet con"). */
+export async function createReturnChild(req: Request, b: ChildIn): Promise<ChildOut> {
     const { data: imp } = await db.from('ProductionImport')
-      .select('id, import_code, status, source_type, return_id, material_id, warehouse_id, warehouse:Warehouse(inventory_mode)').eq('id', req.params.id).maybeSingle()
-    if (!imp) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy phiếu nhập')
-    if (!inScope(req, imp.warehouse_id)) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
-    if (imp.source_type !== 'RETURN' || !imp.return_id) return fail(res, 422, 'NOT_RETURN', 'Chỉ phiếu nhập trả về mới nhận hàng lẻ theo tem gốc')
-    if (imp.status !== 'OPEN') return fail(res, 400, 'ORDER_CLOSED', 'Phiếu nhập không còn ở trạng thái mở')
+      .select('id, import_code, status, source_type, return_id, material_id, warehouse_id, warehouse:Warehouse(inventory_mode)').eq('id', b.orderId).maybeSingle()
+    if (!imp) return no(404, 'NOT_FOUND', 'Không tìm thấy phiếu nhập')
+    if (!inScope(req, imp.warehouse_id)) return no(403, 'FORBIDDEN', SCOPE_MSG)
+    if (imp.source_type !== 'RETURN' || !imp.return_id) return no(422, 'NOT_RETURN', 'Chỉ phiếu nhập trả về mới nhận hàng lẻ theo tem gốc')
+    if (imp.status !== 'OPEN') return no(400, 'ORDER_CLOSED', 'Phiếu nhập không còn ở trạng thái mở')
     const { data: mat } = await db.from('Material').select('*').eq('id', imp.material_id ?? '').maybeSingle()
-    if (!mat) return fail(res, 400, 'NO_MATERIAL', 'Phiếu nhập chưa có hàng hóa')
+    if (!mat) return no(400, 'NO_MATERIAL', 'Phiếu nhập chưa có hàng hóa')
     const invMode = (imp.warehouse as { inventory_mode?: string | null } | null)?.inventory_mode ?? null
-    if (effectiveNoQr(mat.no_qr_tracking, invMode)) return fail(res, 422, 'NO_QR_MATERIAL', 'Mã không theo dõi QR — dùng "Lưu thủ công" để nhận')
+    if (effectiveNoQr(mat.no_qr_tracking, invMode)) return no(422, 'NO_QR_MATERIAL', 'Mã không theo dõi QR — dùng "Lưu thủ công" để nhận')
     const ie = qtyIntegerError(b.qty_base, mat as MatUnits)
-    if (ie) return fail(res, 422, 'VALIDATION_ERROR', ie)
+    if (ie) return no(422, 'VALIDATION_ERROR', ie)
 
     const src = normalizeQR(b.source_pallet_code)
     const parsed = parseInboundQR(src)
-    if (!parsed.is_valid) return fail(res, 400, 'INVALID_QR', parsed.error ?? 'Tem gốc không hợp lệ')
-    if (parsed.material_code !== mat.material_code) return fail(res, 400, 'MATERIAL_MISMATCH', `Tem gốc là mã "${parsed.material_code}" nhưng phiếu nhập là "${mat.material_code}"`)
+    if (!parsed.is_valid) return no(400, 'INVALID_QR', parsed.error ?? 'Tem gốc không hợp lệ')
+    if (parsed.material_code !== mat.material_code) return no(400, 'MATERIAL_MISMATCH', `Tem gốc là mã "${parsed.material_code}" nhưng phiếu nhập là "${mat.material_code}"`)
+    const ret = await returnHead(imp.return_id)
+    if (ret?.gdo_id && !(await tripPalletShipped(ret.gdo_id, mat.id, src))) return no(422, 'RETURN_FOREIGN_PALLET', foreignPalletMsg(src, ret.group_code))
     const { base: cb, error: cbErr } = childBaseOf(src)
-    if (!cb) return fail(res, 400, 'INVALID_QR', cbErr ?? 'Tem gốc không đúng định dạng')
+    if (!cb) return no(400, 'INVALID_QR', cbErr ?? 'Tem gốc không đúng định dạng')
     // thuộc tính lô của tem gốc (dòng tồn gần nhất cùng mã tem — kể cả đã xuất hết); không có thì đọc từ chính QR
     const { data: srcRow } = await db.from('InventoryEntry')
       .select('manufacturer_id, nmsx, cycle, machine_code, pallet_sequence_no, production_date, batch, expiry_date, ncc_id, shelf_life_days')
@@ -359,12 +377,12 @@ export async function receiveReturnLoose(req: Request, res: Response) {
     const s = srcRow as { manufacturer_id: string | null; nmsx: string | null; cycle: string | null; machine_code: string | null; pallet_sequence_no: string | null; production_date: string | null; batch: string | null; expiry_date: string | null; ncc_id: string | null; shelf_life_days: number | null } | null
 
     const { data: loc } = await db.from('Location').select('*').eq('id', b.location_id).maybeSingle()
-    if (!loc) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy vị trí kho')
-    if (!loc.is_active) return fail(res, 400, 'LOCATION_INACTIVE', 'Vị trí kho không hoạt động')
-    if (loc.warehouse_id !== imp.warehouse_id) return fail(res, 422, 'LOCATION_WAREHOUSE_MISMATCH', `Vị trí ${loc.location_code} thuộc kho khác`)
+    if (!loc) return no(404, 'NOT_FOUND', 'Không tìm thấy vị trí kho')
+    if (!loc.is_active) return no(400, 'LOCATION_INACTIVE', 'Vị trí kho không hoạt động')
+    if (loc.warehouse_id !== imp.warehouse_id) return no(422, 'LOCATION_WAREHOUSE_MISMATCH', `Vị trí ${loc.location_code} thuộc kho khác`)
     const cats = (loc.categories ?? null) as string[] | null
     if (cats?.length && mat.category && !cats.includes(mat.category))
-      return fail(res, 422, 'LOCATION_CATEGORY_MISMATCH', `Vị trí ${loc.location_code} thuộc loại "${cats.join(', ')}" — không khớp loại hàng "${mat.category}"`)
+      return no(422, 'LOCATION_CATEGORY_MISMATCH', `Vị trí ${loc.location_code} thuộc loại "${cats.join(', ')}" — không khớp loại hàng "${mat.category}"`)
     const prodDate = s?.production_date ?? (parsed.production_date ? parsed.production_date.toISOString() : null)
     const expiry = s?.expiry_date ?? (parsed.expiry_date ? parsed.expiry_date.toISOString().slice(0, 10) : null)
     const canOverride = req.user?.is_superadmin === true || (req.user?.module_permissions ?? {})['inbound']?.includes('putaway_override') === true
@@ -373,9 +391,8 @@ export async function receiveReturnLoose(req: Request, res: Response) {
       incoming: { material_id: mat.id, ncc_id: s?.ncc_id ?? null, production_date: prodDate, expiry_date: expiry, shelf_life_days: s?.shelf_life_days ?? null },
       overrideReason: b.putaway_override_reason, canOverride, loc: loc as unknown as PutawayLocRow, material: mat as unknown as MaterialShelfInfo,
     })
-    if (put.error) return fail(res, put.error.code === 'FORBIDDEN' ? 403 : 422, put.error.code, put.error.message)
+    if (put.error) return no(put.error.code === 'FORBIDDEN' ? 403 : 422, put.error.code, put.error.message)
 
-    const ret = await returnHead(imp.return_id)
     const qaId = ret?.qa_hold ? await returnHoldQaId() : null
     const actor = resolveActorId(req)
     const stack = b.stack_layer ?? 1
@@ -393,27 +410,39 @@ export async function receiveReturnLoose(req: Request, res: Response) {
         cartons_imported: b.qty_base, cartons_remaining: b.qty_base, production_date: prodDate, expiry_date: expiry, batch: s?.batch ?? parsed.batch ?? null,
         qa_status_id: qaId, ncc_id: s?.ncc_id ?? null, shelf_life_days: s?.shelf_life_days ?? null, import_order_id: imp.id,
         created_by: actor, updated_by: actor, status: 'IN_STOCK', import_date: vnDate(), update_date: vnDate(), created_at: t, updated_at: t,
-        notes: `Hàng lẻ trả về theo tem gốc ${src}`,
+        notes: b.note ?? `Hàng lẻ trả về theo tem gốc ${src}`,
       }
       // NGUYÊN TỬ: khoá dòng Location → đếm sức chứa / tầng dưới / số mã DƯỚI LOCK → insert (cùng RPC với quét nhập)
       const { data: r, error } = await db.rpc('scan_insert_pallet', {
         p_entry: entry, p_location_id: b.location_id, p_stack_layer: stack,
         p_max_materials: (putawayEnforces(put.rules, 'MAX_MATERIALS') && !put.trace.putaway_override_reason) ? put.max_materials : null,
       })
-      if (error) return fail(res, error)
+      if (error) return { ok: false, pg: error }
       const parts = String(r ?? '').split('|')
       switch (parts[0]) {
-        case 'NOLOC':   return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy vị trí')
-        case 'MAXMAT':  return fail(res, 422, 'PUTAWAY_VIOLATION', `Vị trí ${loc.location_code} đang có ${parts[1]} mã, kho giới hạn ${parts[2]} mã cho một vị trí.`)
-        case 'FULL':    return fail(res, 422, 'LOCATION_FULL', `Vị trí ${loc.location_code} đã đầy (${parts[1]}/${parts[2]} pallet). Chọn tầng chồng hoặc vị trí khác.`)
-        case 'NO_BASE': return fail(res, 422, 'NO_BASE_LAYER', `Không có pallet tầng ${stack - 1} tại vị trí này để chồng lên`)
+        case 'NOLOC':   return no(404, 'NOT_FOUND', 'Không tìm thấy vị trí')
+        case 'MAXMAT':  return no(422, 'PUTAWAY_VIOLATION', `Vị trí ${loc.location_code} đang có ${parts[1]} mã, kho giới hạn ${parts[2]} mã cho một vị trí.`)
+        case 'FULL':    return no(422, 'LOCATION_FULL', `Vị trí ${loc.location_code} đã đầy (${parts[1]}/${parts[2]} pallet). Chọn tầng chồng hoặc vị trí khác.`)
+        case 'NO_BASE': return no(422, 'NO_BASE_LAYER', `Không có pallet tầng ${stack - 1} tại vị trí này để chồng lên`)
         case 'DUP':     await jitter(attempt); continue   // người khác vừa lấy đúng tên con này ⇒ đặt tên kế tiếp
       }
       entryId = parts[1] ?? null
     }
-    if (!entryId) return fail(res, 409, 'BUSY', 'Nhiều người cùng nhận hàng lẻ của tem này — thử lại')
+    if (!entryId) return no(409, 'BUSY', 'Nhiều người cùng nhận hàng lẻ của tem này — thử lại')
     const warn = await logReturnScan({ return_id: imp.return_id, import_order_id: imp.id, entry_id: entryId, source_pallet_code: src, merged: false, qty_base: b.qty_base, actor })
     emitInboundChanged()
-    return ok(res, { entry_id: entryId, pallet_code: childCode, warnings: [...(put.warning ? [put.warning] : []), ...(warn ? [warn] : [])] }, 201)
+    return { ok: true, entryId, childCode, warnings: [...(put.warning ? [put.warning] : []), ...(warn ? [warn] : [])] }
+}
+/** Trả lỗi của createReturnChild ra response. */
+export function failChild(res: Response, r: Exclude<ChildOut, { ok: true }>) {
+  return 'pg' in r ? failAny(res, r.pg) : fail(res, r.status, r.code, r.message)
+}
+export async function receiveReturnLoose(req: Request, res: Response) {
+  try {
+    if (!requireBaseQty(req, res)) return
+    const b = req.body as z.infer<typeof zReturnLoose>
+    const r = await createReturnChild(req, { orderId: req.params.id, ...b })
+    if (!r.ok) return failChild(res, r)
+    return ok(res, { entry_id: r.entryId, pallet_code: r.childCode, warnings: r.warnings }, 201)
   } catch (e) { return failAny(res, e) }
 }

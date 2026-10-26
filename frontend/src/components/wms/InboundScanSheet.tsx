@@ -141,7 +141,9 @@ export function InboundScanSheet({ order, onClose, employeeId, allLocations, onL
   const qtyFactor = hasEntry(order.material) ? Number(order.material?.units_per_carton) : 1
   const defaultCartons = (effCartonsPerPallet(order.material, order.warehouse_id) * qtyFactor).toString()
   // NCC + shelflife theo lô. 1 mã + 1 NCC có thể nhiều shelflife (100/200) → chọn NCC = chọn luôn shelflife.
-  const isTransfer = (order as { source_type?: string }).source_type === 'TRANSFER'
+  // Hàng TRẢ VỀ đi cùng đường hàng quay lại của chuyển kho (BE scanQR coi như nhau): NCC kế thừa từ tem gốc, cần
+  // kiểm server để lấy số đã xuất trên chuyến + biết tem còn tồn (cộng dồn / tách tem con khi giữ QA) + chặn tem lạ
+  const isTransfer = ['TRANSFER', 'RETURN'].includes((order as { source_type?: string }).source_type ?? '')
   const { data: allCompanies = [] } = useTransportCompanies(true)
   const allNcc = (allCompanies as { id: string; name: string; type?: string }[]).filter(c => c.type === 'NCC')
   const nccName = (id: string) => allNcc.find(n => n.id === id)?.name ?? '(NCC?)'
@@ -223,7 +225,7 @@ export function InboundScanSheet({ order, onClose, employeeId, allLocations, onL
     // Tối ưu: mã thường (không phải chuyển kho) — số thùng đã biết tại client (cartons_per_pallet),
     // bỏ qua round-trip "xác thực", để bước Lưu tự validate. Chuyển kho cần check để lấy số đã
     // xuất (suggested) + cảnh báo gộp tồn.
-    if ((order as any).source_type !== 'TRANSFER') {
+    if (!isTransfer) {
       setCartons(defaultCartons)
       setServerCheckOk(true)
       return
@@ -236,7 +238,7 @@ export function InboundScanSheet({ order, onClose, employeeId, allLocations, onL
           setServerCheckOk(true)
           setCartons(String(data.suggested_cartons))
           setOutboundCartons(data.outbound_cartons ?? null)
-          setMergeWarning(data.will_merge ? (data.merge_warning ?? null) : null)
+          setMergeWarning(data.will_merge || data.will_split ? (data.merge_warning ?? null) : null)
         },
         onError: (err) => {
           // Chuyển kho BẮT BUỘC online (cần đối chiếu số đã xuất từ server) — không vào queue

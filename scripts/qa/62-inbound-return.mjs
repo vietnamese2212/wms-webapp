@@ -115,12 +115,31 @@ try {
   check('4a. Quét tem P1 đã xuất hết ⇒ dòng tồn MỚI cùng mã tem, 2 thùng, gắn QA giữ (X) theo công tắc phiếu',
     sc1.s === 200 && !!e1 && Number(e1.cartons_imported) === 2 * F && e1.qa_status_id === qaX && e1.status === 'IN_STOCK',
     `http=${sc1.s} ${sc1.j?.error?.message ?? ''} entry=${JSON.stringify(e1 ?? null)}`)
-  const sc2 = await api(`/wms/inbound-orders/${imp.id}/scan`, 'POST', { qr_code: P2, location_id: LOC, cartons_override: F })
-  const p2after = (await restAll('InventoryEntry', `select=cartons_remaining,status&id=eq.${p2.id}`))[0]
-  check('4b. Quét tem P2 còn tồn ⇒ CỘNG DỒN vào pallet đang có (3 → 4 thùng), không tạo dòng mới',
-    sc2.s === 200 && sc2.j?.data?.merged === true && Number(p2after?.cartons_remaining) === 4 * F
+  const ck2 = await api(`/wms/inbound-orders/${imp.id}/check-scan`, 'POST', { qr_code: P2, location_id: LOC })
+  const sc2 = await api(`/wms/inbound-orders/${imp.id}/scan`, 'POST', { qr_code: P2, location_id: LOC, stack_layer: 3, cartons_override: F })
+  const p2after = (await restAll('InventoryEntry', `select=cartons_remaining,status,qa_status_id&id=eq.${p2.id}`))[0]
+  const c2 = (await restAll('InventoryEntry', `select=pallet_code,cartons_imported,qa_status_id,import_order_id&pallet_code=eq.${PFX}002.1_B`))[0]
+  check('4b. Phiếu GIỮ QA quét tem P2 còn tồn (QA OK) ⇒ KHÔNG cộng dồn: tách tem con ".1" 1 thùng mang QA giữ, pallet P2 giữ nguyên 3 thùng; kiểm trước báo will_split + số gợi ý = 4 thùng tem đã xuất trên chuyến',
+    ck2.s === 200 && ck2.j?.data?.will_split === true && ck2.j?.data?.suggested_cartons === 4 * F
+    && sc2.s === 200 && sc2.j?.data?.entry?.pallet_code === `${PFX}002.1_B` && Number(c2?.cartons_imported) === F && c2?.qa_status_id === qaX && c2?.import_order_id === imp.id
+    && Number(p2after?.cartons_remaining) === 3 * F && p2after?.qa_status_id !== qaX,
+    `check=${ck2.s} split=${ck2.j?.data?.will_split} sug=${ck2.j?.data?.suggested_cartons} scan=${sc2.s} ${sc2.j?.error?.message ?? ''} child=${JSON.stringify(c2 ?? null)} p2=${JSON.stringify(p2after)}`)
+  // tem LẠ (không đi trên chuyến) ⇒ chặn ở cả kiểm trước, quét, hàng lẻ
+  const P9 = `${PFX}009_B`
+  const fk = await api(`/wms/inbound-orders/${imp.id}/check-scan`, 'POST', { qr_code: P9, location_id: LOC })
+  const fs = await api(`/wms/inbound-orders/${imp.id}/scan`, 'POST', { qr_code: P9, location_id: LOC, cartons_override: F })
+  const fl = await api(`/wms/inbound-orders/${imp.id}/return-loose`, 'POST', { source_pallet_code: P9, qty_base: F, location_id: LOC })
+  check('4c. Tem không đi trên chuyến gốc ⇒ 422 RETURN_FOREIGN_PALLET ở kiểm trước · quét · hàng lẻ, không tạo tồn',
+    [fk, fs, fl].every(r => r.s === 422 && r.j?.error?.code === 'RETURN_FOREIGN_PALLET') && (await restAll('InventoryEntry', `select=id&pallet_code=like.${PFX}009*`)).length === 0,
+    `check=${fk.s}/${fk.j?.error?.code} scan=${fs.s}/${fs.j?.error?.code} loose=${fl.s}/${fl.j?.error?.code}`)
+  // phiếu KHÔNG giữ QA ⇒ tem còn tồn vẫn cộng dồn như cũ
+  const crB = await api('/wms/inbound-returns', 'POST', { warehouse_id: WH, gdo_id: g.id, reason: 'QA62 không giữ', qa_hold: false, lines: [{ od_number: OD, material_id: mat.id, qty_base: F }] })
+  const scB = await api(`/wms/inbound-orders/${crB.j?.data?.imports?.[0]?.id}/scan`, 'POST', { qr_code: P2, location_id: LOC, cartons_override: F })
+  const p2b = (await restAll('InventoryEntry', `select=cartons_remaining&id=eq.${p2.id}`))[0]
+  check('4d. Phiếu KHÔNG giữ QA quét tem P2 còn tồn ⇒ CỘNG DỒN (3 → 4 thùng), không tạo dòng mới',
+    crB.s === 201 && scB.s === 200 && scB.j?.data?.merged === true && Number(p2b?.cartons_remaining) === 4 * F
     && (await restAll('InventoryEntry', `select=id&pallet_code=eq.${P2}`)).length === 1,
-    `http=${sc2.s} ${sc2.j?.error?.message ?? ''} merged=${sc2.j?.data?.merged} rem=${p2after?.cartons_remaining}`)
+    `lập=${crB.s} scan=${scB.s} ${scB.j?.error?.message ?? ''} rem=${p2b?.cartons_remaining}`)
 
   // ── [5] hàng lẻ theo tem gốc ⇒ tem con ".1" mang NSX gốc ──
   const lo = await api(`/wms/inbound-orders/${imp.id}/return-loose`, 'POST', { source_pallet_code: P1, qty_base: F, location_id: LOC, stack_layer: 3 })
@@ -134,8 +153,9 @@ try {
   // ── [6] sổ nhận trả · truy xuất lô · sổ pallet · chuỗi tình trạng xe ──
   const bo = await api(`/wms/inbound-returns/by-order/${imp.id}`)
   const scans = bo.j?.data?.scans ?? []
-  check('6a. Màn chi tiết phiếu trả: 3 lần nhận (P1 mới · P2 cộng dồn · P1 lẻ), tem P1 đã nhận về 3 thùng',
-    bo.s === 200 && scans.length === 3 && scans.some(s => s.source_pallet_code === P2 && s.merged) && bo.j?.data?.pallets?.find(p => p.pallet_code === P1)?.returned_base === 3 * F,
+  check('6a. Màn chi tiết phiếu trả: 3 lần nhận (P1 mới · P2 tem con · P1 lẻ — không lần nào cộng dồn), tem P1 đã nhận về 3 thùng, P2 tính cả phiếu không giữ = 2 thùng',
+    bo.s === 200 && scans.length === 3 && scans.every(s => !s.merged) && scans.some(s => s.source_pallet_code === P2)
+    && bo.j?.data?.pallets?.find(p => p.pallet_code === P1)?.returned_base === 3 * F && bo.j?.data?.pallets?.find(p => p.pallet_code === P2)?.returned_base === 2 * F,
     `http=${bo.s} scans=${JSON.stringify(scans.map(s => [s.source_pallet_code?.slice(-6), s.qty_base, s.merged]))}`)
   const lt = await api(`/wms/trace?kind=pallet&value=${encodeURIComponent(P1)}`)
   const sum = lt.j?.data?.summary

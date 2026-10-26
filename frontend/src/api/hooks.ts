@@ -4220,6 +4220,7 @@ export interface CheckScanResult {
   suggested_cartons: number
   outbound_cartons?: number | null
   will_merge?: boolean
+  will_split?: boolean   // phiếu trả GIỮ QA + tem còn tồn ⇒ tách tem con giữ QA thay vì cộng dồn
   cartons_existing?: number
   existing_entry_id?: string
   merge_warning?: string

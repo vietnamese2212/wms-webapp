@@ -20,7 +20,7 @@ import { putawayEnforces } from '../../utils/putaway'
 import type { MaterialShelfInfo } from '../../utils/shelfLife'
 import { resolveActorId } from '../../utils/actor'
 import { utcMs } from '../../utils/dates'
-import { returnHead, returnHoldQaId, logReturnScan } from './inboundReturnController'
+import { returnHead, returnHoldQaId, logReturnScan, tripPalletShipped, foreignPalletMsg, createReturnChild, failChild } from './inboundReturnController'
 
 // Quyền duyệt cất khác quy tắc — kiểm TRONG controller vì route /scan gate bằng inbound.scan
 // (người quét bình thường vẫn phải vào được), quyền này chỉ mở thêm cửa vượt rào.
@@ -1165,11 +1165,12 @@ export async function checkScanQR(req: Request, res: Response) {
 
     const { data: order } = await supabase
       .from('ProductionImport')
-      .select('id, import_code, status, source_type, material_id, warehouse_id, warehouse_type, location_id, location_history, material:Material(material_code, cartons_per_pallet), warehouse:Warehouse(id, nmsx_code)')
+      .select('id, import_code, status, source_type, return_id, material_id, warehouse_id, warehouse_type, location_id, location_history, material:Material(material_code, cartons_per_pallet), warehouse:Warehouse(id, nmsx_code)')
       .eq('id', order_id).maybeSingle()
     if (!order)                  return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy phiếu nhập')
     if (order.status !== 'OPEN') return fail(res, 400, 'ORDER_CLOSED', 'Phiếu nhập không còn ở trạng thái mở')
     if (!order.material_id)      return fail(res, 400, 'NO_MATERIAL', 'Phiếu nhập chưa có hàng hóa')
+    const retHead = order.source_type === 'RETURN' ? await returnHead(order.return_id) : null
 
     const parsed = parseInboundQR(qr_code)
     if (!parsed.is_valid) return fail(res, 400, 'INVALID_QR', parsed.error ?? 'QR không hợp lệ')
@@ -1198,7 +1199,7 @@ export async function checkScanQR(req: Request, res: Response) {
     ])
 
     const material = matResult.data
-    const outboundCartons: number | null = isTransfer ? ((obScanResult as any).data?.cartons_scanned ?? null) : null
+    let outboundCartons: number | null = isTransfer ? ((obScanResult as any).data?.cartons_scanned ?? null) : null
     const existingPallet = ((dupResult.data ?? []) as any[]).find(
       (e: any) => e.location?.warehouse_id === orderWarehouseId
     ) as { id: string; status: string; cartons_remaining: number; import_order_id: string | null } | undefined
@@ -1209,20 +1210,30 @@ export async function checkScanQR(req: Request, res: Response) {
       const orderMat = order.material as { material_code?: string } | null
       return fail(res, 400, 'MATERIAL_MISMATCH', `Hàng hóa không khớp: QR có "${parsed.material_code}" nhưng phiếu nhập yêu cầu "${orderMat?.material_code}"`)
     }
+    // Phiếu trả THEO CHUYẾN: tem phải đi trên chuyến đó; số gợi ý = số tem đó đã xuất trên chuyến (không phải lần quét xuất gần nhất)
+    if (retHead?.gdo_id) {
+      const shippedOnTrip = await tripPalletShipped(retHead.gdo_id, material.id, parsed.pallet_code)
+      if (!shippedOnTrip) return fail(res, 422, 'RETURN_FOREIGN_PALLET', foreignPalletMsg(parsed.pallet_code, retHead.group_code))
+      outboundCartons = shippedOnTrip
+    }
     if (existingPallet) {
       // TRANSFER + pallet từ phiếu KHÁC (IN_STOCK hoặc PARTIAL) → cho phép merge
       if (isTransfer && ['IN_STOCK', 'PARTIAL'].includes(existingPallet.status) && existingPallet.import_order_id !== order_id) {
         const mat = material as { cartons_per_pallet?: number | null }
+        const split = !!retHead?.qa_hold   // phiếu trả GIỮ QA: không cộng dồn — tách tem con (scanQR)
         // BASE UNIT: outboundCartons (OutboundScanEntry) đã là base; định mức thùng/pallet × hệ số
         return ok(res, {
           pallet_code:       parsed.pallet_code,
           production_date:   parsed.production_date ?? null,
           suggested_cartons: outboundCartons ?? (mat.cartons_per_pallet ?? 0) * qtyFactorOf(material as MatUnits),
           outbound_cartons:  outboundCartons,
-          will_merge:        true,
+          will_merge:        !split,
+          will_split:        split,
           cartons_existing:  existingPallet.cartons_remaining,
           existing_entry_id: existingPallet.id,
-          merge_warning:     `Pallet này còn ${qtyLabel(Number(existingPallet.cartons_remaining), material as MatUnits)} trong kho. Quét sẽ cộng thêm số mới vào tồn hiện tại.`,
+          merge_warning:     split
+            ? `Pallet này còn ${qtyLabel(Number(existingPallet.cartons_remaining), material as MatUnits)} trong kho (QA OK). Phiếu trả đang GIỮ QA nên hàng trả sẽ tách thành tem con giữ QA, không cộng vào pallet đang có.`
+            : `Pallet này còn ${qtyLabel(Number(existingPallet.cartons_remaining), material as MatUnits)} trong kho. Quét sẽ cộng thêm số mới vào tồn hiện tại.`,
         })
       }
       // TRANSFER + cùng phiếu = quét nhầm 2 lần → block rõ ràng
@@ -1370,6 +1381,21 @@ export async function scanQR(req: Request, res: Response) {
     if (cartons_override !== undefined && cartons_override !== null) {
       const ie = qtyIntegerError(Number(cartons_override), material as MatUnits)
       if (ie) return fail(res, 400, 'VALIDATION_ERROR', ie)
+    }
+    // Phiếu trả THEO CHUYẾN chỉ nhận tem đã đi trên chuyến đó (user 26/10); lập tay thì không ràng
+    if (isReturn && ret?.gdo_id && !(await tripPalletShipped(ret.gdo_id, material.id, parsed.pallet_code)))
+      return fail(res, 422, 'RETURN_FOREIGN_PALLET', foreignPalletMsg(parsed.pallet_code, ret.group_code))
+    // Phiếu trả GIỮ QA + tem còn tồn ⇒ KHÔNG cộng dồn vào pallet đang OK — tách TEM CON ".N" mang QA giữ (user 26/10)
+    if (isReturn && ret?.qa_hold && existingPallet && ['IN_STOCK', 'PARTIAL'].includes(existingPallet.status) && existingPallet.import_order_id !== order_id) {
+      const qty = cartons_override ? Number(cartons_override) : effCartonsPerPallet(material, orderWarehouseId) * qtyFactor
+      const r = await createReturnChild(req, {
+        orderId: order_id, source_pallet_code: parsed.pallet_code, qty_base: qty, location_id, stack_layer: Number(stack_layer) || 1,
+        putaway_override_reason: req.body.putaway_override_reason, note: `Hàng trả về GIỮ QA theo tem gốc ${parsed.pallet_code} (tem gốc còn tồn — không cộng dồn)`,
+      })
+      if (!r.ok) return failChild(res, r)
+      const { data: child } = await supabase.from('InventoryEntry').select(ENTRY_SELECT).eq('id', r.entryId).single()
+      return ok(res, { entry: child, child_of: parsed.pallet_code,
+        warnings: [`Phiếu giữ QA — tem ${parsed.pallet_code} còn tồn nên hàng trả tách thành tem con ${r.childCode} (QA giữ). In tem con ở In tem pallet.`, ...r.warnings] })
     }
 
     if (isTransfer && existingPallet && ['IN_STOCK', 'PARTIAL'].includes(existingPallet.status) && existingPallet.import_order_id !== order_id) {

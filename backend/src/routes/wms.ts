@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import multer from 'multer'
 import * as inbound from '../controllers/wms/inboundController'
+import * as inboundReturn from '../controllers/wms/inboundReturnController'
 import * as outbound from '../controllers/wms/outboundController'
 import * as reconcile from '../controllers/wms/reconcileController'
 import * as inventory from '../controllers/wms/inventoryController'
@@ -206,6 +207,12 @@ router.post('/inbound-orders/:id/scan-manual',          requireAnyPerm(['inbound
 router.patch('/inbound-orders/:id/entries/:entryId',    requireAnyPerm(['inbound', 'edit_pallet'], ['inbound', 'force_edit_pallet']), inbound.updateEntry)
 router.delete('/inbound-orders/:id/entries/:entryId',   requireAnyPerm(['inbound', 'delete_pallet'], ['inbound', 'force_delete_pallet'], ['tms_plan', 'confirm_receipt']), inbound.removeEntry)
 router.delete('/inbound-orders/:id/entries',            requireAnyPerm(['inbound', 'delete_pallet'], ['inbound', 'force_delete_pallet']), inbound.removeEntries)
+// NHẬP HÀNG TRẢ VỀ (26/10) — lập phiếu = inbound.create; nhận hàng lẻ theo tem gốc = inbound.scan (cùng quyền quét nhập)
+router.get('/inbound-returns/trips',                    requirePerm('inbound', 'create'), validate({ query: inboundReturn.zReturnTripsQuery }), inboundReturn.searchReturnTrips)
+router.get('/inbound-returns/trips/:gdoId',             requirePerm('inbound', 'create'), inboundReturn.getReturnTrip)
+router.post('/inbound-returns',                         requirePerm('inbound', 'create'), validate({ body: inboundReturn.zCreateReturn }), inboundReturn.createReturn)
+router.get('/inbound-returns/by-order/:id',             requirePerm('inbound', 'view'), inboundReturn.getReturnByOrder)
+router.post('/inbound-orders/:id/return-loose',         requirePerm('inbound', 'scan'), validate({ body: inboundReturn.zReturnLoose }), inboundReturn.receiveReturnLoose)
 
 // Inventory (tồn kho)
 router.get('/inventory/facets',                   inventory.listFacets)

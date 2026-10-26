@@ -178,7 +178,7 @@ function TraceTab({ canExport }: { canExport: boolean }) {
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(shipments.map(r => ({
       'Tem pallet': r.pallet_code, 'Mã hàng': r.material_code, 'Tên hàng': r.short_name,
       'Mã lô': r.batch, 'Ngày SX': r.production_date?.slice(0, 10) ?? '', 'HSD': r.expiry_date?.slice(0, 10) ?? '',
-      'SL xuất': r.cartons_scanned, 'Ngày giao': r.delivery_date ?? '', 'Số xe': r.group_code,
+      'SL xuất': r.cartons_scanned, 'Trả về': r.returned ?? 0, 'Ngày giao': r.delivery_date ?? '', 'Số xe': r.group_code,
       'Biển số': r.license_plate, 'NPP / khách': r.distributor_name, 'Số DO': r.delivery_code,
       'Kho xuất': r.warehouse_name, 'Lúc quét': r.scanned_at ?? '',
     }))), 'DaGiao')
@@ -234,6 +234,8 @@ function TraceTab({ canExport }: { canExport: boolean }) {
         { label: 'Khách hàng', value: num(s?.customers) },
         { label: 'Chuyến', value: num(s?.trips) },
         { label: 'SL đã giao', value: num(s?.qty_shipped) },
+        // 26/10: hàng khách trả về (nhập trả ở Nhập kho) — không còn là "đã giao khách"
+        ...(s?.qty_returned ? [{ label: 'SL trả về', value: num(s.qty_returned) }] : []),
         { label: 'SL còn trong kho', value: num(s?.qty_on_hand) },
       ]} />
 
@@ -935,7 +937,7 @@ function ShipTable({ rows }: { rows: TraceShipment[] }) {
     <Table className="min-w-full [&_th]:border-r [&_th]:border-slate-200 [&_td]:border-r [&_td]:border-slate-100">
       <TableHeader>
         <TableRow>
-          {['Tem pallet', 'Mã hàng', 'Tên hàng', 'Mã lô', 'Ngày SX', 'HSD', 'SL xuất', 'Ngày giao', 'Số xe', 'Biển số', 'NPP / khách', 'Số DO', 'Kho xuất']
+          {['Tem pallet', 'Mã hàng', 'Tên hàng', 'Mã lô', 'Ngày SX', 'HSD', 'SL xuất', 'Trả về', 'Ngày giao', 'Số xe', 'Biển số', 'NPP / khách', 'Số DO', 'Kho xuất']
             .map(h => <TableHead key={h} className={TH}>{h}</TableHead>)}
         </TableRow>
       </TableHeader>
@@ -949,6 +951,7 @@ function ShipTable({ rows }: { rows: TraceShipment[] }) {
             <TableCell className={TD}>{r.production_date ? formatTimestampDate(r.production_date, true) : <span className="text-slate-300">—</span>}</TableCell>
             <TableCell className={TD}>{r.expiry_date ? formatDate(r.expiry_date) : <span className="text-slate-300">—</span>}</TableCell>
             <TableCell className={`${TD} font-semibold tabular-nums`}>{num(r.cartons_scanned)}</TableCell>
+            <TableCell className={`${TD} tabular-nums`}>{r.returned ? <span className="text-rose-700 font-semibold">{num(r.returned)}</span> : <span className="text-slate-300">—</span>}</TableCell>
             <TableCell className={TD}>{r.delivery_date ? formatDate(r.delivery_date) : <span className="text-slate-300">—</span>}</TableCell>
             <TableCell className={`${TD} font-mono`}>{r.group_code}</TableCell>
             <TableCell className={`${TD} font-mono`}>{r.license_plate ?? <span className="text-slate-300">—</span>}</TableCell>

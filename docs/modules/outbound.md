@@ -23,6 +23,7 @@
 - [`warehouse_map`](warehouse_map.md) — Sơ đồ kho (file này nhắc tới)
 - [`weigh_station`](weigh_station.md) — Phiếu cân (trạm cân) (được nhắc tới từ đó)
 - [`wms_settings`](wms_settings.md) — Cài đặt WMS (hai chiều)
+- [`inbound`](inbound.md) — Nhập kho (nhập hàng trả về đọc chuyến đã hoàn thành + tem đã quét đi — 26/10)
 <!-- giao-thoa:end -->
 
 ## Trang / nghiệp vụ

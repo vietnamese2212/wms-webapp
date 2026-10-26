@@ -76,13 +76,16 @@ export async function tripFlowOf(codes0: string[]): Promise<TripFlow[]> {
   const gateIds = uniq([...[...orderBy.values()].flatMap(o => o.vehicle_slots.map(s => s.gate_registration_id)), ...[...gdoBy.values()].map(g => g.gate_registration_id)].filter((x): x is string => !!x))
   const whIds = uniq([...[...gdoBy.values()].map(g => g.warehouse_id), ...[...orderBy.values()].map(o => o.warehouse_id)].filter((x): x is string => !!x))
   const planIds = uniq([...tripBy.values()].map(t => t.plan_id))
-  const [plans, gates, weighs, whs, transfers] = await Promise.all([
+  const [plans, gates, weighs, whs, transfers, returns] = await Promise.all([
     planIds.length ? fetchAllByIdChunks(planIds, c => db.from('dispatch_plan').select('id, plan_date, segment, warehouse_id, status, confirmed_by').in('id', c).order('id')) as Promise<PlanRow[]> : Promise.resolve([] as PlanRow[]),
     gateIds.length ? fetchAllByIdChunks(gateIds, c => db.from('gate_registrations').select('id, registration_number, status, date, entry_at, exit_at, registered_at, entry_by, exit_by').in('id', c).order('id')) as Promise<GateRow[]> : Promise.resolve([] as GateRow[]),
     gdoIds.length ? fetchAllByIdChunks(gdoIds, c => db.from('WeighTicket').select('id, ticket_no, gdo_id, weigh_date, is_complete, in_time, out_time').in('gdo_id', c).order('in_time', { ascending: false })) as Promise<WeighRow[]> : Promise.resolve([] as WeighRow[]),
     whIds.length ? fetchAllByIdChunks(whIds, c => db.from('Warehouse').select('id, require_gate_on_start, require_weigh_on_start').in('id', c).order('id')) as Promise<WhRow[]> : Promise.resolve([] as WhRow[]),
     gdoIds.length ? fetchAllByIdChunks(gdoIds, c => db.from('TmsOrder').select('id, transfer_gdo_id, status, completed_at, destination_warehouse_id').in('transfer_gdo_id', c).order('id')) as Promise<TransferRow[]> : Promise.resolve([] as TransferRow[]),
+    gdoIds.length ? fetchAllByIdChunks(gdoIds, c => db.from('inbound_return').select('gdo_id, return_code').in('gdo_id', c).order('return_code')) as Promise<{ gdo_id: string | null; return_code: string }[]> : Promise.resolve([] as { gdo_id: string | null; return_code: string }[]),
   ])
+  const retBy = new Map<string, string[]>()
+  for (const r of returns) if (r.gdo_id) { const l = retBy.get(r.gdo_id) ?? []; l.push(r.return_code); retBy.set(r.gdo_id, l) }
   const planBy = new Map(plans.map(p => [p.id, p]))
   const gateBy = new Map(gates.map(g => [g.id, g]))
   const whBy = new Map(whs.map(w => [w.id, w]))
@@ -167,6 +170,13 @@ export async function tripFlowOf(codes0: string[]): Promise<TripFlow[]> {
       steps.push(s?.delivered_at
         ? { key: 'DELIVERED', state: 'done', label: 'Đã giao', doc: s.license_plate, at: s.delivered_at, by: s.delivered_by, ref: o ? { kind: 'order', id: o.id, date: o.date } : null, note: s.delivery_note }
         : { key: 'DELIVERED', state: ready ? 'active' : 'pending', label: ready ? 'Chờ tài xế xác nhận' : 'Chưa giao', doc: null, at: null, by: null, ref: o ? { kind: 'order', id: o.id, date: o.date } : null, note: ready ? 'Tài xế / ĐVVT bấm "Đã giao" ở Kế hoạch VC khi giao xong' : null })
+    }
+    // 26/10: chuyến có HÀNG TRẢ VỀ (phiếu nhập trả ở Nhập kho) ⇒ bước Đã giao nói rõ, kèm số phiếu
+    const rets = g ? (retBy.get(g.id) ?? []) : []
+    if (rets.length) {
+      const d = steps[steps.length - 1]
+      d.label = d.state === 'done' ? 'Giao một phần · có trả về' : `${d.label} · có trả về`
+      d.note = [d.note, `Hàng trả về: ${rets.join(', ')}`].filter(Boolean).join(' · ')
     }
     const current = steps.find(x => x.state === 'active')?.key ?? steps.find(x => x.state === 'pending')?.key ?? null
     return {

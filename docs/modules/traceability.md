@@ -11,6 +11,7 @@
 <!-- giao-thoa:start -->
 - [`inventory`](inventory.md) — Tồn kho (file này nhắc tới)
 - [`packing`](packing.md) — Sổ đóng gói (file này nhắc tới)
+- [`inbound`](inbound.md) — Nhập kho (sổ nhận trả `inbound_return_scan` ⇒ cột "Trả về", trừ khỏi đã giao khách — 26/10)
 <!-- giao-thoa:end -->
 
 ## Trang / nghiệp vụ

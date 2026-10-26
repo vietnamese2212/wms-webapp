@@ -1194,6 +1194,60 @@ export function useCreateInboundOrder() {
   })
 }
 
+// ── NHẬP HÀNG TRẢ VỀ (26/10) — số lượng luôn BASE ──
+export interface ReturnTripHit { gdo_id: string; group_code: string | null; license_plate: string | null; delivery_date: string | null; completed_at: string | null; dos: string[]; customers: string[]; returns: string[] }
+export interface ReturnMat { id: string; material_code: string; short_name: string | null; base_unit: string | null; entry_unit: string | null; units_per_carton: number | null; category: string | null; no_qr_tracking: boolean | null }
+export interface ReturnTripLine { od_number: string; ship_to_code: string | null; customer: string | null; material_id: string; material: ReturnMat | null; shipped_base: number; returned_base: number; pallets: { pallet_code: string; qty_base: number; production_date: string | null }[] }
+/** Tìm CHUYẾN XUẤT GỐC đã hoàn thành theo Số xe · DO · khách · biển số */
+export function useReturnTrips(warehouseId: string, q: string) {
+  return useQuery({
+    queryKey: ['inbound-return-trips', warehouseId, q], enabled: !!warehouseId, staleTime: 30_000,
+    queryFn: async () => (await apiClient.get('/wms/inbound-returns/trips', { params: { warehouse_id: warehouseId, q: q || undefined } })).data.data.items as ReturnTripHit[],
+  })
+}
+export function useReturnTrip(gdoId: string | null) {
+  return useQuery({
+    queryKey: ['inbound-return-trip', gdoId], enabled: !!gdoId, staleTime: 0,
+    queryFn: async () => (await apiClient.get(`/wms/inbound-returns/trips/${gdoId}`)).data.data as { trip: { id: string; group_code: string | null; license_plate: string | null; delivery_date: string | null }; lines: ReturnTripLine[] },
+  })
+}
+export function useCreateReturn() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { warehouse_id: string; gdo_id?: string; ship_to_code?: string; ship_to_name?: string; reason: string; qa_hold: boolean; lines: { od_number?: string | null; material_id: string; qty_base: number }[] }) =>
+      apiClient.post('/wms/inbound-returns', { ...body, qty_semantics: 'base' }).then(r => r.data.data as { return_id: string; return_code: string; imports: { id: string; import_code: string; material_id: string }[] }),
+    onSuccess: () => {
+      for (const k of ['inbound-orders', 'inbound-orders-paged', 'inbound-summary', 'inbound-facets', 'inbound-return-trips', 'inbound-return-trip']) qc.invalidateQueries({ queryKey: [k] })
+    },
+  })
+}
+export interface ReturnByOrder {
+  id: string; return_code: string; gdo_id: string | null; group_code: string | null; license_plate: string | null; ship_to_code: string | null; ship_to_name: string | null
+  reason: string; qa_hold: boolean; created_by_name: string | null; created_at: string
+  lines: { od_number: string | null; qty_base: number; shipped_base: number | null }[]
+  scans: { source_pallet_code: string | null; qty_base: number; merged: boolean; entry_id: string | null; created_at: string }[]
+  pallets: { pallet_code: string; qty_base: number; production_date: string | null; returned_base: number }[]
+}
+export function useReturnByOrder(orderId: string | undefined, enabled: boolean) {
+  return useQuery({
+    queryKey: ['inbound-return-by-order', orderId], enabled: !!orderId && enabled, staleTime: 0,
+    queryFn: async () => (await apiClient.get(`/wms/inbound-returns/by-order/${orderId}`)).data.data as ReturnByOrder,
+  })
+}
+/** Nhận HÀNG LẺ trả về theo TEM GỐC ⇒ tem con ".N" mang lô / NSX gốc */
+export function useReturnLoose() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ orderId, ...body }: { orderId: string; source_pallet_code: string; qty_base: number; location_id: string; putaway_override_reason?: string }) =>
+      apiClient.post(`/wms/inbound-orders/${orderId}/return-loose`, { ...body, qty_semantics: 'base' }).then(r => r.data.data as { entry_id: string; pallet_code: string; warnings: string[] }),
+    onSuccess: (_d, v) => {
+      qc.invalidateQueries({ queryKey: ['inbound-order', v.orderId] })
+      qc.invalidateQueries({ queryKey: ['inbound-return-by-order', v.orderId] })
+      qc.invalidateQueries({ queryKey: ['inbound-orders'] })
+    },
+  })
+}
+
 export function useUpdateInboundOrder() {
   const qc = useQueryClient()
   return useMutation({
@@ -2506,6 +2560,8 @@ export function useRateReceipt() {
 export type TraceKind = 'pallet' | 'material' | 'batch' | 'prod' | 'npp' | 'trip' | 'plate'
 export type TraceShipment = {
   pallet_code: string; cartons_scanned: number; scanned_at: string | null; pct_date: number | null
+  /** 26/10: phần đã NHẬN TRẢ VỀ của (tem, chuyến) — gán ở dòng đầu của cặp đó */
+  returned?: number
   production_date: string | null; expiry_date: string | null; batch: string | null
   material_code: string | null; short_name: string | null
   group_code: string; delivery_date: string | null; license_plate: string | null; trip_status: string
@@ -2524,6 +2580,7 @@ export type TraceResult = {
   summary: {
     pallets: number; shipments: number; stock_rows: number; customers: number; trips: number
     qty_shipped: number; qty_on_hand: number; truncated: boolean
+    qty_returned?: number   // 26/10: nhận trả về (đã giao khách thật = qty_shipped − qty_returned)
   }
 }
 // FILTER CHUẨN (user chốt 01/09 tối lần 3): mỗi tiêu chí một chip, điền ô nào lọc ô đó — 1 lời

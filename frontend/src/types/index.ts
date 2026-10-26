@@ -285,7 +285,10 @@ export interface InboundOrder {
   machine_codes?:      string[]
   location_used_slots?: number
   entries_by_location?: { loc: string; pallets: number; cartons: number }[]
-  source_type?:         'FACTORY' | 'NCC' | 'TRANSFER'
+  source_type?:         'FACTORY' | 'NCC' | 'TRANSFER' | 'RETURN'
+  /** Nhập hàng trả về (26/10) — đầu phiếu trả của phiếu nhập RETURN */
+  return_id?:           string | null
+  inbound_return?:      { id: string; return_code: string; gdo_id: string | null; group_code: string | null; ship_to_name: string | null; reason: string; qa_hold: boolean } | null
   ncc_id?:              string | null
   ncc?:                 { id: string; name: string } | null
   warehouse_type?:      string | null

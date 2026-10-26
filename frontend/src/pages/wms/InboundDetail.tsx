@@ -9,6 +9,7 @@ import { format, parseISO }    from 'date-fns'
 import { vi }                  from 'date-fns/locale'
 import { TableSkeleton }       from '@/components/shared/TableSkeleton'
 import { InboundScanSheet }    from '@/components/wms/InboundScanSheet'
+import { InboundReturnPanel }  from '@/components/wms/InboundReturnPanel'
 import { Button }              from '@/components/ui/button'
 import { Input }               from '@/components/ui/input'
 import { Label }               from '@/components/ui/label'
@@ -827,17 +828,21 @@ export default function InboundDetail() {
               )
             })()}
 
-            {(order.source_type === 'NCC' || order.source_type === 'TRANSFER') && (
+            {order.source_type === 'RETURN' && (
+              <InboundReturnPanel order={order} canScan={can(perms, 'inbound', 'scan')} noQr={isManualEntry} />
+            )}
+
+            {(order.source_type === 'NCC' || order.source_type === 'TRANSFER' || order.source_type === 'RETURN') && (
               <span className="flex items-center gap-1">
                 <span className="text-slate-400 text-[10px]">Thực:</span>
                 <span className="font-semibold font-mono tabular-nums">{qtyLabel(totalScanned, order.material)}</span>
               </span>
             )}
 
-            {(order.source_type === 'NCC' || order.source_type === 'TRANSFER') && (
+            {(order.source_type === 'NCC' || order.source_type === 'TRANSFER' || order.source_type === 'RETURN') && (
               <span className="flex items-center gap-1">
-                <span className="text-slate-400 text-[10px]">KH:</span>
-                {order.source_type === 'TRANSFER' ? (
+                <span className="text-slate-400 text-[10px]">{order.source_type === 'RETURN' ? 'Khai trả:' : 'KH:'}</span>
+                {order.source_type === 'TRANSFER' || order.source_type === 'RETURN' ? (
                   <span className="font-semibold font-mono">
                     {order.planned_cartons != null ? qtyLabel(order.planned_cartons, order.material) : <span className="text-slate-400 font-normal">—</span>}
                   </span>

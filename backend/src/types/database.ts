@@ -1,5 +1,5 @@
 // FILE SINH TỰ ĐỘNG — `node scripts/gen-db-types.mjs` (từ information_schema STAGING). KHÔNG sửa tay.
-// Sinh lúc 2026-10-24T08:15:08.527Z · 107 bảng/view · 210 hàm · 0 enum
+// Sinh lúc 2026-10-26T03:03:48.529Z · 110 bảng/view · 210 hàm · 0 enum
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[]
 
 export type Database = {
@@ -1668,6 +1668,7 @@ export type Database = {
           location_history: Json
           ncc_id: string | null
           transfer_production_date: string | null
+          return_id: string | null
         }
         Insert: {
           id: string
@@ -1696,6 +1697,7 @@ export type Database = {
           location_history?: Json
           ncc_id?: string | null
           transfer_production_date?: string | null
+          return_id?: string | null
         }
         Update: {
           id?: string
@@ -1724,6 +1726,7 @@ export type Database = {
           location_history?: Json
           ncc_id?: string | null
           transfer_production_date?: string | null
+          return_id?: string | null
         }
         Relationships: []
       }
@@ -4676,6 +4679,129 @@ export type Database = {
           updated_at?: string
           status?: string
           cancel_reason?: string | null
+        }
+        Relationships: []
+      }
+      inbound_return: {
+        Row: {
+          id: string
+          return_code: string
+          warehouse_id: string
+          gdo_id: string | null
+          group_code: string | null
+          ship_to_code: string | null
+          ship_to_name: string | null
+          reason: string
+          qa_hold: boolean
+          created_by: string | null
+          created_by_name: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id: string
+          return_code: string
+          warehouse_id: string
+          gdo_id?: string | null
+          group_code?: string | null
+          ship_to_code?: string | null
+          ship_to_name?: string | null
+          reason: string
+          qa_hold?: boolean
+          created_by?: string | null
+          created_by_name?: string | null
+          created_at?: string
+          updated_at: string
+        }
+        Update: {
+          id?: string
+          return_code?: string
+          warehouse_id?: string
+          gdo_id?: string | null
+          group_code?: string | null
+          ship_to_code?: string | null
+          ship_to_name?: string | null
+          reason?: string
+          qa_hold?: boolean
+          created_by?: string | null
+          created_by_name?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      inbound_return_line: {
+        Row: {
+          id: string
+          return_id: string
+          od_number: string | null
+          material_id: string
+          qty_base: number
+          shipped_base: number | null
+          import_order_id: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id: string
+          return_id: string
+          od_number?: string | null
+          material_id: string
+          qty_base: number
+          shipped_base?: number | null
+          import_order_id?: string | null
+          created_at?: string
+          updated_at: string
+        }
+        Update: {
+          id?: string
+          return_id?: string
+          od_number?: string | null
+          material_id?: string
+          qty_base?: number
+          shipped_base?: number | null
+          import_order_id?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      inbound_return_scan: {
+        Row: {
+          id: string
+          return_id: string
+          import_order_id: string
+          entry_id: string | null
+          source_pallet_code: string | null
+          merged: boolean
+          qty_base: number
+          created_by: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id: string
+          return_id: string
+          import_order_id: string
+          entry_id?: string | null
+          source_pallet_code?: string | null
+          merged?: boolean
+          qty_base: number
+          created_by?: string | null
+          created_at?: string
+          updated_at: string
+        }
+        Update: {
+          id?: string
+          return_id?: string
+          import_order_id?: string
+          entry_id?: string | null
+          source_pallet_code?: string | null
+          merged?: boolean
+          qty_base?: number
+          created_by?: string | null
+          created_at?: string
+          updated_at?: string
         }
         Relationships: []
       }

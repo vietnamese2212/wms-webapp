@@ -20,6 +20,7 @@ import { putawayEnforces } from '../../utils/putaway'
 import type { MaterialShelfInfo } from '../../utils/shelfLife'
 import { resolveActorId } from '../../utils/actor'
 import { utcMs } from '../../utils/dates'
+import { returnHead, returnHoldQaId, logReturnScan } from './inboundReturnController'
 
 // Quyền duyệt cất khác quy tắc — kiểm TRONG controller vì route /scan gate bằng inbound.scan
 // (người quét bình thường vẫn phải vào được), quyền này chỉ mở thêm cửa vượt rào.
@@ -78,7 +79,8 @@ async function guardInboundScope(req: Request, res: Response, id: string): Promi
 const ORDER_SELECT = `
   id, import_code, warehouse_id, location_id, material_id, planned_pallets, shift_id, status,
   imported_by, created_by, updated_by, import_date, notes, created_at, updated_at,
-  source_type, gate_registration_id, tms_order_id, planned_cartons, warehouse_type, from_gdo_id, posm_entry_id, posm_cartons, location_history, ncc_id, transfer_production_date,
+  source_type, gate_registration_id, tms_order_id, planned_cartons, warehouse_type, from_gdo_id, posm_entry_id, posm_cartons, location_history, ncc_id, transfer_production_date, return_id,
+  inbound_return:inbound_return!return_id(id, return_code, gdo_id, group_code, ship_to_name, reason, qa_hold),
   warehouse:Warehouse(id, code, name, inventory_mode),
   ncc:TransportCompany!ncc_id(id, name),
   location:Location(id, location_code, sub_code, max_pallets),
@@ -1164,7 +1166,9 @@ export async function checkScanQR(req: Request, res: Response) {
     if (fmtErr) return fail(res, 422, 'QR_FORMAT_MISMATCH', fmtErr)
 
     const orderWarehouseId = (order as any).warehouse_id as string
-    const isTransfer = (order as any).source_type === 'TRANSFER'
+    // Nhập TRẢ VỀ (26/10) đi cùng đường hàng quay lại của chuyển kho: tem còn tồn ⇒ cộng dồn, tem đã xuất ⇒ dòng tồn mới cùng mã
+    const srcType = (order as { source_type?: string | null }).source_type
+    const isTransfer = srcType === 'TRANSFER' || srcType === 'RETURN'
 
     const [matResult, dupResult, locResult, obScanResult] = await Promise.all([
       // shelf_life_days + supplier_shelf_life_overrides: quy tắc cất hàng cần để suy HSD hiệu lực
@@ -1299,7 +1303,7 @@ export async function scanQR(req: Request, res: Response) {
     // Load order with material + source_type
     const { data: order } = await supabase
       .from('ProductionImport')
-      .select('id, import_code, status, source_type, material_id, warehouse_id, warehouse_type, location_id, location_history, ncc_id, material:Material(material_code, cartons_per_pallet, warehouse_pallet_overrides, category), warehouse:Warehouse(id, nmsx_code)')
+      .select('id, import_code, status, source_type, return_id, material_id, warehouse_id, warehouse_type, location_id, location_history, ncc_id, material:Material(material_code, cartons_per_pallet, warehouse_pallet_overrides, category), warehouse:Warehouse(id, nmsx_code)')
       .eq('id', order_id).maybeSingle()
     if (!order)                     return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy phiếu nhập')
     if (order.status !== 'OPEN')    return fail(res, 400, 'ORDER_CLOSED', 'Phiếu nhập không còn ở trạng thái mở')
@@ -1327,7 +1331,12 @@ export async function scanQR(req: Request, res: Response) {
 
     const material = matResult.data
     const orderWarehouseId = (order as any).warehouse_id as string
-    const isTransfer = (order as any).source_type === 'TRANSFER'
+    // Nhập TRẢ VỀ (26/10) đi cùng đường hàng quay lại của chuyển kho (cộng dồn tem còn tồn · kế thừa NCC/shelflife · miễn
+    // bắt NCC) + ghi SỔ NHẬN TRẢ + công tắc QA của phiếu trả
+    const srcType = (order as { source_type?: string | null }).source_type
+    const isReturn = srcType === 'RETURN'
+    const isTransfer = srcType === 'TRANSFER' || isReturn
+    const ret = isReturn ? await returnHead((order as { return_id?: string | null }).return_id) : null
     const existingPallet = ((dupResult.data ?? []) as any[]).find(
       (e: any) => e.location?.warehouse_id === orderWarehouseId
     ) as { id: string; status: string; cartons_remaining: number; adjustment_qty: number; import_order_id: string | null } | undefined
@@ -1393,7 +1402,7 @@ export async function scanQR(req: Request, res: Response) {
             delta:          addCartons,
             cartons_before: before,
             cartons_after:  after,
-            note:           `Nhập trả về từ phiếu transfer ${importCode}`,
+            note:           isReturn ? `Nhập trả về ${ret?.return_code ?? importCode}${ret?.group_code ? ` · chuyến ${ret.group_code}` : ''} (phiếu ${importCode})` : `Nhập trả về từ phiếu transfer ${importCode}`,
             // CÙNG BẢNG với dòng "Điều chỉnh tồn" đã vá 18/09 nhưng là cửa KHÁC — và cửa này còn
             // để `actor_name` NULL CỨNG, tức dòng sổ chắc chắn không có tên dù ai làm.
             actor_name:     req.user?.name ?? null,
@@ -1409,13 +1418,14 @@ export async function scanQR(req: Request, res: Response) {
       }
       if (!done) return fail(res, 409, 'STOCK_CHANGED', 'Tồn pallet này đang bận (nhiều người nhập) — thử lại')
 
+      const logWarn = ret ? await logReturnScan({ return_id: ret.id, import_order_id: order_id, entry_id: existingPallet.id, source_pallet_code: parsed.pallet_code, merged: true, qty_base: addCartons, actor: resolveActorId(req, employee_id) }) : null
       emitInboundChanged()
       return ok(res, {
         merged:        true,
         entry_id:      existingPallet.id,
         added_cartons: addCartons,
         new_remaining: mergedAfter,
-        warnings:      [`Đã cộng ${qtyLabel(addCartons, material as MatUnits)} vào tồn hiện tại (${qtyLabel(mergedBefore, material as MatUnits)} → ${qtyLabel(mergedAfter, material as MatUnits)}). Log ghi nhận tại phiếu transfer ${importCode}.`],
+        warnings:      [`Đã cộng ${qtyLabel(addCartons, material as MatUnits)} vào tồn hiện tại (${qtyLabel(mergedBefore, material as MatUnits)} → ${qtyLabel(mergedAfter, material as MatUnits)}). Log ghi nhận tại phiếu ${isReturn ? 'trả về' : 'transfer'} ${importCode}.`, ...(logWarn ? [logWarn] : [])],
       })
     }
 
@@ -1501,6 +1511,8 @@ export async function scanQR(req: Request, res: Response) {
     // Tem V2 (`;`) mang sẵn QA trên tem (1=OK, khác=X) → tự gán khi operator không chọn tay.
     // User chốt 07/07: QA=0 (X) VẪN CHO NHẬP — chỉ gán trạng thái, không chặn.
     let resolvedQa: string | null = qa_status_id ?? null
+    // Phiếu trả bật công tắc giữ QA ⇒ mặc định 'X' (người quét chọn tay vẫn thắng)
+    if (!resolvedQa && ret?.qa_hold) resolvedQa = await returnHoldQaId()
     if (!resolvedQa && parsed.qa_ok !== null) {
       const { data: qa } = await supabase.from('QAStatus').select('id')
         .eq('code', parsed.qa_ok ? 'OK' : 'X').maybeSingle()
@@ -1606,6 +1618,10 @@ export async function scanQR(req: Request, res: Response) {
     }
 
     const warnings: string[] = []
+    if (ret) {
+      const w = await logReturnScan({ return_id: ret.id, import_order_id: order_id, entry_id: (entry as { id?: string } | null)?.id ?? null, source_pallet_code: parsed.pallet_code, merged: false, qty_base: cartons_imported, actor: resolveActorId(req, employee_id) })
+      if (w) warnings.push(w)
+    }
     // QUÉT NHẬP KHÔNG CẢNH BÁO QUY TẮC CẤT (user chốt 18/08). Chỗ QUYẾT ĐỊNH nơi cất là lúc CHỌN
     // VỊ TRÍ (tạo phiếu / đổi vị trí / picker trong màn quét) — cả 3 cửa đó đều đã gác và đều nói
     // ra khi lệch. Tới lượt quét thì hoặc đã bị chặn (kho bật bắt buộc → 422 ở guardPutaway phía
@@ -1654,7 +1670,7 @@ export async function scanManual(req: Request, res: Response) {
 
     const { data: order } = await supabase
       .from('ProductionImport')
-      .select('id, status, material_id, warehouse_id, posm_entry_id, ncc_id, transfer_production_date, material:Material!material_id(material_code, category, base_unit, entry_unit, units_per_carton)')
+      .select('id, status, source_type, return_id, material_id, warehouse_id, posm_entry_id, ncc_id, transfer_production_date, material:Material!material_id(material_code, category, base_unit, entry_unit, units_per_carton)')
       .eq('id', order_id).maybeSingle()
     if (!order)                  return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy phiếu nhập')
     if (order.status !== 'OPEN') return fail(res, 400, 'ORDER_CLOSED', 'Phiếu nhập không còn ở trạng thái mở')
@@ -1669,7 +1685,8 @@ export async function scanManual(req: Request, res: Response) {
     // Cờ requires_ncc của Loại kho: lưu thủ công (no-QR — entry pool không mang NCC riêng)
     // → NCC phải có ở cấp PHIẾU (ProductionImport.ncc_id). Thiếu → chặn cứng (user chốt 10/07).
     const manualCategory = ((order as any).material?.category ?? '') as string
-    if (!(order as any).ncc_id && await categoryRequiresNcc(manualCategory, (order as { warehouse_id?: string | null }).warehouse_id ?? null)) {
+    const isReturn = (order as { source_type?: string }).source_type === 'RETURN'   // hàng trả về: NCC đã có từ lúc nhập gốc, không bắt lại
+    if (!isReturn && !(order as any).ncc_id && await categoryRequiresNcc(manualCategory, (order as { warehouse_id?: string | null }).warehouse_id ?? null)) {
       return fail(res, 422, 'NCC_REQUIRED', `Loại kho "${manualCategory}" bắt buộc có NCC — sửa phiếu nhập, chọn NCC rồi lưu lại`)
     }
 
@@ -1789,8 +1806,12 @@ export async function scanManual(req: Request, res: Response) {
     const { data: entry } = await supabase
       .from('InventoryEntry').select(ENTRY_SELECT).eq('id', entryId).single()
 
+    // Phiếu trả (mã không theo QR): sổ nhận trả không có tem gốc. Pool chung nên KHÔNG gắn QA giữ (giữ cả pool) — FE nói rõ.
+    const retWarn = isReturn && (order as { return_id?: string | null }).return_id
+      ? await logReturnScan({ return_id: (order as { return_id: string }).return_id, import_order_id: order_id, entry_id: null, source_pallet_code: null, merged: true, qty_base: cartonsNum, actor: resolveActorId(req, employee_id) })
+      : null
     emitInboundChanged()
-    ok(res, { entry, warnings: [] })
+    ok(res, { entry, warnings: retWarn ? [retWarn] : [] })
   } catch (e) { console.error(e); if (isQueryTimeout(e)) { fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return }; fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 

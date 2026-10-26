@@ -21,6 +21,7 @@ const nf = (n: number) => n.toLocaleString('vi-VN')
 const KIND: Record<string, { label: string; cls: string }> = {
   PACKED:    { label: 'Ghi sổ đóng gói (SX)',  cls: 'bg-slate-100 text-slate-700' },
   RECEIVED:  { label: 'Vào sổ tồn',            cls: 'bg-emerald-100 text-emerald-700' },
+  RETURNED:  { label: 'Trả về',                cls: 'bg-rose-100 text-rose-700' },   // 26/10: nhập hàng trả về (ref = chuyến gốc)
   MOVED:     { label: 'Chuyển vị trí',         cls: 'bg-sky-100 text-sky-700' },
   COUNTED:   { label: 'Kiểm kê',               cls: 'bg-indigo-100 text-indigo-700' },
   ADJUSTED:  { label: 'Điều chỉnh tồn',        cls: 'bg-amber-100 text-amber-800' },

@@ -1,6 +1,8 @@
 ﻿import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Plus, PackagePlus, X, ChevronDown, User, MapPin, Pencil, Bookmark, Rows3, AlignJustify, ArrowRight, AlertTriangle } from 'lucide-react'
+import { Plus, PackagePlus, X, ChevronDown, User, MapPin, Pencil, Bookmark, Rows3, AlignJustify, ArrowRight, AlertTriangle, Undo2 } from 'lucide-react'
+import { InboundReturnSheet } from '@/components/wms/InboundReturnSheet'
+import { toast } from '@/components/ui/use-toast'
 import { ScanIcon } from '@/components/shared/ScanIcon'
 import type { AxiosError } from 'axios'
 import { format, parseISO } from 'date-fns'
@@ -1340,6 +1342,7 @@ export default function Inbound() {
   const { inbound: f, setInbound } = useWmsFilterStore()
   const { pin, unpin, isPinned } = useActiveInboundStore()
   const [showNew,      setShowNew]      = useState(false)
+  const [showReturn,   setShowReturn]   = useState(false)
   const [locOpen,      setLocOpen]      = useState(false)
   const [dense,        setDense]        = useState(() => localStorage.getItem('inbound_density') !== 'comfortable')
   const [editNccGroup, setEditNccGroup] = useState<InboundOrder[] | null>(null)
@@ -1505,7 +1508,7 @@ export default function Inbound() {
     { key: 'category', label: 'Loại kho',   type: 'single', options: categoryOptions, value: f.materialCategory || '', allLabel: 'Tất cả loại',
       onChange: v => setInbound({ materialCategory: v, filterMaterials: [], filterCycles: [], filterMachines: [], page: 1 }) },
     { key: 'source',   label: 'Nguồn gốc',  type: 'multi', searchable: false, selected: filterSourceTypes,
-      options: [{ value: 'FACTORY', label: 'SX' }, { value: 'NCC', label: 'NCC' }, { value: 'TRANSFER', label: 'TF' }],
+      options: [{ value: 'FACTORY', label: 'SX' }, { value: 'NCC', label: 'NCC' }, { value: 'TRANSFER', label: 'TF' }, { value: 'RETURN', label: 'TV (trả về)' }],
       onChange: v => setInbound({ filterSourceTypes: v, page: 1 }) },
     { key: 'shift',    label: 'Ca',         type: 'multi', options: shiftOptions,    selected: filterShiftIds, searchable: false,
       onChange: v => setInbound({ filterShiftIds: v, page: 1 }) },
@@ -1562,6 +1565,10 @@ export default function Inbound() {
             ...(can(perms, 'inbound', 'create') ? [{
               key: 'create', icon: Plus, label: 'Tạo phiếu', tip: 'Tạo phiếu nhập kho mới', primary: true,
               onClick: () => setShowNew(true),
+            } satisfies ActionItem, {
+              // 26/10: nhập HÀNG TRẢ VỀ — chọn chuyến xuất gốc (app điền hàng đã xuất) hoặc lập tay
+              key: 'return', icon: Undo2, label: 'Nhập trả về', tip: 'Nhập hàng trả về: chọn chuyến xuất gốc để điền sẵn hàng đã xuất, hoặc lập tay',
+              onClick: () => setShowReturn(true),
             } satisfies ActionItem] : []),
           ]} />
           </div>
@@ -1760,6 +1767,13 @@ export default function Inbound() {
      </div>
 
       <CreateOrderDialog open={showNew || !!editNccGroup} onClose={() => { setShowNew(false); setEditNccGroup(null) }} editGroup={editNccGroup} />
+      <InboundReturnSheet open={showReturn} onClose={() => setShowReturn(false)}
+        onCreated={r => {
+          setShowReturn(false)
+          // một mã ⇒ mở thẳng phiếu nhập để quét; nhiều mã ⇒ ở lại danh sách (các phiếu "TV" vừa lập hiện đầu ngày hôm nay)
+          if (r.imports.length === 1) navigate(`/wms/inbound/${r.imports[0].id}`)
+          else toast({ title: `Đã lập phiếu trả ${r.return_code}`, description: `${r.imports.length} phiếu nhập: ${r.imports.map(i => i.import_code).join(', ')}` })
+        }} />
 
       {/* Quét QR ngay trên trang danh sách (không rời sang chi tiết) */}
       {scanOrderId && (
@@ -1871,8 +1885,10 @@ function InboundRow({ order, onClick, onDoubleClick, onScan, onEditGroup, onPin,
           <span className={`text-[8px] px-1 py-0.5 rounded font-medium ml-0.5 ${
             order.source_type === 'NCC'      ? 'bg-amber-100 text-amber-700'
             : order.source_type === 'TRANSFER' ? 'bg-purple-100 text-purple-700'
+            : order.source_type === 'RETURN'   ? 'bg-rose-100 text-rose-700'
             : 'bg-blue-100 text-blue-600'
-          }`}>{order.source_type === 'NCC' ? 'NCC' : order.source_type === 'TRANSFER' ? 'TF' : 'SX'}</span>
+          }`} title={order.source_type === 'RETURN' && order.inbound_return ? `Trả về ${order.inbound_return.return_code}${order.inbound_return.group_code ? ` · chuyến ${order.inbound_return.group_code}` : ' (lập tay)'} · ${order.inbound_return.reason}` : undefined}>
+            {order.source_type === 'NCC' ? 'NCC' : order.source_type === 'TRANSFER' ? 'TF' : order.source_type === 'RETURN' ? 'TV' : 'SX'}</span>
           {onEditGroup && (
             <button onClick={onEditGroup} title="Sửa nhóm"
               className="text-slate-300 hover:text-blue-500 transition-colors ml-1">

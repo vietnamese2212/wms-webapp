@@ -7,7 +7,12 @@ import type { DeliverySlot, TmsOrder } from '@/types'
 
 // Maps table name → query keys to invalidate (fallback refetch).
 const TABLE_QUERY_MAP: Record<string, string[][]> = {
-  ProductionImport:    [['inbound-orders'], ['inbound-orders-paged'], ['inbound-summary'], ['inbound-facets'], ['inbound-order'], ['inbound-report'], ['transfer-goods'], ['inbound-by-gdo'], ['tms-orders-transfer'], ['tms-material-summary'], ['dashboard'], ['control-tower']],
+  ProductionImport:    [['inbound-orders'], ['inbound-orders-paged'], ['inbound-summary'], ['inbound-facets'], ['inbound-order'], ['inbound-report'], ['transfer-goods'], ['inbound-by-gdo'], ['tms-orders-transfer'], ['tms-material-summary'], ['dashboard'], ['control-tower'], ['inbound-return-trip'], ['inbound-return-by-order']],
+  // Nhập hàng trả về (26/10): đầu phiếu / dòng khai / sổ nhận trả — form chọn chuyến gốc (đã trả bao nhiêu), màn chi tiết phiếu trả,
+  // bước "Đã giao" của chuỗi tình trạng xe
+  inbound_return:      [['inbound-orders'], ['inbound-orders-paged'], ['inbound-order'], ['inbound-return-trips'], ['inbound-return-trip'], ['inbound-return-by-order'], ['trip-flow']],
+  inbound_return_line: [['inbound-return-trip'], ['inbound-return-by-order']],
+  inbound_return_scan: [['inbound-return-by-order']],
   // inbound-orders (list): cột Thực nhập/Tiến độ/pallet gộp từ InventoryEntry — thiếu key này list đứng im tới 60s khi user khác quét/xóa pallet
   // slotting-plan(s): tiến độ kế hoạch sắp xếp suy từ location_id hiện tại — pallet được chuyển phải nhảy tick ngay
   InventoryEntry:      [['inbound-order'], ['inbound-orders'], ['inbound-orders-paged'], ['inbound-summary'], ['inbound-facets'], ['inventory-entries'], ['inventory-summary'], ['inventory-facets'], ['locations-real'], ['plan-vs-actual'], ['inbound-report'], ['manual-item-stock'], ['item-inventory'], ['inventory-by-material'], ['transfer-goods'], ['inbound-by-gdo'], ['stocktake-entries'], ['stocktake-log'], ['tms-material-summary'], ['dashboard'], ['outbound-shortages'], ['slotting-plan'], ['slotting-plans'], ['fill-demand'], ['fill-tasks'], ['warehouse-map-occupancy']],

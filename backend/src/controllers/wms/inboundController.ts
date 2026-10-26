@@ -1088,7 +1088,7 @@ export async function cancelOrder(req: Request, res: Response) {
     if (!(await guardInboundScope(req, res, req.params.id))) return
     const { data: existing } = await supabase
       .from('ProductionImport')
-      .select('status, source_type, from_gdo_id, tms_order_id, posm_entry_id')
+      .select('status, source_type, from_gdo_id, tms_order_id, posm_entry_id, return_id')
       .eq('id', req.params.id).maybeSingle()
     if (!existing) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy phiếu nhập')
     if (existing.status === 'COMPLETED') return fail(res, 400, 'ALREADY_COMPLETED', 'Phiếu nhập đã hoàn thành, không thể hủy')
@@ -1108,8 +1108,19 @@ export async function cancelOrder(req: Request, res: Response) {
     }
 
     const nowTs = new Date().toISOString()
+    // Phiếu nhập TRẢ VỀ: huỷ = rút phần đã khai của mã này (không thì dòng khai mồ côi vẫn chiếm "đã khai trả" — C105);
+    // đầu phiếu trả hết mã thì bỏ luôn (chuyến gốc / chuỗi tình trạng xe không còn ghi "có trả về").
+    const returnId = (existing as { return_id?: string | null }).return_id ?? null
+    if (returnId) {
+      const { error: lErr } = await supabase.from('inbound_return_line').delete().eq('import_order_id', req.params.id)
+      if (lErr) throw lErr
+    }
     const { error } = await supabase.from('ProductionImport').delete().eq('id', req.params.id)
     if (error) throw error
+    if (returnId) {
+      const { count } = await supabase.from('ProductionImport').select('id', { count: 'exact', head: true }).eq('return_id', returnId)
+      if (!count) await supabase.from('inbound_return').delete().eq('id', returnId)
+    }
 
     // Nếu là phiếu TRANSFER: kiểm tra các phiếu còn lại
     // - Hết phiếu → reset GDO transfer_status về IN_TRANSIT để NPP bắt đầu nhận lại

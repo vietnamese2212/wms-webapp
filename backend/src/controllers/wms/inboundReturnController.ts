@@ -71,12 +71,13 @@ async function loadTrip(gdoId: string): Promise<{ trip: Trip | null; lines: Trip
   const retIds = ((rets ?? []) as { id: string }[]).map(r => r.id)
   const prior = retIds.length ? (await fetchAllByIdChunks(retIds, c => db.from('inbound_return_line')
     .select('od_number, material_id, qty_base, import_order_id').in('return_id', c).order('id'))) as { od_number: string | null; material_id: string; qty_base: number; import_order_id: string | null }[] : []
+  // chỉ đếm dòng khai CÒN phiếu nhập chưa huỷ (huỷ phiếu = xoá dòng ProductionImport — C105); cùng luật RPC inbound_return_create
   const impIds = uniq(prior.map(p => p.import_order_id).filter((x): x is string => !!x))
-  const cancelled = new Set(impIds.length ? ((await fetchAllByIdChunks(impIds, c => db.from('ProductionImport')
-    .select('id, status').in('id', c).order('id'))) as { id: string; status: string }[]).filter(i => i.status === 'CANCELLED').map(i => i.id) : [])
+  const live = new Set(impIds.length ? ((await fetchAllByIdChunks(impIds, c => db.from('ProductionImport')
+    .select('id, status').in('id', c).order('id'))) as { id: string; status: string }[]).filter(i => i.status !== 'CANCELLED').map(i => i.id) : [])
   const key = (od: string, mid: string) => `${od}||${mid}`
   const returned = new Map<string, number>()
-  for (const p of prior) if (!p.import_order_id || !cancelled.has(p.import_order_id)) {
+  for (const p of prior) if (p.import_order_id && live.has(p.import_order_id)) {
     const k = key(p.od_number ?? '', p.material_id); returned.set(k, (returned.get(k) ?? 0) + Number(p.qty_base))
   }
   const doOf = new Map(doRows.map(d => [d.id, d]))
@@ -164,7 +165,8 @@ export const zCreateReturn = z.object({
 export async function createReturn(req: Request, res: Response) {
   try {
     if (!requireBaseQty(req, res)) return
-    const b = req.body as z.infer<typeof zCreateReturn>
+    const body = req.body as z.infer<typeof zCreateReturn>
+    const b = { ...body, lines: body.lines.map(l => ({ ...l, od_number: l.od_number?.trim() || null })) }
     if (!inScope(req, b.warehouse_id)) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
     const { data: wh } = await db.from('Warehouse').select('id, code').eq('id', b.warehouse_id).maybeSingle()
     if (!wh) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy kho')
@@ -183,15 +185,18 @@ export async function createReturn(req: Request, res: Response) {
     }
     for (const l of b.lines) { const m = matOf.get(l.material_id); const ie = m ? qtyIntegerError(l.qty_base, m as MatUnits) : null; if (ie) errors.push(`${m?.material_code}: ${ie}`) }
 
+    // trả ≤ đã xuất − đã khai trả trước (gộp các dòng cùng DO × mã trong chính phiếu này). Kiểm ở đây để báo lỗi
+    // đủ mọi dòng; RPC inbound_return_create kiểm LẠI dưới khoá theo chuyến lúc ghi (hai người lập cùng lúc — C104).
+    const want = new Map<string, number>()
+    for (const l of b.lines) { const k = `${l.od_number ?? ''}||${l.material_id}`; want.set(k, (want.get(k) ?? 0) + l.qty_base) }
+    let tripLines: TripLine[] = []
     if (b.gdo_id) {
       const t = await loadTrip(b.gdo_id)
       trip = t.trip
+      tripLines = t.lines
       if (!trip) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy chuyến xuất gốc')
       if (trip.warehouse_id !== b.warehouse_id) return fail(res, 422, 'WAREHOUSE_MISMATCH', 'Chuyến gốc thuộc kho khác kho nhập trả')
       if (trip.status !== 'COMPLETED') return fail(res, 409, 'TRIP_NOT_COMPLETED', `Chuyến ${trip.group_code ?? ''} chưa hoàn thành — chỉ nhập trả cho chuyến đã xuất xong`)
-      // trả ≤ đã xuất − đã khai trả trước (gộp các dòng cùng DO × mã trong chính phiếu này)
-      const want = new Map<string, number>()
-      for (const l of b.lines) { const k = `${l.od_number ?? ''}||${l.material_id}`; want.set(k, (want.get(k) ?? 0) + l.qty_base) }
       for (const [k, q] of want) {
         const [od, mid] = k.split('||')
         const tl = t.lines.find(x => x.od_number === od && x.material_id === mid)
@@ -210,52 +215,50 @@ export async function createReturn(req: Request, res: Response) {
 
     const t0 = nowIso(), today = vnDate(), ddmmyy = ddmmyyOf(today)
     const actor = resolveActorId(req)
-    // ĐẦU PHIẾU — số phiếu `<kho>_RT_ddmmyy_NN`
+    // Số phiếu `<kho>_RT_ddmmyy_NN`; MỖI MÃ MỘT PHIẾU NHẬP (dùng lại màn quét / lưu thủ công / hoàn thành của Nhập kho).
+    // Đầu phiếu + phiếu nhập + dòng khai ghi trong MỘT giao dịch (RPC) — trùng số phiếu ⇒ 23505 ⇒ đặt số mới, thử lại.
+    const rPrefix = `${wh.code}_RT_${ddmmyy}_`, iPrefix = `${wh.code}_N_${ddmmyy}_`
     const returnId = randomUUID()
-    const rPrefix = `${wh.code}_RT_${ddmmyy}_`
-    let returnCode = ''
-    for (let attempt = 0; attempt < 8 && !returnCode; attempt++) {
-      const code = `${rPrefix}${String((await nextReturnSeq(rPrefix)) + 1).padStart(2, '0')}`
-      const { error } = await db.from('inbound_return').insert({
-        id: returnId, return_code: code, warehouse_id: b.warehouse_id, gdo_id: trip?.id ?? null, group_code: trip?.group_code ?? null,
-        ship_to_code: shipTo.code, ship_to_name: shipTo.name, reason: b.reason.trim(), qa_hold: b.qa_hold === true,
-        created_by: actor, created_by_name: resolveActorName(req), created_at: t0, updated_at: t0,
-      })
-      if (!error) { returnCode = code; break }
-      if (error.code !== '23505') throw error
-      await jitter(attempt)
-    }
-    if (!returnCode) return fail(res, 409, 'BUSY', 'Nhiều người cùng lập phiếu trả — thử lại')
-
-    // MỖI MÃ MỘT PHIẾU NHẬP (dùng lại màn quét / lưu thủ công / hoàn thành của Nhập kho)
     const perMat = new Map<string, number>()
     for (const l of b.lines) perMat.set(l.material_id, (perMat.get(l.material_id) ?? 0) + l.qty_base)
-    const iPrefix = `${wh.code}_N_${ddmmyy}_`
+    const impIdOf = new Map([...perMat.keys()].map(mid => [mid, randomUUID()]))
+    const shipped = new Map(tripLines.map(tl => [`${tl.od_number}||${tl.material_id}`, tl.shipped_base]))
+    const lineRows = b.lines.map(l => ({
+      id: randomUUID(), return_id: returnId, od_number: l.od_number, material_id: l.material_id, qty_base: l.qty_base,
+      shipped_base: trip ? (shipped.get(`${l.od_number ?? ''}||${l.material_id}`) ?? null) : null, import_order_id: impIdOf.get(l.material_id) ?? null, created_at: t0, updated_at: t0,
+    }))
+    let returnCode = ''
     let imports: { id: string; import_code: string; material_id: string }[] = []
-    let lastErr: unknown = null
-    for (let attempt = 0; attempt < 8 && !imports.length; attempt++) {
-      const base = await nextImportSeq(iPrefix)
+    for (let attempt = 0; attempt < 8 && !returnCode; attempt++) {
+      const [rSeq, iSeq] = await Promise.all([nextReturnSeq(rPrefix), nextImportSeq(iPrefix)])
+      const code = `${rPrefix}${String(rSeq + 1).padStart(2, '0')}`
       const rows = [...perMat].map(([mid, qty], i) => ({
-        id: randomUUID(), import_code: `${iPrefix}${String(base + i + 1).padStart(2, '0')}`, warehouse_id: b.warehouse_id, material_id: mid,
+        id: impIdOf.get(mid) ?? randomUUID(), import_code: `${iPrefix}${String(iSeq + i + 1).padStart(2, '0')}`, warehouse_id: b.warehouse_id, material_id: mid,
         planned_cartons: qty, status: 'OPEN', source_type: 'RETURN', warehouse_type: matOf.get(mid)?.category ?? null, import_date: today,
         return_id: returnId, notes: `Trả về${trip?.group_code ? ` từ chuyến ${trip.group_code}` : ' (lập tay)'} — ${b.reason.trim()}`.slice(0, 500),
         created_by: actor, updated_by: actor, created_at: t0, updated_at: t0,
       }))
-      const { error } = await db.from('ProductionImport').insert(rows)
-      if (!error) { imports = rows.map(r => ({ id: r.id, import_code: r.import_code, material_id: r.material_id })); break }
-      lastErr = error
-      if (error.code !== '23505') break
-      await jitter(attempt)
+      const { data: r, error } = await db.rpc('inbound_return_create', {
+        p_head: {
+          id: returnId, return_code: code, warehouse_id: b.warehouse_id, gdo_id: trip?.id ?? null, group_code: trip?.group_code ?? null,
+          ship_to_code: shipTo.code, ship_to_name: shipTo.name, reason: b.reason.trim(), qa_hold: b.qa_hold === true,
+          created_by: actor, created_by_name: resolveActorName(req), created_at: t0, updated_at: t0,
+        },
+        p_imports: rows, p_lines: lineRows,
+        p_gdo_id: trip?.id, p_limits: trip ? Object.fromEntries([...want.keys()].map(k => [k, shipped.get(k) ?? 0])) : undefined,
+      })
+      if (error) { if (error.code !== '23505') throw error; await jitter(attempt); continue }
+      const out = String(r ?? '')
+      if (out.startsWith('OVER|')) {
+        // người khác vừa khai trả cùng dòng — đếm dưới khoá thấy vượt
+        const rest = out.slice(5), cut = rest.lastIndexOf('|'), [od, mid] = rest.slice(0, cut).split('||')
+        const m = matOf.get(mid) as MatUnits | undefined
+        return fail(res, 422, 'RETURN_INVALID', `DO ${od || '—'} · ${matOf.get(mid)?.material_code ?? mid}: vừa có phiếu trả khác khai cùng dòng — chỉ còn trả được ${qtyLabel(Number(rest.slice(cut + 1)), m)}. Mở lại chuyến để xem số mới.`)
+      }
+      returnCode = code
+      imports = rows.map(x => ({ id: x.id, import_code: x.import_code, material_id: x.material_id }))
     }
-    if (!imports.length) { await db.from('inbound_return').delete().eq('id', returnId); throw lastErr ?? new Error('Không tạo được phiếu nhập') }
-    const impOf = new Map(imports.map(i => [i.material_id, i.id]))
-    const shipped = new Map<string, number>()
-    if (trip) for (const tl of (await loadTrip(trip.id)).lines) shipped.set(`${tl.od_number}||${tl.material_id}`, tl.shipped_base)
-    const { error: lErr } = await db.from('inbound_return_line').insert(b.lines.map(l => ({
-      id: randomUUID(), return_id: returnId, od_number: l.od_number?.trim() || null, material_id: l.material_id, qty_base: l.qty_base,
-      shipped_base: shipped.get(`${l.od_number ?? ''}||${l.material_id}`) ?? null, import_order_id: impOf.get(l.material_id) ?? null, created_at: t0, updated_at: t0,
-    })))
-    if (lErr) throw lErr
+    if (!returnCode) return fail(res, 409, 'BUSY', 'Nhiều người cùng lập phiếu trả — thử lại')
     emitInboundChanged()
     return ok(res, { return_id: returnId, return_code: returnCode, imports }, 201)
   } catch (e) { return failAny(res, e) }

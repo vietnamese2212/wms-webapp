@@ -1,5 +1,5 @@
 // FILE SINH TỰ ĐỘNG — `node scripts/gen-db-types.mjs` (từ information_schema STAGING). KHÔNG sửa tay.
-// Sinh lúc 2026-10-26T03:03:48.529Z · 110 bảng/view · 210 hàm · 0 enum
+// Sinh lúc 2026-10-26T06:43:24.057Z · 110 bảng/view · 211 hàm · 0 enum
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[]
 
 export type Database = {
@@ -6456,6 +6456,10 @@ export type Database = {
       inbound_orders_summary: {
         Args: { p_warehouse_ids?: unknown | null; p_scope_categories?: unknown | null; p_category?: string | null; p_status?: string | null; p_date_from?: string | null; p_date_to?: string | null; p_material_ids?: unknown | null; p_cycles?: unknown | null; p_machines?: unknown | null; p_shift_ids?: unknown | null; p_source_types?: unknown | null; p_importer_ids?: unknown | null; p_search?: string | null; p_search_mat_ids?: unknown | null; p_search_order_ids?: unknown | null }
         Returns: Json
+      }
+      inbound_return_create: {
+        Args: { p_head: Json | null; p_imports: Json | null; p_lines: Json | null; p_gdo_id?: string | null; p_limits?: Json | null }
+        Returns: string
       }
       inventory_band_totals: {
         Args: { p_ids: unknown | null; p_status: string | null; p_wh_ids: unknown | null; p_location_ids: unknown | null; p_material_ids: unknown | null; p_categories: unknown | null; p_qa_ids: unknown | null; p_search: string | null; p_search_mat_ids: unknown | null; p_search_loc_ids: unknown | null; p_manufacturer: string | null; p_cycles: unknown | null; p_machines: unknown | null; p_nmsx: unknown | null; p_ncc_ids: unknown | null; p_import_from: string | null; p_import_to: string | null }

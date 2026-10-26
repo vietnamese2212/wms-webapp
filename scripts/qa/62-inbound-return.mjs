@@ -81,6 +81,17 @@ try {
     && (await restAll('inbound_return', `select=id&group_code=eq.${GC}`)).length === 0,
     `over=${over.s}/${over.j?.error?.code} ${(over.j?.error?.message ?? '').slice(0, 100)} noCust=${noCust.s}`)
 
+  // ── [2b] hai người lập CÙNG LÚC trên cùng dòng (còn 10, mỗi người 6) ⇒ đúng một người qua (C104); huỷ ⇒ hoàn lại (C105) ──
+  const race = await Promise.all([1, 2].map(() => api('/wms/inbound-returns', 'POST', { warehouse_id: WH, gdo_id: g.id, reason: 'QA62 đua', qa_hold: false, lines: [{ od_number: OD, material_id: mat.id, qty_base: 6 * F }] })))
+  const won = race.filter(r => r.s === 201)
+  check('2b. Hai người cùng khai 6/10 thùng ⇒ đúng MỘT phiếu được lập, người kia 422 (không khai vượt đã xuất)', won.length === 1 && race.some(r => r.s === 422), `http=${race.map(r => r.s)}`)
+  const cancels = []
+  for (const r of won) for (const i of r.j?.data?.imports ?? []) cancels.push((await api(`/wms/inbound-orders/${i.id}/cancel`, 'POST', {})).s)
+  const tc = await api(`/wms/inbound-returns/trips/${g.id}`)
+  check('2c. Huỷ phiếu nhập trả ⇒ số đã khai trả hoàn về 0, đầu phiếu bị bỏ', cancels.length === 1 && cancels.every(s => s === 200)
+    && (tc.j?.data?.lines ?? []).find(l => l.od_number === OD)?.returned_base === 0 && (await restAll('inbound_return', `select=id&group_code=eq.${GC}`)).length === 0,
+    `cancel=${cancels} returned=${(tc.j?.data?.lines ?? [])[0]?.returned_base}`)
+
   // ── [3] lập phiếu trả 4 thùng, GIỮ QA ──
   const cr = await api('/wms/inbound-returns', 'POST', { warehouse_id: WH, gdo_id: g.id, reason: 'QA62 khách từ chối', qa_hold: true, lines: [{ od_number: OD, material_id: mat.id, qty_base: 4 * F }] })
   const imp = cr.j?.data?.imports?.[0]

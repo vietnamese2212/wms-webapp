@@ -537,6 +537,39 @@ const RULES = [
         && /(^|[^.\w])(window\.)?(confirm|alert|prompt)\(/.test(line), s),
   },
   {
+    key: 'mutate_call_swallows_error',
+    label: 'gọi `mutate(x)` TRẦN (không onError / handlers, component không đọc `error`) — lỗi BE (422 chốt nghiệp vụ…) bị NUỐT IM LẶNG, phải hiện banner đỏ',
+    // C108 (26/10): Hoàn thành phiếu nhập ở màn chi tiết gọi completeOrder(order.id) — chốt "hàng NPP chuyển về phải gắn lý do"
+    // (422) và chốt chấm sao không hiện gì, phiếu cứ nằm nguyên. queryClient không có onError toàn cục. Đếm: bí danh
+    // `const { mutate: X … } = useY()` (bỏ qua nếu cùng destructure `error`/`isError`), lời gọi X(…) MỘT đối số không chữ onError/onSettled.
+    count: (s) => {
+      let n = 0
+      for (const f of filesOf('frontend/src', ['.tsx'])) {
+        const src = readFileSync(f, 'utf8')
+        const re = /const \{\s*mutate:\s*(\w+)([^}]*)\}\s*=\s*use\w+\(/g
+        let m
+        while ((m = re.exec(src))) {
+          if (/\b(error|isError)\b/.test(m[2])) continue
+          const name = m[1]
+          for (let i = src.indexOf(name + '('); i >= 0; i = src.indexOf(name + '(', i + 1)) {
+            if (/[\w.]/.test(src[i - 1])) continue
+            let d = 0, j = i + name.length, twoArgs = false
+            for (; j < src.length; j++) {
+              const c = src[j]
+              if ('({['.includes(c)) d++
+              else if (')}]'.includes(c)) { d--; if (d === 0) break }
+              else if (c === ',' && d === 1) twoArgs = true
+            }
+            if (twoArgs || /onError|onSettled/.test(src.slice(i, j))) continue
+            n++
+            if (s && s.length < 5) s.push(`${f.slice(ROOT.length + 1)}:${src.slice(0, i).split('\n').length}`)
+          }
+        }
+      }
+      return n
+    },
+  },
+  {
     key: 'action_item_custom_fill',
     label: 'ActionItem tự tô NỀN MÀU riêng (className bg-*-600…) — nút chính dùng variant, không chế màu; một cụm một nút chính',
     // Điều vận 24/09: "Lập lại" xanh dương + "Xác nhận" xanh lá tự chế = màn duy nhất có hai nút chính hai màu.

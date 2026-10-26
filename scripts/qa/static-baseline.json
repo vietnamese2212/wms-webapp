@@ -11,6 +11,7 @@
   "entry_decimal_beside_unit_label": 0,
   "empty_row_centered_in_wide_td": 0,
   "native_browser_dialog": 31,
+  "mutate_call_swallows_error": 15,
   "action_item_custom_fill": 1,
   "list_table_not_resizable": 45,
   "raw_table_outside_resizable": 81,

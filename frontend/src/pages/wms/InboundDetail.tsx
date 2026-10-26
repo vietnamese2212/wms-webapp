@@ -206,6 +206,12 @@ export default function InboundDetail() {
   const { mutate: updateOrder                           } = useUpdateInboundOrder()
   const { mutate: setOrderLocation                      } = useSetInboundOrderLocation()
   const [locError, setLocError] = useState<string | null>(null)
+  // Hoàn thành / Gỡ / Hủy bị BE chặn (thiếu lý do NPP, chưa chấm sao, còn pallet…) phải NÓI ra — bản cũ gọi mutate trần, 422 im lặng
+  const [actError, setActError] = useState<string | null>(null)
+  const actOpts = (fallback: string, onSuccess?: () => void) => ({
+    onSuccess: () => { setActError(null); onSuccess?.() },
+    onError: (e: unknown) => setActError((e as AxiosError<{ error?: { message?: string } }>).response?.data?.error?.message ?? fallback),
+  })
   // code: truyền vào khi mã vị trí KHÔNG có trong `allLocations` — vd quét tem ô đang ở ngoài 300
   // dòng server trả về. Thiếu tham số này thì nhãn vị trí sau khi quét bị trống.
   const changeLoc = (v: string, code?: string) => setOrderLocation(
@@ -380,7 +386,7 @@ export default function InboundDetail() {
       onClick: () => openConfirm(
         'Hủy phiếu nhập',
         `Xác nhận hủy phiếu "${order.import_code ?? order.id.slice(0, 8)}"? Thao tác này không thể hoàn tác.`,
-        () => cancelOrder(order.id, { onSuccess: () => navigate('/wms/inbound') })
+        () => cancelOrder(order.id, actOpts('Không hủy được phiếu', () => navigate('/wms/inbound')))
       ),
     })
   if (isOpen && can(perms, 'inbound', 'complete'))
@@ -592,8 +598,8 @@ export default function InboundDetail() {
                   disabled={completing || uncompleting}
                   onClick={() => {
                     setCompleteDlg(null)
-                    if (isComplete) completeOrder(order.id)
-                    else uncompleteOrder(order.id)
+                    if (isComplete) completeOrder(order.id, actOpts('Không hoàn thành được phiếu'))
+                    else uncompleteOrder(order.id, actOpts('Không gỡ hoàn thành được'))
                   }}
                 >
                   {isComplete ? 'Hoàn thành' : 'Xác nhận gỡ'}
@@ -894,6 +900,9 @@ export default function InboundDetail() {
 
         {locError && (
           <div className="mx-4 mt-2 rounded-md bg-red-50 border border-red-200 px-3 py-1.5 text-xs text-red-700">{locError}</div>
+        )}
+        {actError && (
+          <div className="mx-4 mt-2 rounded-md bg-red-50 border border-red-200 px-3 py-1.5 text-xs text-red-700">{actError}</div>
         )}
 
         {/* Dải tile tổng hợp (đồng bộ với list) */}

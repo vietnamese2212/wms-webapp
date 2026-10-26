@@ -37,6 +37,8 @@ export const MODULES = {
       complete:           'Hoàn thành phiếu',
       uncomplete:         'Gỡ hoàn thành phiếu',
       putaway_override:   'Duyệt cất khác quy tắc (kho bật bắt buộc)',
+      export:             'Xuất Excel (Hàng trả về)',
+      recall_manage:      'Tạo / đóng mã đợt thu hồi (Hàng trả về)',
     },
   },
   outbound: {

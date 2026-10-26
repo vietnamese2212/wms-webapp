@@ -1214,19 +1214,105 @@ export function useReturnTrip(gdoId: string | null) {
 export function useCreateReturn() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (body: { warehouse_id: string; gdo_id?: string; ship_to_code?: string; ship_to_name?: string; reason: string; qa_hold: boolean; lines: { od_number?: string | null; material_id: string; qty_base: number }[] }) =>
+    mutationFn: (body: { warehouse_id: string; gdo_id?: string; ship_to_code?: string; ship_to_name?: string; reason_code: string; reason?: string; recall_id?: string; qa_hold: boolean; lines: { od_number?: string | null; material_id: string; qty_base: number }[] }) =>
       apiClient.post('/wms/inbound-returns', { ...body, qty_semantics: 'base' }).then(r => r.data.data as { return_id: string; return_code: string; imports: { id: string; import_code: string; material_id: string }[] }),
     onSuccess: () => {
-      for (const k of ['inbound-orders', 'inbound-orders-paged', 'inbound-summary', 'inbound-facets', 'inbound-return-trips', 'inbound-return-trip']) qc.invalidateQueries({ queryKey: [k] })
+      for (const k of ['inbound-orders', 'inbound-orders-paged', 'inbound-summary', 'inbound-facets', 'inbound-return-trips', 'inbound-return-trip', 'inbound-return-report', 'recall-breakdown']) qc.invalidateQueries({ queryKey: [k] })
     },
   })
 }
 export interface ReturnByOrder {
   id: string; return_code: string; gdo_id: string | null; group_code: string | null; license_plate: string | null; ship_to_code: string | null; ship_to_name: string | null
-  reason: string; qa_hold: boolean; created_by_name: string | null; created_at: string
+  reason: string | null; reason_code: string | null; reason_label: string | null; recall_id: string | null; recall: { code: string; name: string | null } | null
+  qa_hold: boolean; created_by_name: string | null; created_at: string
   lines: { od_number: string | null; qty_base: number; shipped_base: number | null }[]
-  scans: { source_pallet_code: string | null; qty_base: number; merged: boolean; entry_id: string | null; created_at: string }[]
-  pallets: { pallet_code: string; qty_base: number; production_date: string | null; returned_base: number }[]
+  scans: { source_pallet_code: string | null; qty_base: number; merged: boolean; surplus: boolean; entry_id: string | null; created_at: string }[]
+  pallets: { pallet_code: string; qty_base: number; production_date: string | null; returned_base: number; surplus_base: number }[]
+}
+
+// ── Lý do trả hàng (danh mục LookupValue 'return_reason', sửa ở Cài đặt WMS) · đợt thu hồi · thống kê (26/10 tối) ──
+export type ReturnReasonRow = { id: string; value: string; sort_order: number; meta?: { label?: string; requires_recall?: boolean } | null }
+export const returnReasonLabel = (rows: ReturnReasonRow[] | undefined, code: string | null | undefined) =>
+  code ? (rows?.find(r => r.value === code)?.meta?.label?.trim() || code) : '—'
+export function useReturnReasons() {
+  return useQuery({
+    queryKey: ['lookup', 'return_reason'], staleTime: 10 * 60_000,
+    queryFn: async () => (await apiClient.get('/wms/lookup', { params: { type: 'return_reason' } })).data.data as ReturnReasonRow[],
+  })
+}
+export function useSaveReturnReason() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, ...input }: { id?: string; value: string; meta: ReturnReasonRow['meta'] }) =>
+      (id ? apiClient.put(`/wms/lookup/${id}`, input) : apiClient.post('/wms/lookup', { type: 'return_reason', ...input })).then(r => r.data.data as ReturnReasonRow),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['lookup', 'return_reason'] }),
+  })
+}
+export function useDeleteReturnReason() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => apiClient.delete(`/wms/lookup/${id}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['lookup', 'return_reason'] }),
+  })
+}
+export interface RecallRow { id: string; code: string; name: string | null; note: string | null; status: 'OPEN' | 'CLOSED'; created_by_name: string | null; created_at: string; closed_at: string | null }
+export function useRecalls(status?: 'OPEN' | 'CLOSED') {
+  return useQuery({
+    queryKey: ['recalls', status ?? 'all'], staleTime: 60_000,
+    queryFn: async () => (await apiClient.get('/wms/recalls', { params: { status } })).data.data.items as RecallRow[],
+  })
+}
+export function useSaveRecall() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, ...body }: { id?: string; code?: string; name?: string; note?: string; status?: 'OPEN' | 'CLOSED' }) =>
+      (id ? apiClient.patch(`/wms/recalls/${id}`, body) : apiClient.post('/wms/recalls', body)).then(r => r.data.data as RecallRow),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['recalls'] }); qc.invalidateQueries({ queryKey: ['recall-breakdown'] }) },
+  })
+}
+export interface RecallBreakdown {
+  recall: Omit<RecallRow, 'created_by_name'>
+  by_material: { material_id: string; material_code: string; short_name: string | null; base_unit: string | null; entry_unit: string | null; units_per_carton: number | null; qty_base: number; phieu: number }[]
+  by_party: { party: string; phieu: number; n_mat: number }[]
+  by_party_material: { party: string; material_id: string; qty_base: number }[]
+}
+export function useRecallBreakdown(id: string | null) {
+  return useQuery({
+    queryKey: ['recall-breakdown', id], enabled: !!id, staleTime: 0,
+    queryFn: async () => (await apiClient.get(`/wms/recalls/${id}/breakdown`)).data.data as RecallBreakdown,
+  })
+}
+export interface ReturnReportRow {
+  kind: 'RT' | 'NPP'; id: string; code: string; day: string; warehouse_id: string | null; trip: string | null; gdo_id: string | null; party: string | null
+  reason_code: string | null; note: string | null; recall_id: string | null; by_name: string | null; n_mat: number
+  declared: number; received: number; surplus: number; held_pallets: number; done: boolean; any_mat: string | null; n_codes: number; first_import: string | null
+}
+export interface ReturnReportSummary { phieu: number; rt: number; npp: number; declared: number; received: number; surplus: number; held_pallets: number; open: number; no_reason: number }
+export interface ReturnReportParams { warehouse_id?: string; date_from?: string; date_to?: string; kind?: 'RT' | 'NPP'; reason?: string; recall_id?: string; search?: string }
+export function useReturnReport(p: ReturnReportParams) {
+  return useQuery({
+    queryKey: ['inbound-return-report', p], staleTime: 30_000, placeholderData: keepPreviousData,
+    queryFn: async () => (await apiClient.get('/wms/inbound-returns/report', { params: p })).data.data as { rows: ReturnReportRow[]; total: number; summary: ReturnReportSummary | null },
+  })
+}
+export interface NppReturnTag { gdo_id: string; group_code: string | null; is_npp: boolean; npp_name: string | null; imports: number; reason_code: string | null; note: string | null; recall_id: string | null }
+export function useNppReturn(gdoId: string | null | undefined) {
+  return useQuery({
+    queryKey: ['inbound-return-npp', gdoId], enabled: !!gdoId, staleTime: 30_000,
+    queryFn: async () => (await apiClient.get(`/wms/inbound-returns/npp/${gdoId}`)).data.data as NppReturnTag,
+  })
+}
+export function useTagNppReturn() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ gdoId, ...body }: { gdoId: string; reason_code: string; note?: string; recall_id?: string | null }) =>
+      apiClient.patch(`/wms/inbound-returns/npp/${gdoId}`, body).then(r => r.data.data as { updated: number }),
+    onSuccess: (_d, v) => {
+      qc.invalidateQueries({ queryKey: ['inbound-return-npp', v.gdoId] })
+      qc.invalidateQueries({ queryKey: ['inbound-return-report'] })
+      qc.invalidateQueries({ queryKey: ['recall-breakdown'] })
+    },
+  })
 }
 export function useReturnByOrder(orderId: string | undefined, enabled: boolean) {
   return useQuery({
@@ -1238,12 +1324,13 @@ export function useReturnByOrder(orderId: string | undefined, enabled: boolean) 
 export function useReturnLoose() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ orderId, ...body }: { orderId: string; source_pallet_code: string; qty_base: number; location_id: string; putaway_override_reason?: string }) =>
-      apiClient.post(`/wms/inbound-orders/${orderId}/return-loose`, { ...body, qty_semantics: 'base' }).then(r => r.data.data as { entry_id: string; pallet_code: string; warnings: string[] }),
+    mutationFn: ({ orderId, ...body }: { orderId: string; source_pallet_code: string; qty_base: number; location_id: string; putaway_override_reason?: string; production_date?: string }) =>
+      apiClient.post(`/wms/inbound-orders/${orderId}/return-loose`, { ...body, qty_semantics: 'base' }).then(r => r.data.data as { entry_id: string; pallet_code: string; surplus_base: number; warnings: string[] }),
     onSuccess: (_d, v) => {
       qc.invalidateQueries({ queryKey: ['inbound-order', v.orderId] })
       qc.invalidateQueries({ queryKey: ['inbound-return-by-order', v.orderId] })
       qc.invalidateQueries({ queryKey: ['inbound-orders'] })
+      qc.invalidateQueries({ queryKey: ['inbound-return-report'] })
     },
   })
 }

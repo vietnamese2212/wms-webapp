@@ -48,6 +48,7 @@ const lotTrace           = () => import('@/pages/wms/LotTrace')
 const warehouseCostVoucher = () => import('@/pages/wms/WarehouseCostVoucher')
 const forklift           = () => import('@/pages/wms/Forklift')
 const packing            = () => import('@/pages/wms/Packing')
+const inboundReturns     = () => import('@/pages/wms/InboundReturns')
 const fillPicking        = () => import('@/pages/wms/FillPicking')
 const fillOrderDetail    = () => import('@/pages/wms/FillOrderDetail')
 const loosePicking           = () => import('@/pages/wms/LoosePicking')
@@ -102,6 +103,7 @@ export const Pages = {
   WarehouseCostVoucher: lazyRetry(warehouseCostVoucher),
   Forklift: lazyRetry(forklift),
   Packing: lazyRetry(packing),
+  InboundReturns: lazyRetry(inboundReturns),
   FillPicking: lazyRetry(fillPicking),
   FillOrderDetail: lazyRetry(fillOrderDetail),
   LoosePicking: lazyRetry(loosePicking),

@@ -2,6 +2,7 @@
 //   • THEO CHUYẾN XUẤT GỐC: tìm chuyến đã hoàn thành (Số xe · DO · khách · biển số) ⇒ app điền DO · mã · số đã xuất; nhập số trả
 //     (không vượt đã xuất − đã khai trả). "Cả xe quay về" = điền hết phần còn trả được.
 //   • LẬP TAY khi không tìm được chuyến: khách + mã + số + lý do.
+//   • LÝ DO chọn từ danh mục (Cài đặt WMS); lý do khai "bắt chọn đợt" (Thu hồi) ⇒ phải chọn MÃ ĐỢT thu hồi đang mở.
 //   • Công tắc QA THEO PHIẾU, mặc định KHÔNG giữ; bật ⇒ hàng quét nhận gắn QA "X" (giữ, không xuất được tới khi QA duyệt).
 // Lập xong: mỗi mã thành một phiếu nhập (nguồn "RT") — quét / lưu thủ công / hoàn thành ở màn chi tiết phiếu nhập như thường.
 // Giao lại hàng trả = ĐƠN RIÊNG (SAP tạo DO mới), form không hỏi.
@@ -19,7 +20,7 @@ import { QtyInput } from '@/components/shared/QtyInput'
 import { useScopedWarehouses } from '@/hooks/useUserScope'
 import { useDebouncedValue } from '@/hooks/useDebouncedValue'
 import { useGlobalScopeStore } from '@/stores/globalScopeStore'
-import { useReturnTrips, useReturnTrip, useCreateReturn, useMaterials, type ReturnTripLine, type MaterialLite } from '@/api/hooks'
+import { useReturnTrips, useReturnTrip, useCreateReturn, useMaterials, useReturnReasons, useRecalls, type ReturnTripLine, type MaterialLite } from '@/api/hooks'
 import { qtyLabel, type MatUnits } from '@/utils/qtyUnits'
 import { formatDate } from '@/utils/formatters'
 
@@ -44,16 +45,21 @@ export function InboundReturnSheet({ open, onClose, onCreated }: {
   const [manualRows, setManualRows] = useState<ManualRow[]>([])
   const [matTerm, setMatTerm] = useState('')   // SingleSelect serverSearch tự giãn nhịp 250 ms
   const debMat = matTerm
-  const [reason, setReason] = useState('')
+  const [reasonCode, setReasonCode] = useState('')
+  const [reason, setReason] = useState('')     // ghi chú thêm
+  const [recallId, setRecallId] = useState('')
   const [qaHold, setQaHold] = useState(false)
   const [err, setErr] = useState('')
+  const { data: reasons = [] } = useReturnReasons()
+  const { data: recalls = [] } = useRecalls('OPEN')
+  const needRecall = reasons.find(r => r.value === reasonCode)?.meta?.requires_recall === true
 
   useEffect(() => {
     if (!open) return
     const ids = new Set((warehouses as { id: string }[]).map(w => w.id))
     setWarehouseId(gWh && ids.has(gWh) ? gWh : (warehouses.length === 1 ? (warehouses[0] as { id: string }).id : ''))
     setMode('TRIP'); setTerm(''); setGdoId(null); setQty({}); setShipToName(''); setManualRows([]); setMatTerm('')
-    setReason(''); setQaHold(false); setErr('')
+    setReasonCode(''); setReason(''); setRecallId(''); setQaHold(false); setErr('')
   }, [open]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const tripsQ = useReturnTrips(open && mode === 'TRIP' && !gdoId ? warehouseId : '', debTerm.trim())
@@ -69,14 +75,15 @@ export function InboundReturnSheet({ open, onClose, onCreated }: {
     : manualRows.filter(r => r.qty > 0).map(r => ({ od_number: r.od.trim() || null, material_id: r.material.id, qty_base: r.qty })),
   [mode, lines, qty, manualRows])
   const over = mode === 'TRIP' && lines.some(l => (qty[keyOf(l)] ?? 0) > roomOf(l) + 1e-9)
-  const canSave = !!warehouseId && payloadLines.length > 0 && reason.trim().length > 0 && !over
+  const canSave = !!warehouseId && payloadLines.length > 0 && !!reasonCode && (!needRecall || !!recallId) && !over
     && (mode === 'TRIP' ? !!gdoId : shipToName.trim().length > 0)
 
   async function save() {
     setErr('')
     try {
       const r = await create.mutateAsync({
-        warehouse_id: warehouseId, reason: reason.trim(), qa_hold: qaHold, lines: payloadLines,
+        warehouse_id: warehouseId, reason_code: reasonCode, reason: reason.trim() || undefined, recall_id: recallId || undefined,
+        qa_hold: qaHold, lines: payloadLines,
         ...(mode === 'TRIP' ? { gdo_id: gdoId! } : { ship_to_name: shipToName.trim() }),
       })
       onCreated(r)
@@ -230,10 +237,23 @@ export function InboundReturnSheet({ open, onClose, onCreated }: {
           </div>
         )}
 
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          <div>
+            <Label className="text-xs">Lý do trả <span className="text-red-500">*</span></Label>
+            <SingleSelect value={reasonCode} onChange={setReasonCode} placeholder="Chọn lý do" triggerClassName="h-8 mt-0.5"
+              options={reasons.map(r => ({ value: r.value, label: r.meta?.label?.trim() || r.value }))} />
+          </div>
+          <div>
+            <Label className="text-xs">Mã đợt thu hồi {needRecall ? <span className="text-red-500">*</span> : <span className="text-slate-400">(nếu có)</span>}</Label>
+            <SingleSelect value={recallId} onChange={setRecallId} placeholder={recalls.length ? 'Chọn mã đợt' : 'Chưa có đợt nào đang mở'} triggerClassName="h-8 mt-0.5"
+              options={[...(needRecall ? [] : [{ value: '', label: '— Không thuộc đợt nào —' }]), ...recalls.map(r => ({ value: r.id, label: `${r.code}${r.name ? ` · ${r.name}` : ''}` }))]} />
+            {needRecall && !recalls.length && <div className="text-[10px] text-amber-700 mt-0.5">Lý do này bắt chọn đợt — nhờ người có quyền tạo mã đợt ở trang Hàng trả về.</div>}
+          </div>
+        </div>
         <div>
-          <Label className="text-xs">Lý do trả <span className="text-red-500">*</span></Label>
+          <Label className="text-xs">Ghi chú</Label>
           <textarea value={reason} onChange={e => setReason(e.target.value)} rows={2} maxLength={500}
-            placeholder="vd khách từ chối nhận · hàng móp · giao không được · cả xe quay về"
+            placeholder="vd hàng móp góc · khách hẹn giao lại tuần sau"
             className="mt-0.5 w-full rounded-md border border-slate-300 px-2 py-1.5 text-xs" />
         </div>
 

@@ -288,7 +288,8 @@ export interface InboundOrder {
   source_type?:         'FACTORY' | 'NCC' | 'TRANSFER' | 'RETURN'
   /** Nhập hàng trả về (26/10) — đầu phiếu trả của phiếu nhập RETURN */
   return_id?:           string | null
-  inbound_return?:      { id: string; return_code: string; gdo_id: string | null; group_code: string | null; ship_to_name: string | null; reason: string; qa_hold: boolean } | null
+  from_gdo_id?:         string | null   // phiếu nhận CHUYỂN KHO: chuyến xuất nguồn (chuyến từ kho NPP = hàng NPP chuyển về)
+  inbound_return?:      { id: string; return_code: string; gdo_id: string | null; group_code: string | null; ship_to_name: string | null; reason: string | null; qa_hold: boolean } | null
   ncc_id?:              string | null
   ncc?:                 { id: string; name: string } | null
   warehouse_type?:      string | null

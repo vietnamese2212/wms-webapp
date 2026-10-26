@@ -49,6 +49,7 @@ export function sweepGlobalScope(scope: GlobalScope, opts: { force: boolean }) {
     s.setAlerts({ warehouseId: wid })
     s.setForklift({ warehouseId: wid })
     s.setPacking({ warehouseId: wid, page: 1, runPage: 1 })
+    s.setInboundReturns({ warehouseId: wid, page: 1 })
     s.setWeighTickets({ warehouse_ids: one(wid) })
     s.setTmsTransfer({ khoXuat: one(wid) })
     s.setUserAdmin({ warehouseId: wid || '__all__', page: 1 })   // slice duy nhất sentinel '__all__'

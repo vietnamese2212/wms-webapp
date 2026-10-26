@@ -9,7 +9,7 @@ import { format, parseISO }    from 'date-fns'
 import { vi }                  from 'date-fns/locale'
 import { TableSkeleton }       from '@/components/shared/TableSkeleton'
 import { InboundScanSheet }    from '@/components/wms/InboundScanSheet'
-import { InboundReturnPanel }  from '@/components/wms/InboundReturnPanel'
+import { InboundReturnPanel, NppReturnTag } from '@/components/wms/InboundReturnPanel'
 import { Button }              from '@/components/ui/button'
 import { Input }               from '@/components/ui/input'
 import { Label }               from '@/components/ui/label'
@@ -830,6 +830,9 @@ export default function InboundDetail() {
 
             {order.source_type === 'RETURN' && (
               <InboundReturnPanel order={order} canScan={can(perms, 'inbound', 'scan')} noQr={isManualEntry} />
+            )}
+            {order.source_type === 'TRANSFER' && order.from_gdo_id && (
+              <NppReturnTag gdoId={order.from_gdo_id} canEdit={can(perms, 'inbound', 'create')} />
             )}
 
             {(order.source_type === 'NCC' || order.source_type === 'TRANSFER' || order.source_type === 'RETURN') && (

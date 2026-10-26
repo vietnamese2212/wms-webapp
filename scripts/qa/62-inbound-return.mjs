@@ -6,7 +6,9 @@
 //   [4] Quét tem đã xuất hết ⇒ dòng tồn mới cùng mã tem; tem còn tồn ⇒ CỘNG DỒN; công tắc QA phiếu bật ⇒ gắn QA "X"
 //   [5] Hàng lẻ theo TEM GỐC ⇒ tem con ".N" mang NSX gốc
 //   [6] Truy xuất lô trừ phần trả về (qty_returned); sổ pallet có dòng RETURNED; chuỗi tình trạng xe nói "có trả về"
-// Fixture QA62: chuyến COMPLETED ở kho QR + 2 tem đã quét đi (P1 hết, P2 còn tồn) — dọn bằng PostgREST.
+//   [8] (26/10 tối) lý do theo DANH MỤC · ĐỢT THU HỒI (lý do bắt đợt ⇒ phải chọn đợt đang mở) · HÀNG THỪA (vượt số tem đã xuất ⇒ tách
+//       tem con, truy xuất lô không trừ) · hàng NPP chuyển về (phiếu TF từ kho loại NPP) gắn lý do / đợt · thống kê + đợt đã thu
+// Fixture QA62: chuyến COMPLETED ở kho QR + 2 tem đã quét đi (P1 hết, P2 còn tồn) + chuyến NPP (Bluestar) chuyển về — dọn bằng PostgREST.
 import { randomUUID } from 'crypto'
 import { login, api, restAll, restWrite, resolveFixtures, FIX, check, finish } from './lib.mjs'
 
@@ -14,7 +16,7 @@ const PACK = '62-inbound-return'
 await login(); await resolveFixtures()
 const WH = FIX.WH_QR.id, LOC = FIX.LOC_QR_ID
 const todayVN = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
-const GC = 'QA62_RET_GDO', OD = 'QA62OD1'
+const GC = 'QA62_RET_GDO', OD = 'QA62OD1', GC_NPP = 'QA62_NPP_GDO'
 const PFX = '011026_510000306_C62_Q6_'
 const P1 = `${PFX}001_B`, P2 = `${PFX}002_B`, CHILD = `${PFX}001.1_B`
 const mat = (await restAll('Material', `select=id,material_code,units_per_carton&material_code=eq.${FIX.MAT_POOL}`))[0]
@@ -35,7 +37,10 @@ async function cleanup() {
   }
   if (imps.length) await restWrite('ProductionImport', 'DELETE', `id=in.(${imps.map(i => i.id).join(',')})`)
   if (retIds.length) await restWrite('inbound_return', 'DELETE', `id=in.(${retIds.join(',')})`)
-  for (const g of await restAll('GroupDeliveryOrder', `select=id&group_code=eq.${GC}`)) {
+  for (const g of await restAll('GroupDeliveryOrder', `select=id&group_code=eq.${GC_NPP}`))
+    await restWrite('ProductionImport', 'DELETE', `from_gdo_id=eq.${g.id}`).catch(() => {})
+  await restWrite('recall_campaign', 'DELETE', 'code=like.QA62*').catch(() => {})
+  for (const g of await restAll('GroupDeliveryOrder', `select=id&group_code=in.(${GC},${GC_NPP})`)) {
     const dos = await restAll('OutboundDelivery', `select=id&gdo_id=eq.${g.id}`)
     if (dos.length) {
       const its = await restAll('OutboundItem', `select=id&do_id=in.(${dos.map(d => d.id).join(',')})`)
@@ -74,15 +79,15 @@ try {
     `http=${t1.s} line=${JSON.stringify(l1 ?? null)?.slice(0, 220)}`)
 
   // ── [2] khai vượt / lập tay thiếu khách ⇒ 422, không ghi ──
-  const over = await api('/wms/inbound-returns', 'POST', { warehouse_id: WH, gdo_id: g.id, reason: 'QA62 vượt', qa_hold: false, lines: [{ od_number: OD, material_id: mat.id, qty_base: 11 * F }] })
-  const noCust = await api('/wms/inbound-returns', 'POST', { warehouse_id: WH, reason: 'QA62 lập tay', qa_hold: false, lines: [{ material_id: mat.id, qty_base: F }] })
+  const over = await api('/wms/inbound-returns', 'POST', { warehouse_id: WH, gdo_id: g.id, reason_code: 'TU_CHOI', reason: 'QA62 vượt', qa_hold: false, lines: [{ od_number: OD, material_id: mat.id, qty_base: 11 * F }] })
+  const noCust = await api('/wms/inbound-returns', 'POST', { warehouse_id: WH, reason_code: 'TU_CHOI', reason: 'QA62 lập tay', qa_hold: false, lines: [{ material_id: mat.id, qty_base: F }] })
   check('2a. Khai trả 11 thùng > đã xuất 10 ⇒ 422 RETURN_INVALID nêu "vượt" · lập tay không ghi khách ⇒ 422 · không phiếu nào được ghi',
     over.s === 422 && over.j?.error?.code === 'RETURN_INVALID' && /vượt/.test(over.j?.error?.message ?? '') && noCust.s === 422
     && (await restAll('inbound_return', `select=id&group_code=eq.${GC}`)).length === 0,
     `over=${over.s}/${over.j?.error?.code} ${(over.j?.error?.message ?? '').slice(0, 100)} noCust=${noCust.s}`)
 
   // ── [2b] hai người lập CÙNG LÚC trên cùng dòng (còn 10, mỗi người 6) ⇒ đúng một người qua (C104); huỷ ⇒ hoàn lại (C105) ──
-  const race = await Promise.all([1, 2].map(() => api('/wms/inbound-returns', 'POST', { warehouse_id: WH, gdo_id: g.id, reason: 'QA62 đua', qa_hold: false, lines: [{ od_number: OD, material_id: mat.id, qty_base: 6 * F }] })))
+  const race = await Promise.all([1, 2].map(() => api('/wms/inbound-returns', 'POST', { warehouse_id: WH, gdo_id: g.id, reason_code: 'TU_CHOI', reason: 'QA62 đua', qa_hold: false, lines: [{ od_number: OD, material_id: mat.id, qty_base: 6 * F }] })))
   const won = race.filter(r => r.s === 201)
   check('2b. Hai người cùng khai 6/10 thùng ⇒ đúng MỘT phiếu được lập, người kia 422 (không khai vượt đã xuất)', won.length === 1 && race.some(r => r.s === 422), `http=${race.map(r => r.s)}`)
   const cancels = []
@@ -93,7 +98,7 @@ try {
     `cancel=${cancels} returned=${(tc.j?.data?.lines ?? [])[0]?.returned_base}`)
 
   // ── [3] lập phiếu trả 4 thùng, GIỮ QA ──
-  const cr = await api('/wms/inbound-returns', 'POST', { warehouse_id: WH, gdo_id: g.id, reason: 'QA62 khách từ chối', qa_hold: true, lines: [{ od_number: OD, material_id: mat.id, qty_base: 4 * F }] })
+  const cr = await api('/wms/inbound-returns', 'POST', { warehouse_id: WH, gdo_id: g.id, reason_code: 'TU_CHOI', reason: 'QA62 khách từ chối', qa_hold: true, lines: [{ od_number: OD, material_id: mat.id, qty_base: 4 * F }] })
   const imp = cr.j?.data?.imports?.[0]
   const impRow = imp ? (await restAll('ProductionImport', `select=id,import_code,source_type,status,planned_cartons,from_gdo_id,return_id&id=eq.${imp.id}`))[0] : null
   check('3a. Lập phiếu trả theo chuyến ⇒ 201, số phiếu <kho>_RT_…, MỘT phiếu nhập nguồn RETURN mở, khai 4 thùng, KHÔNG gắn from_gdo_id',
@@ -101,7 +106,7 @@ try {
     && Number(impRow?.planned_cartons) === 4 * F && !impRow?.from_gdo_id && impRow?.return_id === cr.j?.data?.return_id,
     `http=${cr.s} ${cr.j?.error?.message ?? ''} code=${cr.j?.data?.return_code} imp=${JSON.stringify(impRow)}`)
   const t2 = await api(`/wms/inbound-returns/trips/${g.id}`)
-  const over2 = await api('/wms/inbound-returns', 'POST', { warehouse_id: WH, gdo_id: g.id, reason: 'QA62 lần 2', qa_hold: false, lines: [{ od_number: OD, material_id: mat.id, qty_base: 7 * F }] })
+  const over2 = await api('/wms/inbound-returns', 'POST', { warehouse_id: WH, gdo_id: g.id, reason_code: 'TU_CHOI', reason: 'QA62 lần 2', qa_hold: false, lines: [{ od_number: OD, material_id: mat.id, qty_base: 7 * F }] })
   check('3b. Chuyến ghi đã khai trả 4 thùng · lần trả thứ hai 7 thùng > còn 6 ⇒ 422',
     (t2.j?.data?.lines ?? []).find(l => l.od_number === OD)?.returned_base === 4 * F && over2.s === 422, `ret=${(t2.j?.data?.lines ?? [])[0]?.returned_base} over2=${over2.s}`)
   const sm = await api(`/wms/inbound-orders/summary?warehouse_id=${WH}&search=${encodeURIComponent(impRow?.import_code ?? '-')}`)
@@ -133,7 +138,7 @@ try {
     [fk, fs, fl].every(r => r.s === 422 && r.j?.error?.code === 'RETURN_FOREIGN_PALLET') && (await restAll('InventoryEntry', `select=id&pallet_code=like.${PFX}009*`)).length === 0,
     `check=${fk.s}/${fk.j?.error?.code} scan=${fs.s}/${fs.j?.error?.code} loose=${fl.s}/${fl.j?.error?.code}`)
   // phiếu KHÔNG giữ QA ⇒ tem còn tồn vẫn cộng dồn như cũ
-  const crB = await api('/wms/inbound-returns', 'POST', { warehouse_id: WH, gdo_id: g.id, reason: 'QA62 không giữ', qa_hold: false, lines: [{ od_number: OD, material_id: mat.id, qty_base: F }] })
+  const crB = await api('/wms/inbound-returns', 'POST', { warehouse_id: WH, gdo_id: g.id, reason_code: 'TU_CHOI', reason: 'QA62 không giữ', qa_hold: false, lines: [{ od_number: OD, material_id: mat.id, qty_base: F }] })
   const scB = await api(`/wms/inbound-orders/${crB.j?.data?.imports?.[0]?.id}/scan`, 'POST', { qr_code: P2, location_id: LOC, cartons_override: F })
   const p2b = (await restAll('InventoryEntry', `select=cartons_remaining&id=eq.${p2.id}`))[0]
   check('4d. Phiếu KHÔNG giữ QA quét tem P2 còn tồn ⇒ CỘNG DỒN (3 → 4 thùng), không tạo dòng mới',
@@ -172,14 +177,80 @@ try {
     `http=${tf.s} step=${JSON.stringify(dl ?? null)?.slice(0, 200)}`)
 
   // ── [7] lập tay (không chuyến) ──
-  const mn = await api('/wms/inbound-returns', 'POST', { warehouse_id: WH, ship_to_name: 'QA62 khách lẻ', reason: 'QA62 khách mang trả', qa_hold: false, lines: [{ material_id: mat.id, qty_base: F }] })
+  const mn = await api('/wms/inbound-returns', 'POST', { warehouse_id: WH, ship_to_name: 'QA62 khách lẻ', reason_code: 'TU_CHOI', reason: 'QA62 khách mang trả', qa_hold: false, lines: [{ material_id: mat.id, qty_base: F }] })
   const mnHead = (await restAll('inbound_return', `select=gdo_id,qa_hold,ship_to_name&id=eq.${mn.j?.data?.return_id}`))[0]
   check('7a. Lập tay ⇒ 201, phiếu không chuyến gốc, không giữ QA (mặc định)', mn.s === 201 && mnHead && !mnHead.gdo_id && mnHead.qa_hold === false && mnHead.ship_to_name === 'QA62 khách lẻ',
     `http=${mn.s} ${mn.j?.error?.message ?? ''} head=${JSON.stringify(mnHead ?? null)}`)
+
+  // ── [8a] lý do theo danh mục + đợt thu hồi ──
+  const badReason = await api('/wms/inbound-returns', 'POST', { warehouse_id: WH, ship_to_name: 'QA62 lý do lạ', reason_code: 'KHONG_CO', qa_hold: false, lines: [{ material_id: mat.id, qty_base: F }] })
+  const noRecall = await api('/wms/inbound-returns', 'POST', { warehouse_id: WH, ship_to_name: 'QA62 thu hồi', reason_code: 'THU_HOI', qa_hold: false, lines: [{ material_id: mat.id, qty_base: F }] })
+  check('8a. Lý do không có trong danh mục ⇒ 422 · lý do "Thu hồi" (bắt đợt) mà không chọn đợt ⇒ 422 RETURN_REASON_INVALID',
+    badReason.s === 422 && badReason.j?.error?.code === 'RETURN_REASON_INVALID' && noRecall.s === 422 && /đợt/i.test(noRecall.j?.error?.message ?? ''),
+    `bad=${badReason.s}/${badReason.j?.error?.code} noRecall=${noRecall.s} ${(noRecall.j?.error?.message ?? '').slice(0, 80)}`)
+  const rc = await api('/wms/recalls', 'POST', { code: 'qa62-rc1', name: 'QA62 thu hồi SP B' })
+  const rcDup = await api('/wms/recalls', 'POST', { code: 'QA62-RC1' })
+  check('8b. Tạo mã đợt ⇒ 201 (mã tự viết hoa) · trùng mã ⇒ 409', rc.s === 201 && rc.j?.data?.code === 'QA62-RC1' && rc.j?.data?.status === 'OPEN' && rcDup.s === 409,
+    `tạo=${rc.s} ${JSON.stringify(rc.j?.data ?? rc.j?.error)?.slice(0, 120)} trùng=${rcDup.s}`)
+  const rcId = rc.j?.data?.id
+  const withRecall = await api('/wms/inbound-returns', 'POST', { warehouse_id: WH, ship_to_name: 'QA62 thu hồi', reason_code: 'THU_HOI', reason: 'SP B hết hạn', recall_id: rcId, qa_hold: true, lines: [{ material_id: mat.id, qty_base: 2 * F }] })
+  const wrHead = (await restAll('inbound_return', `select=reason_code,recall_id,reason&id=eq.${withRecall.j?.data?.return_id}`))[0]
+  check('8c. Lý do Thu hồi + chọn đợt ⇒ 201, phiếu mang reason_code + recall_id, ghi chú vào reason',
+    withRecall.s === 201 && wrHead?.reason_code === 'THU_HOI' && wrHead?.recall_id === rcId && wrHead?.reason === 'SP B hết hạn',
+    `http=${withRecall.s} ${withRecall.j?.error?.message ?? ''} head=${JSON.stringify(wrHead ?? null)}`)
+
+  // ── [8d] hàng THỪA: tem P1 xuất 6 thùng, đã nhận về 3 ⇒ nhận lẻ thêm 5 ⇒ 3 trong trần + 2 THỪA (một tem con, sổ ghi hai dòng) ──
+  const sur = await api(`/wms/inbound-orders/${imp.id}/return-loose`, 'POST', { source_pallet_code: P1, qty_base: 5 * F, location_id: LOC, stack_layer: 3 })
+  const bo2 = await api(`/wms/inbound-returns/by-order/${imp.id}`)
+  const p1row = (bo2.j?.data?.pallets ?? []).find(p => p.pallet_code === P1)
+  const lt2 = await api(`/wms/trace?kind=pallet&value=${encodeURIComponent(P1)}`)
+  check('8d. Nhận lẻ vượt số tem đã xuất ⇒ 201 vẫn nhận (tem con), báo thừa 2 thùng; tem P1: đã nhận về 6 = đã xuất, thừa 2; truy xuất lô trừ 6 (không 8)',
+    sur.s === 201 && sur.j?.data?.surplus_base === 2 * F && p1row?.returned_base === 6 * F && p1row?.surplus_base === 2 * F
+    && Number(lt2.j?.data?.summary?.qty_returned) === 6 * F,
+    `http=${sur.s} ${sur.j?.error?.message ?? ''} surplus=${sur.j?.data?.surplus_base} p1=${JSON.stringify(p1row ?? null)} traceRet=${lt2.j?.data?.summary?.qty_returned}`)
+  // quét tem P2 còn tồn trên phiếu KHÔNG giữ (B): xuất 4, đã nhận về 2 ⇒ quét 5 ⇒ cộng dồn 2 + tách 3 thùng thừa thành tem con
+  const p2before = Number((await restAll('InventoryEntry', `select=cartons_remaining&id=eq.${p2.id}`))[0]?.cartons_remaining)
+  const surScan = await api(`/wms/inbound-orders/${crB.j?.data?.imports?.[0]?.id}/scan`, 'POST', { qr_code: P2, location_id: LOC, stack_layer: 3, cartons_override: 5 * F })
+  const p2after2 = Number((await restAll('InventoryEntry', `select=cartons_remaining&id=eq.${p2.id}`))[0]?.cartons_remaining)
+  const surChild = surScan.j?.data?.surplus?.pallet_code
+  const surEnt = surChild ? (await restAll('InventoryEntry', `select=cartons_imported&pallet_code=eq.${encodeURIComponent(surChild)}`))[0] : null
+  check('8e. Quét tem còn tồn vượt số đã xuất ⇒ cộng dồn phần trong trần (2 thùng) + tách 3 thùng THỪA thành tem con',
+    surScan.s === 200 && surScan.j?.data?.merged === true && p2after2 - p2before === 2 * F && Number(surEnt?.cartons_imported) === 3 * F,
+    `http=${surScan.s} ${surScan.j?.error?.message ?? ''} merged=${surScan.j?.data?.merged} +${(p2after2 - p2before) / F} thùng child=${surChild} ${JSON.stringify(surEnt)}`)
+
+  // ── [8f] hàng NPP chuyển về: chuyến từ kho loại NPP (Bluestar) ⇒ phiếu TF ở kho QR — gắn lý do + đợt ──
+  const tsN = new Date().toISOString()
+  const [gN] = await restWrite('GroupDeliveryOrder', 'POST', null, { id: randomUUID(), group_code: GC_NPP, warehouse_id: FIX.WH_QTY.id, delivery_date: todayVN, planned_date: todayVN, status: 'COMPLETED', completed_at: tsN, license_plate: 'QA62NPP', created_at: tsN, updated_at: tsN })
+  await restWrite('ProductionImport', 'POST', null, { id: randomUUID(), import_code: `QA62NPP_${Date.now()}`, warehouse_id: WH, material_id: mat.id, planned_cartons: 2 * F, status: 'OPEN', source_type: 'TRANSFER', from_gdo_id: gN.id, warehouse_type: FIX.MAT_POOL_CAT ?? null, import_date: todayVN, created_at: tsN, updated_at: tsN })
+  const nG = await api(`/wms/inbound-returns/npp/${gN.id}`)
+  const nBad = await api(`/wms/inbound-returns/npp/${g.id}`, 'PATCH', { reason_code: 'TU_CHOI' })
+  const nTag = await api(`/wms/inbound-returns/npp/${gN.id}`, 'PATCH', { reason_code: 'THU_HOI', note: 'QA62 NPP gom', recall_id: rcId })
+  check('8f. Chuyến từ kho NPP ⇒ is_npp; gắn lý do Thu hồi + đợt cho phiếu TF ⇒ 200 (1 phiếu) · chuyến kho chính ⇒ 422 NOT_NPP_TRANSFER',
+    nG.s === 200 && nG.j?.data?.is_npp === true && nTag.s === 200 && nTag.j?.data?.updated === 1 && nBad.s === 422 && nBad.j?.error?.code === 'NOT_NPP_TRANSFER',
+    `get=${nG.s} npp=${nG.j?.data?.is_npp} tag=${nTag.s} ${nTag.j?.error?.message ?? ''} upd=${nTag.j?.data?.updated} bad=${nBad.s}/${nBad.j?.error?.code}`)
+
+  // ── [8g] thống kê + đợt đã thu ──
+  const rep = await api(`/wms/inbound-returns/report?warehouse_id=${WH}&recall_id=${rcId}`)
+  const kinds = (rep.j?.data?.rows ?? []).map(r => r.kind).sort().join(',')
+  const repAll = await api(`/wms/inbound-returns/report?warehouse_id=${WH}&search=QA62&date_from=${todayVN}&date_to=${todayVN}`)
+  const rowB = (repAll.j?.data?.rows ?? []).find(r => r.code === crB.j?.data?.return_code)
+  check('8g. Thống kê lọc theo đợt ⇒ đúng 1 phiếu RT + 1 chuyến NPP; dòng phiếu B có thừa 3 thùng; ngày sai lịch ⇒ 400',
+    rep.s === 200 && kinds === 'NPP,RT' && rep.j?.data?.summary?.phieu === 2 && rowB && Number(rowB.surplus) === 3 && rowB.first_import
+    && (await api(`/wms/inbound-returns/report?date_from=2026-02-31`)).s === 400,
+    `http=${rep.s} kinds=${kinds} sum=${JSON.stringify(rep.j?.data?.summary ?? null)?.slice(0, 160)} rowB=${JSON.stringify(rowB ?? null)?.slice(0, 160)}`)
+  const bd = await api(`/wms/recalls/${rcId}/breakdown`)
+  check('8h. Đợt đã thu: theo mã + theo khách / NPP (phiếu RT lập tay + chuyến NPP)',
+    bd.s === 200 && (bd.j?.data?.by_material ?? []).some(m => m.material_id === mat.id) && (bd.j?.data?.by_party ?? []).length === 2,
+    `http=${bd.s} ${JSON.stringify(bd.j?.data ?? bd.j?.error)?.slice(0, 200)}`)
+  const closeRc = await api(`/wms/recalls/${rcId}`, 'PATCH', { status: 'CLOSED' })
+  const afterClose = await api('/wms/inbound-returns', 'POST', { warehouse_id: WH, ship_to_name: 'QA62 sau đóng', reason_code: 'THU_HOI', recall_id: rcId, qa_hold: false, lines: [{ material_id: mat.id, qty_base: F }] })
+  check('8i. Đóng đợt ⇒ 200 · lập phiếu vào đợt đã đóng ⇒ 422', closeRc.s === 200 && closeRc.j?.data?.status === 'CLOSED' && afterClose.s === 422,
+    `close=${closeRc.s} after=${afterClose.s} ${(afterClose.j?.error?.message ?? '').slice(0, 80)}`)
 } finally {
   await cleanup()
   check('9. Dọn sạch fixture QA62', (await restAll('inbound_return', `select=id&or=(group_code.eq.${GC},ship_to_name.like.QA62*)`)).length === 0
     && (await restAll('InventoryEntry', `select=id&pallet_code=like.${PFX}*`)).length === 0
-    && (await restAll('GroupDeliveryOrder', `select=id&group_code=eq.${GC}`)).length === 0)
+    && (await restAll('recall_campaign', 'select=id&code=like.QA62*')).length === 0
+    && (await restAll('GroupDeliveryOrder', `select=id&group_code=in.(${GC},${GC_NPP})`)).length === 0)
 }
 finish(PACK)

@@ -11,7 +11,8 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { QtyInput } from '@/components/shared/QtyInput'
 import { StatusBadge } from '@/components/shared/StatusBadge'
-import { useReturnByOrder, useReturnLoose } from '@/api/hooks'
+import { SingleSelect } from '@/components/shared/SingleSelect'
+import { useReturnByOrder, useReturnLoose, useNppReturn, useTagNppReturn, useReturnReasons, useRecalls } from '@/api/hooks'
 import { qtyLabel, type MatUnits } from '@/utils/qtyUnits'
 import { formatDate } from '@/utils/formatters'
 import type { InboundOrder } from '@/types'
@@ -19,12 +20,61 @@ import type { InboundOrder } from '@/types'
 const TH = 'px-2 py-1 text-left text-[9px] font-medium text-slate-500 whitespace-nowrap bg-slate-50'
 const TD = 'px-2 py-1 text-[10px] whitespace-nowrap'
 
+// HÀNG NPP CHUYỂN VỀ (26/10 tối): NPP dùng app tạo đơn xuất về kho chính ⇒ phiếu nhận chuyển kho (TF) ở kho chính chính là
+// hàng trả về. Khối này hiện CHỈ khi chuyến nguồn thuộc kho loại NPP: kho gắn lý do / ghi chú / mã đợt cho cả chuyến đó
+// (mọi phiếu nhập của chuyến) để vào thống kê Hàng trả về. Lý do khai "bắt chọn đợt" ⇒ phải chọn mã đợt.
+export function NppReturnTag({ gdoId, canEdit }: { gdoId: string; canEdit: boolean }) {
+  const q = useNppReturn(gdoId)
+  const { data: reasons = [] } = useReturnReasons()
+  const { data: recalls = [] } = useRecalls()
+  const save = useTagNppReturn()
+  const [draft, setDraft] = useState<{ reason: string; recall: string; note: string } | null>(null)
+  const [err, setErr] = useState('')
+  const d = q.data
+  if (!d?.is_npp) return null
+  const cur = draft ?? { reason: d.reason_code ?? '', recall: d.recall_id ?? '', note: d.note ?? '' }
+  const needRecall = reasons.find(r => r.value === cur.reason)?.meta?.requires_recall === true
+  const recallOf = recalls.find(r => r.id === (d.recall_id ?? ''))
+  const dirty = !!draft && (draft.reason !== (d.reason_code ?? '') || draft.recall !== (d.recall_id ?? '') || draft.note !== (d.note ?? ''))
+  async function submit() {
+    setErr('')
+    try {
+      await save.mutateAsync({ gdoId, reason_code: cur.reason, note: cur.note.trim() || undefined, recall_id: cur.recall || null })
+      setDraft(null)
+    } catch (e) { setErr((e as AxiosError<{ error?: { message?: string } }>).response?.data?.error?.message ?? 'Không lưu được') }
+  }
+  return (
+    <div className="w-full mt-0.5 px-2 py-1.5 rounded bg-rose-50 border border-rose-100 text-[10px] space-y-1">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5">
+        <span className="font-semibold text-rose-700 inline-flex items-center gap-1"><Undo2 className="h-3 w-3" />Hàng NPP chuyển về</span>
+        <span className="text-slate-500">Từ: <span className="text-slate-700">{d.npp_name ?? '—'}</span></span>
+        {!canEdit && <span className="text-slate-500">Lý do: <span className="text-slate-700">{d.reason_code ? (reasons.find(r => r.value === d.reason_code)?.meta?.label ?? d.reason_code) : 'chưa gắn'}</span>
+          {recallOf && <> · Đợt <span className="font-mono font-semibold">{recallOf.code}</span></>}{d.note && <> · {d.note}</>}</span>}
+        {!d.reason_code && canEdit && <span className="text-amber-700">Chưa gắn lý do — gắn để vào thống kê Hàng trả về</span>}
+      </div>
+      {canEdit && (
+        <div className="flex flex-wrap items-end gap-1.5">
+          <div className="w-44"><SingleSelect value={cur.reason} onChange={v => setDraft({ ...cur, reason: v })} placeholder="Lý do trả" triggerClassName="h-7"
+            options={reasons.map(r => ({ value: r.value, label: r.meta?.label?.trim() || r.value }))} /></div>
+          <div className="w-48"><SingleSelect value={cur.recall} onChange={v => setDraft({ ...cur, recall: v })} placeholder={needRecall ? 'Mã đợt (bắt buộc)' : 'Mã đợt (nếu có)'} triggerClassName="h-7"
+            options={[{ value: '', label: '— Không thuộc đợt nào —' }, ...recalls.filter(r => r.status === 'OPEN' || r.id === d.recall_id).map(r => ({ value: r.id, label: `${r.code}${r.name ? ` · ${r.name}` : ''}` }))]} /></div>
+          <Input value={cur.note} onChange={e => setDraft({ ...cur, note: e.target.value })} placeholder="Ghi chú" maxLength={500} className="h-7 w-48 text-[11px]" />
+          <Button size="sm" className="h-7 text-[11px]" disabled={!dirty || !cur.reason || (needRecall && !cur.recall) || save.isPending} onClick={() => void submit()}>
+            {save.isPending ? 'Đang lưu…' : 'Lưu'}
+          </Button>
+        </div>
+      )}
+      {err && <div className="text-red-700">{err}</div>}
+    </div>
+  )
+}
+
 export function InboundReturnPanel({ order, canScan, noQr }: { order: InboundOrder; canScan: boolean; noQr: boolean }) {
   const q = useReturnByOrder(order.id, order.source_type === 'RETURN')
   const r = q.data
   const mat = order.material as MatUnits | null
   const isOpen = order.status === 'OPEN'
-  const [loose, setLoose] = useState<{ code: string; qty: number } | null>(null)
+  const [loose, setLoose] = useState<{ code: string; qty: number; nsx: string } | null>(null)   // nsx '' = theo tem gốc
   const [err, setErr] = useState('')
   const [ok, setOk] = useState('')
   const recv = useReturnLoose()
@@ -35,7 +85,7 @@ export function InboundReturnPanel({ order, canScan, noQr }: { order: InboundOrd
     if (!loose) return
     setErr('')
     try {
-      const d = await recv.mutateAsync({ orderId: order.id, source_pallet_code: loose.code.trim(), qty_base: loose.qty, location_id: order.location_id! })
+      const d = await recv.mutateAsync({ orderId: order.id, source_pallet_code: loose.code.trim(), qty_base: loose.qty, location_id: order.location_id!, production_date: loose.nsx || undefined })
       setOk(`Đã nhận ${qtyLabel(loose.qty, mat)} vào tem con ${d.pallet_code}${d.warnings.length ? ` — ${d.warnings.join(' · ')}` : ''}. In tem: In tem pallet → In lại.`)
       setLoose(null)
     } catch (e) {
@@ -52,7 +102,8 @@ export function InboundReturnPanel({ order, canScan, noQr }: { order: InboundOrd
         {r?.license_plate && <span className="text-slate-500">Xe: <span className="font-mono">{r.license_plate}</span></span>}
         {(head?.ship_to_name ?? r?.ship_to_name) && <span className="text-slate-500">Khách: <span className="text-slate-700">{head?.ship_to_name ?? r?.ship_to_name}</span></span>}
         {r?.lines?.some(l => l.od_number) && <span className="text-slate-500">DO: <span className="font-mono">{r.lines.map(l => l.od_number).filter(Boolean).join(' · ')}</span></span>}
-        <span className="text-slate-500">Lý do: <span className="text-slate-700">{head?.reason ?? r?.reason}</span></span>
+        <span className="text-slate-500">Lý do: <span className="text-slate-700">{r?.reason_label ?? '…'}</span>{(r?.reason ?? head?.reason) && <span className="text-slate-500"> · {r?.reason ?? head?.reason}</span>}</span>
+        {r?.recall && <span className="text-slate-500">Đợt: <span className="font-mono font-semibold text-slate-700" title={r.recall.name ?? ''}>{r.recall.code}</span></span>}
         {(head?.qa_hold ?? r?.qa_hold) ? <StatusBadge tone="red" title="Pallet quét nhận gắn QA X — chỉ xuất được sau khi QA duyệt">Giữ QA</StatusBadge> : <StatusBadge tone="green">Không giữ QA</StatusBadge>}
       </span>
 
@@ -60,7 +111,7 @@ export function InboundReturnPanel({ order, canScan, noQr }: { order: InboundOrd
         <div className="overflow-auto border rounded-lg max-h-[28vh]">
           <table className="w-full">
             <thead className="sticky top-0"><tr>
-              <th className={TH}>Tem gốc đã xuất (mã này)</th><th className={TH}>NSX</th><th className={TH}>Đã xuất</th><th className={TH}>Đã nhận về</th><th className={TH}></th>
+              <th className={TH}>Tem gốc đã xuất (mã này)</th><th className={TH}>NSX</th><th className={TH}>Đã xuất</th><th className={TH}>Đã nhận về</th><th className={TH}>Còn trả được</th><th className={TH}>Thừa</th><th className={TH}></th>
             </tr></thead>
             <tbody>
               {r!.pallets.map(p => (
@@ -69,11 +120,14 @@ export function InboundReturnPanel({ order, canScan, noQr }: { order: InboundOrd
                   <td className={`${TD} tabular-nums`}>{p.production_date ? formatDate(p.production_date) : '—'}</td>
                   <td className={`${TD} tabular-nums`}>{qtyLabel(p.qty_base, mat)}</td>
                   <td className={`${TD} tabular-nums`}>{p.returned_base ? <span className="text-rose-700">{qtyLabel(p.returned_base, mat)}</span> : <span className="text-slate-300">—</span>}</td>
+                  <td className={`${TD} tabular-nums`}>{qtyLabel(Math.max(0, p.qty_base - p.returned_base), mat)}</td>
+                  <td className={`${TD} tabular-nums`} title="Nhận vượt số tem này đã xuất trên chuyến — tách tem con, chuyến chỉ tính trả về tới số đã xuất">
+                    {p.surplus_base ? <span className="text-amber-700 font-semibold">{qtyLabel(p.surplus_base, mat)}</span> : <span className="text-slate-300">—</span>}</td>
                   <td className={TD}>
                     {isOpen && canScan && (
                       <Button size="sm" variant="outline" className="h-7 text-[11px]" disabled={!order.location_id}
                         title={order.location_id ? 'Hàng lẻ không còn tem — nhận vào tem con mang lô / NSX của tem này' : 'Chọn vị trí của phiếu trước'}
-                        onClick={() => { setErr(''); setOk(''); setLoose({ code: p.pallet_code, qty: 0 }) }}>
+                        onClick={() => { setErr(''); setOk(''); setLoose({ code: p.pallet_code, qty: 0, nsx: '' }) }}>
                         <PackagePlus className="h-3.5 w-3.5 mr-1" />Nhận hàng lẻ
                       </Button>
                     )}
@@ -86,7 +140,7 @@ export function InboundReturnPanel({ order, canScan, noQr }: { order: InboundOrd
       )}
       {!noQr && isOpen && canScan && !head?.gdo_id && (
         <button type="button" className="text-[11px] text-sky-700 hover:underline disabled:text-slate-400" disabled={!order.location_id}
-          onClick={() => { setErr(''); setOk(''); setLoose({ code: '', qty: 0 }) }}>
+          onClick={() => { setErr(''); setOk(''); setLoose({ code: '', qty: 0, nsx: '' }) }}>
           + Nhận hàng lẻ theo tem gốc (gõ / quét mã tem)
         </button>
       )}
@@ -109,6 +163,12 @@ export function InboundReturnPanel({ order, canScan, noQr }: { order: InboundOrd
             <div>
               <Label className="text-xs">Số lượng nhận về</Label>
               <QtyInput value={loose.qty} mat={mat} onChange={b => setLoose({ ...loose, qty: b })} />
+              {head?.gdo_id && <div className="text-[10px] text-slate-500 mt-0.5">Phần vượt số tem này đã xuất trên chuyến được ghi là <b>hàng thừa</b> (vẫn nhận vào tem con).</div>}
+            </div>
+            <div>
+              <Label className="text-xs">NSX</Label>
+              <Input type="date" value={loose.nsx} onChange={e => setLoose({ ...loose, nsx: e.target.value })} className="h-8 mt-0.5 text-xs w-44" />
+              <div className="text-[10px] text-slate-500 mt-0.5">Để trống = theo tem gốc. Gõ NSX khi hàng thực tế khác lô tem gốc (HSD tính lại theo NSX).</div>
             </div>
             <div className="text-slate-500">Vị trí: <span className="font-mono font-semibold text-slate-700">{order.location?.location_code ?? '—'}</span>{(head?.qa_hold ?? r?.qa_hold) ? ' · gắn QA giữ (X)' : ''}</div>
             {err && <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-red-700 whitespace-pre-wrap">{err}</div>}

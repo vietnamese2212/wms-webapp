@@ -1,5 +1,5 @@
 // FILE SINH TỰ ĐỘNG — `node scripts/gen-db-types.mjs` (từ information_schema STAGING). KHÔNG sửa tay.
-// Sinh lúc 2026-10-26T06:43:24.057Z · 110 bảng/view · 211 hàm · 0 enum
+// Sinh lúc 2026-10-26T08:58:32.087Z · 111 bảng/view · 213 hàm · 0 enum
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[]
 
 export type Database = {
@@ -1669,6 +1669,9 @@ export type Database = {
           ncc_id: string | null
           transfer_production_date: string | null
           return_id: string | null
+          return_reason_code: string | null
+          return_note: string | null
+          recall_id: string | null
         }
         Insert: {
           id: string
@@ -1698,6 +1701,9 @@ export type Database = {
           ncc_id?: string | null
           transfer_production_date?: string | null
           return_id?: string | null
+          return_reason_code?: string | null
+          return_note?: string | null
+          recall_id?: string | null
         }
         Update: {
           id?: string
@@ -1727,6 +1733,9 @@ export type Database = {
           ncc_id?: string | null
           transfer_production_date?: string | null
           return_id?: string | null
+          return_reason_code?: string | null
+          return_note?: string | null
+          recall_id?: string | null
         }
         Relationships: []
       }
@@ -4691,12 +4700,14 @@ export type Database = {
           group_code: string | null
           ship_to_code: string | null
           ship_to_name: string | null
-          reason: string
+          reason: string | null
           qa_hold: boolean
           created_by: string | null
           created_by_name: string | null
           created_at: string
           updated_at: string
+          reason_code: string | null
+          recall_id: string | null
         }
         Insert: {
           id: string
@@ -4706,12 +4717,14 @@ export type Database = {
           group_code?: string | null
           ship_to_code?: string | null
           ship_to_name?: string | null
-          reason: string
+          reason?: string | null
           qa_hold?: boolean
           created_by?: string | null
           created_by_name?: string | null
           created_at?: string
           updated_at: string
+          reason_code?: string | null
+          recall_id?: string | null
         }
         Update: {
           id?: string
@@ -4721,12 +4734,14 @@ export type Database = {
           group_code?: string | null
           ship_to_code?: string | null
           ship_to_name?: string | null
-          reason?: string
+          reason?: string | null
           qa_hold?: boolean
           created_by?: string | null
           created_by_name?: string | null
           created_at?: string
           updated_at?: string
+          reason_code?: string | null
+          recall_id?: string | null
         }
         Relationships: []
       }
@@ -4778,6 +4793,7 @@ export type Database = {
           created_by: string | null
           created_at: string
           updated_at: string
+          surplus: boolean
         }
         Insert: {
           id: string
@@ -4790,6 +4806,7 @@ export type Database = {
           created_by?: string | null
           created_at?: string
           updated_at: string
+          surplus?: boolean
         }
         Update: {
           id?: string
@@ -4802,6 +4819,7 @@ export type Database = {
           created_by?: string | null
           created_at?: string
           updated_at?: string
+          surplus?: boolean
         }
         Relationships: []
       }
@@ -5222,6 +5240,45 @@ export type Database = {
           failed_n?: number
           created_at?: string
           updated_at?: string
+        }
+        Relationships: []
+      }
+      recall_campaign: {
+        Row: {
+          id: string
+          code: string
+          name: string | null
+          note: string | null
+          status: string
+          created_by: string | null
+          created_by_name: string | null
+          created_at: string
+          updated_at: string
+          closed_at: string | null
+        }
+        Insert: {
+          id: string
+          code: string
+          name?: string | null
+          note?: string | null
+          status?: string
+          created_by?: string | null
+          created_by_name?: string | null
+          created_at?: string
+          updated_at: string
+          closed_at?: string | null
+        }
+        Update: {
+          id?: string
+          code?: string
+          name?: string | null
+          note?: string | null
+          status?: string
+          created_by?: string | null
+          created_by_name?: string | null
+          created_at?: string
+          updated_at?: string
+          closed_at?: string | null
         }
         Relationships: []
       }
@@ -6461,6 +6518,10 @@ export type Database = {
         Args: { p_head: Json | null; p_imports: Json | null; p_lines: Json | null; p_gdo_id?: string | null; p_limits?: Json | null }
         Returns: string
       }
+      inbound_return_report: {
+        Args: { p_wh_ids?: unknown | null; p_cats?: unknown | null; p_from?: string | null; p_to?: string | null; p_kind?: string | null; p_reason?: string | null; p_recall_id?: string | null; p_search?: string | null; p_limit?: number | null }
+        Returns: Json
+      }
       inventory_band_totals: {
         Args: { p_ids: unknown | null; p_status: string | null; p_wh_ids: unknown | null; p_location_ids: unknown | null; p_material_ids: unknown | null; p_categories: unknown | null; p_qa_ids: unknown | null; p_search: string | null; p_search_mat_ids: unknown | null; p_search_loc_ids: unknown | null; p_manufacturer: string | null; p_cycles: unknown | null; p_machines: unknown | null; p_nmsx: unknown | null; p_ncc_ids: unknown | null; p_import_from: string | null; p_import_to: string | null }
         Returns: Json
@@ -6643,6 +6704,10 @@ export type Database = {
       }
       realtime_readiness: {
         Args: Record<PropertyKey, never>
+        Returns: Json
+      }
+      recall_breakdown: {
+        Args: { p_recall_id: string | null; p_wh_ids?: unknown | null }
         Returns: Json
       }
       recount_slot: {

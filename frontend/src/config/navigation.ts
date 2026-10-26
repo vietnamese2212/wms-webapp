@@ -6,7 +6,7 @@ import {
   LayoutDashboard, Package, PackagePlus, PackageMinus, MapPin,
   Settings2, BarChart2, ClipboardList, UserCog, Scissors,
   ClipboardCheck, ShieldCheck, Tag, QrCode, CalendarRange, CalendarCheck, Network, KeyRound, Scale, Activity, Boxes, Database, Forklift,
-  ArrowDownToLine, BellRing, NotebookPen, Move, Wallet, PackageSearch, ListChecks, CalendarClock, Store, Banknote, Waypoints,
+  ArrowDownToLine, BellRing, NotebookPen, Move, Wallet, PackageSearch, ListChecks, CalendarClock, Store, Banknote, Waypoints, Undo2,
 } from 'lucide-react'
 // Icon của MỤC MENU quét (Quét loạt, Lịch sử quét) — dùng chung symbol quét toàn app.
 // `QrCode` phía trên GIỮ NGUYÊN vì mục "In tem pallet" nói về TEM QR, không phải hành động quét.
@@ -74,6 +74,7 @@ export const NAV_GROUPS: NavGroup[] = [
         label: 'Nhập hàng', icon: PackagePlus,
         items: [
           { to: '/wms/inbound', icon: PackagePlus, label: 'Nhập kho',    module: 'inbound' },
+          { to: '/wms/inbound-returns', icon: Undo2, label: 'Hàng trả về', module: 'inbound' },
           { to: '/wms/packing', icon: NotebookPen, label: 'Sổ đóng gói', module: 'packing' },
         ],
       },

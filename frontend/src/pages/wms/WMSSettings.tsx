@@ -1,6 +1,9 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
 import type { AxiosError } from 'axios'
-import { Plus, Pencil, Trash2, Warehouse, Tag, Settings2, MapPin, X, Clock, ShieldCheck, GripVertical, SlidersHorizontal, Ruler, Cog, ChevronUp, ChevronDown, Thermometer } from 'lucide-react'
+import { Plus, Pencil, Trash2, Warehouse, Tag, Settings2, MapPin, X, Clock, ShieldCheck, GripVertical, SlidersHorizontal, Ruler, Cog, ChevronUp, ChevronDown, Thermometer, Undo2 } from 'lucide-react'
+import { useConfirmDialog } from '@/components/shared/ConfirmDialog'
+import { TableEmptyRow } from '@/components/shared/TableEmptyRow'
+import { ResizableTable } from '@/components/shared/ResizableTable'
 import { formatDateTime } from '@/utils/formatters'
 import { Button }   from '@/components/ui/button'
 import { Input }    from '@/components/ui/input'
@@ -41,6 +44,7 @@ import {
   useVehicleModels, useCustomers,
   useWhTypeConfigs, useSaveWhTypeConfigs, type WhTypeConfig,
   type WarehouseZone, type UnitRow, type UnitRole, type StorageConditionRow,
+  useReturnReasons, useSaveReturnReason, useDeleteReturnReason, type ReturnReasonRow,
 } from '@/api/hooks'
 import { can, isAdmin, type ModulePermissions } from '@/config/permissions'
 import { useAuthStore } from '@/stores/authStore'
@@ -2002,6 +2006,104 @@ function StorageConditionTab({ canManage }: { canManage: boolean }) {
   )
 }
 
+// ─── LÝ DO TRẢ HÀNG (return_reason) — user chốt 26/10: danh sách chọn + ghi chú, để thống kê theo lý do ──
+// Mã = khoá lưu trên phiếu (không đổi sau khi tạo); Tên = chữ người dùng đọc; "Bắt chọn đợt thu hồi" = phiếu trả lý do này phải
+// chọn MÃ ĐỢT (đợt duyệt ngoài app, người có quyền tạo mã ở trang Hàng trả về).
+function ReturnReasonDialog({ row, open, onClose }: { row: ReturnReasonRow | null; open: boolean; onClose: () => void }) {
+  const isEdit = !!row
+  const [value, setValue] = useState(row?.value ?? '')
+  const [label, setLabel] = useState(row?.meta?.label ?? '')
+  const [needRecall, setNeedRecall] = useState(row?.meta?.requires_recall === true)
+  const [err, setErr] = useState('')
+  const save = useSaveReturnReason()
+  function handleSubmit() {
+    setErr('')
+    const code = value.trim().toUpperCase().replace(/\s+/g, '_')
+    if (!code) { setErr('Mã lý do là bắt buộc (vd HU_HONG)'); return }
+    if (!label.trim()) { setErr('Tên lý do là bắt buộc'); return }
+    save.mutate({ id: row?.id, value: code, meta: { label: label.trim(), requires_recall: needRecall } },
+      { onSuccess: onClose, onError: (e: unknown) => setErr(apiMsg(e)) })
+  }
+  return (
+    <FormSheet open={open} onClose={onClose} title={isEdit ? 'Sửa lý do trả hàng' : 'Thêm lý do trả hàng'} widthClass="sm:max-w-lg" footer={<>
+      <Button variant="outline" size="sm" onClick={onClose}>Huỷ</Button>
+      <Button size="sm" onClick={handleSubmit} disabled={save.isPending || !value.trim() || !label.trim()}>{save.isPending ? 'Đang lưu…' : isEdit ? 'Lưu' : 'Tạo'}</Button>
+    </>}>
+      <div className="space-y-3">
+        {err && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1.5">{err}</p>}
+        <div className="space-y-1">
+          <Label className="text-xs">Mã lý do *</Label>
+          <Input value={value} onChange={e => setValue(e.target.value.toUpperCase())} placeholder="HU_HONG" disabled={isEdit} />
+          <p className="text-[10px] text-slate-400">Mã lưu trên phiếu trả. {isEdit && 'Không đổi mã sau khi tạo (phiếu cũ đang mang mã này).'}</p>
+        </div>
+        <div className="space-y-1">
+          <Label className="text-xs">Tên hiển thị *</Label>
+          <Input value={label} onChange={e => setLabel(e.target.value)} placeholder="Hàng hư hỏng" maxLength={60} />
+        </div>
+        <label className="flex items-start gap-2 cursor-pointer">
+          <Switch checked={needRecall} onCheckedChange={setNeedRecall} className="mt-0.5" />
+          <span className="text-xs text-slate-700">Bắt chọn mã đợt thu hồi
+            <span className="block text-[10px] text-slate-500">Bật: phiếu trả (và hàng NPP chuyển về) chọn lý do này phải chọn một mã đợt đang mở — dùng cho lý do "Thu hồi".</span></span>
+        </label>
+      </div>
+    </FormSheet>
+  )
+}
+
+function ReturnReasonTab({ canManage }: { canManage: boolean }) {
+  const { data: rows = [], isLoading } = useReturnReasons()
+  const del = useDeleteReturnReason()
+  const [ask, confirmNode] = useConfirmDialog()
+  const [editing, setEditing] = useState<ReturnReasonRow | null>(null)
+  const [showDlg, setShowDlg] = useState(false)
+  async function handleDelete(r: ReturnReasonRow) {
+    if (await ask({ title: `Xoá lý do "${r.meta?.label ?? r.value}"? Phiếu cũ vẫn giữ mã ${r.value}.`, danger: true, confirmLabel: 'Xoá' }) === null) return
+    del.mutate(r.id, { onError: e => toast({ variant: 'destructive', title: 'Không xoá được', description: apiMsg(e) }) })
+  }
+  return (
+    <>
+      <div className="border-b px-3 py-1.5 shrink-0 flex items-center gap-2 flex-wrap">
+        <p className="text-xs text-slate-500 flex-1 min-w-[160px] truncate">{rows.length} lý do · dùng cho phiếu Nhập hàng trả về và hàng NPP chuyển về</p>
+        {canManage && (
+          <ActionCluster className="shrink-0" items={[{
+            key: 'add', icon: Plus, label: 'Thêm lý do', tip: 'Thêm một lý do trả hàng',
+            primary: true, variant: 'default', onClick: () => { setEditing(null); setShowDlg(true) },
+          } satisfies ActionItem]} />
+        )}
+      </div>
+      <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
+        {isLoading ? <div className="p-8 text-center text-sm text-slate-400">Đang tải…</div> : (
+          <ResizableTable storageKey="return_reasons_cols_v1" cols={[
+            { id: 'code', label: 'Mã', w: 120 }, { id: 'label', label: 'Tên hiển thị', w: 220 }, { id: 'recall', label: 'Bắt chọn đợt thu hồi', w: 150 },
+            ...(canManage ? [{ id: 'act', label: '', w: 70 }] : []),
+          ]}>
+            <TableBody>
+              {!rows.length && <TableEmptyRow colSpan={canManage ? 4 : 3}>Chưa có lý do nào</TableEmptyRow>}
+              {rows.map(r => (
+                <TableRow key={r.id}>
+                  <TableCell className="px-2 py-1 font-mono font-semibold text-[10px] text-slate-700 whitespace-nowrap">{r.value}</TableCell>
+                  <TableCell className="px-2 py-1 text-[10px] text-slate-600 whitespace-nowrap">{r.meta?.label || <span className="text-slate-300">—</span>}</TableCell>
+                  <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{r.meta?.requires_recall ? <span className="text-rose-700 font-medium">Bắt buộc</span> : <span className="text-slate-300">—</span>}</TableCell>
+                  {canManage && (
+                    <TableCell className="px-2 py-1 whitespace-nowrap">
+                      <div className="flex items-center gap-0.5">
+                        <button className="text-slate-400 hover:text-blue-500 p-1 transition-colors" title="Sửa" onClick={() => { setEditing(r); setShowDlg(true) }}><Pencil className="h-3.5 w-3.5" /></button>
+                        <button className="text-slate-400 hover:text-red-500 p-1 transition-colors" title="Xoá" disabled={del.isPending} onClick={() => void handleDelete(r)}><Trash2 className="h-3.5 w-3.5" /></button>
+                      </div>
+                    </TableCell>
+                  )}
+                </TableRow>
+              ))}
+            </TableBody>
+          </ResizableTable>
+        )}
+      </div>
+      {showDlg && <ReturnReasonDialog row={editing} open={showDlg} onClose={() => setShowDlg(false)} />}
+      {confirmNode}
+    </>
+  )
+}
+
 // ─── Main page ────────────────────────────────────────────────────────────────
 
 export default function WMSSettings() {
@@ -2022,6 +2124,7 @@ export default function WMSSettings() {
     canManageWarehouse && { key: 'warehouses', label: 'Kho',          icon: Warehouse },
     canManageType      && { key: 'types',      label: 'Loại kho',     icon: Tag },
     canManageType      && { key: 'storage',    label: 'ĐK bảo quản',  icon: Thermometer },
+    canManageType      && { key: 'return_reasons', label: 'Lý do trả hàng', icon: Undo2 },
     canManageUnit      && { key: 'units',      label: 'Đơn vị tính',  icon: Ruler },
     canManageZone      && { key: 'zones',      label: 'Khu vực',      icon: MapPin },
     canManageShift     && { key: 'shifts',     label: 'Ca nhập',      icon: Clock },
@@ -2578,6 +2681,11 @@ export default function WMSSettings() {
         {/* ── Tab: Điều kiện bảo quản (danh mục dùng chung cho Loại kho và Mã dòng xe) ── */}
         <TabsContent value="storage" className="mt-0 flex-1 min-h-0 data-[state=inactive]:hidden flex flex-col">
           <StorageConditionTab canManage={canManageType} />
+        </TabsContent>
+
+        {/* ── Tab: Lý do trả hàng (danh mục cho phiếu Nhập hàng trả về + hàng NPP chuyển về, 26/10) ── */}
+        <TabsContent value="return_reasons" className="mt-0 flex-1 min-h-0 data-[state=inactive]:hidden flex flex-col">
+          <ReturnReasonTab canManage={canManageType} />
         </TabsContent>
 
         {/* ── Tab: Đơn vị tính ── */}

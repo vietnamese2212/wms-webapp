@@ -14,13 +14,14 @@ import { z, zText } from '../../middlewares/validate'
 import { ok, fail, failAny } from '../../utils/response'
 import { fetchAllByIdChunks, fetchAllRowsParallel } from '../../utils/pagination'
 import { safeFilterValue } from '../../utils/search'
-import { categoryAllowed, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
+import { categoryAllowed, scopeCategoriesOf, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
 import { qtyIntegerError, qtyLabel, type MatUnits } from '../../utils/qtyUnits'
 import { requireBaseQty } from '../../utils/qtySemantics'
 import { resolveActorId, resolveActorName } from '../../utils/actor'
 import { normalizeQR, parseInboundQR } from '../../utils/qrParser'
 import { childBaseOf, childLikePattern, childIndexOf, childCodeOf } from '../../utils/palletChild'
 import { effectiveNoQr } from '../../lib/inventoryMode'
+import { isDay } from '../../utils/dates'
 import { emitInboundChanged } from '../../lib/events'
 import { guardPutaway, type PutawayLocRow } from '../../services/putawayContext'
 import { putawayEnforces } from '../../utils/putaway'
@@ -158,16 +159,38 @@ export const zCreateReturn = z.object({
   gdo_id: zText(1, 64).optional(),
   ship_to_code: zText(0, 64).optional(),
   ship_to_name: zText(0, 200).optional(),
-  reason: zText(1, 500),
+  reason_code: zText(1, 40),                 // danh mục LookupValue 'return_reason' (user 26/10)
+  reason: zText(0, 500).optional(),          // ghi chú
+  recall_id: zText(1, 64).optional(),        // đợt thu hồi — bắt buộc khi lý do khai requires_recall
   qa_hold: z.boolean().optional(),
   lines: z.array(z.object({ od_number: zText(0, 200).nullish(), material_id: zText(1, 64), qty_base: z.number().positive() })).min(1).max(300),
 })
+/** Lý do trả (danh mục) + đợt thu hồi: lý do phải có trong danh mục; lý do khai `requires_recall` ⇒ bắt chọn đợt;
+ *  đợt (nếu chọn) phải đang MỞ. Dùng chung cho phiếu RT và gắn lý do phiếu NPP chuyển về. */
+export async function checkReasonRecall(reasonCode: string, recallId: string | null | undefined): Promise<{ error: string | null; label: string }> {
+  const { data: rr } = await db.from('LookupValue').select('value, meta').eq('type', 'return_reason').eq('value', reasonCode).maybeSingle()
+  if (!rr) return { error: `Lý do "${reasonCode}" không có trong danh mục lý do trả hàng`, label: reasonCode }
+  const meta = (rr.meta ?? null) as { requires_recall?: boolean; label?: string } | null
+  const label = meta?.label?.trim() || reasonCode
+  if (meta?.requires_recall === true && !recallId) return { error: `Lý do "${label}" phải chọn MÃ ĐỢT thu hồi`, label }
+  if (recallId) {
+    const { data: rc } = await db.from('recall_campaign').select('code, status').eq('id', recallId).maybeSingle()
+    if (!rc) return { error: 'Không tìm thấy đợt thu hồi', label }
+    if (rc.status !== 'OPEN') return { error: `Đợt ${rc.code} đã đóng — không gắn thêm phiếu`, label }
+  }
+  return { error: null, label }
+}
+
 export async function createReturn(req: Request, res: Response) {
   try {
     if (!requireBaseQty(req, res)) return
     const body = req.body as z.infer<typeof zCreateReturn>
     const b = { ...body, lines: body.lines.map(l => ({ ...l, od_number: l.od_number?.trim() || null })) }
     if (!inScope(req, b.warehouse_id)) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
+    const rc = await checkReasonRecall(b.reason_code, b.recall_id)
+    if (rc.error) return fail(res, 422, 'RETURN_REASON_INVALID', rc.error)
+    const note = b.reason?.trim() || null
+    const reasonText = `${rc.label}${note ? `: ${note}` : ''}`
     const { data: wh } = await db.from('Warehouse').select('id, code').eq('id', b.warehouse_id).maybeSingle()
     if (!wh) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy kho')
 
@@ -235,13 +258,13 @@ export async function createReturn(req: Request, res: Response) {
       const rows = [...perMat].map(([mid, qty], i) => ({
         id: impIdOf.get(mid) ?? randomUUID(), import_code: `${iPrefix}${String(iSeq + i + 1).padStart(2, '0')}`, warehouse_id: b.warehouse_id, material_id: mid,
         planned_cartons: qty, status: 'OPEN', source_type: 'RETURN', warehouse_type: matOf.get(mid)?.category ?? null, import_date: today,
-        return_id: returnId, notes: `Trả về${trip?.group_code ? ` từ chuyến ${trip.group_code}` : ' (lập tay)'} — ${b.reason.trim()}`.slice(0, 500),
+        return_id: returnId, notes: `Trả về${trip?.group_code ? ` từ chuyến ${trip.group_code}` : ' (lập tay)'} — ${reasonText}`.slice(0, 500),
         created_by: actor, updated_by: actor, created_at: t0, updated_at: t0,
       }))
       const { data: r, error } = await db.rpc('inbound_return_create', {
         p_head: {
           id: returnId, return_code: code, warehouse_id: b.warehouse_id, gdo_id: trip?.id ?? null, group_code: trip?.group_code ?? null,
-          ship_to_code: shipTo.code, ship_to_name: shipTo.name, reason: b.reason.trim(), qa_hold: b.qa_hold === true,
+          ship_to_code: shipTo.code, ship_to_name: shipTo.name, reason: note, reason_code: b.reason_code, recall_id: b.recall_id ?? null, qa_hold: b.qa_hold === true,
           created_by: actor, created_by_name: resolveActorName(req), created_at: t0, updated_at: t0,
         },
         p_imports: rows, p_lines: lineRows,
@@ -276,12 +299,18 @@ export async function returnHoldQaId(): Promise<string | null> {
   const { data } = await db.from('QAStatus').select('id').eq('code', 'X').maybeSingle()
   return (data as { id: string } | null)?.id ?? null
 }
-/** Ghi SỔ NHẬN TRẢ (lỗi ghi sổ không làm hỏng lượt nhận đã ghi tồn — nhưng nói ra). */
-export async function logReturnScan(r: { return_id: string; import_order_id: string; entry_id: string | null; source_pallet_code: string | null; merged: boolean; qty_base: number; actor: string | null }): Promise<string | null> {
+/** Ghi SỔ NHẬN TRẢ (lỗi ghi sổ không làm hỏng lượt nhận đã ghi tồn — nhưng nói ra). `room` = phần còn "trả về" được
+ *  (null = không trần — phiếu lập tay): lượt nhận vượt `room` ghi thành HAI dòng — phần trong trần + phần THỪA. */
+export async function logReturnScan(r: { return_id: string; import_order_id: string; entry_id: string | null; source_pallet_code: string | null; merged: boolean; qty_base: number; actor: string | null; room?: number | null }): Promise<string | null> {
   if (!(r.qty_base > 0)) return null
   const t = nowIso()
-  const { actor, ...cols } = r
-  const { error } = await db.from('inbound_return_scan').insert({ id: randomUUID(), ...cols, created_by: actor, created_at: t, updated_at: t })
+  const { actor, room, qty_base, ...cols } = r
+  const inCap = room == null ? qty_base : Math.min(qty_base, Math.max(0, room))
+  const rows = [
+    ...(inCap > 0 ? [{ id: randomUUID(), ...cols, qty_base: inCap, surplus: false, created_by: actor, created_at: t, updated_at: t }] : []),
+    ...(qty_base - inCap > 0 ? [{ id: randomUUID(), ...cols, qty_base: qty_base - inCap, surplus: true, created_by: actor, created_at: t, updated_at: t }] : []),
+  ]
+  const { error } = await db.from('inbound_return_scan').insert(rows)
   if (error) { console.error('[inboundReturn] ghi sổ nhận trả:', error); return `Chưa ghi được sổ nhận trả: ${error.message}` }
   return null
 }
@@ -293,11 +322,13 @@ export async function getReturnByOrder(req: Request, res: Response) {
     if (!imp) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy phiếu nhập')
     if (!inScope(req, imp.warehouse_id)) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
     if (!imp.return_id) return fail(res, 404, 'NOT_RETURN', 'Phiếu nhập này không phải phiếu trả về')
-    const { data: head } = await db.from('inbound_return').select('id, return_code, gdo_id, group_code, ship_to_code, ship_to_name, reason, qa_hold, created_by_name, created_at').eq('id', imp.return_id).maybeSingle()
+    const { data: head } = await db.from('inbound_return')
+      .select('id, return_code, gdo_id, group_code, ship_to_code, ship_to_name, reason, reason_code, recall_id, qa_hold, created_by_name, created_at, recall:recall_campaign!recall_id(code, name)')
+      .eq('id', imp.return_id).maybeSingle()
     if (!head) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy phiếu trả')
     const [{ data: lines }, { data: scans }] = await Promise.all([
       db.from('inbound_return_line').select('od_number, qty_base, shipped_base').eq('import_order_id', imp.id).order('od_number'),
-      db.from('inbound_return_scan').select('source_pallet_code, qty_base, merged, entry_id, created_at').eq('import_order_id', imp.id).order('created_at'),
+      db.from('inbound_return_scan').select('source_pallet_code, qty_base, merged, surplus, entry_id, created_at').eq('import_order_id', imp.id).order('created_at'),
     ])
     let pallets: TripLine['pallets'] = []
     let license_plate: string | null = null
@@ -308,15 +339,16 @@ export async function getReturnByOrder(req: Request, res: Response) {
         for (const p of l.pallets) { const e = pallets.find(x => x.pallet_code === p.pallet_code); if (e) e.qty_base += p.qty_base; else pallets.push({ ...p }) }
     }
     // đã nhận về theo từng tem gốc (mọi phiếu trả của chuyến) — để người nhận biết tem nào còn trả được
-    const recvBy = new Map<string, number>()
+    const recvBy = new Map<string, number>(), surBy = new Map<string, number>()
     if (head.gdo_id && pallets.length) {
       const { data: rs } = await db.from('inbound_return').select('id').eq('gdo_id', head.gdo_id)
       const rids = ((rs ?? []) as { id: string }[]).map(r => r.id)
-      const all = rids.length ? ((await fetchAllByIdChunks(rids, c => db.from('inbound_return_scan').select('source_pallet_code, qty_base').in('return_id', c).order('id'))) as { source_pallet_code: string | null; qty_base: number }[]) : []
-      for (const s of all) if (s.source_pallet_code) recvBy.set(s.source_pallet_code, (recvBy.get(s.source_pallet_code) ?? 0) + Number(s.qty_base))
+      const all = rids.length ? ((await fetchAllByIdChunks(rids, c => db.from('inbound_return_scan').select('source_pallet_code, qty_base, surplus').in('return_id', c).order('id'))) as { source_pallet_code: string | null; qty_base: number; surplus: boolean }[]) : []
+      for (const s of all) if (s.source_pallet_code) { const m = s.surplus ? surBy : recvBy; m.set(s.source_pallet_code, (m.get(s.source_pallet_code) ?? 0) + Number(s.qty_base)) }
     }
-    return ok(res, { ...head, license_plate, lines: lines ?? [], scans: scans ?? [],
-      pallets: pallets.map(p => ({ ...p, returned_base: recvBy.get(p.pallet_code) ?? 0 })).sort((a, b) => a.pallet_code.localeCompare(b.pallet_code)) })
+    const { data: rl } = head.reason_code ? await db.from('LookupValue').select('meta').eq('type', 'return_reason').eq('value', head.reason_code).maybeSingle() : { data: null }
+    return ok(res, { ...head, reason_label: (rl?.meta as { label?: string } | null)?.label ?? head.reason_code, license_plate, lines: lines ?? [], scans: scans ?? [],
+      pallets: pallets.map(p => ({ ...p, returned_base: recvBy.get(p.pallet_code) ?? 0, surplus_base: surBy.get(p.pallet_code) ?? 0 })).sort((a, b) => a.pallet_code.localeCompare(b.pallet_code)) })
   } catch (e) { return failAny(res, e) }
 }
 
@@ -331,6 +363,30 @@ export async function tripPalletShipped(gdoId: string, materialId: string, palle
     .select('cartons_scanned').in('item_id', c).eq('pallet_code', palletCode).order('id'))) as { cartons_scanned: number | null }[]
   return scans.reduce((s, x) => s + Number(x.cartons_scanned ?? 0), 0)
 }
+/** Đã NHẬN VỀ (không tính phần thừa) của tem này qua mọi phiếu trả của chuyến gốc. */
+export async function tripPalletReturned(gdoId: string, palletCode: string): Promise<number> {
+  const { data: rets } = await db.from('inbound_return').select('id').eq('gdo_id', gdoId)
+  const ids = ((rets ?? []) as { id: string }[]).map(r => r.id)
+  if (!ids.length) return 0
+  const rows = (await fetchAllByIdChunks(ids, c => db.from('inbound_return_scan').select('qty_base')
+    .in('return_id', c).eq('source_pallet_code', palletCode).eq('surplus', false).order('id'))) as { qty_base: number }[]
+  return rows.reduce((s, r) => s + Number(r.qty_base), 0)
+}
+/** Còn "trả về" được bao nhiêu cho MÃ (không theo tem — mã không theo QR) trên chuyến: đã xuất − đã nhận về (không tính thừa). */
+export async function tripMaterialRoom(gdoId: string, materialId: string): Promise<number> {
+  const { data: dos } = await db.from('OutboundDelivery').select('id').eq('gdo_id', gdoId).order('id')
+  const doIds = ((dos ?? []) as { id: string }[]).map(d => d.id)
+  const items = doIds.length ? (await fetchAllByIdChunks(doIds, c => db.from('OutboundItem').select('cartons_scanned')
+    .in('do_id', c).eq('material_id', materialId).order('id'))) as { cartons_scanned: number | null }[] : []
+  const shipped = items.reduce((s, i) => s + Number(i.cartons_scanned ?? 0), 0)
+  const { data: rets } = await db.from('inbound_return').select('id').eq('gdo_id', gdoId)
+  const rIds = ((rets ?? []) as { id: string }[]).map(r => r.id)
+  const imps = rIds.length ? (await fetchAllByIdChunks(rIds, c => db.from('ProductionImport').select('id')
+    .in('return_id', c).eq('material_id', materialId).order('id'))) as { id: string }[] : []
+  const got = imps.length ? (await fetchAllByIdChunks(imps.map(i => i.id), c => db.from('inbound_return_scan').select('qty_base')
+    .in('import_order_id', c).eq('surplus', false).order('id'))) as { qty_base: number }[] : []
+  return Math.max(0, shipped - got.reduce((s, r) => s + Number(r.qty_base), 0))
+}
 export const foreignPalletMsg = (palletCode: string, groupCode: string | null) =>
   `Tem ${palletCode} không đi trên chuyến ${groupCode ?? 'gốc'} của phiếu trả này. Hàng của chuyến khác ⇒ lập phiếu trả theo đúng chuyến đó; không rõ chuyến ⇒ lập phiếu trả lập tay.`
 
@@ -342,9 +398,10 @@ export const zReturnLoose = z.object({
   location_id: zText(1, 64),
   stack_layer: z.number().int().min(1).max(5).optional(),
   putaway_override_reason: zText(0, 200).optional(),
+  production_date: z.string().refine(isDay, 'NSX không phải ngày có thật').optional(),   // NSX gõ tay (mặc định theo tem gốc) — user 26/10 "cả 2 cách"
 })
-type ChildIn = { orderId: string; source_pallet_code: string; qty_base: number; location_id: string; stack_layer?: number; putaway_override_reason?: string; note?: string }
-type ChildOut = { ok: true; entryId: string; childCode: string; warnings: string[] } | { ok: false; status: number; code: string; message: string } | { ok: false; pg: unknown }
+type ChildIn = { orderId: string; source_pallet_code: string; qty_base: number; location_id: string; stack_layer?: number; putaway_override_reason?: string; note?: string; production_date?: string }
+type ChildOut = { ok: true; entryId: string; childCode: string; surplusQty: number; warnings: string[] } | { ok: false; status: number; code: string; message: string } | { ok: false; pg: unknown }
 const no = (status: number, code: string, message: string): ChildOut => ({ ok: false, status, code, message })
 /** Nhận hàng trả về thành TEM CON ".N" của tem gốc (mang lô / NSX / HSD gốc). Dùng cho: hàng lẻ (nút "Nhận hàng lẻ") và
  *  phiếu GIỮ QA quét tem còn tồn (không cộng dồn vào pallet đang OK — user 26/10 "tách pallet con"). */
@@ -367,7 +424,14 @@ export async function createReturnChild(req: Request, b: ChildIn): Promise<Child
     if (!parsed.is_valid) return no(400, 'INVALID_QR', parsed.error ?? 'Tem gốc không hợp lệ')
     if (parsed.material_code !== mat.material_code) return no(400, 'MATERIAL_MISMATCH', `Tem gốc là mã "${parsed.material_code}" nhưng phiếu nhập là "${mat.material_code}"`)
     const ret = await returnHead(imp.return_id)
-    if (ret?.gdo_id && !(await tripPalletShipped(ret.gdo_id, mat.id, src))) return no(422, 'RETURN_FOREIGN_PALLET', foreignPalletMsg(src, ret.group_code))
+    // phiếu theo chuyến: tem phải đi trên chuyến; phần vượt "đã xuất − đã nhận về" của tem = HÀNG THỪA (vẫn nhận, ghi riêng)
+    let room: number | null = null
+    if (ret?.gdo_id) {
+      const shipped = await tripPalletShipped(ret.gdo_id, mat.id, src)
+      if (!shipped) return no(422, 'RETURN_FOREIGN_PALLET', foreignPalletMsg(src, ret.group_code))
+      room = Math.max(0, shipped - await tripPalletReturned(ret.gdo_id, src))
+    }
+    const surplusQty = room == null ? 0 : Math.max(0, b.qty_base - room)
     const { base: cb, error: cbErr } = childBaseOf(src)
     if (!cb) return no(400, 'INVALID_QR', cbErr ?? 'Tem gốc không đúng định dạng')
     // thuộc tính lô của tem gốc (dòng tồn gần nhất cùng mã tem — kể cả đã xuất hết); không có thì đọc từ chính QR
@@ -383,8 +447,9 @@ export async function createReturnChild(req: Request, b: ChildIn): Promise<Child
     const cats = (loc.categories ?? null) as string[] | null
     if (cats?.length && mat.category && !cats.includes(mat.category))
       return no(422, 'LOCATION_CATEGORY_MISMATCH', `Vị trí ${loc.location_code} thuộc loại "${cats.join(', ')}" — không khớp loại hàng "${mat.category}"`)
-    const prodDate = s?.production_date ?? (parsed.production_date ? parsed.production_date.toISOString() : null)
-    const expiry = s?.expiry_date ?? (parsed.expiry_date ? parsed.expiry_date.toISOString().slice(0, 10) : null)
+    // NSX gõ tay thắng NSX tem gốc; khi đó HSD tem gốc không còn đúng ⇒ bỏ, %Date tính lại từ NSX + hạn dùng
+    const prodDate = b.production_date ? `${b.production_date}T00:00:00` : (s?.production_date ?? (parsed.production_date ? parsed.production_date.toISOString() : null))
+    const expiry = b.production_date ? null : (s?.expiry_date ?? (parsed.expiry_date ? parsed.expiry_date.toISOString().slice(0, 10) : null))
     const canOverride = req.user?.is_superadmin === true || (req.user?.module_permissions ?? {})['inbound']?.includes('putaway_override') === true
     const put = await guardPutaway({
       warehouseId: imp.warehouse_id, locationId: b.location_id,
@@ -410,7 +475,7 @@ export async function createReturnChild(req: Request, b: ChildIn): Promise<Child
         cartons_imported: b.qty_base, cartons_remaining: b.qty_base, production_date: prodDate, expiry_date: expiry, batch: s?.batch ?? parsed.batch ?? null,
         qa_status_id: qaId, ncc_id: s?.ncc_id ?? null, shelf_life_days: s?.shelf_life_days ?? null, import_order_id: imp.id,
         created_by: actor, updated_by: actor, status: 'IN_STOCK', import_date: vnDate(), update_date: vnDate(), created_at: t, updated_at: t,
-        notes: b.note ?? `Hàng lẻ trả về theo tem gốc ${src}`,
+        notes: b.note ?? (surplusQty > 0 && surplusQty === b.qty_base ? `Hàng THỪA trả về theo tem gốc ${src}` : `Hàng lẻ trả về theo tem gốc ${src}`),
       }
       // NGUYÊN TỬ: khoá dòng Location → đếm sức chứa / tầng dưới / số mã DƯỚI LOCK → insert (cùng RPC với quét nhập)
       const { data: r, error } = await db.rpc('scan_insert_pallet', {
@@ -429,9 +494,10 @@ export async function createReturnChild(req: Request, b: ChildIn): Promise<Child
       entryId = parts[1] ?? null
     }
     if (!entryId) return no(409, 'BUSY', 'Nhiều người cùng nhận hàng lẻ của tem này — thử lại')
-    const warn = await logReturnScan({ return_id: imp.return_id, import_order_id: imp.id, entry_id: entryId, source_pallet_code: src, merged: false, qty_base: b.qty_base, actor })
+    const warn = await logReturnScan({ return_id: imp.return_id, import_order_id: imp.id, entry_id: entryId, source_pallet_code: src, merged: false, qty_base: b.qty_base, actor, room })
     emitInboundChanged()
-    return { ok: true, entryId, childCode, warnings: [...(put.warning ? [put.warning] : []), ...(warn ? [warn] : [])] }
+    const surplusMsg = surplusQty > 0 ? [`${qtyLabel(surplusQty, mat as MatUnits)} vượt số tem ${src} đã xuất trên chuyến — ghi là hàng THỪA (chuyến chỉ tính trả về tới số đã xuất).`] : []
+    return { ok: true, entryId, childCode, surplusQty, warnings: [...surplusMsg, ...(put.warning ? [put.warning] : []), ...(warn ? [warn] : [])] }
 }
 /** Trả lỗi của createReturnChild ra response. */
 export function failChild(res: Response, r: Exclude<ChildOut, { ok: true }>) {
@@ -443,6 +509,138 @@ export async function receiveReturnLoose(req: Request, res: Response) {
     const b = req.body as z.infer<typeof zReturnLoose>
     const r = await createReturnChild(req, { orderId: req.params.id, ...b })
     if (!r.ok) return failChild(res, r)
-    return ok(res, { entry_id: r.entryId, pallet_code: r.childCode, warnings: r.warnings }, 201)
+    return ok(res, { entry_id: r.entryId, pallet_code: r.childCode, surplus_base: r.surplusQty, warnings: r.warnings }, 201)
+  } catch (e) { return failAny(res, e) }
+}
+
+// ─── ĐỢT THU HỒI (user 26/10: duyệt NGOÀI app; người có quyền tạo MÃ ĐỢT dạng chữ; lý do "Thu hồi" bắt chọn đợt) ───
+// GET /wms/recalls?status=OPEN — danh sách đợt (ô chọn trên form + quản lý đợt)
+export async function listRecalls(req: Request, res: Response) {
+  try {
+    const status = String(req.query.status ?? '')
+    let q = db.from('recall_campaign').select('id, code, name, note, status, created_by_name, created_at, closed_at')
+    if (status === 'OPEN' || status === 'CLOSED') q = q.eq('status', status)
+    // danh mục đợt nhỏ (vài đợt / năm) — vẫn chặn trần + nói ra khi chạm
+    const { data, error } = await q.order('status', { ascending: false }).order('created_at', { ascending: false }).limit(500)
+    if (error) throw error
+    return ok(res, { items: data ?? [], truncated: (data ?? []).length >= 500 })
+  } catch (e) { return failAny(res, e) }
+}
+// POST /wms/recalls — tạo mã đợt (quyền inbound.recall_manage)
+export const zRecallCreate = z.object({ code: zText(1, 60), name: zText(0, 200).optional(), note: zText(0, 500).optional() })
+export async function createRecall(req: Request, res: Response) {
+  try {
+    const b = req.body as z.infer<typeof zRecallCreate>
+    const t = nowIso(), code = b.code.trim().toUpperCase()
+    const { data, error } = await db.from('recall_campaign').insert({
+      id: randomUUID(), code, name: b.name?.trim() || null, note: b.note?.trim() || null, status: 'OPEN',
+      created_by: resolveActorId(req), created_by_name: resolveActorName(req), created_at: t, updated_at: t,
+    }).select('id, code, name, note, status, created_by_name, created_at, closed_at').single()
+    if (error) {
+      if (error.code === '23505') return fail(res, 409, 'DUPLICATE', `Mã đợt "${code}" đã có`)
+      return fail(res, error)
+    }
+    return ok(res, data, 201)
+  } catch (e) { return failAny(res, e) }
+}
+// PATCH /wms/recalls/:id — sửa tên / ghi chú, đóng / mở lại đợt (quyền inbound.recall_manage). Mã đợt không đổi (phiếu đã gắn).
+export const zRecallUpdate = z.object({ name: zText(0, 200).optional(), note: zText(0, 500).optional(), status: z.enum(['OPEN', 'CLOSED']).optional() })
+export async function updateRecall(req: Request, res: Response) {
+  try {
+    const b = req.body as z.infer<typeof zRecallUpdate>
+    const patch: { updated_at: string; name?: string | null; note?: string | null; status?: string; closed_at?: string | null } = { updated_at: nowIso() }
+    if (b.name !== undefined) patch.name = b.name.trim() || null
+    if (b.note !== undefined) patch.note = b.note.trim() || null
+    if (b.status) { patch.status = b.status; patch.closed_at = b.status === 'CLOSED' ? nowIso() : null }
+    const { data, error } = await db.from('recall_campaign').update(patch).eq('id', req.params.id)
+      .select('id, code, name, note, status, created_by_name, created_at, closed_at')
+    if (error) return fail(res, error)
+    if (!data?.length) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy đợt thu hồi')
+    return ok(res, data[0])
+  } catch (e) { return failAny(res, e) }
+}
+// GET /wms/recalls/:id/breakdown — đợt đã thu được gì: theo mã · theo khách / NPP (trong phạm vi kho của người xem)
+export async function recallBreakdown(req: Request, res: Response) {
+  try {
+    const { data: rc } = await db.from('recall_campaign').select('id, code, name, note, status, created_at, closed_at').eq('id', req.params.id).maybeSingle()
+    if (!rc) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy đợt thu hồi')
+    const { data, error } = await db.rpc('recall_breakdown', { p_recall_id: rc.id, p_wh_ids: scopeOf(req) ?? undefined })
+    if (error) throw error
+    return ok(res, { recall: rc, ...((data ?? {}) as object) })
+  } catch (e) { return failAny(res, e) }
+}
+
+// ─── HÀNG NPP CHUYỂN VỀ (user 26/10: NPP dùng app tạo đơn xuất về kho chính ⇒ phiếu nhận TF ở kho chính = hàng trả về) ───
+type NppImp = { id: string; warehouse_id: string | null; status: string; return_reason_code: string | null; return_note: string | null; recall_id: string | null }
+/** Chuyến nguồn của phiếu TF có phải từ kho loại NPP không + các phiếu nhập của chuyến đó. */
+async function nppTrip(gdoId: string) {
+  const { data: g } = await db.from('GroupDeliveryOrder').select('id, group_code, warehouse_id').eq('id', gdoId).maybeSingle()
+  if (!g) return null
+  const { data: wh } = g.warehouse_id ? await db.from('Warehouse').select('name, warehouse_type').eq('id', g.warehouse_id).maybeSingle() : { data: null }
+  const { data: imps } = await db.from('ProductionImport').select('id, warehouse_id, status, return_reason_code, return_note, recall_id')
+    .eq('from_gdo_id', gdoId).eq('source_type', 'TRANSFER').neq('status', 'CANCELLED').order('id')
+  return { gdo: g, isNpp: wh?.warehouse_type === 'NPP', nppName: wh?.name ?? null, imports: (imps ?? []) as NppImp[] }
+}
+// GET /wms/inbound-returns/npp/:gdoId — lý do / đợt đang gắn cho chuyến NPP chuyển về
+export async function getNppReturn(req: Request, res: Response) {
+  try {
+    const t = await nppTrip(req.params.gdoId)
+    if (!t) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy chuyến')
+    const mine = t.imports.filter(i => inScope(req, i.warehouse_id))
+    if (!mine.length) return fail(res, 404, 'NOT_FOUND', 'Không có phiếu nhập của chuyến này trong phạm vi kho')
+    const first = mine[0]
+    return ok(res, { gdo_id: t.gdo.id, group_code: t.gdo.group_code, is_npp: t.isNpp, npp_name: t.nppName, imports: mine.length,
+      reason_code: first.return_reason_code, note: first.return_note, recall_id: first.recall_id })
+  } catch (e) { return failAny(res, e) }
+}
+// PATCH /wms/inbound-returns/npp/:gdoId — gắn lý do / ghi chú / đợt cho MỌI phiếu nhập của chuyến NPP (quyền inbound.create)
+export const zNppTag = z.object({ reason_code: zText(1, 40), note: zText(0, 500).optional(), recall_id: zText(1, 64).nullish() })
+export async function tagNppReturn(req: Request, res: Response) {
+  try {
+    const b = req.body as z.infer<typeof zNppTag>
+    const t = await nppTrip(req.params.gdoId)
+    if (!t) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy chuyến')
+    if (!t.isNpp) return fail(res, 422, 'NOT_NPP_TRANSFER', 'Chỉ gắn lý do trả cho hàng chuyển về TỪ KHO NPP')
+    const mine = t.imports.filter(i => inScope(req, i.warehouse_id))
+    if (!mine.length) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
+    const rc = await checkReasonRecall(b.reason_code, b.recall_id)
+    if (rc.error) return fail(res, 422, 'RETURN_REASON_INVALID', rc.error)
+    const ids = mine.map(i => i.id), patch = {
+      return_reason_code: b.reason_code, return_note: b.note?.trim() || null, recall_id: b.recall_id ?? null,
+      updated_by: resolveActorId(req), updated_at: nowIso(),
+    }
+    let updated = 0
+    for (let i = 0; i < ids.length; i += 300) {   // chia lô 300 (trần URL của .in)
+      const chunk = ids.slice(i, i + 300)
+      const { data, error } = await db.from('ProductionImport').update(patch).in('id', chunk).select('id')
+      if (error) return fail(res, error)
+      updated += data?.length ?? 0
+    }
+    emitInboundChanged()
+    return ok(res, { updated })
+  } catch (e) { return failAny(res, e) }
+}
+
+// ─── THỐNG KÊ HÀNG TRẢ VỀ — GET /wms/inbound-returns/report (mỗi dòng một phiếu: RT hoặc một chuyến NPP chuyển về) ───
+export const zReturnReportQuery = z.object({
+  warehouse_id: zText(1, 64).optional(),
+  date_from: z.string().refine(isDay, 'Ngày không hợp lệ').optional(), date_to: z.string().refine(isDay, 'Ngày không hợp lệ').optional(),
+  kind: z.enum(['RT', 'NPP']).optional(), reason: zText(1, 40).optional(), recall_id: zText(1, 64).optional(), search: zText(1, 80).optional(),
+})
+export async function returnReport(req: Request, res: Response) {
+  try {
+    const q = req.query as unknown as z.infer<typeof zReturnReportQuery>
+    const scope = scopeOf(req)
+    let whIds: string[] | null = scope
+    if (q.warehouse_id) {
+      if (scope && !scope.includes(q.warehouse_id)) return ok(res, { rows: [], total: 0, summary: null })
+      whIds = [q.warehouse_id]
+    }
+    const { data, error } = await db.rpc('inbound_return_report', {
+      p_wh_ids: whIds ?? undefined, p_cats: scopeCategoriesOf(req) ?? undefined, p_from: q.date_from, p_to: q.date_to,
+      p_kind: q.kind, p_reason: q.reason, p_recall_id: q.recall_id, p_search: q.search ? safeFilterValue(q.search) : undefined, p_limit: 1000,
+    })
+    if (error) throw error
+    return ok(res, data)
   } catch (e) { return failAny(res, e) }
 }

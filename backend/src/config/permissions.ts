@@ -1,6 +1,6 @@
 export const ALL_PERMISSIONS: Record<string, string[]> = {
   inventory:    ['view', 'adjust', 'move_location', 'recode', 'qa_update', 'update_ncc', 'update_prod_date', 'export', 'import'],
-  inbound:      ['view', 'create', 'edit', 'scan', 'edit_pallet', 'force_edit_pallet', 'delete_pallet', 'force_delete_pallet', 'cancel', 'complete', 'uncomplete', 'putaway_override'],
+  inbound:      ['view', 'create', 'edit', 'scan', 'edit_pallet', 'force_edit_pallet', 'delete_pallet', 'force_delete_pallet', 'cancel', 'complete', 'uncomplete', 'putaway_override', 'export', 'recall_manage'],
   outbound:     ['view', 'prepare', 'create', 'quick_export', 'import', 'edit', 'assign', 'unassign', 'start', 'unstart', 'scan', 'complete', 'uncomplete', 'cancel', 'reconcile', 'weigh_waive', 'gate_waive', 'rotation_override', 'set_date', 'push_transfer'],
   scanlog:      ['view', 'export'],
   // Truy xuất lô (28/08): ghép tồn + xuất + khách hàng vào một màn — rộng hơn từng trang lẻ nên

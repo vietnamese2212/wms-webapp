@@ -12,7 +12,7 @@ function fail(res: Response, message: string, status = 400) {
 
 /** meta của danh mục ĐIỀU KIỆN BẢO QUẢN (type='storage_condition', 24/09): nhãn tiếng Việt + dải nhiệt để hiển thị. */
 export interface StorageConditionMeta { label?: string; temp_min?: number | null; temp_max?: number | null; badge_color?: string }
-type LookupMeta = WhTypeMeta & StorageConditionMeta
+type LookupMeta = WhTypeMeta & StorageConditionMeta & { requires_recall?: boolean }
 
 // meta = cờ hành vi per-giá-trị. Chỉ nhận đúng các key đã biết CỦA TỪNG DANH MỤC, ép kiểu — không cho
 // client nhét jsonb tùy ý, và không để key của danh mục này lọt sang danh mục khác.
@@ -23,6 +23,12 @@ function sanitizeMeta(raw: unknown, type?: string): LookupMeta | null {
   const o = raw as Record<string, unknown>
   const out: LookupMeta = {}
   if (typeof o.badge_color === 'string') out.badge_color = o.badge_color.trim()
+  // Lý do trả hàng (26/10): mã = value, tên = label, bắt chọn đợt thu hồi = requires_recall
+  if (type === 'return_reason') {
+    if (typeof o.label === 'string') out.label = o.label.trim().slice(0, 60)
+    if (typeof o.requires_recall === 'boolean') out.requires_recall = o.requires_recall
+    return out
+  }
   if (type === 'storage_condition') {
     if (typeof o.label === 'string') out.label = o.label.trim().slice(0, 60)
     const temp = (v: unknown): number | null | undefined => {

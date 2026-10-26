@@ -215,9 +215,10 @@ router.get('/inbound-returns/by-order/:id',             requirePerm('inbound', '
 router.post('/inbound-orders/:id/return-loose',         requirePerm('inbound', 'scan'), validate({ body: inboundReturn.zReturnLoose }), inboundReturn.receiveReturnLoose)
 // Thống kê hàng trả về · hàng NPP chuyển về (gắn lý do / đợt) · đợt thu hồi (26/10 tối)
 router.get('/inbound-returns/report',                   requirePerm('inbound', 'view'), validate({ query: inboundReturn.zReturnReportQuery }), inboundReturn.returnReport)
-router.get('/inbound-returns/npp/:gdoId',               requirePerm('inbound', 'view'), inboundReturn.getNppReturn)
-router.patch('/inbound-returns/npp/:gdoId',             requirePerm('inbound', 'create'), validate({ body: inboundReturn.zNppTag }), inboundReturn.tagNppReturn)
-router.get('/recalls',                                  requirePerm('inbound', 'view'), inboundReturn.listRecalls)
+// gắn lý do hàng NPP chuyển về là điều kiện HOÀN THÀNH phiếu ⇒ người nhận ở tab Chuyển kho (tms_plan.confirm_receipt) cũng phải làm được
+router.get('/inbound-returns/npp/:gdoId',               requireAnyPerm(['inbound', 'view'], ['tms_plan', 'confirm_receipt']), inboundReturn.getNppReturn)
+router.patch('/inbound-returns/npp/:gdoId',             requireAnyPerm(['inbound', 'create'], ['tms_plan', 'confirm_receipt']), validate({ body: inboundReturn.zNppTag }), inboundReturn.tagNppReturn)
+router.get('/recalls',                                  requireAnyPerm(['inbound', 'view'], ['tms_plan', 'confirm_receipt']), inboundReturn.listRecalls)
 router.post('/recalls',                                 requirePerm('inbound', 'recall_manage'), validate({ body: inboundReturn.zRecallCreate }), inboundReturn.createRecall)
 router.patch('/recalls/:id',                            requirePerm('inbound', 'recall_manage'), validate({ body: inboundReturn.zRecallUpdate }), inboundReturn.updateRecall)
 router.get('/recalls/:id/breakdown',                    requirePerm('inbound', 'view'), inboundReturn.recallBreakdown)

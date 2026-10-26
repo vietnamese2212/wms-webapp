@@ -54,6 +54,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { useDebouncedValue } from '@/hooks/useDebouncedValue'
 import { SearchInput } from '@/components/shared/SearchInput'
 import { InboundScanSheetById } from '@/components/wms/InboundScanSheet'
+import { NppReturnTag } from '@/components/wms/InboundReturnPanel'
 import { formatDate, formatDateTime, normalizeLicensePlate, normalizePhone, isValidPhone } from '@/utils/formatters'
 import { isQtyLike } from '@/utils/inventoryMode'
 import { parseVnNumber as parseVnNumberShared } from '@/utils/vnNumber'
@@ -2771,6 +2772,8 @@ function TransferOrderDetail({ order, canEdit, canConfirmReceipt, onClose }: { o
               )}
               <ActionCluster className="ml-auto" items={headerActions} />
             </div>
+            {/* Hàng NPP chuyển về: phải gắn lý do trả trước khi hoàn thành (user 26/10) — khối tự ẩn khi chuyến nguồn không phải kho NPP */}
+            {order?.transfer_gdo?.id && hasActiveImports && <NppReturnTag gdoId={order.transfer_gdo.id} canEdit={canConfirmReceipt} />}
             {confirmErr && <p className="text-xs text-red-600 bg-red-50 px-2 py-1 rounded mt-1">{confirmErr}</p>}
             {actionErr && <p className="text-xs text-red-600 bg-red-50 px-2 py-1 rounded mt-1">{actionErr}</p>}
             {overReceivedMats.length > 0 && (

@@ -18,6 +18,8 @@
 
 ## Trang / nghiệp vụ
 
+**Hàng NPP chuyển về (26/10, user chốt "bắt buộc luôn"):** lệnh chuyển kho mà chuyến nguồn ở kho loại NPP = hàng trả về ⇒ panel tab Chuyển kho hiện khối "Hàng NPP chuyển về"; phải gắn LÝ DO TRẢ (+ đợt nếu lý do bắt đợt) trước khi hoàn thành phiếu nhận — kể cả "Nhận đủ theo xuất" (422 `NPP_RETURN_REASON_REQUIRED` ở `completeOrder`). Quyền gắn: `tms_plan.confirm_receipt` hoặc `inbound.create`. Xem [`inbound`](inbound.md).
+
 TMS Bookings (tab Đặt lịch + Chuyển kho). **HAI TRẠNG THÁI KHÁC NHAU, đừng suy cái này từ cái kia (lỗi 09/09):** `TmsOrder.status` (PENDING·DONE·CANCELLED) = LỆNH đã xong chưa, do kho nhận xác nhận; `TmsVehicleSlot.status` (PENDING·BOOKED·ARRIVED·DONE) = DÒNG XE, nhưng app **chỉ ghi tới `BOOKED`** — ARRIVED/DONE mới chỉ được ĐỌC trong các gác an toàn. Ô "Hoàn thành" của SummaryBand từng suy từ trạng thái dòng xe nên đứng yên **0/N** vĩnh viễn; nay đếm HỢP hai đường — lệnh tự mang `status='DONE'` (nhập/chuyển kho đã nhận) **HOẶC** có CHUYẾN cùng Số xe đã COMPLETED (lệnh sinh từ Kế hoạch xuất giữ PENDING, việc xong nằm ở chuyến) — `20260909_…` + `20260909b_…`, gói QA 14 mục 9. Thêm báo cáo mới đếm "đã xong" → hỏi "cột này có đường ghi nào đặt giá trị đó không?" trước khi tin.
 
 ## Actions

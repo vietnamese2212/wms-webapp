@@ -952,9 +952,18 @@ export async function completeOrder(req: Request, res: Response) {
   try {
     if (!(await guardInboundScope(req, res, req.params.id))) return
     const { data: existing } = await supabase
-      .from('ProductionImport').select('id, status, source_type, tms_order_id').eq('id', req.params.id).maybeSingle()
+      .from('ProductionImport').select('id, status, source_type, tms_order_id, from_gdo_id, return_reason_code').eq('id', req.params.id).maybeSingle()
     if (!existing) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy phiếu nhập')
     if (existing.status === 'COMPLETED') return fail(res, 400, 'ALREADY_COMPLETED', 'Phiếu nhập đã hoàn thành')
+
+    // HÀNG NPP CHUYỂN VỀ (user 26/10 "bắt buộc luôn"): phiếu nhận chuyển kho mà chuyến nguồn ở kho loại NPP phải GẮN LÝ DO
+    // TRẢ trước khi hoàn thành — đây là cửa DUY NHẤT đặt COMPLETED cho phiếu nhập (nút Hoàn thành ở Nhập kho lẫn tab Chuyển kho).
+    const ex = existing as { source_type: string; from_gdo_id: string | null; return_reason_code: string | null }
+    if (ex.source_type === 'TRANSFER' && ex.from_gdo_id && !ex.return_reason_code) {
+      const { data: src } = await supabase.from('GroupDeliveryOrder').select('warehouse:Warehouse!warehouse_id(warehouse_type)').eq('id', ex.from_gdo_id).maybeSingle()
+      if ((src?.warehouse as { warehouse_type?: string | null } | null)?.warehouse_type === 'NPP')
+        return fail(res, 422, 'NPP_RETURN_REASON_REQUIRED', 'Hàng NPP chuyển về — gắn LÝ DO TRẢ (khối "Hàng NPP chuyển về" trên phiếu / tab Chuyển kho) trước khi hoàn thành')
+    }
 
     // Kho nhận phải CHẤM SAO chuyến giao trước khi chốt phiếu (chỉ khi đơn vị bật `required`).
     // Chặn ở bước HOÀN THÀNH chứ không ở bước xác nhận: lúc xác nhận người ta chưa mở hàng ra xem,

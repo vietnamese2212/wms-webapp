@@ -832,7 +832,7 @@ export default function InboundDetail() {
               <InboundReturnPanel order={order} canScan={can(perms, 'inbound', 'scan')} noQr={isManualEntry} />
             )}
             {order.source_type === 'TRANSFER' && order.from_gdo_id && (
-              <NppReturnTag gdoId={order.from_gdo_id} canEdit={can(perms, 'inbound', 'create')} />
+              <NppReturnTag gdoId={order.from_gdo_id} canEdit={can(perms, 'inbound', 'create') || can(perms, 'tms_plan', 'confirm_receipt')} />
             )}
 
             {(order.source_type === 'NCC' || order.source_type === 'TRANSFER' || order.source_type === 'RETURN') && (

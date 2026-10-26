@@ -221,10 +221,17 @@ try {
   // ── [8f] hàng NPP chuyển về: chuyến từ kho loại NPP (Bluestar) ⇒ phiếu TF ở kho QR — gắn lý do + đợt ──
   const tsN = new Date().toISOString()
   const [gN] = await restWrite('GroupDeliveryOrder', 'POST', null, { id: randomUUID(), group_code: GC_NPP, warehouse_id: FIX.WH_QTY.id, delivery_date: todayVN, planned_date: todayVN, status: 'COMPLETED', completed_at: tsN, license_plate: 'QA62NPP', created_at: tsN, updated_at: tsN })
-  await restWrite('ProductionImport', 'POST', null, { id: randomUUID(), import_code: `QA62NPP_${Date.now()}`, warehouse_id: WH, material_id: mat.id, planned_cartons: 2 * F, status: 'OPEN', source_type: 'TRANSFER', from_gdo_id: gN.id, warehouse_type: FIX.MAT_POOL_CAT ?? null, import_date: todayVN, created_at: tsN, updated_at: tsN })
+  const [impN] = await restWrite('ProductionImport', 'POST', null, { id: randomUUID(), import_code: `QA62NPP_${Date.now()}`, warehouse_id: WH, material_id: mat.id, planned_cartons: 2 * F, status: 'OPEN', source_type: 'TRANSFER', from_gdo_id: gN.id, warehouse_type: FIX.MAT_POOL_CAT ?? null, import_date: todayVN, created_at: tsN, updated_at: tsN })
   const nG = await api(`/wms/inbound-returns/npp/${gN.id}`)
   const nBad = await api(`/wms/inbound-returns/npp/${g.id}`, 'PATCH', { reason_code: 'TU_CHOI' })
+  const nEarly = await api(`/wms/inbound-orders/${impN.id}/complete`, 'POST', {})
+  check('8f0. Hàng NPP chuyển về CHƯA gắn lý do ⇒ hoàn thành phiếu bị chặn 422 NPP_RETURN_REASON_REQUIRED (user 26/10 "bắt buộc")',
+    nEarly.s === 422 && nEarly.j?.error?.code === 'NPP_RETURN_REASON_REQUIRED'
+    && (await restAll('ProductionImport', `select=status&id=eq.${impN.id}`))[0]?.status === 'OPEN',
+    `http=${nEarly.s}/${nEarly.j?.error?.code}`)
   const nTag = await api(`/wms/inbound-returns/npp/${gN.id}`, 'PATCH', { reason_code: 'THU_HOI', note: 'QA62 NPP gom', recall_id: rcId })
+  const nDone = await api(`/wms/inbound-orders/${impN.id}/complete`, 'POST', {})
+  check('8f1. Gắn lý do xong ⇒ hoàn thành phiếu NPP chuyển về ⇒ 200', nDone.s === 200, `http=${nDone.s} ${nDone.j?.error?.message ?? ''}`)
   check('8f. Chuyến từ kho NPP ⇒ is_npp; gắn lý do Thu hồi + đợt cho phiếu TF ⇒ 200 (1 phiếu) · chuyến kho chính ⇒ 422 NOT_NPP_TRANSFER',
     nG.s === 200 && nG.j?.data?.is_npp === true && nTag.s === 200 && nTag.j?.data?.updated === 1 && nBad.s === 422 && nBad.j?.error?.code === 'NOT_NPP_TRANSFER',
     `get=${nG.s} npp=${nG.j?.data?.is_npp} tag=${nTag.s} ${nTag.j?.error?.message ?? ''} upd=${nTag.j?.data?.updated} bad=${nBad.s}/${nBad.j?.error?.code}`)

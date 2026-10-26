@@ -50,7 +50,7 @@ export function NppReturnTag({ gdoId, canEdit }: { gdoId: string; canEdit: boole
         <span className="text-slate-500">Từ: <span className="text-slate-700">{d.npp_name ?? '—'}</span></span>
         {!canEdit && <span className="text-slate-500">Lý do: <span className="text-slate-700">{d.reason_code ? (reasons.find(r => r.value === d.reason_code)?.meta?.label ?? d.reason_code) : 'chưa gắn'}</span>
           {recallOf && <> · Đợt <span className="font-mono font-semibold">{recallOf.code}</span></>}{d.note && <> · {d.note}</>}</span>}
-        {!d.reason_code && canEdit && <span className="text-amber-700">Chưa gắn lý do — gắn để vào thống kê Hàng trả về</span>}
+        {!d.reason_code && <span className="text-red-600 font-medium">Chưa gắn lý do — bắt buộc trước khi hoàn thành phiếu</span>}
       </div>
       {canEdit && (
         <div className="flex flex-wrap items-end gap-1.5">

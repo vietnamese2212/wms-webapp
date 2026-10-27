@@ -28,44 +28,61 @@ export function NppReturnTag({ gdoId, canEdit }: { gdoId: string; canEdit: boole
   const { data: reasons = [] } = useReturnReasons()
   const { data: recalls = [] } = useRecalls()
   const save = useTagNppReturn()
-  const [draft, setDraft] = useState<{ reason: string; recall: string; note: string } | null>(null)
+  const [form, setForm] = useState<{ reason: string; recall: string; note: string } | null>(null)   // null = form đóng
   const [err, setErr] = useState('')
   const d = q.data
   if (!d?.is_npp) return null
-  const cur = draft ?? { reason: d.reason_code ?? '', recall: d.recall_id ?? '', note: d.note ?? '' }
-  const needRecall = reasons.find(r => r.value === cur.reason)?.meta?.requires_recall === true
+  const reasonLabel = d.reason_code ? (reasons.find(r => r.value === d.reason_code)?.meta?.label ?? d.reason_code) : null
+  const needRecall = !!form && reasons.find(r => r.value === form.reason)?.meta?.requires_recall === true
   const recallOf = recalls.find(r => r.id === (d.recall_id ?? ''))
-  const dirty = !!draft && (draft.reason !== (d.reason_code ?? '') || draft.recall !== (d.recall_id ?? '') || draft.note !== (d.note ?? ''))
   async function submit() {
+    if (!form) return
     setErr('')
     try {
-      await save.mutateAsync({ gdoId, reason_code: cur.reason, note: cur.note.trim() || undefined, recall_id: cur.recall || null })
-      setDraft(null)
+      await save.mutateAsync({ gdoId, reason_code: form.reason, note: form.note.trim() || undefined, recall_id: form.recall || null })
+      setForm(null)
     } catch (e) { setErr((e as AxiosError<{ error?: { message?: string } }>).response?.data?.error?.message ?? 'Không lưu được') }
   }
   return (
-    <div className="w-full mt-0.5 px-2 py-1.5 rounded bg-rose-50 border border-rose-100 text-[10px] space-y-1">
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5">
-        <span className="font-semibold text-rose-700 inline-flex items-center gap-1"><Undo2 className="h-3 w-3" />Hàng NPP chuyển về</span>
-        <span className="text-slate-500">Từ: <span className="text-slate-700">{d.npp_name ?? '—'}</span></span>
-        {!canEdit && <span className="text-slate-500">Lý do: <span className="text-slate-700">{d.reason_code ? (reasons.find(r => r.value === d.reason_code)?.meta?.label ?? d.reason_code) : 'chưa gắn'}</span>
-          {recallOf && <> · Đợt <span className="font-mono font-semibold">{recallOf.code}</span></>}{d.note && <> · {d.note}</>}</span>}
-        {!d.reason_code ? <span className="text-red-600 font-medium">Chưa gắn lý do — bắt buộc trước khi hoàn thành phiếu</span>
-          : d.missing > 0 && <span className="text-red-600 font-medium">{d.missing}/{d.imports} phiếu chưa mang lý do — bấm Lưu để gắn cho cả chuyến</span>}
-      </div>
+    <div className="w-full mt-0.5 px-2 py-1.5 rounded bg-rose-50 border border-rose-100 text-[10px] flex flex-wrap items-center gap-x-3 gap-y-1">
+      <span className="font-semibold text-rose-700 inline-flex items-center gap-1"><Undo2 className="h-3 w-3" />Hàng NPP chuyển về</span>
+      <span className="text-slate-500">Từ: <span className="text-slate-700">{d.npp_name ?? '—'}</span></span>
+      {reasonLabel && <span className="text-slate-500">Lý do: <span className="text-slate-700 font-medium">{reasonLabel}</span>
+        {recallOf && <> · Đợt <span className="font-mono font-semibold">{recallOf.code}</span></>}{d.note && <> · {d.note}</>}</span>}
+      {!d.reason_code ? <span className="text-red-600 font-medium">Chưa gắn lý do — bắt buộc trước khi hoàn thành phiếu</span>
+        : d.missing > 0 && <span className="text-red-600 font-medium">{d.missing}/{d.imports} phiếu chưa mang lý do — bấm Gắn lý do để lưu cho cả chuyến</span>}
       {canEdit && (
-        <div className="flex flex-wrap items-end gap-1.5">
-          <div className="w-44"><SingleSelect value={cur.reason} onChange={v => setDraft({ ...cur, reason: v })} placeholder="Lý do trả" triggerClassName="h-7"
-            options={reasons.map(r => ({ value: r.value, label: r.meta?.label?.trim() || r.value }))} /></div>
-          <div className="w-48"><SingleSelect value={cur.recall} onChange={v => setDraft({ ...cur, recall: v })} placeholder={needRecall ? 'Mã đợt (bắt buộc)' : 'Mã đợt (nếu có)'} triggerClassName="h-7"
-            options={[{ value: '', label: '— Không thuộc đợt nào —' }, ...recalls.filter(r => r.status === 'OPEN' || r.id === d.recall_id).map(r => ({ value: r.id, label: `${r.code}${r.name ? ` · ${r.name}` : ''}` }))]} /></div>
-          <Input value={cur.note} onChange={e => setDraft({ ...cur, note: e.target.value })} placeholder="Ghi chú" maxLength={500} className="h-7 w-48 text-[11px]" />
-          <Button size="sm" className="h-7 text-[11px]" disabled={!(dirty || d.missing > 0) || !cur.reason || (needRecall && !cur.recall) || save.isPending} onClick={() => void submit()}>
-            {save.isPending ? 'Đang lưu…' : 'Lưu'}
-          </Button>
-        </div>
+        <Button size="sm" variant="outline" className="h-7 text-[11px] ml-auto"
+          onClick={() => { setErr(''); setForm({ reason: d.reason_code ?? '', recall: d.recall_id ?? '', note: d.note ?? '' }) }}>
+          {d.reason_code ? 'Sửa lý do' : 'Gắn lý do'}
+        </Button>
       )}
-      {err && <div className="text-red-700">{err}</div>}
+      {form && (
+        <FormSheet open onClose={() => setForm(null)} title="Lý do trả — hàng NPP chuyển về"
+          description={`Áp cho cả ${d.imports} phiếu nhận của chuyến ${d.group_code ?? ''} từ ${d.npp_name ?? 'NPP'}.`}
+          footer={<>
+            <Button variant="outline" onClick={() => setForm(null)}>Huỷ</Button>
+            <Button onClick={() => void submit()} disabled={!form.reason || (needRecall && !form.recall) || save.isPending}>{save.isPending ? 'Đang lưu…' : 'Lưu'}</Button>
+          </>}>
+          <div className="space-y-3">
+            {err && <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">{err}</div>}
+            <div>
+              <Label className="text-xs">Lý do trả <span className="text-red-500">*</span></Label>
+              <SingleSelect value={form.reason} onChange={v => setForm({ ...form, reason: v })} placeholder="Chọn lý do" triggerClassName="h-8 mt-0.5"
+                options={reasons.map(r => ({ value: r.value, label: r.meta?.label?.trim() || r.value }))} />
+            </div>
+            <div>
+              <Label className="text-xs">Mã đợt thu hồi {needRecall ? <span className="text-red-500">*</span> : <span className="text-slate-400">(nếu có)</span>}</Label>
+              <SingleSelect value={form.recall} onChange={v => setForm({ ...form, recall: v })} placeholder="Chọn mã đợt" triggerClassName="h-8 mt-0.5"
+                options={[{ value: '', label: '— Không thuộc đợt nào —' }, ...recalls.filter(r => r.status === 'OPEN' || r.id === d.recall_id).map(r => ({ value: r.id, label: `${r.code}${r.name ? ` · ${r.name}` : ''}` }))]} />
+            </div>
+            <div>
+              <Label className="text-xs">Ghi chú</Label>
+              <Input value={form.note} onChange={e => setForm({ ...form, note: e.target.value })} placeholder="Tuỳ chọn" maxLength={500} className="h-8 text-xs mt-0.5" />
+            </div>
+          </div>
+        </FormSheet>
+      )}
     </div>
   )
 }

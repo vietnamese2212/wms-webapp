@@ -7,7 +7,10 @@ import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import type { AxiosError } from 'axios'
 import * as XLSX from 'xlsx'
-import { Flag, FileDown, Undo2, Plus } from 'lucide-react'
+import { Flag, FileDown, Plus, AlignJustify, Rows3 } from 'lucide-react'
+import { SavedViews } from '@/components/shared/SavedViews'
+import { useSavedViewsStore } from '@/stores/savedViewsStore'
+import { rowText } from '@/lib/rowStatus'
 import { TableBody, TableCell, TableRow } from '@/components/ui/table'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -94,18 +97,33 @@ export default function InboundReturns() {
   }
 
   const recallSel = recalls.find(r => r.id === f.recallId) ?? null
+  // Views + mật độ dòng — cùng khuôn trang Nhập kho
+  const viewSnapshot = { search: f.search, warehouseId: f.warehouseId, dateFrom: f.dateFrom, dateTo: f.dateTo, kind: f.kind, reason: f.reason, recallId: f.recallId }
+  const savedViews = useSavedViewsStore(s => s.views['inbound_returns'] ?? [])
+  const activeViewId = savedViews.find(v => JSON.stringify(v.filters) === JSON.stringify(viewSnapshot))?.id ?? null
+  const [dense, setDense] = useState(() => { try { return localStorage.getItem('inbound_returns_density') !== 'comfortable' } catch { return true } })
+  const toggleDensity = () => setDense(d => { try { localStorage.setItem('inbound_returns_density', d ? 'comfortable' : 'compact') } catch { /* bộ nhớ trình duyệt bị chặn */ } return !d })
   return (
     <div className="flex flex-col h-full sm:p-3">
       <div className="flex flex-col flex-1 min-h-0 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm">
         <div className="border-b bg-white px-3 py-1.5 space-y-1 sm:py-2 sm:space-y-1.5 shrink-0 sm:rounded-t-xl">
           <div className="flex items-center gap-1.5 flex-wrap xl:flex-nowrap">
-            <h1 className="text-sm font-semibold text-slate-800 shrink-0 inline-flex items-center gap-1"><Undo2 className="h-4 w-4 text-rose-600" />Hàng trả về</h1>
+            <span className="hidden sm:inline text-sm font-semibold text-slate-700 shrink-0">Hàng trả về</span>
             <SearchInput value={f.search} onChange={v => setF({ search: v, page: 1 })} placeholder="Tìm số phiếu, chuyến, khách / NPP…" className="flex-1 min-w-[160px]" />
             <FilterSheetButton defs={defs} className="sm:hidden" />
-            <ActionCluster mobileInline items={[
+            <div className="flex items-center gap-1.5 flex-wrap w-full min-w-0 sm:contents">
+            <SavedViews module="inbound_returns" currentFilters={viewSnapshot} activeId={activeViewId}
+              onApply={v => setF({ ...(v as Partial<typeof f>), page: 1 })} />
+            <button type="button" onClick={toggleDensity}
+              className="hidden sm:inline-flex h-7 w-7 items-center justify-center rounded-md border border-slate-200 text-slate-500 hover:bg-slate-50 transition-colors shrink-0"
+              title={dense ? 'Đang: dày · bấm để thoáng' : 'Đang: thoáng · bấm để dày'}>
+              {dense ? <AlignJustify className="h-3.5 w-3.5" /> : <Rows3 className="h-3.5 w-3.5" />}
+            </button>
+            <ActionCluster className="shrink-0" mobileInline items={[
               { key: 'recall', icon: Flag, label: 'Đợt thu hồi', tip: 'Danh sách mã đợt thu hồi — tạo / đóng đợt (người có quyền), xem đợt đã thu được gì', primary: true, variant: 'default', onClick: () => setRecallOpen(true) },
               ...(canExport ? [{ key: 'xlsx', icon: FileDown, label: 'Xuất Excel', tip: `Xuất ${rows.length} phiếu đang lọc ra Excel`, onClick: exportExcel, disabled: !rows.length, mobileHidden: true } satisfies ActionItem] : []),
             ] satisfies ActionItem[]} />
+            </div>
           </div>
           <div className="hidden sm:flex"><FilterBar defs={defs} /></div>
         </div>
@@ -127,10 +145,10 @@ export default function InboundReturns() {
               {!q.isError && q.isLoading && !rows.length && <TableEmptyRow colSpan={COLS.length}>Đang tải…</TableEmptyRow>}
               {!q.isError && !q.isLoading && !rows.length && <TableEmptyRow colSpan={COLS.length}>Không có phiếu trả về nào trong khoảng đang lọc.</TableEmptyRow>}
               {shown.map(r => (
-                <TableRow key={`${r.kind}-${r.id}`} className={`cursor-pointer hover:bg-slate-50 ${r.done ? 'text-slate-500' : ''}`}
+                <TableRow key={`${r.kind}-${r.id}`} className={`cursor-pointer ${rowText(r.done ? 'completed' : 'inProgress')} ${dense ? '' : '[&_td]:py-2.5'}`}
                   onClick={() => r.first_import && navigate(`/wms/inbound/${r.first_import}`)} title="Mở phiếu nhập">
                   <TableCell className={`${TD} sticky left-0 z-10 bg-white tabular-nums`}>{formatDate(r.day)}</TableCell>
-                  <TableCell className={TD}><span className={`text-[9px] px-1.5 py-0.5 rounded font-semibold ${r.kind === 'RT' ? 'bg-rose-100 text-rose-700' : 'bg-purple-100 text-purple-700'}`}>{r.kind === 'RT' ? 'RT' : 'NPP'}</span></TableCell>
+                  <TableCell className={TD}><StatusBadge tone={r.kind === 'RT' ? 'slate' : 'purple'}>{r.kind === 'RT' ? 'RT' : 'NPP'}</StatusBadge></TableCell>
                   <TableCell className={`${TD} font-mono font-semibold`}>{r.code}</TableCell>
                   <TableCell className={`${TD} font-mono`}>{r.trip ?? <span className="text-slate-400 italic font-sans">lập tay</span>}</TableCell>
                   <TableCell className={`${TD} truncate`} title={r.party ?? ''}>{r.party ?? '—'}</TableCell>
@@ -202,7 +220,7 @@ function RecallSheet({ open, onClose, onFilter }: { open: boolean; onClose: () =
   const qtyBy = new Map((b.data?.by_material ?? []).map(m => [m.material_id, m]))
   return (
     <FormSheet open={open} onClose={onClose} widthClass="sm:max-w-3xl"
-      title={<span className="inline-flex items-center gap-1.5"><Flag className="h-4 w-4 text-rose-600" />Đợt thu hồi</span>}
+      title="Đợt thu hồi"
       description="Đợt duyệt ngoài app; người có quyền tạo MÃ ĐỢT ở đây. Phiếu trả chọn lý do bắt đợt (vd Thu hồi) phải chọn một đợt đang mở."
       footer={<Button variant="outline" size="sm" className="h-8" onClick={onClose}>Đóng</Button>}>
       <div className="space-y-3 text-xs">

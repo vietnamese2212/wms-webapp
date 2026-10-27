@@ -2086,7 +2086,7 @@ function ReturnReasonTab({ canManage }: { canManage: boolean }) {
                   <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{r.meta?.requires_recall ? <span className="text-rose-700 font-medium">Bắt buộc</span> : <span className="text-slate-300">—</span>}</TableCell>
                   {canManage && (
                     <TableCell className="px-2 py-1 whitespace-nowrap">
-                      <div className="flex items-center gap-0.5">
+                      <div className="flex items-center justify-end gap-0.5">
                         <button className="text-slate-400 hover:text-blue-500 p-1 transition-colors" title="Sửa" onClick={() => { setEditing(r); setShowDlg(true) }}><Pencil className="h-3.5 w-3.5" /></button>
                         <button className="text-slate-400 hover:text-red-500 p-1 transition-colors" title="Xoá" disabled={del.isPending} onClick={() => void handleDelete(r)}><Trash2 className="h-3.5 w-3.5" /></button>
                       </div>

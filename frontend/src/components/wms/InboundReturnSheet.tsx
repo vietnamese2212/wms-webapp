@@ -8,7 +8,8 @@
 // Giao lại hàng trả = ĐƠN RIÊNG (SAP tạo DO mới), form không hỏi.
 import { useEffect, useMemo, useState } from 'react'
 import type { AxiosError } from 'axios'
-import { Undo2, Search, Trash2 } from 'lucide-react'
+import { Trash2 } from 'lucide-react'
+import { SearchInput } from '@/components/shared/SearchInput'
 import { FormSheet } from '@/components/shared/FormSheet'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -98,8 +99,7 @@ export function InboundReturnSheet({ open, onClose, onCreated }: {
 
   return (
     <FormSheet open={open} onClose={onClose} widthClass="sm:max-w-3xl"
-      title={<span className="inline-flex items-center gap-1.5"><Undo2 className="h-4 w-4 text-sky-600" />Nhập hàng trả về</span>}
-      description="Chọn chuyến xuất gốc để app điền sẵn hàng đã xuất; không tìm được chuyến thì lập tay. Giao lại hàng trả = đơn riêng (SAP tạo DO mới)."
+      title="Nhập hàng trả về"
       footer={<>
         <Button variant="outline" size="sm" className="h-8" onClick={onClose} disabled={create.isPending}>Huỷ</Button>
         <Button size="sm" className="h-8" onClick={() => void save()} disabled={!canSave || create.isPending}>
@@ -107,30 +107,25 @@ export function InboundReturnSheet({ open, onClose, onCreated }: {
         </Button>
       </>}>
       <div className="space-y-3 text-xs">
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-          <div>
-            <Label className="text-xs">Kho nhận hàng trả <span className="text-red-500">*</span></Label>
-            <WarehouseSingleSelect warehouses={warehouses as { id: string; code?: string; name: string }[]} value={warehouseId}
-              onChange={v => { setWarehouseId(v); setGdoId(null); setQty({}) }} triggerClassName="h-8 mt-0.5" />
-          </div>
-          <div>
-            <Label className="text-xs">Cách lập</Label>
-            <div className="mt-0.5 flex flex-wrap gap-1.5">
-              {([['TRIP', 'Theo chuyến xuất gốc'], ['MANUAL', 'Lập tay (không tìm được chuyến)']] as const).map(([k, label]) => (
-                <button key={k} type="button" onClick={() => { setMode(k); setErr('') }}
-                  className={`h-8 rounded-full border px-3 ${mode === k ? 'border-sky-600 bg-sky-600 text-white' : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'}`}>{label}</button>
-              ))}
-            </div>
-          </div>
+        {/* Cách lập — thanh chọn 2 nửa, cùng khuôn "Nhập SX | Nhập NCC" của form Tạo phiếu nhập */}
+        <div className="flex rounded-lg border overflow-hidden">
+          {([['TRIP', 'Theo chuyến xuất gốc'], ['MANUAL', 'Lập tay']] as const).map(([k, label]) => (
+            <button key={k} type="button" onClick={() => { setMode(k); setErr('') }}
+              className={['flex-1 py-1.5 text-xs font-medium transition-colors',
+                mode === k ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'].join(' ')}>{label}</button>
+          ))}
+        </div>
+        <div>
+          <Label className="text-xs">Kho nhận hàng trả <span className="text-red-500">*</span></Label>
+          <WarehouseSingleSelect warehouses={warehouses as { id: string; code?: string; name: string }[]} value={warehouseId}
+            onChange={v => { setWarehouseId(v); setGdoId(null); setQty({}) }} triggerClassName="h-8 mt-0.5" />
         </div>
 
         {mode === 'TRIP' && !gdoId && (
           <div className="space-y-1.5">
-            <div className="relative">
-              <Search className="absolute left-2 top-2 h-4 w-4 text-slate-400" />
-              <Input value={term} onChange={e => setTerm(e.target.value)} placeholder="Tìm chuyến đã xuất: Số xe · DO · khách · biển số (90 ngày gần nhất)" className="h-8 pl-8 text-xs" disabled={!warehouseId} />
-            </div>
-            {!warehouseId && <div className="text-slate-500">Chọn kho trước.</div>}
+            <Label className="text-xs">Chuyến xuất gốc <span className="text-red-500">*</span></Label>
+            {!warehouseId ? <div className="text-slate-500">Chọn kho trước.</div>
+              : <SearchInput value={term} onChange={setTerm} placeholder="Số xe · DO · khách · biển số (90 ngày gần nhất)" />}
             {warehouseId && (
               <div className="overflow-auto border rounded-lg max-h-[45vh]">
                 <table className="w-full">
@@ -252,9 +247,8 @@ export function InboundReturnSheet({ open, onClose, onCreated }: {
         </div>
         <div>
           <Label className="text-xs">Ghi chú</Label>
-          <textarea value={reason} onChange={e => setReason(e.target.value)} rows={2} maxLength={500}
-            placeholder="vd hàng móp góc · khách hẹn giao lại tuần sau"
-            className="mt-0.5 w-full rounded-md border border-slate-300 px-2 py-1.5 text-xs" />
+          <Input value={reason} onChange={e => setReason(e.target.value)} maxLength={500}
+            placeholder="Tuỳ chọn — vd hàng móp góc, khách hẹn giao lại" className="h-8 text-xs mt-0.5" />
         </div>
 
         <label className="flex items-start gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 cursor-pointer">

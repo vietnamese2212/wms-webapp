@@ -31,6 +31,11 @@
 //    nhất rồi mới dâng đều cả mặt; không chất cột trên nóc từng chân. Nhiều mã gửi → mã trước
 //    chiếm trọn từng hàng ngang từ phía cabin (mã sau không đè lên mã trước). Pallet gộp hàng
 //    lẻ chia lớp cho CAO ĐỀU (không pallet lùn lẻ). Phần sàn (luật 1-7) giữ nguyên.
+// 9. PALLET THẬT (user 28/10: "pallet ghép hình khối rất tệ"; "200 túi hợp lý 1 pallet riêng"):
+//    thùng/lớp theo SỐ LỚP thật khi có (110 thùng / 11 lớp = 10/lớp — lưới thẳng chỉ 8 ⇒ pallet
+//    cao vống 1,95m); phần lẻ một mã tự đủ 1 pallet mà tách không tăng số pallet ⇒ PALLET RIÊNG; còn
+//    lại pallet gộp NẶNG DƯỚI NHẸ TRÊN, mỗi mã NẰM LIỀN (không xé lớp ra mọi pallet). Khối pallet
+//    kèm RUỘT (`contents` — từng lớp thùng) để vẽ đúng thùng thật.
 // 1 step = 1 lượt đặt (1 chân mới / 1 cụm đè lên chân dở / 1 cụm lên nóc) — cho thanh
 // trượt "xếp theo thứ tự". Đơn vị: mm.
 
@@ -50,7 +55,13 @@ export interface LoadGroup {
   // ĐẾ PALLET (26/08): khối này là pallet → phần đáy cao `h` vẽ MÀU RIÊNG đồng nhất để phân biệt
   // rõ với hàng phía trên (user chốt; màu khai per MÃ pallet — tương lai có pallet dạng khác).
   base?: { h: number; color: string }
+  // RUỘT PALLET (28/10): các lớp thùng từ dưới lên — mỗi lớp `n` thùng cỡ l×w×h của dòng hàng `key`
+  // (PalletizeInput.key). Để vẽ pallet thành từng lớp thùng thật (pallet gộp thấy rõ mã nào nằm đâu)
+  // và kể pallet gộp gồm những gì. Không có = không rõ ruột (mã tính theo cái / thùng to hơn chân).
+  contents?: PalletLayer[]
 }
+
+export interface PalletLayer { key: string; n: number; l: number; w: number; h: number }
 
 export interface PlacedBox {
   x: number; y: number; z: number   // gốc = góc trong-trái-sàn; x dọc thân xe (0 = sát cabin)
@@ -241,7 +252,8 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
   // m = hệ số trải — vòng chọn bên dưới tìm m LỚN NHẤT vẫn xếp đủ (trải tới đuôi xe).
   // `fine`: lát phẳng hàng gửi THẬT (levelFill — nặng). Vòng chọn m (~30 lần pack) chỉ cần biết
   // CÒN CHỖ cho bao nhiêu thùng gửi → ước lượng theo diện tích; lát thật 1 lần cho phương án thắng.
-  function pack(m: number, mLast = 1, fine = false) {
+  // `rows`: khối chiếm TRỌN hàng ngang (luật 28/10) — tắt khi xe chật mà trọn hàng thì bỏ thùng lại.
+  function pack(m: number, mLast = 1, fine = false, rows = true) {
     const placed: PlacedBox[] = []
     const leftover: { group: number; count: number }[] = []
     const cols: Col[] = []
@@ -431,19 +443,42 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
       // KHÔNG nhô thêm)
       const cap = Math.max(1, Math.min(full, Math.ceil(chain.capMm / maxH)))
       // sàn không hạ dưới 3 lớp (thảm 1-2 lớp kín sàn = phi thực tế — thợ dồn gọn)
-      let L = Math.max(Math.min(cap, 3), Math.ceil(cap / mEffOf(rowKey)))
+      let Lfloor = Math.min(cap, 3)
+      let L = Math.max(Lfloor, Math.ceil(cap / mEffOf(rowKey)))
       // BẬC THANG THOẢI (user 14/07: "hạ độ cao phải hạ DẦN, không rơi vực — đổ hàng"):
       // từ khối thứ 2, mức thân không thấp hơn mức khối trước quá 1 bậc an toàn
       if (floorRows.indexOf(rowKey) > 0) {
         const drop = Math.max(2 * maxH, truck.height * 0.25)
         const Lmin = Math.min(cap, Math.max(1, Math.ceil((chain.capMm - drop) / maxH)))
         if (L < Lmin) L = Lmin
+        Lfloor = Math.max(Lfloor, Lmin)
       }
       // Có hàng thừa mà trần không còn chỗ nổi (khối kịch trần) → hạ khối 1 lớp để thừa
       // lên được TRÊN KHỐI (quy trình: không đứng chân ngắn dưới sàn)
       const C = live.reduce((s, gi) => s + avail(gi), 0)
       if (C % L !== 0 && (L + 1) * maxH > truck.height) L = Math.max(1, L - 1)
       st.openCol = null; classCols = []; zones = []
+      // HÀNG NGANG TRỌN (user 28/10: "người bốc xếp xếp từ trong ra ngoài theo thứ tự các mã — xếp
+      // hàng 1 nửa từ trong ra là không đúng"): khối chiếm TRỌN một số hàng ngang (đủ mọi làn bề
+      // rộng) — số chân = sức chứa đúng một chiều sâu D; mức thân = tổng ÷ số chân (≤ L dự kiến, không
+      // dưới sàn 3 lớp / bậc thang), phần dư NỔI trên nóc (luật 1). Mặt tiền khối phẳng ⇒ khối sau bắt
+      // đầu trên một đường thẳng ngang thùng, không lấp nửa hàng dở của khối trước. Hàng quá ít (không
+      // đủ 1 lớp cho trọn hàng) / khối nhận cột thềm của hàng gửi ⇒ giữ cách cũ.
+      let colTarget = Infinity
+      const g0 = groupsIn[live[0]]
+      if (rows && !pendingStubs.some(s => s.ck === classKeyOf(g0) && s.doKey === g0.doKey)) {
+        const lanes = zoneMixFor(g0).map(z => { const d = zoneDims(g0, z); return { n: Math.floor((z.yB - z.yA) / d.fw + 1e-9), fl: d.fl } })
+        const capAt = (D: number) => lanes.reduce((s, z) => s + z.n * Math.floor(D / z.fl + 1e-9), 0)
+        const depths = [...new Set(lanes.flatMap(z => Array.from({ length: Math.floor(truck.length / z.fl) }, (_, k) => (k + 1) * z.fl)))].sort((a, b) => a - b)
+        for (const D of depths) {
+          const n = capAt(D)
+          const Lr = n > 0 ? Math.floor(C / n) : 0
+          if (Lr < Lfloor) break
+          if (Lr > L || live.some(gi => (groupsIn[gi].maxLayers ?? Infinity) < Lr)) continue
+          if (C - Lr * n > 0 && (Lr + 1) * maxH > truck.height) continue   // thừa không còn chỗ nổi
+          L = Lr; colTarget = n; break
+        }
+      }
       for (let mi = 0; mi < live.length; mi++) {
         const gi = live[mi]
         const g = groupsIn[gi]
@@ -493,6 +528,14 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
             used[gi] += before - remaining
             if (remaining <= 0) break
             // nóc không đủ (maxLayers/trần) → đành đứng chân ngắn cuối khối
+          }
+          // 2b) Khối đã đủ số chân TRỌN HÀNG ⇒ phần còn lại nổi trên nóc (< 1 lớp), không mọc nửa
+          // hàng mới (nóc không nhận hết — maxLayers/trần — thì mới đứng chân như cũ)
+          if (classCols.length >= colTarget) {
+            const before = remaining
+            remaining = spillOnRoof(g, gi, remaining)
+            used[gi] += before - remaining
+            if (remaining <= 0) break
           }
           // 3) Chân mới bằng mặt cao myL
           const take = Math.min(remaining, myL)
@@ -1100,31 +1143,41 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
     return score(r) >= score(cur)
   }
   const M_GRID = [1, 1.06, 1.13, 1.22, 1.33, 1.5, 1.7, 2, 2.4, 3, 3.8, 5, 6.5, 8.5, 11, 14, 18, 25]
-  let best = pack(1)
-  let bestIdx = 0
-  let bestM = 1
-  for (let i = 1; i < M_GRID.length; i++) {
-    const r = pack(M_GRID[i])
-    if (better(r, best)) { best = r; bestIdx = i; bestM = M_GRID[i] }
-  }
-  {
-    let lo = M_GRID[bestIdx], hi = M_GRID[bestIdx + 1] ?? M_GRID[bestIdx] * 1.3
-    for (let i = 0; i < 4; i++) {
-      const mid = (lo + hi) / 2
-      const r = pack(mid)
-      if (better(r, best)) { best = r; lo = mid; bestM = mid } else hi = mid
+  const search = (rows: boolean) => {
+    let best = pack(1, 1, false, rows)
+    let bestIdx = 0
+    let bestM = 1
+    for (let i = 1; i < M_GRID.length; i++) {
+      const r = pack(M_GRID[i], 1, false, rows)
+      if (better(r, best)) { best = r; bestIdx = i; bestM = M_GRID[i] }
     }
+    {
+      let lo = M_GRID[bestIdx], hi = M_GRID[bestIdx + 1] ?? M_GRID[bestIdx] * 1.3
+      for (let i = 0; i < 4; i++) {
+        const mid = (lo + hi) / 2
+        const r = pack(mid, 1, false, rows)
+        if (better(r, best)) { best = r; lo = mid; bestM = mid } else hi = mid
+      }
+    }
+    // Tinh chỉnh RIÊNG KHỐI CUỐI (user 15/07: "tất cả các lớp bám tới cuối xe"): hạ thêm
+    // chỉ khối cuối để mép cuối CHẠM đuôi xe — không kéo cả đoàn hạ theo. better() giữ
+    // luật cũ: phải vẫn xếp đủ + sạch, maxX lớn hơn mới nhận.
+    let bestML = 1
+    for (const mL of [1.1, 1.2, 1.35, 1.5, 1.7, 2]) {
+      const r = pack(bestM, mL, false, rows)
+      if (better(r, best)) { best = r; bestML = mL }
+    }
+    return { best, bestM, bestML, rows }
   }
-  // Tinh chỉnh RIÊNG KHỐI CUỐI (user 15/07: "tất cả các lớp bám tới cuối xe"): hạ thêm
-  // chỉ khối cuối để mép cuối CHẠM đuôi xe — không kéo cả đoàn hạ theo. better() giữ
-  // luật cũ: phải vẫn xếp đủ + sạch, maxX lớn hơn mới nhận.
-  let bestML = 1
-  for (const mL of [1.1, 1.2, 1.35, 1.5, 1.7, 2]) {
-    const r = pack(bestM, mL)
-    if (better(r, best)) { best = r; bestML = mL }
+  // HÀNG NGANG TRỌN trước; xe chật mà trọn hàng phải bỏ thùng lại ⇒ thử cách cũ (mã sau lấp nốt
+  // hàng dở), lấy cách bỏ lại ÍT hơn — không bao giờ chở kém đi vì luật hàng trọn
+  let pick = search(true)
+  if (leftCnt(pick.best) > 0) {
+    const alt = search(false)
+    if (leftCnt(alt.best) < leftCnt(pick.best)) pick = alt
   }
   // Phương án thắng → xếp lại 1 lần với lát phẳng hàng gửi THẬT
-  best = pack(bestM, bestML, true)
+  const best = pack(pick.bestM, pick.bestML, true, pick.rows)
 
   const { placed, leftover, step } = best
   const truckVol = truck.length * truck.width * truck.height
@@ -1202,13 +1255,24 @@ export interface PalletizeInput {
   // với mã CÙNG BỂ trong cùng đơn (vd POSM không nằm chung pallet lẻ với thành phẩm).
   // Không khai = bể chung của đơn.
   remPool?: { key: string; label: string }
+  // SỐ LỚP trên 1 pallet chẵn (28/10 — dữ liệu thật: 110 thùng / 11 lớp). Có ⇒ thùng/lớp = quy cách ÷
+  // số lớp: mẫu xếp pallet thật đan xen, nhiều thùng hơn lưới thẳng hàng (thùng 420×255 lưới chỉ 8/lớp,
+  // thật 10/lớp ⇒ pallet vẽ cao 1,95m thay vì 1,55m). Không khai ⇒ lưới như cũ.
+  layers?: number | null
 }
 
 // Số thùng xếp được trên MỘT LỚP của chân pallet — lưới đều, thử cả 2 hướng đặt (cùng triết lý
 // "xoay theo làn" của computeLoadPlan: mục đích là tận dụng mặt chân, không trộn hướng trong lớp).
-export function cartonsPerLayer(spec: PalletSpec, carton: { l: number; w: number }): number {
+// Có `layers` (số lớp thật của pallet chẵn) ⇒ lấy quy cách ÷ số lớp, miễn vừa diện tích chân (cho
+// chờm mép ~8% như pallet thật).
+export function cartonsPerLayer(spec: PalletSpec, carton: { l: number; w: number }, cpp?: number | null, layers?: number | null): number {
   const grid = (l: number, w: number) => Math.floor(spec.l / l) * Math.floor(spec.w / w)
-  return Math.max(grid(carton.l, carton.w), grid(carton.w, carton.l))
+  const g = Math.max(grid(carton.l, carton.w), grid(carton.w, carton.l))
+  if (g > 0 && cpp && cpp > 0 && layers && layers > 0) {
+    const per = Math.ceil(cpp / layers)
+    if (per <= Math.floor((spec.l * spec.w * 1.08) / (carton.l * carton.w))) return per
+  }
+  return g
 }
 
 /**
@@ -1271,10 +1335,17 @@ export function palletizeGroups(items: PalletizeInput[], spec: PalletSpec): Pall
   for (const [doKey, lines] of byDo) {
     const doLabel = lines[0].doLabel
     // Phần DƯ của từng mã trong đơn — gom lại rồi xếp theo LỚP lên pallet gộp
-    type RemItem = { label: string; cartons: number; perLayer: number; cartonH: number
+    type RemItem = { key: string; label: string; cartons: number; perLayer: number
+      carton: { l: number; w: number; h: number } | null
       weightKg: number | null; assumed: boolean; pool: string; poolLabel: string
       frac: number | null }   // mã tính theo cái/kg → phần dư = tỷ lệ của 1 pallet
     const rems: RemItem[] = []
+    // Các lớp thùng của `n` thùng một mã (lớp đủ trước, lớp thiếu trên cùng) — ruột pallet để vẽ
+    const layersOfCartons = (key: string, n: number, per: number, c: { l: number; w: number; h: number }): PalletLayer[] => {
+      const out: PalletLayer[] = []
+      for (let left = n; left > 0; left -= per) out.push({ key, n: Math.min(left, per), l: c.l, w: c.w, h: c.h })
+      return out
+    }
 
     for (const it of lines) {
       // ── Dòng PALLET MANG HÀNG (Loscam, is_pallet_carrier): chính là pallet LÓT DƯỚI các khối
@@ -1305,7 +1376,7 @@ export function palletizeGroups(items: PalletizeInput[], spec: PalletSpec): Pall
       // CHIỀU CAO pallet đầy của MÃ NÀY — luôn tính từ thùng × quy cách (user chốt: "không phải
       // các pallet đều cao như nhau"; quy cách 140 vs 216 phải khác cao dù thùng là cỡ giả định).
       // Thùng to hơn chân (0 thùng/lớp) coi như thiếu dữ liệu tin được → mới rơi về spec.h.
-      const perLayer = it.carton && !it.unitless ? cartonsPerLayer(spec, it.carton) : 0
+      const perLayer = it.carton && !it.unitless ? cartonsPerLayer(spec, it.carton, cpp, it.layers) : 0
       const layers = perLayer > 0 ? Math.ceil(cpp / perLayer) : 0
       const fullH = layers > 0 ? spec.baseH + layers * it.carton!.h : spec.h
       const hNote = layers > 0
@@ -1324,11 +1395,12 @@ export function palletizeGroups(items: PalletizeInput[], spec: PalletSpec): Pall
           assumed: it.assumed === true || layers === 0,   // cao từ cỡ giả định — panel gắn nhãn
           maxLayers: 1,            // pallet hàng KHÔNG chồng lên nhau
           onTop: false,
+          ...(layers > 0 ? { contents: layersOfCartons(it.key, cpp, perLayer, it.carton!) } : {}),
         })
       }
       if (rem > 0) rems.push({
-        label: it.label, cartons: rem, perLayer,
-        cartonH: it.carton && it.carton.h > 0 ? it.carton.h : 0,
+        key: it.key, label: it.label, cartons: rem, perLayer,
+        carton: it.carton && it.carton.h > 0 ? it.carton : null,
         weightKg: it.weightKg, assumed: it.assumed === true || layers === 0,
         pool: it.remPool?.key ?? '', poolLabel: it.remPool?.label ?? '',
         frac: it.unitless ? rem / cpp : null,
@@ -1350,62 +1422,100 @@ export function palletizeGroups(items: PalletizeInput[], spec: PalletSpec): Pall
       }
       for (const [poolKey, poolRems] of byPool) {
         const poolLabel = poolRems[0].poolLabel
-        type Layer = { h: number; kg: number; assumed: boolean }
-        const layerList: Layer[] = []
-        for (const r of poolRems) {
-          if (r.frac != null) {
+        // 1 lớp: `cut` = ruột thật (null khi không dựng được lớp thùng — mã tính theo cái / thùng to
+        // hơn chân); wpc = kg/thùng để xếp NẶNG DƯỚI NHẸ TRÊN
+        type Layer = { h: number; kg: number; assumed: boolean; cut: PalletLayer | null; wpc: number }
+        const layersOf = (r: RemItem): Layer[] => {
+          const wpc = r.weightKg ?? 0
+          if (r.frac != null)
             // mã tính theo cái/kg: chiếm đúng TỶ LỆ của một pallet (0,05 pallet = 5% chiều cao),
             // không dựng lớp thùng ảo
-            layerList.push({ h: Math.max(1, Math.min(budget, Math.round(budget * r.frac))),
-              kg: r.cartons * (r.weightKg ?? 0), assumed: true })
-          } else if (r.perLayer > 0 && r.cartonH > 0) {
-            let left = r.cartons
-            while (left > 0) {
-              const take = Math.min(left, r.perLayer)
-              layerList.push({ h: r.cartonH, kg: take * (r.weightKg ?? 0), assumed: r.assumed })
-              left -= take
-            }
-          } else {
-            // không tính được lớp (thùng to hơn chân pallet / thiếu cao thùng) — chiếm nguyên
-            // 1 pallet cao bằng trần, gắn nhãn ước lượng
-            layerList.push({ h: budget > 0 ? budget : spec.h, kg: r.cartons * (r.weightKg ?? 0), assumed: true })
-          }
+            return [{ h: Math.max(1, Math.min(budget, Math.round(budget * r.frac))), kg: r.cartons * wpc, assumed: true, cut: null, wpc }]
+          if (r.perLayer > 0 && r.carton)
+            return layersOfCartons(r.key, r.cartons, r.perLayer, r.carton)
+              .map(c => ({ h: c.h, kg: c.n * wpc, assumed: r.assumed, cut: c, wpc }))
+          // không tính được lớp (thùng to hơn chân pallet / thiếu cao thùng) — chiếm nguyên
+          // 1 pallet cao bằng trần, gắn nhãn ước lượng
+          return [{ h: budget > 0 ? budget : spec.h, kg: r.cartons * wpc, assumed: true, cut: null, wpc }]
         }
+        const sumH = (ls: Layer[]) => ls.reduce((s, l) => s + l.h, 0)
         // First-fit-decreasing: lớp CAO xếp trước → pallet đầy chặt, ít pallet lẻ nhất có thể.
         // Lớp đơn lẻ cao hơn trần vẫn phải nằm 1 pallet riêng (thực tế không cưa đôi thùng được).
-        layerList.sort((a, b) => b.h - a.h)
-        let pals: { h: number; kg: number; assumed: boolean }[] = []
-        for (const ly of layerList) {
-          const p = pals.find(x => x.h + ly.h <= budget)
-          if (p) { p.h += ly.h; p.kg += ly.kg; p.assumed = p.assumed || ly.assumed }
-          else pals.push({ h: ly.h, kg: ly.kg, assumed: ly.assumed })
+        const ffd = (ls: Layer[]): Layer[][] => {
+          const pals: { h: number; ls: Layer[] }[] = []
+          for (const ly of [...ls].sort((a, b) => b.h - a.h)) {
+            const p = pals.find(x => x.h + ly.h <= budget)
+            if (p) { p.h += ly.h; p.ls.push(ly) } else pals.push({ h: ly.h, ls: [ly] })
+          }
+          return pals.map(p => p.ls)
         }
-        // CÂN CAO (user 27/10: "vuông vắn" — FFD dồn đầy pallet đầu, pallet cuối LÙN lẻ loi kiểu
-        // 1,58m · 1,61m · 0,45m): giữ ĐÚNG số pallet FFD cần, chia lại lớp cho các pallet cao
-        // gần bằng nhau — lớp cao trước, mỗi lớp vào pallet đang THẤP nhất còn chỗ (LPT).
-        if (pals.length > 1) {
-          const bal = pals.map(() => ({ h: 0, kg: 0, assumed: false }))
+        const blocks = poolRems.map(r => ({ r, ls: layersOf(r) }))
+        const need = ffd(blocks.flatMap(b => b.ls)).length
+        // ── PALLET RIÊNG (user 28/10: "200 túi hợp lý 1 pallet riêng"; "pallet ghép hình khối rất
+        // tệ"): phần lẻ một mã tự đủ 1 pallet mà tách ra KHÔNG làm tăng số pallet của bể ⇒ đứng
+        // pallet riêng của mã đó, không trộn lớp với mã khác. Gộp chỉ khi bớt được pallet. ──
+        const own = new Set<typeof blocks[number]>()
+        for (const b of [...blocks].sort((a, c) => sumH(c.ls) - sumH(a.ls))) {
+          if (ffd(b.ls).length !== 1) continue
+          const sep = blocks.filter(x => own.has(x) || x === b)
+          if (sep.length + ffd(blocks.filter(x => !sep.includes(x)).flatMap(x => x.ls)).length <= need) own.add(b)
+        }
+        const pushPallet = (key: string, label: string, ls: Layer[]) => {
+          const kg = ls.reduce((s, l) => s + l.kg, 0)
+          groups.push({
+            key, label, doKey, doLabel, count: 1, l: spec.l, w: spec.w,
+            h: spec.baseH + sumH(ls),
+            base: { h: spec.baseH, color: spec.baseColor },
+            weightKg: kg > 0 || pw > 0 ? kg + pw : null,
+            assumed: ls.some(l => l.assumed), maxLayers: 1, onTop: false,
+            ...(ls.every(l => l.cut) ? { contents: ls.map(l => l.cut!) } : {}),
+          })
+        }
+        for (const b of blocks) if (own.has(b)) {
+          pushPallet(`${b.r.key}|plt`, `${b.r.label} (pallet lẻ)`, b.ls)
+          notes.push(`${b.r.label}: dư ${b.r.cartons} thùng đứng pallet riêng (gộp với mã khác không bớt được pallet)`)
+        }
+        // ── Phần còn lại → PALLET GỘP: nặng dưới nhẹ trên, MỖI MÃ NẰM LIỀN (trước đây chia từng lớp
+        // cho pallet thấp nhất ⇒ mỗi mã xé lẻ ra mọi pallet gộp, hình khối lởm chởm). Cắt dãy lớp
+        // thành đúng số pallet cần, trần nhỏ nhất có thể ⇒ các pallet cao gần đều; mã chỉ đứt ở ranh
+        // 2 pallet. Cắt liền mà tốn thêm pallet so với FFD ⇒ quay về FFD + cân cao như cũ. ──
+        const rest = blocks.filter(b => !own.has(b)).sort((a, c) => (c.ls[0]?.wpc ?? 0) - (a.ls[0]?.wpc ?? 0))
+        const seq = rest.flatMap(b => b.ls)
+        if (!seq.length) continue
+        const M = ffd(seq).length
+        const cutAt = (cap: number): Layer[][] => {
+          const out: Layer[][] = []
+          let cur: Layer[] = [], h = 0
+          for (const ly of seq) {
+            if (cur.length && h + ly.h > cap) { out.push(cur); cur = []; h = 0 }
+            cur.push(ly); h += ly.h
+          }
+          if (cur.length) out.push(cur)
+          return out
+        }
+        let pals: Layer[][]
+        if (cutAt(budget).length <= M) {
+          let lo = Math.max(...seq.map(l => l.h)), hi = Math.max(lo, budget)
+          while (lo < hi) { const mid = Math.floor((lo + hi) / 2); if (cutAt(mid).length <= M) hi = mid; else lo = mid + 1 }
+          pals = cutAt(lo)
+        } else {
+          // CÂN CAO kiểu cũ (user 27/10): giữ ĐÚNG số pallet FFD, mỗi lớp vào pallet đang THẤP nhất
+          // còn chỗ (LPT); trong từng pallet vẫn xếp lại nặng dưới nhẹ trên
+          pals = ffd(seq)
+          const bal: { h: number; ls: Layer[] }[] = pals.map(() => ({ h: 0, ls: [] }))
           let ok = true
-          for (const ly of layerList) {
+          for (const ly of [...seq].sort((a, b) => b.h - a.h)) {
             const p = bal.filter(x => x.h + ly.h <= budget).sort((a, b) => a.h - b.h)[0]
             if (!p) { ok = false; break }
-            p.h += ly.h; p.kg += ly.kg; p.assumed = p.assumed || ly.assumed
+            p.h += ly.h; p.ls.push(ly)
           }
-          if (ok) pals = bal.sort((a, b) => b.h - a.h)
+          if (ok) pals = bal.sort((a, b) => b.h - a.h).map(p => p.ls)
+          pals = pals.map(ls => [...ls].sort((a, b) => b.wpc - a.wpc || (b.cut?.n ?? 0) - (a.cut?.n ?? 0)))
         }
-        const baseLabel = poolLabel ? `Pallet gộp ${poolLabel}` : 'Pallet gộp (hàng lẻ)'
-        pals.forEach((p, i) => {
-          groups.push({
-            key: `${doKey}|mixed|${poolKey}|${i}`,
-            label: pals.length > 1 ? `${baseLabel} #${i + 1}` : baseLabel,
-            doKey, doLabel, count: 1, l: spec.l, w: spec.w,
-            h: spec.baseH + p.h,
-            base: { h: spec.baseH, color: spec.baseColor },
-            weightKg: p.kg > 0 || pw > 0 ? p.kg + pw : null,
-            assumed: p.assumed, maxLayers: 1, onTop: false,
-          })
-        })
-        notes.push(`${baseLabel} đơn ${doLabel}: ${layerList.length} lớp hàng lẻ → ${pals.length} pallet (trần ${(spec.h / 1000).toFixed(2)}m)`)
+        // bể chỉ còn MỘT mã (phần lẻ cao quá 1 pallet nên phải chia) ⇒ gọi tên mã, không phải "gộp"
+        const baseLabel = rest.length === 1 ? `${rest[0].r.label} (pallet lẻ)` : poolLabel ? `Pallet gộp ${poolLabel}` : 'Pallet gộp (hàng lẻ)'
+        pals.forEach((ls, i) => pushPallet(`${doKey}|mixed|${poolKey}|${i}`, pals.length > 1 ? `${baseLabel} #${i + 1}` : baseLabel, ls))
+        notes.push(`${baseLabel} đơn ${doLabel}: ${seq.length} lớp hàng lẻ → ${pals.length} pallet (trần ${(spec.h / 1000).toFixed(2)}m)`)
       }
     }
   }

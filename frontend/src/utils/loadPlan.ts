@@ -25,6 +25,12 @@
 //    chạy dọc chiều dài (trộn nA làn dọc + nB làn ngang PHỦ SÁT bề rộng nhất); mỗi làn
 //    (dãy tính từ trong ra ngoài) giữ NGUYÊN hướng tới khi hết khối — không "cái dọc
 //    cái ngang" trong 1 dãy.
+// 8. VUÔNG VẮN — KHÔNG THÁP LẺ (user 27/10: "thạch túi xếp rất cao, hở… hàng tựa vào nhau
+//    không đổ"): mọi chỗ đặt thùng LÊN MẶT khối khác (hàng gửi dư, hàng lên nóc pallet) đi
+//    qua `levelFill` — RÓT NƯỚC: lát lưới kín ở mặt THẤP nhất trước, đắp ngang mức khối cao
+//    nhất rồi mới dâng đều cả mặt; không chất cột trên nóc từng chân. Nhiều mã gửi → mã trước
+//    chiếm trọn từng hàng ngang từ phía cabin (mã sau không đè lên mã trước). Pallet gộp hàng
+//    lẻ chia lớp cho CAO ĐỀU (không pallet lùn lẻ). Phần sàn (luật 1-7) giữ nguyên.
 // 1 step = 1 lượt đặt (1 chân mới / 1 cụm đè lên chân dở / 1 cụm lên nóc) — cho thanh
 // trượt "xếp theo thứ tự". Đơn vị: mm.
 
@@ -73,6 +79,143 @@ const LIGHT_MAX_DEFAULT = 8
 
 type Col = { x: number; y: number; fl: number; fw: number; top: number; doKey: string; step: number; groups: Set<number> }
 
+// Gom các khối thành HÀNG NGANG theo DẢI ~1m dọc thân xe (theo tâm khối), từ phía cabin ra.
+// Không nối chuỗi "giao nhau": 2 vùng xoay khác nhịp (sâu 420 & 255) chồng mép nhau làm cả đơn
+// dính thành 1 hàng (chuyến thật 15/08 _559 — mã gửi đầu trải hết mặt, mã sau bỏ oan 216 thùng).
+export function rowsAcross<T extends { x: number; l: number }>(bs: T[], band = 1000): T[][] {
+  const by = new Map<number, T[]>()
+  for (const b of bs) {
+    const k = Math.floor((b.x + b.l / 2) / band)
+    const r = by.get(k)
+    if (r) r.push(b); else by.set(k, [b])
+  }
+  return [...by.entries()].sort((a, b) => a[0] - b[0]).map(e => e[1])
+}
+
+// Đếm MẶT BÊN LỘ của các thùng `bs`: ngay cạnh mặt bên, ở cao độ giữa thùng, không có thùng nào
+// tựa (vách xe = có tựa). Ít mặt lộ = khối gọn, hàng tựa vào nhau — dùng so 2 cách lát hàng gửi.
+function exposedSides(all: PlacedBox[], bs: PlacedBox[], truck: TruckDims): number {
+  const filled = (x: number, y: number, z: number) => {
+    for (const o of all) if (o.x <= x && x < o.x + o.l && o.y <= y && y < o.y + o.w && o.z <= z && z < o.z + o.h) return true
+    return false
+  }
+  let n = 0
+  for (const b of bs) {
+    const zm = b.z + b.h / 2
+    const sides: [number, number, boolean][] = [
+      [b.x - 5, b.y + b.w / 2, b.x <= 1], [b.x + b.l + 5, b.y + b.w / 2, b.x + b.l >= truck.length - 1],
+      [b.x + b.l / 2, b.y - 5, b.y <= 1], [b.x + b.l / 2, b.y + b.w + 5, b.y + b.w >= truck.width - 1],
+    ]
+    for (const [x, y, wall] of sides) if (!wall && !filled(x, y, zm)) n++
+  }
+  return n
+}
+
+// ─── LÁT PHẲNG (user 27/10: "thạch túi xếp rất cao, hở… vuông vắn nhất có thể, hàng tựa vào
+// nhau không đổ") ───────────────────────────────────────────────────────────────────────────
+// Đặt thùng LÊN MẶT các khối đã xếp theo kiểu RÓT NƯỚC: luôn lát ở MẶT THẤP NHẤT còn chỗ trước
+// (đắp trũng cho bằng), mỗi mặt bằng lát LƯỚI KÍN thành từng dải từ phía cabin ra, chạy hết
+// chiều ngang — không chất cột đứng trên nóc từng chân (từng tạo tháp 8 lớp + khe hở giữa các
+// cột vì 1 thùng nhẹ chỉ chiếm một góc mặt chân). Thùng chỉ đặt lên mặt BẰNG PHẲNG đỡ trọn
+// đáy; đỉnh không vượt `capZ`. Bản đồ cao lưới 10mm trên vùng được phép.
+const LEVEL_R = 10
+export function levelFill(o: {
+  boxes: PlacedBox[]                                          // mọi thùng đã đặt (dựng bản đồ cao)
+  region: { x: number; y: number; l: number; w: number }[]    // mặt được phép đặt lên
+  g: LoadGroup; gi: number; count: number
+  capZ: number                                                // trần đỉnh thùng đặt thêm (mm)
+  forbidTop?: Set<number>                                     // không đè lên mặt là thùng các mã này
+  stepStart: number
+}): { placed: PlacedBox[]; left: number; step: number } {
+  const { boxes, region, g, gi } = o
+  let left = o.count, step = o.stepStart
+  const placed: PlacedBox[] = []
+  if (left <= 0 || !region.length || g.h <= 0) return { placed, left, step }
+  const R = LEVEL_R
+  const x0 = Math.min(...region.map(r => r.x)), y0 = Math.min(...region.map(r => r.y))
+  const x1 = Math.max(...region.map(r => r.x + r.l)), y1 = Math.max(...region.map(r => r.y + r.w))
+  const nx = Math.ceil((x1 - x0) / R - 1e-6), ny = Math.ceil((y1 - y0) / R - 1e-6)
+  if (nx <= 0 || ny <= 0) return { placed, left, step }
+  const N = nx * ny
+  const allowed = new Uint8Array(N), height = new Float64Array(N), topG = new Int32Array(N).fill(-1)
+  const cnt = new Int32Array(N)   // số lớp của CHÍNH mã này đã chồng tại ô (trần maxLayers)
+  // Thùng đã đặt: ô bị che dù MỘT PHẦN cũng tính (cỡ lẻ 422×233 không được để hở vài mm cho thùng
+  // sau chờm vào).
+  const mark = (x: number, y: number, l: number, w: number, fn: (k: number) => void) => {
+    const i0 = Math.max(0, Math.floor((x - x0) / R + 1e-6)), i1 = Math.min(nx, Math.ceil((x + l - x0) / R - 1e-6))
+    const j0 = Math.max(0, Math.floor((y - y0) / R + 1e-6)), j1 = Math.min(ny, Math.ceil((y + w - y0) / R - 1e-6))
+    for (let i = i0; i < i1; i++) for (let j = j0; j < j1; j++) fn(i * ny + j)
+  }
+  // Vùng được phép: ô phải được các mặt đỡ GHÉP LẠI phủ KÍN. Đường giáp 2 chân 255mm cạnh nhau phủ
+  // kín → được (xét từng chân riêng thì dải giáp bị loại, mặt phẳng xé thành dải 250mm → túi 310
+  // đặt lác đác); MÉP NGOÀI cùng không kín → không (thùng chờm vài mm ra mép rồi khối dựng SAU ở
+  // cạnh đó đâm vào — đo 27/10).
+  const cover = new Float64Array(N)
+  for (const r of region) mark(r.x, r.y, r.l, r.w, k => {
+    const i = Math.floor(k / ny), j = k % ny
+    const cx0 = x0 + i * R, cy0 = y0 + j * R
+    const ix = Math.min(cx0 + R, r.x + r.l) - Math.max(cx0, r.x), iy = Math.min(cy0 + R, r.y + r.w) - Math.max(cy0, r.y)
+    if (ix > 0 && iy > 0) cover[k] += ix * iy
+  })
+  for (let k = 0; k < N; k++) if (cover[k] >= R * R - 0.5) allowed[k] = 1
+  for (const b of boxes) {
+    if (b.x >= x1 || b.x + b.l <= x0 || b.y >= y1 || b.y + b.w <= y0) continue
+    mark(b.x, b.y, b.l, b.w, k => {
+      if (b.z + b.h > height[k] + 1e-6) { height[k] = b.z + b.h; topG[k] = b.group }
+      if (b.group === gi) cnt[k]++
+    })
+  }
+  const maxL = g.maxLayers ?? Infinity
+  const okAt = (k: number, z: number) => allowed[k] === 1 && Math.abs(height[k] - z) < 0.5 && cnt[k] < maxL &&
+    !(topG[k] >= 0 && topG[k] !== gi && o.forbidTop?.has(topG[k]))
+  const orients = (g.l === g.w ? [[g.l, g.w]] : [[g.l, g.w], [g.w, g.l]]).map(([l, w]) => ({ l, w }))
+  // mức đã thử mà không đặt được thùng nào thì về sau cũng không (ô ở mức đó chỉ có thể bớt đi)
+  const dead = new Set<number>()
+  for (let guard = 0; left > 0 && guard < 400; guard++) {
+    // các mức mặt còn đặt được, THẤP trước
+    const levels = new Set<number>()
+    for (let k = 0; k < N; k++) if (allowed[k] && cnt[k] < maxL && height[k] + g.h <= o.capZ + 1e-6) levels.add(Math.round(height[k]))
+    let done = false
+    for (const z of [...levels].sort((a, b) => a - b)) {
+      if (dead.has(z)) continue
+      // prefix sum ô đặt được ở mức z
+      const P = new Int32Array((nx + 1) * (ny + 1))
+      for (let i = 0; i < nx; i++) for (let j = 0; j < ny; j++)
+        P[(i + 1) * (ny + 1) + j + 1] = (okAt(i * ny + j, z) ? 1 : 0) + P[i * (ny + 1) + j + 1] + P[(i + 1) * (ny + 1) + j] - P[i * (ny + 1) + j]
+      const fits = (i: number, j: number, a: number, b: number) =>
+        i + a <= nx && j + b <= ny &&
+        P[(i + a) * (ny + 1) + j + b] - P[i * (ny + 1) + j + b] - P[(i + a) * (ny + 1) + j] + P[i * (ny + 1) + j] === a * b
+      // lát theo DẢI: mỗi dải 1 mốc x, quét hết chiều ngang; dải có thùng → dải sau lùi đúng 1 thùng
+      let bestPos: { i: number; j: number; l: number; w: number }[] = []
+      for (const { l, w } of orients) {
+        // làm tròn LÊN: cỡ lẻ (vd 255mm) chiếm đủ ô, thùng cạnh nhau không bao giờ chờm nhau
+        const a = Math.ceil(l / R - 1e-9), b = Math.ceil(w / R - 1e-9)
+        const pos: { i: number; j: number; l: number; w: number }[] = []
+        for (let i = 0; i + a <= nx;) {
+          let any = false
+          for (let j = 0; j + b <= ny;) {
+            if (fits(i, j, a, b)) { pos.push({ i, j, l, w }); any = true; j += b } else j++
+          }
+          i += any ? a : 1
+        }
+        if (pos.length > bestPos.length) bestPos = pos
+      }
+      if (!bestPos.length) { dead.add(z); continue }
+      step++
+      for (const p of bestPos.slice(0, left)) {
+        const bx = x0 + p.i * R, by = y0 + p.j * R
+        placed.push({ x: bx, y: by, z, l: p.l, w: p.w, h: g.h, group: gi, step })
+        mark(bx, by, p.l, p.w, k => { height[k] = z + g.h; topG[k] = gi; cnt[k]++ })
+        left--
+      }
+      done = true
+      break
+    }
+    if (!done) break
+  }
+  return { placed, left, step }
+}
+
 // "Gần kích thước" = trùng nhau khi làm tròn về cm — cùng class thì gom chung khối
 const classKeyOf = (g: LoadGroup) => `${Math.round(g.l / 10)}x${Math.round(g.w / 10)}x${Math.round(g.h / 10)}`
 
@@ -95,8 +238,10 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
     return a - b
   })
 
-  // m = hệ số trải — vòng chọn bên dưới tìm m LỚN NHẤT vẫn xếp đủ (trải tới đuôi xe)
-  function pack(m: number, mLast = 1) {
+  // m = hệ số trải — vòng chọn bên dưới tìm m LỚN NHẤT vẫn xếp đủ (trải tới đuôi xe).
+  // `fine`: lát phẳng hàng gửi THẬT (levelFill — nặng). Vòng chọn m (~30 lần pack) chỉ cần biết
+  // CÒN CHỖ cho bao nhiêu thùng gửi → ước lượng theo diện tích; lát thật 1 lần cho phương án thắng.
+  function pack(m: number, mLast = 1, fine = false) {
     const placed: PlacedBox[] = []
     const leftover: { group: number; count: number }[] = []
     const cols: Col[] = []
@@ -656,6 +801,60 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
           // kéo nền) → nhẹ còn lại đi PHA 3
           if (baseOut || !placedAny || lightRemain() < 2 * cellsRowEst) break
         }
+        // LÁT LẠI CHO KÍN (user 27/10: "hở"): lưới ô gửi mở lại theo TỪNG vùng nền xoay nên giữa
+        // 2 vùng còn rãnh ~1 bề thùng (hẹp hơn thùng → không lấp được, thành khe + chồng lẻ). Gỡ
+        // hàng gửi vừa lát, lát lại bằng levelFill trên TOÀN mặt thềm (lưới liền, mặt thấp trước,
+        // đỉnh ≤ mức chung topT); phần không lát lại được trả về cho PHA 3.
+        if (fine && laid.length && platAll.length) {
+          const lightSet = new Set(doLights)
+          const mine = placed.filter(b => lightSet.has(b.group))
+          const keep = placed.filter(b => !lightSet.has(b.group))
+          const laidOrig = laid.slice()
+          const stepOrig = step
+          const exposedBefore = exposedSides(placed, mine, truck)
+          placed.length = 0
+          for (const b of keep) placed.push(b)
+          for (const b of mine) used[b.group]--
+          laid.length = 0
+          // trần = mức cao nhất vùng gửi CŨ đã đạt (PHA 1 cố ý cho vượt topT < 1 thùng — "thà nhô
+          // nhẹ hơn lõm", user 15/07); lấy đúng topT thì lớp gửi đầu có khi không vừa → bỏ oan
+          const capRetile = Math.min(truck.height, Math.max(topT, ...mine.map(b => b.z + b.h)))
+          for (const gi of doLights) {
+            const n = mine.filter(b => b.group === gi).length
+            if (!n) continue
+            const g = groupsIn[gi]
+            const r = levelFill({
+              boxes: placed, region: platAll.map(c => ({ x: c.x, y: c.y, l: c.fl, w: c.fw })),
+              g: { ...g, maxLayers: g.maxLayers ?? LIGHT_MAX_DEFAULT }, gi, count: n,
+              capZ: capRetile, forbidTop: new Set(doLights.filter(x => x !== gi)), stepStart: step,
+            })
+            for (const b of r.placed) { placed.push(b); used[gi]++ }
+            step = r.step
+          }
+          // Lát lại KHÔNG phải lúc nào cũng tốt hơn: thềm dựng VỪA KHÍT lưới ô cũ, lưới mới có khi
+          // chỉ còn chỗ rời rạc → chồng lẻ. Giữ cách nào ÍT mặt thùng lộ (không có hàng tựa ngang)
+          // hơn; lát lại mà thiếu thùng thì cũng giữ cách cũ.
+          const fresh = placed.filter(b => lightSet.has(b.group))
+          if (fresh.length < mine.length || exposedSides(placed, fresh, truck) >= exposedBefore) {
+            placed.length = 0
+            for (const b of keep) placed.push(b)
+            for (const b of fresh) used[b.group]--
+            for (const b of mine) { placed.push(b); used[b.group]++ }
+            step = stepOrig
+            for (const s of laidOrig) laid.push(s)
+          }
+          // dựng lại `laid` (chồng gửi theo ô) cho PHA 3 + chấm điểm vùng gửi
+          if (!laid.length) {
+          const stacks = new Map<string, { x: number; y: number; fl: number; fw: number; top: number; n: number }>()
+          for (const b of placed) if (lightSet.has(b.group)) {
+            const k = `${b.x},${b.y},${b.l},${b.w}`
+            const s = stacks.get(k) ?? { x: b.x, y: b.y, fl: b.l, fw: b.w, top: 0, n: 0 }
+            s.top = Math.max(s.top, b.z + b.h); s.n++
+            stacks.set(k, s)
+          }
+          for (const s of stacks.values()) laid.push(s)
+          }
+        }
         // Có hàng gửi mà KHÔNG dựng được thềm (toàn bộ rơi PHA 3 rải nóc) → phạt nặng
         // để m-search né phương án này
         if (!laid.length && doLights.length) spanMiss += truck.width * 2
@@ -759,27 +958,59 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
             leftover.push({ group: gi, count: remaining }); used[gi] += remaining
             continue
           }
-          // (2.5) NỔI LÊN NÓC khối sàn CÙNG ĐƠN, dồn PHÍA TRONG thành dải liền — user
-          // 23/07: "đưa hàng gửi lên xếp đè lên nó", hàng gửi dư KHÔNG đứng sàn (cột
-          // nhẹ đứng sàn giữa/đuôi xe = đổ hàng + tách rời vùng gửi).
+          // (2.5) LÁT PHẲNG LÊN NÓC khối sàn CÙNG ĐƠN — user 23/07: "đưa hàng gửi lên xếp đè
+          // lên nó" (hàng gửi dư KHÔNG đứng sàn). User 27/10 bác cách cũ (chất tới 8 lớp trên
+          // nóc TỪNG CHÂN → tháp cao lẻ loi + khe hở giữa các cột): nay RÓT NƯỚC — lát lưới kín
+          // ở mặt thấp nhất trước, đỉnh không vượt khối nặng cao nhất của đơn; dư mới nổi
+          // thêm đúng 1 lớp (SOP thừa nổi trên khối).
           {
-            const capN = g.maxLayers ?? LIGHT_MAX_DEFAULT
-            const roofCols = cols
-              .filter(c => c.doKey === dk)
-              .filter(c => (g.l <= c.fl && g.w <= c.fw) || (g.w <= c.fl && g.l <= c.fw))
-              .sort((a, b) => (a.x - b.x) || (a.y - b.y))
-            for (const c of roofCols) {
-              if (remaining <= 0) break
-              const fit = (g.l <= c.fl && g.w <= c.fw) ? { fl: g.l, fw: g.w } : { fl: g.w, fw: g.l }
-              const n = Math.min(remaining, capN, Math.floor((truck.height - c.top) / g.h))
-              if (n <= 0) continue
-              step++
-              for (let k = 0; k < n; k++)
-                placed.push({ x: c.x, y: c.y, z: c.top + k * g.h, l: fit.fl, w: fit.fw, h: g.h, group: gi, step })
-              c.top += n * g.h
-              c.groups.add(gi)
-              used[gi] += n
-              remaining -= n
+            // MỌI chồng hàng NẶNG của đơn — cả cột thềm PHA 1 (không nằm trong `cols`; chuyến thật
+            // 15/08 _559 dồn hết nền vào thềm → không còn chỗ nào để đặt → bỏ oan cả mã 216 thùng)
+            const stk = new Map<string, Col>()
+            for (const b of placed) {
+              const gb = groupsIn[b.group]
+              if (gb.onTop || gb.doKey !== dk) continue
+              const k = `${b.x},${b.y},${b.l},${b.w}`
+              const s = stk.get(k)
+              if (s) s.top = Math.max(s.top, b.z + b.h)
+              else stk.set(k, { x: b.x, y: b.y, fl: b.l, fw: b.w, top: b.z + b.h, doKey: dk, step: b.step, groups: new Set([b.group]) })
+            }
+            const ordCols = [...stk.values()]
+            if (ordCols.length) {
+              const ref = Math.max(...ordCols.map(c => c.top))
+              const others = new Set(doLights.filter(x => x !== gi))
+              const gCap = g.maxLayers ?? LIGHT_MAX_DEFAULT
+              if (!fine) {
+                // vòng chọn m: chỉ ƯỚC sức chứa theo diện tích nóc dưới trần xe (không đặt thùng)
+                const area = g.l * g.w
+                let capN = 0
+                for (const c of ordCols) {
+                  const lay = Math.min(gCap, Math.floor((truck.height - c.top) / g.h))
+                  if (lay > 0) capN += lay * (c.fl * c.fw) / area
+                }
+                const n = Math.min(remaining, Math.floor(capN * 0.9))
+                used[gi] += n
+                remaining -= n
+              }
+              // Thật: đắp ngang mức khối cao nhất của đơn, dư thì DÂNG ĐỀU cả mặt tới trần (vẫn phẳng,
+              // không bỏ lại hàng — đo 239 chuyến thật 15/08: chặn ở +1 lớp làm 11 chuyến bỏ lại tới
+              // 295 thùng). Còn mã gửi khác chờ sau → mã này chiếm TRỌN TỪNG HÀNG NGANG từ phía
+              // cabin (đắp rồi dâng), chừa các hàng phía cửa cho mã sau (mã sau không đè lên mã trước).
+              const lastLight = doLights.every(x => x === gi || avail(x) <= 0)
+              const regionOf = (cs: Col[]) => cs.map(c => ({ x: c.x, y: c.y, l: c.fl, w: c.fw }))
+              const pools = fine ? (lastLight ? [ordCols] : rowsAcross(ordCols.map(c => ({ ...c, l: c.fl }))).map(r => r as Col[])) : []
+              for (const pool of pools) for (const cap of [ref, truck.height]) {
+                if (remaining <= 0) break
+                const r = levelFill({
+                  boxes: placed, region: regionOf(pool),
+                  g: { ...g, maxLayers: gCap }, gi, count: remaining,
+                  capZ: Math.min(cap, truck.height), forbidTop: others, stepStart: step,
+                })
+                for (const b of r.placed) placed.push(b)
+                step = r.step
+                used[gi] += remaining - r.left
+                remaining = r.left
+              }
             }
           }
           if (remaining <= 0) continue
@@ -795,6 +1026,11 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
         }
       }
     }
+    // Đánh số lại bước liền mạch 1..n (lát lại hàng gửi để lại số bước trống — thanh trượt
+    // "xếp theo thứ tự" không được có bước rỗng)
+    const stepMap = new Map([...new Set(placed.map(b => b.step))].sort((a, b) => a - b).map((s, i) => [s, i + 1]))
+    for (const b of placed) b.step = stepMap.get(b.step)!
+    step = stepMap.size
     return { placed, leftover, step, spilled, lightPatch, spanMiss, topMiss }
   }
 
@@ -882,10 +1118,13 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
   // Tinh chỉnh RIÊNG KHỐI CUỐI (user 15/07: "tất cả các lớp bám tới cuối xe"): hạ thêm
   // chỉ khối cuối để mép cuối CHẠM đuôi xe — không kéo cả đoàn hạ theo. better() giữ
   // luật cũ: phải vẫn xếp đủ + sạch, maxX lớn hơn mới nhận.
+  let bestML = 1
   for (const mL of [1.1, 1.2, 1.35, 1.5, 1.7, 2]) {
     const r = pack(bestM, mL)
-    if (better(r, best)) best = r
+    if (better(r, best)) { best = r; bestML = mL }
   }
+  // Phương án thắng → xếp lại 1 lần với lát phẳng hàng gửi THẬT
+  best = pack(bestM, bestML, true)
 
   const { placed, leftover, step } = best
   const truckVol = truck.length * truck.width * truck.height
@@ -1135,11 +1374,24 @@ export function palletizeGroups(items: PalletizeInput[], spec: PalletSpec): Pall
         // First-fit-decreasing: lớp CAO xếp trước → pallet đầy chặt, ít pallet lẻ nhất có thể.
         // Lớp đơn lẻ cao hơn trần vẫn phải nằm 1 pallet riêng (thực tế không cưa đôi thùng được).
         layerList.sort((a, b) => b.h - a.h)
-        const pals: { h: number; kg: number; assumed: boolean }[] = []
+        let pals: { h: number; kg: number; assumed: boolean }[] = []
         for (const ly of layerList) {
           const p = pals.find(x => x.h + ly.h <= budget)
           if (p) { p.h += ly.h; p.kg += ly.kg; p.assumed = p.assumed || ly.assumed }
           else pals.push({ h: ly.h, kg: ly.kg, assumed: ly.assumed })
+        }
+        // CÂN CAO (user 27/10: "vuông vắn" — FFD dồn đầy pallet đầu, pallet cuối LÙN lẻ loi kiểu
+        // 1,58m · 1,61m · 0,45m): giữ ĐÚNG số pallet FFD cần, chia lại lớp cho các pallet cao
+        // gần bằng nhau — lớp cao trước, mỗi lớp vào pallet đang THẤP nhất còn chỗ (LPT).
+        if (pals.length > 1) {
+          const bal = pals.map(() => ({ h: 0, kg: 0, assumed: false }))
+          let ok = true
+          for (const ly of layerList) {
+            const p = bal.filter(x => x.h + ly.h <= budget).sort((a, b) => a.h - b.h)[0]
+            if (!p) { ok = false; break }
+            p.h += ly.h; p.kg += ly.kg; p.assumed = p.assumed || ly.assumed
+          }
+          if (ok) pals = bal.sort((a, b) => b.h - a.h)
         }
         const baseLabel = poolLabel ? `Pallet gộp ${poolLabel}` : 'Pallet gộp (hàng lẻ)'
         pals.forEach((p, i) => {
@@ -1190,44 +1442,44 @@ export function spreadOnTopOfPallets(plan: LoadPlan, topIdx: number[], groupsIn:
     return { ...plan, leftover, totalCount: plan.totalCount + addTotal }
   }
   const H = plan.truck.height
-  // owner: mỗi mặt pallet thuộc ĐỘC QUYỀN 1 mã nóc (user chốt vòng 11: "lên hết loại hàng này
-  // mới tới loại hàng khác" — KHÔNG được 1 lớp hàng A dưới, 1 lớp hàng B đè lên cùng chỗ).
-  type Surf = { x: number; y: number; l: number; w: number; top: number; owner: number | null }
-  const surfs: Surf[] = plan.placed
-    .map(b => ({ x: b.x, y: b.y, l: b.l, w: b.w, top: b.z + b.h, owner: null as number | null }))
-    // mặt THẤP xếp trước (nhiều khoảng trống nhất), cùng cao thì từ phía cabin ra
-    .sort((a, b) => a.top - b.top || a.x - b.x || a.y - b.y)
+  // User 27/10: "vuông vắn nhất có thể, không tháp lẻ" — bỏ cách vòng 11 (chất ĐẦY TỚI TRẦN
+  // từng mặt pallet → tháp cao hơn hẳn pallet bên cạnh). Nay RÓT NƯỚC (levelFill): (1) đắp các
+  // pallet THẤP lên NGANG pallet cao nhất của đơn; (2) dư mới dâng ĐỀU cả mặt tới trần (mỗi lớp
+  // lát kín từ phía cabin ra) — mặt hàng luôn phẳng, không cột lẻ. GIỮ luật vòng 11: mã sau
+  // KHÔNG đè lên mã trước (forbidTop) — không 1 lớp A dưới 1 lớp B trên cùng chỗ; chồng không
+  // quá số lớp tối đa của mã. Hàng nóc của đơn nào đặt lên pallet CỦA ĐƠN ĐÓ trước; thiếu chỗ
+  // mới sang pallet đơn khác.
+  const pallets = [...plan.placed]
+  const foot = (b: PlacedBox) => ({ x: b.x, y: b.y, l: b.l, w: b.w })
   const placed = [...plan.placed]
   const leftover = [...plan.leftover]
   let step = plan.stepCount
   let addVol = 0, addW = 0, addPlaced = 0, addTotal = 0
+  const topSet = new Set(topIdx)
   for (const gi of topIdx) {
     const g = groupsIn[gi]
     if (g.count <= 0) continue
     addTotal += g.count
     let left = g.count
-    step += 1
-    // Chất ĐẦY TỚI TRẦN từng mặt rồi mới sang mặt kế — hết mã này mới tới mã khác
-    for (const s of surfs) {
-      if (left <= 0 || g.h <= 0) break
-      if (s.owner !== null) continue          // mặt đã thuộc mã nóc khác
-      // lưới thùng trên mặt này — thử 2 hướng đặt, lấy hướng chứa nhiều hơn
-      const n1 = Math.floor(s.l / g.l) * Math.floor(s.w / g.w)
-      const n2 = Math.floor(s.l / g.w) * Math.floor(s.w / g.l)
-      if (Math.max(n1, n2) <= 0) continue
-      const rot = n2 > n1
-      const bl = rot ? g.w : g.l, bw = rot ? g.l : g.w
-      const nx = Math.floor(s.l / bl), ny = Math.floor(s.w / bw)
-      let placedHere = false
-      while (left > 0 && H - s.top >= g.h) {
-        for (let ix = 0; ix < nx && left > 0; ix++) for (let iy = 0; iy < ny && left > 0; iy++) {
-          placed.push({ x: s.x + ix * bl, y: s.y + iy * bw, z: s.top, l: bl, w: bw, h: g.h, group: gi, step })
-          left--; addPlaced++; addVol += bl * bw * g.h; addW += g.weightKg ?? 0
-        }
-        s.top += g.h   // lớp thiếu thùng vẫn nâng mặt trọn lớp — không đặt chồng lên lớp hụt
-        placedHere = true
+    const others = new Set([...topSet].filter(x => x !== gi))
+    const own = pallets.filter(b => groupsIn[b.group]?.doKey === g.doKey)
+    const fill = (region: PlacedBox[], cap: number) => {
+      if (left <= 0 || !region.length) return
+      const r = levelFill({ boxes: placed, region: region.map(foot), g, gi, count: left,
+        capZ: Math.min(cap, H), forbidTop: others, stepStart: step })
+      for (const b of r.placed) { placed.push(b); addPlaced++; addVol += b.l * b.w * b.h; addW += g.weightKg ?? 0 }
+      step = r.step
+      left = r.left
+    }
+    // còn mã nóc khác chờ sau → chiếm TRỌN TỪNG HÀNG pallet từ phía cabin (chừa hàng phía cửa cho
+    // mã sau — mã sau không được đè lên mã này; trải mỏng khắp xe thì mã sau hết chỗ)
+    const isLast = topIdx.every(x => x === gi || groupsIn[x].count <= 0 || topIdx.indexOf(x) < topIdx.indexOf(gi))
+    for (const pool of own.length && own.length < pallets.length ? [own, pallets] : [pallets]) {
+      const ref = Math.max(...pool.map(b => b.z + b.h))
+      for (const part of isLast ? [pool] : rowsAcross(pool)) {
+        fill(part, ref)                                       // (1) đắp ngang pallet cao nhất
+        fill(part, H)                                         // (2) dư: dâng đều cả mặt tới trần
       }
-      if (placedHere) s.owner = gi   // mặt này từ giờ chỉ của mã này — mã sau đi mặt khác
     }
     if (left > 0) leftover.push({ group: gi, count: left })
   }

@@ -19,6 +19,13 @@ export const FIX = {
   WH_QTY:  { id: 'c36008f3-4f01-41a8-9538-3cce289837b0', code: '10010499', name: 'Bluestar' }, // kho QTY
   WH_NONE: { id: 'b9ef99ad-473d-4538-9e0a-95955a08b37e', code: '10000274', name: 'An Sơn' },   // kho NONE
   WH_QR:   { id: '56cf7a64-d3aa-4fd2-948d-490ec487acb9', code: '20000016', name: 'Kho Ba Vì' },// kho QR
+  // Ship-to CÓ TRỎ KHO (`Customer.warehouse_id`) — điều kiện DUY NHẤT để chuyến xuất đẻ lệnh chuyển kho
+  // (luật 28/09: kho đích chỉ đọc cột đó, không dò mã/tên kho nữa). Mã `WH_NONE.code` KHÔNG có trong danh mục
+  // Khách hàng nên nó là khách NGOÀI (OTHER) — mà OTHER đã gỡ khỏi cờ Xác nhận giao hàng 20/10 ⇒ không còn
+  // đẻ lệnh. Kho đích này để `inventory_mode = NONE` có chủ đích: lệnh là SELF (tài xế tự xác nhận) nên
+  // KHÔNG dựng kế hoạch nhập / không đụng tồn ở kho đích — phép kiểm chỉ cần "đúng một lệnh", không cần hơn.
+  SHIPTO_DEST: '20000013',  // khách trỏ Kho Đà Nẵng (NONE)
+
   MAT_POOL: '510000306',   // mã có dòng tồn pool tại WH_QTY
   DVVT_TAG: 'QA-SUITE',    // mọi GDO test gắn dvvt này để nhận diện + dọn
   DATE: '2026-12-20',      // delivery_date test (tương lai xa, không đụng data thật) — CHỈ cho đơn nằm im (create/sửa/xóa PENDING)

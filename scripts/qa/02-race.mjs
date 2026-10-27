@@ -36,16 +36,26 @@ console.log(`  pool ${FIX.MAT_POOL}@${FIX.WH_QTY.name} baseline = ${pool0}`)
 async function createPending(cartons) {
   const c = await api('/wms/outbound', 'POST', {
     delivery_date: FIX.EXEC_DATE, warehouse_id: FIX.WH_QTY.id, dvvt: FIX.DVVT_TAG,   // sẽ Xuất luôn → phải ngày hôm nay (luật FUTURE_DATE 02/08)
-    customer_name: 'An Sơn', shipto_party: FIX.WH_NONE.code,
+    customer_name: 'An Sơn', shipto_party: FIX.SHIPTO_DEST,   // phải TRỎ KHO thì mới có lệnh chuyển kho để đo "không nhân bản"
     delivery_code: 'RACE-' + Math.floor(Math.random() * 1e9),
     items: [{ material_code: FIX.MAT_POOL, cartons_ordered: cartons }],
   })
   return c.j?.data
 }
+// Đếm thẳng DB theo khoá ngoại: cửa list `/tms/orders?source_type=TRANSFER` kéo MỌI lệnh tích luỹ (không lọc
+// ngày) rồi lọc trong JS — vừa nặng vừa phụ thuộc shape response.
 async function trfCount(gdoId) {
-  const { j } = await api(`/tms/orders?source_type=TRANSFER`, 'GET')
-  return (j?.data ?? []).filter(o => o.transfer_gdo?.id === gdoId).length
+  return (await restAll('TmsOrder', `select=id&transfer_gdo_id=eq.${gdoId}`)).length
 }
+// Chuyến có đẻ lệnh chuyển kho hay không là do CẤU HÌNH, không phải luật cứng: cờ Xác nhận giao hàng
+// (Cài đặt hệ thống) tắt, hoặc không chọn hình thức của kho đích, thì không lệnh nào sinh ra — và đó là
+// ĐÚNG. Phép kiểm hỏi cờ rồi mới đặt kỳ vọng, thay vì đòi cứng 1 lệnh: đòi cứng là mỗi lần người dùng
+// tắt một ô trong Cài đặt là bộ kiểm đỏ oan, đúng lớp "cổng kêu oan" dự án đã cấm.
+// Đọc thẳng DB (PostgREST) — không phụ thuộc shape response của cửa Cài đặt.
+const dcFlag = (await restAll('SystemSetting', 'select=value&key=eq.delivery_confirmation'))[0]?.value
+const trfOn = dcFlag?.enabled === true && (dcFlag?.modes ?? []).includes('NONE')
+const TRF = trfOn ? 1 : 0
+console.log(`  cờ Xác nhận giao hàng: ${trfOn ? 'có hình thức NONE ⇒ chuyến phải đẻ ĐÚNG 1 lệnh chuyển kho' : 'KHÔNG có NONE ⇒ không lệnh nào (bỏ qua vế nhân bản)'}`)
 
 // ── BÀI 1: 10× "Xuất luôn" đồng thời cùng 1 GDO ──
 {
@@ -60,7 +70,8 @@ async function trfCount(gdoId) {
   check('R1 GDO COMPLETED sau đua', g.j?.data?.status === 'COMPLETED', `codes=${JSON.stringify(codes)}`)
   check('R1 ghi nhận đúng 1 lần', Number(item?.cartons_scanned) === CARTONS && (item?.scan_entries?.length ?? 0) === 1,
     `scanned=${item?.cartons_scanned} entries=${item?.scan_entries?.length}`)
-  check('R1 đúng 1 lệnh chuyển kho', (await trfCount(gdo.id)) === 1)
+  const t1 = await trfCount(gdo.id)
+  check(`R1 đúng ${TRF} lệnh chuyển kho (10 lần Xuất luôn đồng thời không nhân bản)`, t1 === TRF, `có ${t1}`)
   const p1 = await poolRemaining()
   check('R1 pool trừ ĐÚNG 1 lần', p1 === pool0 - CARTONS, `${pool0} → ${p1} (kỳ vọng ${pool0 - CARTONS})`)
   check('R1 dọn sạch', await teardownGdo(gdo.id, 'COMPLETED'))
@@ -76,7 +87,8 @@ async function trfCount(gdoId) {
   const g = await api(`/wms/outbound/${gdo.id}`, 'GET')
   check('R2 10× Hoàn thành đồng thời → COMPLETED', g.j?.data?.status === 'COMPLETED',
     `codes=${JSON.stringify(rs.map(r => r.s))}`)
-  check('R2 vẫn đúng 1 lệnh chuyển kho (sync, không nhân bản)', (await trfCount(gdo.id)) === 1)
+  const t2 = await trfCount(gdo.id)
+  check(`R2 vẫn đúng ${TRF} lệnh chuyển kho (sync, không nhân bản)`, t2 === TRF, `có ${t2}`)
   const p2 = await poolRemaining()
   check('R2 tồn không đổi khi HT lại (không trừ thêm)', p2 === pool0 - 2, `pool=${p2} (kỳ vọng ${pool0 - 2})`)
   check('R2 dọn sạch', await teardownGdo(gdo.id, 'COMPLETED'))

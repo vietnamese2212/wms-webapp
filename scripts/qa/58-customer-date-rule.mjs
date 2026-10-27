@@ -339,7 +339,10 @@ try {
   check('[5e] Nguồn lạ → 400, không im lặng trả cả bảng', rSrcBad.s === 400, `${rSrcBad.s} ${err(rSrcBad)}`)
 
   // ═══ [6] LUẬT CHUYỂN KHO đọc Customer.warehouse_id ════════════════════════════════════════════
-  // Khách TRỎ KHO ⇒ kho nhận vào app xác nhận (SCAN); khách ngoài ⇒ tài xế tự xác nhận (SELF).
+  // Khách TRỎ KHO ⇒ kho nhận vào app xác nhận (SCAN). Khách NGOÀI ⇒ KHÔNG sinh lệnh chuyển kho nữa:
+  // hình thức OTHER đã GỠ khỏi cờ Xác nhận giao hàng ngày 20/10 (commit ed16cd50, C90 sửa gốc) — giao cho
+  // khách thì "Đã giao" là việc TÀI XẾ / ĐVVT xác nhận trên lệnh VC, không phải một lệnh chuyển kho tự sinh.
+  // Bản trước đòi lệnh SELF; nó khoá hành vi CŨ nên đỏ mọi đêm 20→26/10 trong khi app làm đúng luật mới.
   // TẮT quy định date ở kho cho khúc này: đây là phép kiểm luật CHUYỂN KHO, không phải luật date —
   // để bật thì khách "chưa khai mức" bị cửa gác chặn và phép kiểm đỏ vì một lý do KHÔNG liên quan.
   await restWrite('Warehouse', 'PATCH', `id=eq.${wh.id}`, { date_rule_policy: 'OFF', updated_at: nowIso() })
@@ -356,8 +359,8 @@ try {
   check('[6a] Khách TRỎ KHO → lệnh chuyển kho đặt kho nhận + chờ kho nhận xác nhận (SCAN)',
     !!oD && oD.delivery_mode === 'SCAN' && oD.destination_warehouse_id === whDest.id,
     `${rD.s} ${err(rD)} mode=${oD?.delivery_mode} dest=${oD?.destination_warehouse_id === whDest.id}`)
-  check('[6b] Khách KHÔNG trỏ kho → tài xế TỰ xác nhận (SELF) — vào danh mục không kéo theo nghĩa vụ xác nhận',
-    !!oC && oC.delivery_mode === 'SELF', `${rC.s} ${err(rC)} mode=${oC?.delivery_mode}`)
+  check('[6b] Khách KHÔNG trỏ kho → chuyến vẫn Xuất luôn bình thường, KHÔNG đẻ lệnh chuyển kho (OTHER gỡ 20/10)',
+    (rC.s === 201 || rC.s === 200) && !oC, `${rC.s} ${err(rC)} mode=${oC?.delivery_mode ?? 'không có lệnh (đúng)'}`)
 
   // ═══ [7] API Khách hàng / Kênh ════════════════════════════════════════════════════════════════
   const rDup = await api('/masterdata/customers', 'POST', { ship_to_code: SHIP.A, name: 'trùng' })

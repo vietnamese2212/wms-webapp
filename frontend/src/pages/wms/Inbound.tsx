@@ -201,7 +201,7 @@ const NccRowItem = React.memo(function NccRowItem({
   )
 })
 
-function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClose: () => void; editGroup?: InboundOrder[] | null }) {
+function CreateOrderDialog({ open, onClose, editGroup, onPickReturn }: { open: boolean; onClose: () => void; editGroup?: InboundOrder[] | null; onPickReturn?: () => void }) {
   const navigate  = useNavigate()
   const user      = useAuthStore((s) => s.user)
   const canPickWarehouse = user?.warehouse_scope === 'NATIONAL' || !user?.warehouse_id
@@ -728,6 +728,13 @@ function CreateOrderDialog({ open, onClose, editGroup }: { open: boolean; onClos
                   {t === 'FACTORY' ? 'Nhập SX' : 'Nhập NCC'}
                 </button>
               ))}
+              {/* 27/10: lối vào Nhập hàng trả về đặt cạnh 2 loại phiếu — user tìm ở đây, không thấy nút icon trên toolbar */}
+              {onPickReturn && (
+                <button type="button" onClick={onPickReturn}
+                  className="flex-1 py-1.5 text-xs font-medium transition-colors bg-white text-slate-600 hover:bg-slate-50">
+                  Hàng trả về
+                </button>
+              )}
             </div>
           )}
 
@@ -1767,7 +1774,8 @@ export default function Inbound() {
       )}
      </div>
 
-      <CreateOrderDialog open={showNew || !!editNccGroup} onClose={() => { setShowNew(false); setEditNccGroup(null) }} editGroup={editNccGroup} />
+      <CreateOrderDialog open={showNew || !!editNccGroup} onClose={() => { setShowNew(false); setEditNccGroup(null) }} editGroup={editNccGroup}
+        onPickReturn={() => { setShowNew(false); setShowReturn(true) }} />
       <InboundReturnSheet open={showReturn} onClose={() => setShowReturn(false)}
         onCreated={r => {
           setShowReturn(false)

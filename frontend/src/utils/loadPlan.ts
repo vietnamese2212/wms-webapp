@@ -32,10 +32,14 @@
 //    chiếm trọn từng hàng ngang từ phía cabin (mã sau không đè lên mã trước). Pallet gộp hàng
 //    lẻ chia lớp cho CAO ĐỀU (không pallet lùn lẻ). Phần sàn (luật 1-7) giữ nguyên.
 // 9. PALLET THẬT (user 28/10: "pallet ghép hình khối rất tệ"; "200 túi hợp lý 1 pallet riêng"):
-//    thùng/lớp theo SỐ LỚP thật khi có (110 thùng / 11 lớp = 10/lớp — lưới thẳng chỉ 8 ⇒ pallet
-//    cao vống 1,95m); phần lẻ một mã tự đủ 1 pallet mà tách không tăng số pallet ⇒ PALLET RIÊNG; còn
-//    lại pallet gộp NẶNG DƯỚI NHẸ TRÊN, mỗi mã NẰM LIỀN (không xé lớp ra mọi pallet). Khối pallet
-//    kèm RUỘT (`contents` — từng lớp thùng) để vẽ đúng thùng thật.
+//    thùng/lớp = mẫu xếp GỌN trong chân pallet (`palletPattern`, ghép 2 hướng — "hàng nằm gọn trên
+//    pallet", không chờm sang pallet bên cạnh), có số lớp thật thì không vượt quy cách ÷ số lớp; phần
+//    lẻ cả đơn dồn PALLET GỘP (trần 1,65m) NẶNG DƯỚI, HÀNG NHẸ (`onTop`) TRÊN CÙNG, mỗi mã NẰM LIỀN
+//    (không xé lớp ra mọi pallet); muốn pallet riêng ⇒ bể `remPool`. Khối pallet kèm RUỘT (`contents`).
+// 10. HÀNG GỬI MỘT KHỐI (user 28/10: "thạch túi lẽ ra xếp trọn ở trên sữa chua chai, độ cao ít chênh
+//    lệch, liền kề — nguyên tắc là 1 khối"): xe còn chỗ ⇒ hàng gửi của đơn rót nước thành MỘT khối trên
+//    nóc khối nền đầu của đơn; nền hạ thấp trải rộng sao cho nền + gửi ≈ mức khối nền lẽ ra đứng. Mỗi
+//    khối sàn chiếm TRỌN hàng ngang (ranh các mã thẳng ngang thùng); xe chật ⇒ cách cũ.
 // 1 step = 1 lượt đặt (1 chân mới / 1 cụm đè lên chân dở / 1 cụm lên nóc) — cho thanh
 // trượt "xếp theo thứ tự". Đơn vị: mm.
 
@@ -434,7 +438,8 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
 
     // Đổ TOÀN BỘ 1 class (nhiều mã, liền mạch) thành KHỐI BẰNG MẶT — MỘT chiều cao L.
     // PHẦN THỪA cuối khối không đủ bằng mặt → NỔI LÊN TRÊN KHỐI, không đứng sàn.
-    const pourClass = (members: number[], rowKey: string) => {
+    // `forceL`: mức thân ép sẵn (khối nền đỡ hàng gửi — luật 10) thay cho mức theo hệ số trải m
+    const pourClass = (members: number[], rowKey: string, forceL?: number) => {
       const live = members.filter(gi => avail(gi) > 0)
       if (!live.length) return
       const maxH = Math.max(...live.map(gi => groupsIn[gi].h))
@@ -453,6 +458,7 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
         if (L < Lmin) L = Lmin
         Lfloor = Math.max(Lfloor, Lmin)
       }
+      if (forceL != null) { L = Math.max(1, Math.min(forceL, full)); Lfloor = Math.min(Lfloor, L) }
       // Có hàng thừa mà trần không còn chỗ nổi (khối kịch trần) → hạ khối 1 lớp để thừa
       // lên được TRÊN KHỐI (quy trình: không đứng chân ngắn dưới sàn)
       const C = live.reduce((s, gi) => s + avail(gi), 0)
@@ -567,7 +573,61 @@ export function computeLoadPlan(truck: TruckDims, groupsIn: LoadGroup[]): LoadPl
       // LUẬT NGƯỜI XẾP HÀNG (user 14/07): đỉnh hàng gửi phải NGANG BẰNG hàng phía sau
       // (thiếu thì NÂNG NỀN lên, không được lõm thấp hơn các hàng ngoài); hàng gửi được
       // XOAY TỰ DO từng ô để lát kín mặt thềm (chỉ hàng gửi được bỏ luật 1 hàng 1 hướng).
-      if (doLights.length && doFloor.length) {
+      // PHA 1 MỚI (luật 10 — user 28/10: "thạch túi lẽ ra xếp TRỌN ở trên sữa chua chai, độ cao ít
+      // chênh lệch, liền kề — nguyên tắc là 1 khối"; luật thềm cũ "gửi đủ lớp tối đa trước" dựng tháp
+      // gửi 7 lớp trên thềm hẹp 1 chân, phần dư văng sang nóc khối khác = 2 khối): hàng gửi của đơn
+      // thành MỘT khối rót nước trên NÓC KHỐI NỀN ĐẦU của đơn. Mức nền p chọn sao cho nền + hàng gửi
+      // ≈ mức khối nền lẽ ra đứng (nền hạ thấp, trải rộng ra ⇒ hàng gửi ít lớp). Xe chật (`rows` tắt)
+      // vẫn dùng thềm kiểu cũ bên dưới.
+      if (rows && doLights.length && doFloor.length) {
+        const ck0 = classKeyOf(groupsIn[doFloor[0]])
+        const base = doFloor.filter(gi => classKeyOf(groupsIn[gi]) === ck0)
+        const bg = groupsIn[base[0]]
+        const lg = groupsIn[doLights[0]]
+        if (bg.h <= truck.height && Math.min(bg.l, bg.w) <= truck.width) {
+          const rowKey = `${dk}|${ck0}`
+          const Cb = base.reduce((s, gi) => s + avail(gi), 0)
+          const NL = doLights.reduce((s, gi) => s + avail(gi), 0)
+          const fullB = Math.max(1, Math.floor(truck.height / bg.h))
+          const capB = Math.max(1, Math.min(fullB, Math.ceil(chain.capMm / bg.h)))
+          const Lnorm = Math.max(Math.min(capB, 3), Math.ceil(capB / mEffOf(rowKey)))
+          const target = Lnorm * bg.h
+          const lightCap = lg.maxLayers ?? LIGHT_MAX_DEFAULT
+          let p = Lnorm, bestD = Infinity, topEst = Lnorm * bg.h
+          for (let q = Lnorm; q >= 1; q--) {
+            const per = Math.floor((Math.ceil(Cb / q) * bg.l * bg.w) / (lg.l * lg.w) * 0.85)   // thùng gửi / lớp ước theo diện tích nóc
+            if (per <= 0) continue
+            const t = Math.ceil(NL / per)
+            if (t > lightCap || q * bg.h + t * lg.h > truck.height) continue
+            const d = Math.abs(q * bg.h + t * lg.h - target)
+            if (d < bestD - 1e-9) { bestD = d; p = q; topEst = q * bg.h + t * lg.h }
+          }
+          pourClass(base, rowKey, p)
+          // BẬC THANG tính cả khối gửi trên nóc (mặt nhìn thấy) — khối sau không tụt quá 1 bậc so với nó
+          chain.capMm = Math.min(truck.height, Math.max(chain.capMm, topEst))
+          const region = classCols.map(c => ({ x: c.x, y: c.y, l: c.fl, w: c.fw }))
+          if (!fine) {
+            // vòng chọn m: chỉ ƯỚC sức chứa nóc khối nền dưới trần (đặt thật 1 lần cho phương án thắng)
+            let room = classCols.reduce((s, c) => s + Math.max(0, Math.min(lightCap, Math.floor((truck.height - c.top) / lg.h))) * c.fl * c.fw, 0) * 0.9
+            for (const gi of doLights) {
+              const g = groupsIn[gi]
+              const n = Math.min(avail(gi), Math.floor(room / (g.l * g.w)))
+              used[gi] += n
+              room -= n * g.l * g.w
+            }
+          } else if (region.length) {
+            for (const gi of doLights) {
+              const g = groupsIn[gi]
+              const n0 = avail(gi)
+              if (n0 <= 0) continue
+              const r = levelFill({ boxes: placed, region, g: { ...g, maxLayers: g.maxLayers ?? LIGHT_MAX_DEFAULT }, gi, count: n0, capZ: truck.height, stepStart: step })
+              for (const b of r.placed) placed.push(b)
+              step = r.step
+              used[gi] += n0 - r.left
+            }
+          }
+        }
+      } else if (doLights.length && doFloor.length) {
         const bg0 = groupsIn[doFloor[0]]
         const full0 = Math.max(1, Math.floor(truck.height / bg0.h))
         // MỨC MẶT BẰNG CHUNG = đỉnh khối nền THẬT sẽ đứng ngay sau thềm (ăn theo hệ số
@@ -1256,23 +1316,61 @@ export interface PalletizeInput {
   // Không khai = bể chung của đơn.
   remPool?: { key: string; label: string }
   // SỐ LỚP trên 1 pallet chẵn (28/10 — dữ liệu thật: 110 thùng / 11 lớp). Có ⇒ thùng/lớp = quy cách ÷
-  // số lớp: mẫu xếp pallet thật đan xen, nhiều thùng hơn lưới thẳng hàng (thùng 420×255 lưới chỉ 8/lớp,
-  // thật 10/lớp ⇒ pallet vẽ cao 1,95m thay vì 1,55m). Không khai ⇒ lưới như cũ.
+  // số lớp, nhưng không quá số thùng đặt GỌN trong chân pallet (`palletPattern`). Không khai ⇒ mẫu gọn.
   layers?: number | null
+  // HÀNG NHẸ (28/10 — user: "hàng nào mã ghi là nhẹ ⇒ bắt buộc xếp phía trên cùng"): trên pallet gộp
+  // các lớp của mã này luôn nằm TRÊN mọi mã thường (không xét kg/thùng).
+  onTop?: boolean
 }
 
-// Số thùng xếp được trên MỘT LỚP của chân pallet — lưới đều, thử cả 2 hướng đặt (cùng triết lý
-// "xoay theo làn" của computeLoadPlan: mục đích là tận dụng mặt chân, không trộn hướng trong lớp).
-// Có `layers` (số lớp thật của pallet chẵn) ⇒ lấy quy cách ÷ số lớp, miễn vừa diện tích chân (cho
-// chờm mép ~8% như pallet thật).
-export function cartonsPerLayer(spec: PalletSpec, carton: { l: number; w: number }, cpp?: number | null, layers?: number | null): number {
-  const grid = (l: number, w: number) => Math.floor(spec.l / l) * Math.floor(spec.w / w)
-  const g = Math.max(grid(carton.l, carton.w), grid(carton.w, carton.l))
-  if (g > 0 && cpp && cpp > 0 && layers && layers > 0) {
-    const per = Math.ceil(cpp / layers)
-    if (per <= Math.floor((spec.l * spec.w * 1.08) / (carton.l * carton.w))) return per
+// MẪU XẾP 1 LỚP thùng cl×cw GỌN TRONG mặt L×W (user 28/10: "hàng trên pallet phải nằm gọn trên pallet",
+// không chờm sang pallet bên cạnh): cắt chém (guillotine) — mỗi mảnh lưới đều một hướng, cắt dọc/ngang
+// tại tổ hợp i·cl + j·cw. Thùng 420×255 trên chân 1200×1000: lưới thẳng 8, mẫu ghép 2 hướng 9.
+// Trả về vị trí từng thùng (gốc góc chân), sắp theo hàng.
+export function palletPattern(L: number, W: number, cl: number, cw: number): { x: number; y: number; l: number; w: number }[] {
+  if (!(cl > 0 && cw > 0) || L <= 0 || W <= 0) return []
+  const cuts = (D: number) => {
+    const s = new Set<number>()
+    for (let i = 0; i * cl <= D; i++) for (let j = 0; i * cl + j * cw <= D; j++) { const v = i * cl + j * cw; if (v > 0 && v < D) s.add(v) }
+    return [...s]
   }
-  return g
+  type Plan = { n: number; build: (x: number, y: number, out: { x: number; y: number; l: number; w: number }[]) => void }
+  const memo = new Map<string, Plan>()
+  const grid = (a: number, b: number, l: number, w: number): Plan => {
+    const nx = Math.floor(a / l), ny = Math.floor(b / w)
+    return { n: nx * ny, build: (x, y, out) => { for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) out.push({ x: x + i * l, y: y + j * w, l, w }) } }
+  }
+  const best = (a: number, b: number, depth: number): Plan => {
+    const k = `${a}x${b}x${depth}`
+    const hit = memo.get(k)
+    if (hit) return hit
+    let p = grid(a, b, cl, cw)
+    const q = grid(a, b, cw, cl)
+    if (q.n > p.n) p = q
+    if (depth > 0) {
+      for (const c of cuts(a)) {
+        const A = best(c, b, depth - 1), B = best(a - c, b, depth - 1)
+        if (A.n + B.n > p.n) p = { n: A.n + B.n, build: (x, y, out) => { A.build(x, y, out); B.build(x + c, y, out) } }
+      }
+      for (const c of cuts(b)) {
+        const A = best(a, c, depth - 1), B = best(a, b - c, depth - 1)
+        if (A.n + B.n > p.n) p = { n: A.n + B.n, build: (x, y, out) => { A.build(x, y, out); B.build(x, y + c, out) } }
+      }
+    }
+    memo.set(k, p)
+    return p
+  }
+  const out: { x: number; y: number; l: number; w: number }[] = []
+  best(L, W, 2).build(0, 0, out)
+  return out.sort((a, b) => a.y - b.y || a.x - b.x)
+}
+
+// Số thùng xếp được trên MỘT LỚP của chân pallet — mẫu xếp GỌN trong chân (`palletPattern`). Có `layers`
+// (số lớp thật của pallet chẵn) ⇒ quy cách ÷ số lớp nếu không vượt mẫu gọn.
+export function cartonsPerLayer(spec: PalletSpec, carton: { l: number; w: number }, cpp?: number | null, layers?: number | null): number {
+  const fit = palletPattern(spec.l, spec.w, carton.l, carton.w).length
+  if (fit > 0 && cpp && cpp > 0 && layers && layers > 0) return Math.min(fit, Math.ceil(cpp / layers))
+  return fit
 }
 
 /**
@@ -1335,7 +1433,7 @@ export function palletizeGroups(items: PalletizeInput[], spec: PalletSpec): Pall
   for (const [doKey, lines] of byDo) {
     const doLabel = lines[0].doLabel
     // Phần DƯ của từng mã trong đơn — gom lại rồi xếp theo LỚP lên pallet gộp
-    type RemItem = { key: string; label: string; cartons: number; perLayer: number
+    type RemItem = { key: string; label: string; cartons: number; perLayer: number; light: boolean
       carton: { l: number; w: number; h: number } | null
       weightKg: number | null; assumed: boolean; pool: string; poolLabel: string
       frac: number | null }   // mã tính theo cái/kg → phần dư = tỷ lệ của 1 pallet
@@ -1399,7 +1497,7 @@ export function palletizeGroups(items: PalletizeInput[], spec: PalletSpec): Pall
         })
       }
       if (rem > 0) rems.push({
-        key: it.key, label: it.label, cartons: rem, perLayer,
+        key: it.key, label: it.label, cartons: rem, perLayer, light: it.onTop === true,
         carton: it.carton && it.carton.h > 0 ? it.carton : null,
         weightKg: it.weightKg, assumed: it.assumed === true || layers === 0,
         pool: it.remPool?.key ?? '', poolLabel: it.remPool?.label ?? '',
@@ -1424,19 +1522,19 @@ export function palletizeGroups(items: PalletizeInput[], spec: PalletSpec): Pall
         const poolLabel = poolRems[0].poolLabel
         // 1 lớp: `cut` = ruột thật (null khi không dựng được lớp thùng — mã tính theo cái / thùng to
         // hơn chân); wpc = kg/thùng để xếp NẶNG DƯỚI NHẸ TRÊN
-        type Layer = { h: number; kg: number; assumed: boolean; cut: PalletLayer | null; wpc: number }
+        type Layer = { h: number; kg: number; assumed: boolean; cut: PalletLayer | null; wpc: number; light: boolean }
         const layersOf = (r: RemItem): Layer[] => {
-          const wpc = r.weightKg ?? 0
+          const wpc = r.weightKg ?? 0, light = r.light
           if (r.frac != null)
             // mã tính theo cái/kg: chiếm đúng TỶ LỆ của một pallet (0,05 pallet = 5% chiều cao),
             // không dựng lớp thùng ảo
-            return [{ h: Math.max(1, Math.min(budget, Math.round(budget * r.frac))), kg: r.cartons * wpc, assumed: true, cut: null, wpc }]
+            return [{ h: Math.max(1, Math.min(budget, Math.round(budget * r.frac))), kg: r.cartons * wpc, assumed: true, cut: null, wpc, light }]
           if (r.perLayer > 0 && r.carton)
             return layersOfCartons(r.key, r.cartons, r.perLayer, r.carton)
-              .map(c => ({ h: c.h, kg: c.n * wpc, assumed: r.assumed, cut: c, wpc }))
+              .map(c => ({ h: c.h, kg: c.n * wpc, assumed: r.assumed, cut: c, wpc, light }))
           // không tính được lớp (thùng to hơn chân pallet / thiếu cao thùng) — chiếm nguyên
           // 1 pallet cao bằng trần, gắn nhãn ước lượng
-          return [{ h: budget > 0 ? budget : spec.h, kg: r.cartons * wpc, assumed: true, cut: null, wpc }]
+          return [{ h: budget > 0 ? budget : spec.h, kg: r.cartons * wpc, assumed: true, cut: null, wpc, light }]
         }
         const sumH = (ls: Layer[]) => ls.reduce((s, l) => s + l.h, 0)
         // First-fit-decreasing: lớp CAO xếp trước → pallet đầy chặt, ít pallet lẻ nhất có thể.
@@ -1450,16 +1548,6 @@ export function palletizeGroups(items: PalletizeInput[], spec: PalletSpec): Pall
           return pals.map(p => p.ls)
         }
         const blocks = poolRems.map(r => ({ r, ls: layersOf(r) }))
-        const need = ffd(blocks.flatMap(b => b.ls)).length
-        // ── PALLET RIÊNG (user 28/10: "200 túi hợp lý 1 pallet riêng"; "pallet ghép hình khối rất
-        // tệ"): phần lẻ một mã tự đủ 1 pallet mà tách ra KHÔNG làm tăng số pallet của bể ⇒ đứng
-        // pallet riêng của mã đó, không trộn lớp với mã khác. Gộp chỉ khi bớt được pallet. ──
-        const own = new Set<typeof blocks[number]>()
-        for (const b of [...blocks].sort((a, c) => sumH(c.ls) - sumH(a.ls))) {
-          if (ffd(b.ls).length !== 1) continue
-          const sep = blocks.filter(x => own.has(x) || x === b)
-          if (sep.length + ffd(blocks.filter(x => !sep.includes(x)).flatMap(x => x.ls)).length <= need) own.add(b)
-        }
         const pushPallet = (key: string, label: string, ls: Layer[]) => {
           const kg = ls.reduce((s, l) => s + l.kg, 0)
           groups.push({
@@ -1471,15 +1559,14 @@ export function palletizeGroups(items: PalletizeInput[], spec: PalletSpec): Pall
             ...(ls.every(l => l.cut) ? { contents: ls.map(l => l.cut!) } : {}),
           })
         }
-        for (const b of blocks) if (own.has(b)) {
-          pushPallet(`${b.r.key}|plt`, `${b.r.label} (pallet lẻ)`, b.ls)
-          notes.push(`${b.r.label}: dư ${b.r.cartons} thùng đứng pallet riêng (gộp với mã khác không bớt được pallet)`)
-        }
-        // ── Phần còn lại → PALLET GỘP: nặng dưới nhẹ trên, MỖI MÃ NẰM LIỀN (trước đây chia từng lớp
-        // cho pallet thấp nhất ⇒ mỗi mã xé lẻ ra mọi pallet gộp, hình khối lởm chởm). Cắt dãy lớp
-        // thành đúng số pallet cần, trần nhỏ nhất có thể ⇒ các pallet cao gần đều; mã chỉ đứt ở ranh
-        // 2 pallet. Cắt liền mà tốn thêm pallet so với FFD ⇒ quay về FFD + cân cao như cũ. ──
-        const rest = blocks.filter(b => !own.has(b)).sort((a, c) => (c.ls[0]?.wpc ?? 0) - (a.ls[0]?.wpc ?? 0))
+        // ── Phần lẻ của bể → PALLET GỘP (user 28/10: "phần lẻ của các pallet dồn lên 1 pallet với nhau,
+        // cao không quá 1m65; mã ghi là nhẹ bắt buộc xếp trên cùng"): nặng dưới, HÀNG NHẸ TRÊN CÙNG, MỖI
+        // MÃ NẰM LIỀN (trước đây chia từng lớp cho pallet thấp nhất ⇒ mỗi mã xé lẻ ra mọi pallet gộp).
+        // Cắt dãy lớp thành đúng số pallet cần, trần nhỏ nhất có thể ⇒ các pallet cao gần đều; mã chỉ
+        // đứt ở ranh 2 pallet. Cắt liền mà tốn thêm pallet so với FFD ⇒ quay về FFD + cân cao như cũ.
+        // (Muốn phần lẻ một nhóm hàng đứng pallet riêng ⇒ khai bể riêng `remPool`.) ──
+        const heavyFirst = (a: { light: boolean; wpc: number }, c: { light: boolean; wpc: number }) => Number(a.light) - Number(c.light) || c.wpc - a.wpc
+        const rest = [...blocks].sort((a, c) => heavyFirst({ light: a.r.light, wpc: a.r.weightKg ?? 0 }, { light: c.r.light, wpc: c.r.weightKg ?? 0 }))
         const seq = rest.flatMap(b => b.ls)
         if (!seq.length) continue
         const M = ffd(seq).length
@@ -1510,7 +1597,7 @@ export function palletizeGroups(items: PalletizeInput[], spec: PalletSpec): Pall
             p.h += ly.h; p.ls.push(ly)
           }
           if (ok) pals = bal.sort((a, b) => b.h - a.h).map(p => p.ls)
-          pals = pals.map(ls => [...ls].sort((a, b) => b.wpc - a.wpc || (b.cut?.n ?? 0) - (a.cut?.n ?? 0)))
+          pals = pals.map(ls => [...ls].sort((a, b) => heavyFirst(a, b) || (b.cut?.n ?? 0) - (a.cut?.n ?? 0)))
         }
         // bể chỉ còn MỘT mã (phần lẻ cao quá 1 pallet nên phải chia) ⇒ gọi tên mã, không phải "gộp"
         const baseLabel = rest.length === 1 ? `${rest[0].r.label} (pallet lẻ)` : poolLabel ? `Pallet gộp ${poolLabel}` : 'Pallet gộp (hàng lẻ)'

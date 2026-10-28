@@ -3,7 +3,7 @@
 // trên nóc + khe giữa các cột; pallet gộp lùn 0,45m đứng cạnh pallet 1,6m).
 import { describe, it, expect } from 'vitest'
 import {
-  computeLoadPlan, palletizeGroups, levelFill,
+  computeLoadPlan, palletizeGroups, levelFill, palletPattern,
   type LoadGroup, type PlacedBox, type PalletSpec,
 } from '../../../frontend/src/utils/loadPlan'
 
@@ -66,24 +66,36 @@ describe('loadPlan — hình khối vuông vắn', () => {
     ({ key, label: key, doKey: 'D', doLabel: 'D', cartons, cartonsPerPallet: cpp, isPalletCarrier: false, weightKg: kg, carton, layers })
   const contiguous = (keys: string[]) => keys.every((k, i) => i === 0 || k === keys[i - 1] || !keys.slice(0, i).includes(k))
 
-  it('thùng/lớp theo SỐ LỚP thật: 110 thùng / 11 lớp ⇒ pallet 11 lớp (không phải 14 lớp lưới 8/lớp)', () => {
+  it('mẫu xếp lớp NẰM GỌN trong chân pallet (ghép 2 hướng): 420×255 trên 1200×1000 = 9 thùng, không chờm', () => {
+    const p = palletPattern(1200, 1000, 420, 255)
+    expect(p).toHaveLength(9)
+    for (const c of p) { expect(c.x + c.l).toBeLessThanOrEqual(1200); expect(c.y + c.w).toBeLessThanOrEqual(1000) }
+    expect(overlaps(p.map(c => ({ ...c, z: 0, h: 1, group: 0, step: 0 })))).toBe(0)
+    // số lớp thật 11 (= 10/lớp) không vượt mẫu gọn ⇒ 9/lớp
     const r = palletizeGroups([pin('ST', 110, 110, 10, { l: 420, w: 255, h: 130 }, 11)], spec)
-    expect(r.groups).toHaveLength(1)
-    expect(r.groups[0].h).toBe(150 + 11 * 130)
+    expect(r.groups[0].h).toBe(150 + Math.ceil(110 / 9) * 130)
     expect(r.groups[0].contents?.reduce((s, c) => s + c.n, 0)).toBe(110)
   })
 
-  it('phần lẻ một mã tự đủ pallet ⇒ PALLET RIÊNG, không trộn (gộp không bớt được pallet)', () => {
+  it('phần lẻ DỒN pallet gộp ≤ trần; mã ghi NHẸ luôn nằm TRÊN CÙNG (kể cả nặng kg hơn)', () => {
     const r = palletizeGroups([
-      pin('SCU', 100, 110, 10, { l: 420, w: 255, h: 130 }, 11),
-      pin('C100', 120, 143, 6, { l: 430, w: 250, h: 100 }, 14),
+      { ...pin('C100', 57, 143, 5.9, { l: 430, w: 250, h: 100 }, 14) },
+      { ...pin('TUI', 30, 216, 8, { l: 310, w: 130, h: 130 }, 8), onTop: true },   // nhẹ nhưng kg/thùng cao hơn
+    ], spec)
+    expect(r.palletCount).toBe(1)
+    const g = r.groups[0]
+    expect(g.h).toBeLessThanOrEqual(spec.h)
+    const keys = g.contents!.map(c => c.key)
+    expect(keys.indexOf('TUI')).toBeGreaterThan(keys.lastIndexOf('C100'))
+  })
+
+  it('bể riêng (remPool) ⇒ phần lẻ đứng pallet riêng, không trộn với bể chung', () => {
+    const r = palletizeGroups([
+      pin('C100', 57, 143, 5.9, { l: 430, w: 250, h: 100 }, 14),
+      { ...pin('TUI', 200, 216, 3.08, { l: 310, w: 130, h: 130 }, 8), onTop: true, remPool: { key: 'light', label: 'hàng nhẹ' } },
     ], spec)
     expect(r.palletCount).toBe(2)
-    expect(r.groups.map(g => g.key).sort()).toEqual(['SCU|plt', 'C100|plt'].sort())
-    for (const g of r.groups) {
-      expect(new Set(g.contents?.map(c => c.key))).toEqual(new Set([g.key.replace('|plt', '')]))
-      expect(g.h).toBeLessThanOrEqual(spec.h)
-    }
+    for (const g of r.groups) expect(new Set(g.contents?.map(c => c.key)).size).toBe(1)
   })
 
   it('phần lẻ nhỏ dồn PALLET GỘP: nặng dưới nhẹ trên, mỗi mã nằm liền, các pallet cao gần đều', () => {

@@ -1663,13 +1663,13 @@ export function palletizeGroups(items: PalletizeInput[], spec: PalletSpec): Pall
           return [{ h: budget > 0 ? budget : spec.h, kg: r.cartons * wpc, assumed: true, cut: null, wpc, light }]
         }
         const sumH = (ls: Layer[]) => ls.reduce((s, l) => s + l.h, 0)
-        const pushPallet = (key: string, label: string, ls: Layer[]) => {
+        const pushPallet = (key: string, label: string, ls: Layer[], h = sumH(ls)) => {
           const kg = ls.reduce((s, l) => s + l.kg, 0)
           const contents = ls.every(l => l.cut) ? ls.map(l => l.cut!) : null
           const foot = contents ? palletFoot(spec, contents) : { l: spec.l, w: spec.w }
           groups.push({
             key, label, doKey, doLabel, count: 1, l: foot.l, w: foot.w,
-            h: spec.baseH + sumH(ls),
+            h: spec.baseH + h,
             base: { h: spec.baseH, color: spec.baseColor },
             weightKg: kg > 0 || pw > 0 ? kg + pw : null,
             assumed: ls.some(l => l.assumed), maxLayers: 1, onTop: false,
@@ -1686,19 +1686,31 @@ export function palletizeGroups(items: PalletizeInput[], spec: PalletSpec): Pall
         const heavyFirst = (a: { light: boolean; wpc: number }, c: { light: boolean; wpc: number }) => Number(a.light) - Number(c.light) || c.wpc - a.wpc
         const chunks = poolRems.map(r => ({ r, ls: layersOf(r) })).map(b => ({ ...b, h: sumH(b.ls) })).filter(b => b.ls.length)
         if (!chunks.length) continue
-        const bins: { h: number; cs: typeof chunks }[] = []
+        type Chunk = (typeof chunks)[number]
+        const byWeight = (a: Chunk, c: Chunk) => heavyFirst({ light: a.r.light, wpc: a.r.weightKg ?? 0 }, { light: c.r.light, wpc: c.r.weightKg ?? 0 })
+        // CAO THẬT của pallet gộp (nặng dưới, nhẹ trên — 28/10 tối, MalCargo: pallet gộp vượt 1m65): lớp THIẾU THÙNG
+        // của một mã nằm dưới mã khác phải lấp cho phẳng bằng thùng mã trên (không thì lớp trên treo trên ô trống)
+        // ⇒ lớp đó cao bằng thùng mã trên khi thùng ấy cao hơn (sữa 100mm thiếu 2 thùng + thạch túi 130mm ⇒ cao 130)
+        const stackH = (cs: Chunk[]) => {
+          const o = [...cs].sort(byWeight)
+          return o.reduce((h, c, i) => {
+            const last = c.ls[c.ls.length - 1], nx = o[i + 1]?.ls[0]
+            return h + c.h + (nx && last.cut && last.cut.n < last.cut.per && nx.h > last.h ? nx.h - last.h : 0)
+          }, 0)
+        }
+        const bins: { h: number; cs: Chunk[] }[] = []
         for (const c of [...chunks].sort((a, b) => b.h - a.h)) {
-          const p = bins.find(x => x.h + c.h <= budget)
-          if (p) { p.h += c.h; p.cs.push(c) } else bins.push({ h: c.h, cs: [c] })
+          const p = bins.find(x => stackH([...x.cs, c]) <= budget)
+          if (p) { p.cs.push(c); p.h = stackH(p.cs) } else bins.push({ h: c.h, cs: [c] })
         }
         const mixedLabel = poolLabel ? `Pallet gộp ${poolLabel}` : 'Pallet gộp (hàng lẻ)'
         const nMixed = bins.filter(b => b.cs.length > 1).length
         let k = 0
         bins.forEach((b, i) => {
-          const cs = [...b.cs].sort((a, c) => heavyFirst({ light: a.r.light, wpc: a.r.weightKg ?? 0 }, { light: c.r.light, wpc: c.r.weightKg ?? 0 }))
+          const cs = [...b.cs].sort(byWeight)
           // pallet chỉ MỘT mã ⇒ gọi tên mã, không phải "gộp"
           const label = cs.length === 1 ? `${cs[0].r.label} (pallet lẻ)` : nMixed > 1 ? `${mixedLabel} #${++k}` : mixedLabel
-          pushPallet(`${doKey}|mixed|${poolKey}|${i}`, label, cs.flatMap(c => c.ls))
+          pushPallet(`${doKey}|mixed|${poolKey}|${i}`, label, cs.flatMap(c => c.ls), b.h)
         })
         notes.push(`Phần lẻ đơn ${doLabel}${poolLabel ? ` (${poolLabel})` : ''}: ${chunks.length} mã → ${bins.length} pallet (mỗi mã nằm nguyên một pallet, trần ${(spec.h / 1000).toFixed(2)}m)`)
       }

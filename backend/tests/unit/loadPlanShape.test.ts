@@ -115,6 +115,20 @@ describe('loadPlan — hình khối vuông vắn', () => {
     expect(keys.indexOf('TUI')).toBeGreaterThan(keys.lastIndexOf('C100'))
   })
 
+  // 28/10 tối: lớp lẻ (thiếu thùng) của mã dưới phải lấp phẳng bằng thùng mã trên — sữa 100mm thiếu 2 thùng dưới
+  // thạch túi 130mm ⇒ lớp đó cao 130, pallet gộp tính cả phần này mới không vượt trần (bản trước 1,68m)
+  it('pallet gộp tính lớp lẻ được lấp bằng thùng mã trên cao hơn — không vượt trần', () => {
+    const items = [
+      pin('ST180', 40, 110, 9.85, { l: 420, w: 255, h: 130 }, 11),    // 4 lớp đủ
+      pin('ST110', 18, 140, 6.2, { l: 420, w: 255, h: 100 }, 14),     // 1 lớp đủ + 1 lớp thiếu 2 thùng
+      { ...pin('TUI', 160, 216, 3.08, { l: 310, w: 130, h: 130 }, 8), onTop: true },   // 6 lớp
+    ]
+    const r = palletizeGroups(items, spec)
+    for (const g of r.groups) expect(g.h).toBeLessThanOrEqual(spec.h)
+    // 520 + 200 + 780 = 1500 đúng trần nếu lớp thiếu tính 100 — tính đúng 130 thì không gộp đủ cả ba
+    expect(r.groups.some(g => new Set(g.contents?.map(c => c.key)).size === 3)).toBe(false)
+  })
+
   it('bể riêng (remPool) ⇒ phần lẻ đứng pallet riêng, không trộn với bể chung', () => {
     const r = palletizeGroups([
       pin('C100', 57, 143, 5.9, { l: 430, w: 250, h: 100 }, 14),

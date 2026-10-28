@@ -437,6 +437,9 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
         // đồng cao 1650 hết là sai; nhãn "cỡ giả định" vẫn giữ để biết số là ước lượng).
         carton: { l: g.l, w: g.w, h: g.h },
         assumed: g.assumed, unitless: g.unitless,
+        // Số lớp thật ⇒ thùng/lớp = quy cách ÷ số lớp (user 28/10: "110 thùng – 11 lớp ⇒ 1 lớp 10 thùng");
+        // hàng gửi (stack_on_top) nằm TRÊN CÙNG pallet gộp
+        layers: g.maxLayers, onTop: g.onTop,
         // "Pallet riêng": phần dư của loại này gom bể riêng, không trộn pallet lẻ chung
         remPool: !g.isPallet && g.category && placeOf(g.category) === 'OWN_PALLET'
           ? { key: g.category, label: g.category } : undefined,
@@ -519,7 +522,7 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
           key: g.key, label: g.label, doKey: g.doKey, doLabel: g.doLabel,
           cartons: g.count, cartonsPerPallet: g.cpp, isPalletCarrier: false,
           weightKg: g.weightKg, carton: { l: g.l, w: g.w, h: g.h }, assumed: g.assumed,
-          unitless: g.unitless,
+          unitless: g.unitless, layers: g.maxLayers, onTop: g.onTop,
           remPool: g.category && placeOf(g.category) === 'OWN_PALLET'
             ? { key: g.category, label: g.category } : undefined,
         }))

@@ -1472,15 +1472,25 @@ export function cartonsPerLayer(spec: PalletSpec, carton: { l: number; w: number
   return layerPattern(spec.l, spec.w, carton.l, carton.w)?.length ?? 0
 }
 
+// Mẫu của MỘT mã trên pallet: có lớp đầy ⇒ mẫu lớp đầy (`per`); phần lẻ chưa đủ một lớp ⇒ mẫu gọn cho đúng
+// số thùng đó, căn giữa chân (user 28/10: 1 thùng thừa bị đặt ở góc, chờm mép theo mẫu 11 thùng/lớp, nhìn
+// như gác lên pallet bên cạnh). Lõi (`palletFoot`) và lớp vẽ dùng chung để cỡ khối khớp chỗ thùng.
+export function runPattern(spec: PalletSpec, r: { n: number; per: number; l: number; w: number }) {
+  return layerPattern(spec.l, spec.w, r.l, r.w, r.n >= r.per ? r.per : r.n)
+}
+
 // Cỡ KHỐI pallet = chân + phần CHỜM của các lớp (mẫu căn giữa chân) — xếp lên xe không đè pallet bên cạnh
-export function palletFoot(spec: PalletSpec, ls: { l: number; w: number; per: number }[]): { l: number; w: number } {
+export function palletFoot(spec: PalletSpec, ls: { key?: string; n: number; l: number; w: number; per: number }[]): { l: number; w: number } {
   let x0 = 0, y0 = 0, x1 = spec.l, y1 = spec.w
-  const seen = new Set<string>()
+  // gộp các lớp liền nhau của cùng một mã thành một đợt (như lúc xếp)
+  const runs: { key?: string; n: number; l: number; w: number; per: number }[] = []
   for (const c of ls) {
-    const k = `${c.l}|${c.w}|${c.per}`
-    if (seen.has(k)) continue
-    seen.add(k)
-    for (const s of layerPattern(spec.l, spec.w, c.l, c.w, c.per) ?? []) {
+    const last = runs[runs.length - 1]
+    if (last && last.key === c.key && last.l === c.l && last.w === c.w && last.per === c.per) last.n += c.n
+    else runs.push({ ...c })
+  }
+  for (const c of runs) {
+    for (const s of runPattern(spec, c) ?? []) {
       x0 = Math.min(x0, s.x); y0 = Math.min(y0, s.y); x1 = Math.max(x1, s.x + s.l); y1 = Math.max(y1, s.y + s.w)
     }
   }

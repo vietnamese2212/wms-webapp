@@ -980,7 +980,7 @@ export function useUpdateMaterial() {
       units_per_carton?: number | null; shelf_life_days?: number | null
       is_active?: boolean; no_qr_tracking?: boolean; pallet_per_ea?: number | null
       carton_length_mm?: number | null; carton_width_mm?: number | null; carton_height_mm?: number | null
-      max_stack_layers?: number | null; stack_on_top?: boolean
+      max_stack_layers?: number | null; loose_stack_layers?: number | null; stack_on_top?: boolean
       warehouse_pallet_overrides?: import('@/types').WarehousePalletOverride[]
       supplier_shelf_life_overrides?: import('@/types').SupplierShelfLifeOverride[]
     }) => apiClient.put(`/masterdata/materials/${id}`, body).then((r) => r.data.data),

@@ -239,6 +239,7 @@ export interface Material {
   carton_width_mm?:           number | null
   carton_height_mm?:          number | null
   max_stack_layers?:          number | null   // số lớp xếp tối đa 1 chân hàng (null = theo chiều cao xe)
+  loose_stack_layers?:        number | null   // số lớp khi xếp XÁ (xe thùng rời) — null = như max_stack_layers
   stack_on_top?:              boolean         // hàng nhẹ — được xếp TRÊN mã hàng khác (ưu tiên lên nóc)
   base_unit?:                 string | null   // ĐV GỐC (lưu trữ/tính toán sau semantic flip): HOP/BT/KG/EA… — tùy biến
   entry_unit?:                string | null   // ĐV NHẬP LIỆU (chỉ hiển thị): CAR…; hệ số 1 Entry = N Base = units_per_carton
@@ -675,7 +676,7 @@ export interface OutboundItem {
   do_id:              string
   material_id:        string | null
   material_code_raw:  string | null
-  material:           { id: string; material_code: string; short_name: string | null; custom_short_name: string | null; category?: string | null; cartons_per_pallet: number | null; warehouse_pallet_overrides?: WarehousePalletOverride[] | null; weight_kg: number | null; unit?: string | null; no_qr_tracking?: boolean; carton_length_mm?: number | null; carton_width_mm?: number | null; carton_height_mm?: number | null; max_stack_layers?: number | null; stack_on_top?: boolean; is_pallet_carrier?: boolean | null; pallet_color?: string | null; base_unit?: string | null; entry_unit?: string | null; units_per_carton?: number | null } | null
+  material:           { id: string; material_code: string; short_name: string | null; custom_short_name: string | null; category?: string | null; cartons_per_pallet: number | null; warehouse_pallet_overrides?: WarehousePalletOverride[] | null; weight_kg: number | null; unit?: string | null; no_qr_tracking?: boolean; carton_length_mm?: number | null; carton_width_mm?: number | null; carton_height_mm?: number | null; max_stack_layers?: number | null; loose_stack_layers?: number | null; stack_on_top?: boolean; is_pallet_carrier?: boolean | null; pallet_color?: string | null; base_unit?: string | null; entry_unit?: string | null; units_per_carton?: number | null } | null
   cartons_ordered:    number
   od_refs?:           { od_number: string; od_item: string; qty_base?: number }[] | null   // liên kết dòng DO SAP (đơn upload) — rỗng = đơn tay
   boxes_display:      number

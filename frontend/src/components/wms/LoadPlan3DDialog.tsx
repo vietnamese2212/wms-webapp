@@ -20,7 +20,8 @@ import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import {
   computeLoadPlan, GROUP_COLORS, palletizeGroups, palletFitError, palletFloorSlots, palletsTooTall,
-  spreadOnTopOfPallets, DEFAULT_PALLET, cartonBoxOf, type LoadGroup, type LoadPlan, type PalletSpec, type PalletizeInput,
+  spreadOnTopOfPallets, DEFAULT_PALLET, cartonBoxOf, packPallet, spacePallets, spreadToDoor, cartonsPerPalletEstimate,
+  type LoadGroup, type LoadPlan, type PalletSpec, type PalletizeInput, type PalletCarton,
 } from '@/utils/loadPlan'
 import type { GDO } from '@/types'
 
@@ -53,6 +54,36 @@ type PlanGroup = LoadGroup & {
   // Mốc quét ĐẦU TIÊN của mã (scanned_at) — tab Tiến độ xếp lại sơ đồ theo TRÌNH TỰ QUÉT THẬT
   // (user chốt 26/08: "dự toán là dự kiến, tiến độ là lên thực tế — có thể khác nhau")
   firstScanAt?: string | null
+  // Số lớp khi xếp XÁ (Material.loose_stack_layers) — xe thường chồng theo số này, trống = như maxLayers
+  looseLayers?: number | null
+  // Khối PALLET: từng thùng đã xếp trên mặt pallet (`packPallet`) + chỗ tấm gỗ trong khối — vẽ từng thùng
+  cartons?: PalletCarton[]
+  deck?: { x: number; y: number; l: number; w: number }
+}
+
+// Xe thường: chồng theo "Chồng khi xếp xá" của mã (sữa 110ml: pallet 14 lớp, xá 28) — chưa khai thì như pallet
+const looseCap = (g: PlanGroup): PlanGroup => (g.looseLayers ? { ...g, maxLayers: g.looseLayers } : g)
+
+// Thùng/pallet: mã chưa khai mà có cỡ thùng THẬT ⇒ ƯỚC theo cỡ thùng (`palletizeGroups` coi thiếu quy cách là
+// "1 mã = 1 pallet" bất kể số thùng). Cỡ giả định / mã tính theo cái / pallet Loscam ⇒ giữ cách cũ.
+const perPalletOf = (g: PlanGroup, spec: PalletSpec) =>
+  g.cpp ?? (g.isPallet || g.assumed || g.unitless ? null : cartonsPerPalletEstimate(spec, g, g.maxLayers))
+
+// Khối pallet có ruột ⇒ xếp từng thùng theo lớp phẳng phủ kín; khối cao đúng đỉnh thùng thật đã xếp
+function withCartons<T extends LoadGroup>(blocks: T[], src: PlanGroup[], spec: PalletSpec): T[] {
+  const light = new Set(src.filter(g => g.onTop).map(g => g.key))
+  const cap = new Map(src.filter(g => g.maxLayers).map(g => [g.key, g.maxLayers!]))
+  return blocks.map(g => {
+    if (!g.contents) return g
+    const { cartons, deck } = packPallet(spec, g.contents, light, cap)
+    return cartons.length ? { ...g, cartons, deck, h: spec.baseH + Math.max(...cartons.map(c => c.z + c.h)) } : g
+  })
+}
+
+// Toạ độ trên pallet (theo dài × rộng của KHỐI) → toạ độ trên xe; khối đặt XOAY trên xe ⇒ đổi trục
+function onPallet<T extends { x: number; y: number; l: number; w: number }>(b: { x: number; y: number; l: number }, L: number, cs: T[]): T[] {
+  const turned = Math.abs(b.l - L) > 1
+  return cs.map(c => (turned ? { ...c, x: b.x + c.y, y: b.y + c.x, l: c.w, w: c.l } : { ...c, x: b.x + c.x, y: b.y + c.y }))
 }
 
 function disposeChildren(THREE: typeof import('three'), group: import('three').Group) {
@@ -375,6 +406,7 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
           weightKg: it.material?.weight_kg ?? null,
           assumed: !hasDims,
           maxLayers: it.material?.max_stack_layers ?? null,
+          looseLayers: it.material?.loose_stack_layers ?? null,
           onTop: it.material?.stack_on_top ?? false,
           cpp: cppNow,
           isPallet: it.material?.is_pallet_carrier ?? false,
@@ -430,7 +462,7 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
       .filter(g => !onTopActive(g, cartonGroups))
       .map(g => ({
         key: g.key, label: g.label, doKey: g.doKey, doLabel: g.doLabel,
-        cartons: g.count, cartonsPerPallet: g.cpp, isPalletCarrier: g.isPallet,
+        cartons: g.count, cartonsPerPallet: perPalletOf(g, palSpec), isPalletCarrier: g.isPallet,
         weightKg: g.weightKg,
         // Cao pallet tính từ thùng × quy cách — mã chưa khai thì dùng CỠ GIẢ ĐỊNH kèm nhãn
         // (user chốt vòng 7: quy cách 140 vs 216 thùng/pallet phải ra chiều cao KHÁC NHAU,
@@ -447,7 +479,7 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
     const res = palletizeGroups(items, palSpec)
     // Tiến độ theo TỶ LỆ đã xuất của chính mã đó (pallet gộp không quy được về 1 mã → 0)
     const srcByKey = new Map(cartonGroups.map(g => [g.key, g]))
-    const withDone: PlanGroup[] = res.groups.map(g => {
+    const withDone: PlanGroup[] = withCartons(res.groups, cartonGroups, palSpec).map(g => {
       const src = srcByKey.get(g.key.replace(/\|(full|plt)$/, ''))
       const r = src && src.count > 0 ? src.done / src.count : 0
       return {
@@ -470,7 +502,7 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
         .map(g => ({ ...g, onTop: true, topCarton: true }))
       return [...(palletized?.groups ?? []), ...top]
     }
-    return cartonGroups.filter(g => !g.isPallet)
+    return cartonGroups.filter(g => !g.isPallet).map(looseCap)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isPalletTruck, palletized, cartonGroups, placements, whId])
 
@@ -499,11 +531,16 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
     // Thùng "Lên nóc" (topCarton) KHÔNG đi qua thuật toán thùng-sàn (nó dựng tháp lẻ loi khi
     // trộn với pallet): xếp pallet trước (count 0 giữ nguyên CHỈ SỐ nhóm cho nhãn/màu), rồi
     // rải thùng lên MẶT các pallet bằng spreadOnTopOfPallets.
+    // Xe pallet: sàn thừa dàn thành KHE giữa các pallet. Xe thường: trải sàn tới sát cửa khi hàng đã phủ ≥ 75% sàn
+    // (luật 11 lõi — loại xe chưa khai tải trọng nên chưa xét theo % tải).
     const topIdx = groups.map((g, i) => (g.topCarton ? i : -1)).filter(i => i >= 0)
-    if (!topIdx.length) return computeLoadPlan(truck, groups)
-    const base = computeLoadPlan(truck, groups.map(g => (g.topCarton ? { ...g, count: 0 } : g)))
+    if (!topIdx.length) {
+      const p = computeLoadPlan(truck, groups)
+      return isPalletTruck ? spacePallets(p) : spreadToDoor(truck, groups, p, null)
+    }
+    const base = spacePallets(computeLoadPlan(truck, groups.map(g => (g.topCarton ? { ...g, count: 0 } : g))))
     return spreadOnTopOfPallets(base, topIdx, groups)
-  }, [truckOk, truckL, truckW, truckH, groups, palFitErr])
+  }, [truckOk, truckL, truckW, truckH, groups, palFitErr, isPalletTruck])
 
   // ── TAB TIẾN ĐỘ = xếp lại theo TRÌNH TỰ QUÉT THẬT (user chốt 26/08): mã quét trước nằm
   // sâu phía cabin; số lượng = phần ĐÃ quét. Khác hẳn Dự toán — không tô lại vị trí dự kiến. ──
@@ -514,13 +551,13 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
       .map(g => ({ ...g, count: g.done }))
       .sort((a, b) => ((a.firstScanAt ?? '9999') < (b.firstScanAt ?? '9999') ? -1 : 1))
     if (!scanned.length) return null
-    let effGroups: PlanGroup[] = scanned
+    let effGroups: PlanGroup[] = isPalletTruck ? scanned : scanned.map(looseCap)
     if (isPalletTruck && palSpec) {
       const items: PalletizeInput[] = scanned
         .filter(g => !onTopActive(g, scanned))
         .map(g => ({
           key: g.key, label: g.label, doKey: g.doKey, doLabel: g.doLabel,
-          cartons: g.count, cartonsPerPallet: g.cpp, isPalletCarrier: false,
+          cartons: g.count, cartonsPerPallet: perPalletOf(g, palSpec), isPalletCarrier: false,
           weightKg: g.weightKg, carton: { l: g.l, w: g.w, h: g.h }, assumed: g.assumed,
           unitless: g.unitless, layers: g.maxLayers, onTop: g.onTop,
           remPool: g.category && placeOf(g.category) === 'OWN_PALLET'
@@ -528,7 +565,7 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
         }))
       const res = palletizeGroups(items, palSpec)
       const srcByKey = new Map(scanned.map(g => [g.key, g]))
-      const pal: PlanGroup[] = res.groups.map(g => {
+      const pal: PlanGroup[] = withCartons(res.groups, scanned, palSpec).map(g => {
         const src = srcByKey.get(g.key.replace(/\|(full|plt)$/, ''))
         return { ...g, done: g.count, cpp: null, isPallet: false, category: null,
           qty: src?.qty, qtyDone: src?.qtyDone, qtyUnit: src?.qtyUnit }
@@ -544,8 +581,9 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
     effGroups = effGroups.map((g, i) => ({ ...g, doKey: `${String(i).padStart(3, '0')}|${g.doKey}` }))
     const truck = { length: truckL, width: truckW, height: truckH }
     const topIdx = effGroups.map((g, i) => (g.topCarton ? i : -1)).filter(i => i >= 0)
-    const base = computeLoadPlan(truck, topIdx.length
+    const base0 = computeLoadPlan(truck, topIdx.length
       ? effGroups.map(g => (g.topCarton ? { ...g, count: 0 } : g)) : effGroups)
+    const base = isPalletTruck ? spacePallets(base0) : base0
     const p = topIdx.length ? spreadOnTopOfPallets(base, topIdx, effGroups) : base
     return { plan: p, groups: effGroups }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -559,6 +597,8 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
   useEffect(() => { setMaxStep(plan?.stepCount ?? 0) }, [plan?.stepCount])
 
   const assumedCount = groups.filter(g => g.assumed).length
+  // Xe pallet: mã chưa khai Thùng/Pallet đang được ƯỚC theo cỡ thùng (`perPalletOf`)
+  const guessedPal = isPalletTruck && palSpec ? cartonGroups.filter(g => g.cpp == null && perPalletOf(g, palSpec) != null).length : 0
   const sumDone = groups.reduce((s, g) => s + g.done, 0)
   // Chế độ xe pallet: mỗi KHỐI trên sơ đồ là 1 PALLET — trừ loại "Lên nóc" là THÙNG rời;
   // có lẫn cả hai thì chữ chung dùng "khối", nhãn từng nhóm vẫn nói đúng pallet/thùng.
@@ -729,19 +769,30 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
       buckets.get(bk)!.boxes.push({ b })
     })
 
+    // Thùng trên pallet tô theo MÃ (dòng hàng): màu của khối riêng của mã đó; mã chỉ nằm trong pallet gộp thì màu kế tiếp
+    const keyColor = new Map<string, string>()
+    dGroups.forEach((g, i) => { const k = g.key.replace(/\|(full|plt)$/, ''); if (!keyColor.has(k)) keyColor.set(k, GROUP_COLORS[i % GROUP_COLORS.length]) })
+    const colorOfKey = (k: string) => {
+      if (!keyColor.has(k)) keyColor.set(k, GROUP_COLORS[(dGroups.length + keyColor.size) % GROUP_COLORS.length])
+      return keyColor.get(k)!
+    }
+
     // Spotlight: có mã đang CHỌN từ panel → khối khác chìm mờ, khối chọn nổi
     const spotlight = selectedKeys.size > 0
     const visibleByGroup = new Map<number, { cx: number; cy: number; top: number; n: number }>()
     for (const { boxes, gi, kind } of buckets.values()) {
-      const color = new THREE.Color(GROUP_COLORS[gi % GROUP_COLORS.length])
       const dimmed = spotlight && !selectedKeys.has(dGroups[gi].key)
-      const mat = new THREE.MeshLambertMaterial({
-        color,
-        transparent: dimmed || kind === 'done',
-        opacity: dimmed ? 0.07 : kind === 'done' ? 0.28 : 1,
-        emissive: !dimmed && (kind === 'current' || (spotlight && selectedKeys.has(dGroups[gi].key))) ? color : new THREE.Color(0x000000),
-        emissiveIntensity: kind === 'current' ? 0.45 : spotlight && !dimmed ? 0.2 : 0,
-      })
+      const mkMat = (hex: string) => {
+        const color = new THREE.Color(hex)
+        return new THREE.MeshLambertMaterial({
+          color,
+          transparent: dimmed || kind === 'done',
+          opacity: dimmed ? 0.07 : kind === 'done' ? 0.28 : 1,
+          emissive: !dimmed && (kind === 'current' || (spotlight && selectedKeys.has(dGroups[gi].key))) ? color : new THREE.Color(0x000000),
+          emissiveIntensity: kind === 'current' ? 0.45 : spotlight && !dimmed ? 0.2 : 0,
+        })
+      }
+      const groupMat = () => mkMat(GROUP_COLORS[gi % GROUP_COLORS.length])   // tạo khi dùng — vật liệu thừa không ai dọn
       // ĐẾ PALLET (26/08): khối pallet vẽ 2 phần — đế MÀU RIÊNG đồng nhất (phân biệt rõ, user
       // chốt) + hàng phía trên mang màu nhóm. Loscam rỗng: cả khối là đế. Khối thường: 1 phần.
       const base = dGroups[gi].base
@@ -769,15 +820,18 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
         })
         // PALLET 4 CỔNG (user chốt 26/08): đế vẽ 2 tầng — MẶT pallet (ván trên) + 9 CHÂN xếp
         // lưới 3×3, để HỞ LỖ càng xe nâng ở CẢ 4 PHÍA cho trực quan, thay cho khối đặc cũ.
+        // Khối có ruột: đế đúng chỗ CHÂN pallet trong khối (khối rộng hơn chân khi thùng chờm mép).
+        const g = dGroups[gi]
+        const decks = g.deck ? boxes.map(({ b }) => ({ b: { ...b, ...onPallet(b, g.l, [g.deck!])[0] } })) : boxes
         const deckH = Math.max(20, baseH * 0.35)
         const blockH = baseH - deckH
-        mkInst(new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), baseMat, boxes.length),
-          boxes, blockH, () => deckH)
+        mkInst(new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), baseMat, decks.length),
+          decks, blockH, () => deckH)
         if (blockH > 4) {
-          const legs = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), baseMat, boxes.length * 9)
+          const legs = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), baseMat, decks.length * 9)
           const lm = new THREE.Matrix4()
           let li = 0
-          for (const { b } of boxes) {
+          for (const { b } of decks) {
             const bl = Math.max(40, b.l * 0.16), bw = Math.max(40, b.w * 0.19)   // cỡ chân ~ Loscam 3×3
             const xs = [b.x + bl / 2 + 5, b.x + b.l / 2, b.x + b.l - bl / 2 - 5]
             const ys = [b.y + bw / 2 + 5, b.y + b.w / 2, b.y + b.w - bw / 2 - 5]
@@ -790,11 +844,20 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
           legs.instanceMatrix.needsUpdate = true
           boxGroup.add(legs)
         }
-        if (goods.length)
-          mkInst(new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), mat, goods.length),
+        if (g.cartons?.length) {
+          // TỪNG THÙNG THẬT đã xếp (luật 12 lõi) — mỗi mã một màu, pallet gộp thấy rõ mã nào nằm đâu
+          const byKey = new Map<string, typeof boxes>()
+          for (const { b } of goods) for (const c of onPallet(b, g.l, g.cartons)) {
+            if (!byKey.has(c.key)) byKey.set(c.key, [])
+            byKey.get(c.key)!.push({ b: { ...b, x: c.x, y: c.y, z: b.z + baseH + c.z, l: c.l, w: c.w, h: c.h } })
+          }
+          for (const [k, list] of byKey)
+            mkInst(new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), mkMat(colorOfKey(k)), list.length), list, 0, bh => bh)
+        } else if (goods.length)
+          mkInst(new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), groupMat(), goods.length),
             goods, baseH, bh => bh - baseH)
       } else {
-        mkInst(new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), mat, boxes.length),
+        mkInst(new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), groupMat(), boxes.length),
           boxes, 0, bh => bh)
       }
       boxes.forEach(({ b }) => {
@@ -1242,6 +1305,11 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
           {assumedCount > 0 && (
             <div className="rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2 text-[11px] text-amber-700">
               <b>{assumedCount} mã chưa khai kích thước thùng</b> — đang ƯỚC LƯỢNG cỡ: mã bán theo cái có khai quy cách <i>cái/pallet</i> thì suy cỡ 1 cái từ quy cách đó, còn lại dùng cỡ giả định {assumedCarton.l}×{assumedCarton.w}×{assumedCarton.h} mm. Khai ở Mã hàng → Thùng D×R×C để sơ đồ đúng thật.
+            </div>
+          )}
+          {guessedPal > 0 && (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2 text-[11px] text-amber-700">
+              <b>{guessedPal} mã chưa khai Thùng/Pallet</b> — đang ước theo cỡ thùng (gọn trong chân pallet × số lớp vừa trần). Khai ở Mã hàng → Thùng/Pallet để số pallet đúng thật.
             </div>
           )}
 

@@ -16,6 +16,8 @@ _(chưa ghi nhận)_
 
 Mã hàng (+ Nhà sản xuất)
 
+**Quy cách xếp xe 3D (30/10):** `max_stack_layers` (Số lớp tối đa — xe pallet), `loose_stack_layers` (Chồng khi xếp xá — xe thùng rời; trống = như Số lớp tối đa, sữa 110ml: pallet 14 / xá 28), `stack_on_top` (hàng nhẹ). Form, chi tiết mã và file Excel (cột "Chồng xá (lớp)") cùng một luật; sơ đồ đọc qua chi tiết chuyến xuất (`outboundController` chọn cột).
+
 ## Actions
 
 view, create, edit, delete 

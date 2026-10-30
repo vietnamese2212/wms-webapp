@@ -212,7 +212,7 @@ const NON_NEGATIVE_FIELDS: Record<string, string> = {
   weight_kg: 'Khối lượng', cartons_per_pallet: 'Thùng/Pallet', cartons_per_pallet_mn: 'Thùng/Pallet (MN)',
   units_per_carton: 'Hộp/Thùng', pallet_per_ea: 'Pallet/EA', shelf_life_days: 'Hạn dùng (ngày)',
   carton_length_mm: 'Dài thùng', carton_width_mm: 'Rộng thùng', carton_height_mm: 'Cao thùng',
-  max_stack_layers: 'Số lớp chồng tối đa',
+  max_stack_layers: 'Số lớp chồng tối đa', loose_stack_layers: 'Chồng khi xếp xá',
 }
 function negativeNumberError(body: Record<string, unknown>): string | null {
   for (const [key, label] of Object.entries(NON_NEGATIVE_FIELDS)) {
@@ -232,7 +232,7 @@ export async function createMaterial(req: Request, res: Response) {
       weight_kg, cartons_per_pallet, cartons_per_pallet_mn,
       units_per_carton, pallet_per_ea, shelf_life_days, storage_category, old_code, image_url,
       warehouse_pallet_overrides, supplier_shelf_life_overrides, batch_prefix,
-      carton_length_mm, carton_width_mm, carton_height_mm, max_stack_layers, stack_on_top,
+      carton_length_mm, carton_width_mm, carton_height_mm, max_stack_layers, loose_stack_layers, stack_on_top,
       base_unit, entry_unit, is_non_stock, is_pallet_carrier,
     } = req.body
     if (!material_code || !material_description)
@@ -274,6 +274,7 @@ export async function createMaterial(req: Request, res: Response) {
         carton_width_mm:  carton_width_mm  != null ? Number(carton_width_mm)  : null,
         carton_height_mm: carton_height_mm != null ? Number(carton_height_mm) : null,
         max_stack_layers: max_stack_layers != null ? Number(max_stack_layers) : null,
+        loose_stack_layers: loose_stack_layers != null ? Number(loose_stack_layers) : null,
         stack_on_top:     Boolean(stack_on_top),
         base_unit: base_unit ? String(base_unit).trim().toUpperCase() : null,
         entry_unit: entry_unit ? String(entry_unit).trim().toUpperCase() : null,
@@ -313,7 +314,7 @@ export async function updateMaterial(req: Request, res: Response) {
       weight_kg, cartons_per_pallet, cartons_per_pallet_mn,
       units_per_carton, pallet_per_ea, shelf_life_days, storage_category, old_code, image_url,
       warehouse_pallet_overrides, supplier_shelf_life_overrides, batch_prefix,
-      carton_length_mm, carton_width_mm, carton_height_mm, max_stack_layers, stack_on_top,
+      carton_length_mm, carton_width_mm, carton_height_mm, max_stack_layers, loose_stack_layers, stack_on_top,
       base_unit, entry_unit, is_non_stock, is_pallet_carrier,
     } = req.body
 
@@ -371,6 +372,7 @@ export async function updateMaterial(req: Request, res: Response) {
     if (carton_width_mm  !== undefined) patch.carton_width_mm  = carton_width_mm  != null ? Number(carton_width_mm)  : null
     if (carton_height_mm !== undefined) patch.carton_height_mm = carton_height_mm != null ? Number(carton_height_mm) : null
     if (max_stack_layers !== undefined) patch.max_stack_layers = max_stack_layers != null ? Number(max_stack_layers) : null
+    if (loose_stack_layers !== undefined) patch.loose_stack_layers = loose_stack_layers != null ? Number(loose_stack_layers) : null
     if (stack_on_top     !== undefined) patch.stack_on_top     = Boolean(stack_on_top)
     if (base_unit !== undefined)  patch.base_unit  = base_unit ? String(base_unit).trim().toUpperCase() : null
     if (entry_unit !== undefined) patch.entry_unit = entry_unit ? String(entry_unit).trim().toUpperCase() : null
@@ -450,6 +452,7 @@ const M_FIELDS: FieldDef[] = [
   { key: 'carton_width_mm',      label: 'Thùng rộng (mm)',    aliases: ['thung rong mm', 'thung rong'] },
   { key: 'carton_height_mm',     label: 'Thùng cao (mm)',     aliases: ['thung cao mm', 'thung cao'] },
   { key: 'max_stack_layers',     label: 'Số lớp tối đa',      aliases: ['so lop toi da'] },
+  { key: 'loose_stack_layers',   label: 'Chồng xá (lớp)',     aliases: ['chong xa lop', 'chong xa', 'chong khi xep xa'] },
   { key: 'stack_on_top',         label: 'Xếp trên hàng khác', aliases: ['xep tren hang khac 1 0', 'xep tren hang khac'] },
   { key: 'base_unit',            label: 'Base Unit',          aliases: ['base unit'] },
   { key: 'entry_unit',           label: 'Entry Unit',         aliases: ['entry unit'] },
@@ -496,11 +499,11 @@ export async function uploadExcel(req: Request, res: Response) {
       pallet_per_ea: number | null; shelf_life_days: number | null; notes: string | null
       base_unit: string | null; entry_unit: string | null; batch_prefix: string | null
       carton_length_mm: number | null; carton_width_mm: number | null; carton_height_mm: number | null
-      max_stack_layers: number | null; stack_on_top: boolean
+      max_stack_layers: number | null; loose_stack_layers: number | null; stack_on_top: boolean
       no_qr_tracking: boolean; is_non_stock: boolean; is_pallet_carrier: boolean
     }
     const existing = await fetchAllRowsParallel(() => supabase.from('Material').select(
-      'id, material_code, material_description, short_name, custom_short_name, category, product_type, weight_kg, cartons_per_pallet, units_per_carton, pallet_per_ea, shelf_life_days, notes, base_unit, entry_unit, batch_prefix, carton_length_mm, carton_width_mm, carton_height_mm, max_stack_layers, stack_on_top, no_qr_tracking, is_non_stock, is_pallet_carrier'
+      'id, material_code, material_description, short_name, custom_short_name, category, product_type, weight_kg, cartons_per_pallet, units_per_carton, pallet_per_ea, shelf_life_days, notes, base_unit, entry_unit, batch_prefix, carton_length_mm, carton_width_mm, carton_height_mm, max_stack_layers, loose_stack_layers, stack_on_top, no_qr_tracking, is_non_stock, is_pallet_carrier'
     )) as ExistingMat[]
     const existingByCode = new Map<string, ExistingMat>()
     for (const m of existing) existingByCode.set(String(m.material_code).trim(), m)
@@ -536,6 +539,7 @@ export async function uploadExcel(req: Request, res: Response) {
       const cWid         = mNum(row.carton_width_mm)
       const cHei         = mNum(row.carton_height_mm)
       const maxLayers    = mInt(row.max_stack_layers)
+      const looseLayers  = mQtyInt(row.loose_stack_layers)   // chồng khi xếp xá — trống = như số lớp pallet
       // Xếp trên hàng khác: 1/x/có/yes → true; 0/không/no → false; ô trống → giữ nguyên
       const onTop        = mBool(row.stack_on_top)
       const noQr         = mBool(row.no_qr_tracking)      // mã không quản QR (kho QTY, hàng không tem)
@@ -561,6 +565,7 @@ export async function uploadExcel(req: Request, res: Response) {
         if (cWid         != null) base.carton_width_mm  = cWid
         if (cHei         != null) base.carton_height_mm = cHei
         if (maxLayers    != null) base.max_stack_layers = maxLayers
+        if (looseLayers  != null) base.loose_stack_layers = looseLayers
         if (onTop        != null) base.stack_on_top = onTop
         if (baseUnit     != null) base.base_unit = baseUnit
         if (entryUnit    != null) base.entry_unit = entryUnit
@@ -611,6 +616,7 @@ export async function uploadExcel(req: Request, res: Response) {
           base_unit: dbRow!.base_unit, entry_unit: dbRow!.entry_unit, batch_prefix: dbRow!.batch_prefix,
           carton_length_mm: dbRow!.carton_length_mm, carton_width_mm: dbRow!.carton_width_mm,
           carton_height_mm: dbRow!.carton_height_mm, max_stack_layers: dbRow!.max_stack_layers,
+          loose_stack_layers: dbRow!.loose_stack_layers,
           stack_on_top: dbRow!.stack_on_top, no_qr_tracking: dbRow!.no_qr_tracking,
           is_non_stock: dbRow!.is_non_stock, is_pallet_carrier: dbRow!.is_pallet_carrier,
         }
@@ -625,7 +631,7 @@ export async function uploadExcel(req: Request, res: Response) {
           cartons_per_pallet: cpp, units_per_carton: upc, pallet_per_ea: ppe,
           shelf_life_days: sld, notes, batch_prefix: batchPrefix,
           carton_length_mm: cLen, carton_width_mm: cWid, carton_height_mm: cHei,
-          max_stack_layers: maxLayers, stack_on_top: onTop ?? false,
+          max_stack_layers: maxLayers, loose_stack_layers: looseLayers, stack_on_top: onTop ?? false,
           base_unit: baseUnit, entry_unit: entryUnit,
           no_qr_tracking: noQr ?? false, is_non_stock: nonStock ?? false, is_pallet_carrier: palletCarry ?? false,
           is_active: true, created_at: now, updated_at: now,

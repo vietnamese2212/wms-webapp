@@ -83,6 +83,7 @@ const EMPTY_FORM = {
   carton_width_mm: '',
   carton_height_mm: '',
   max_stack_layers: '',
+  loose_stack_layers: '',
   old_code: '',
   batch_prefix: '',
   notes: '',
@@ -274,6 +275,10 @@ export default function Materials() {
     labels.push('Không quản QR (1/0)', 'Mã phi hàng hóa (1/0)', 'Pallet mang hàng (1/0)')
     keys.push('no_qr_tracking', 'is_non_stock', 'is_pallet_carrier')
     ex.push(0, 0, 0)
+    // Xe xá chồng khác pallet — trống = như "Số lớp tối đa"
+    labels.push('Chồng xá (lớp)')
+    keys.push('loose_stack_layers')
+    ex.push('')
     const ws = XLSX.utils.aoa_to_sheet([labels, keys, ex])
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'MaHang')
@@ -314,6 +319,7 @@ export default function Materials() {
       carton_width_mm:      formatDecimalForInput(mat.carton_width_mm, decSep),
       carton_height_mm:     formatDecimalForInput(mat.carton_height_mm, decSep),
       max_stack_layers:     mat.max_stack_layers    != null ? String(mat.max_stack_layers)    : '',
+      loose_stack_layers:   mat.loose_stack_layers  != null ? String(mat.loose_stack_layers)  : '',
       old_code:             mat.old_code ?? '',
       batch_prefix:         mat.batch_prefix ?? '',
       notes:                mat.notes ?? '',
@@ -369,6 +375,7 @@ export default function Materials() {
         carton_width_mm:               parseDecimalInput(form.carton_width_mm, decSep),
         carton_height_mm:              parseDecimalInput(form.carton_height_mm, decSep),
         max_stack_layers:              form.max_stack_layers ? Number(form.max_stack_layers) : null,
+        loose_stack_layers:            form.loose_stack_layers ? Number(form.loose_stack_layers) : null,
         stack_on_top:                  stackOnTop,
         old_code:                      form.old_code.trim() || undefined,
         batch_prefix:                  form.batch_prefix.trim().toUpperCase() || undefined,
@@ -864,6 +871,8 @@ export default function Materials() {
                     <DRow label="Thùng D×R×C"        value={(detailMat.carton_length_mm != null || detailMat.carton_width_mm != null || detailMat.carton_height_mm != null)
                       ? `${detailMat.carton_length_mm ?? '?'} × ${detailMat.carton_width_mm ?? '?'} × ${detailMat.carton_height_mm ?? '?'} mm` : null} />
                     <DRow label="Số lớp xếp tối đa"  value={detailMat.max_stack_layers != null ? `${detailMat.max_stack_layers} lớp` : <span className="text-slate-400">∞ (theo trần xe)</span>} />
+                    <DRow label="Chồng khi xếp xá"   value={detailMat.loose_stack_layers != null ? `${detailMat.loose_stack_layers} lớp`
+                      : <span className="text-slate-400">Theo số lớp tối đa: {detailMat.max_stack_layers != null ? `${detailMat.max_stack_layers} lớp` : '∞'}</span>} />
                     <DRow label="Xếp trên hàng khác" value={detailMat.stack_on_top ? 'Có (hàng nhẹ được lên nóc)' : 'Không'} />
                   </div>
                 </div>
@@ -1192,6 +1201,13 @@ export default function Materials() {
                   Xếp trên hàng khác (hàng nhẹ)
                 </label>
               </div>
+            </div>
+            {/* Xe XÁ chồng được cao hơn trên pallet (sữa 110ml: pallet 14 lớp, xá 28) — trống = như số lớp tối đa */}
+            <div className="grid grid-cols-3 items-center gap-2">
+              <Label className="text-xs text-right">Chồng khi xếp xá</Label>
+              <Input type="number" min={1} className="col-span-2 h-7 text-xs w-24" value={form.loose_stack_layers}
+                onChange={e => setField('loose_stack_layers', e.target.value)}
+                placeholder={`Theo số lớp tối đa: ${form.max_stack_layers || '∞'}`} />
             </div>
 
             {/* HSD */}

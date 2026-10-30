@@ -4,7 +4,8 @@
 import { describe, it, expect } from 'vitest'
 import {
   computeLoadPlan, palletizeGroups, levelFill, palletPattern, layerPattern,
-  type LoadGroup, type PlacedBox, type PalletSpec,
+  spreadToDoor, spreadTarget, packPallet, spacePallets, cartonsPerPalletEstimate, cartonsPerLayer,
+  type LoadGroup, type PlacedBox, type PalletSpec, type PalletizeInput,
 } from '../../../frontend/src/utils/loadPlan'
 
 const grp = (key: string, doKey: string, count: number, l: number, w: number, h: number, extra: Partial<LoadGroup> = {}): LoadGroup => ({
@@ -169,5 +170,99 @@ describe('loadPlan — hình khối vuông vắn', () => {
       expect(b.y + b.w).toBeLessThanOrEqual(1020 + 10)
       expect(b.z % 100).toBe(0)
     }
+  })
+})
+
+// Luật 11-13 (30/10 — chuyển từ MalCargo về lõi): trải sàn tới cửa · từng thùng trên pallet · khe pallet · ước thùng/pallet.
+// Số liệu = 2 chuyến mẫu của MalCargo (container 40ft xếp xá; xe pallet 15 tấn 6 mã).
+describe('loadPlan — luật 11-13 (trải tới cửa, thùng trên pallet, khe pallet, ước thùng/pallet)', () => {
+  const PAL: PalletSpec = { l: 1200, w: 1000, h: 1650, baseH: 150, baseColor: '#a07a4e', weightKg: 25 }
+  const minus = (n: number) => (b: { x: number; l: number }) => n - (b.x + b.l)
+
+  it('bốc xá đủ tải ⇒ trải tới SÁT CỬA, không bỏ thùng, không chồng lấn (container 40ft, 94% tải)', () => {
+    const truck = { length: 12032, width: 2352, height: 2393 }
+    const gs = [
+      grp('ST180', 'D1', 1350, 420, 255, 130, { maxLayers: 11 }),
+      grp('ST110', 'D1', 1400, 420, 255, 100, { maxLayers: 28 }),   // chồng khi xếp xá 28 (pallet 14)
+      grp('TUI', 'D1', 1600, 310, 130, 130, { maxLayers: 8, onTop: true }),
+    ]
+    const base = computeLoadPlan(truck, gs)
+    const p = spreadToDoor(truck, gs, base, 94)
+    const gap = Math.min(...p.placed.map(minus(truck.length)))
+    expect(Math.min(...base.placed.map(minus(truck.length)))).toBeGreaterThan(255 * 1.5)   // trước: chừa khoảng ở cửa
+    expect(gap).toBeLessThan(255 * 1.5)
+    expect(p.placedCount).toBe(p.totalCount)
+    expect(overlaps(p.placed)).toBe(0)
+    // tải ít + sàn chưa tới 75% ⇒ để nguyên
+    const few = [grp('ST180', 'D1', 150, 420, 255, 130, { maxLayers: 11 })]
+    const b2 = computeLoadPlan(truck, few)
+    expect(spreadToDoor(truck, few, b2, null)).toBe(b2)
+    expect(spreadTarget(50, 0)).toBeCloseTo(58.8, 0)
+    expect(spreadTarget(null, 80)).toBe(100)
+  })
+
+  // Đơn mẫu xe pallet: 6 mã, phần lẻ dồn pallet gộp, thạch túi (nhẹ) trên cùng
+  const items: PalletizeInput[] = ([
+    ['ST110', 740, 420, 255, 100, 140, 14, false], ['C100', 479, 430, 250, 100, 143, 14, false],
+    ['C85', 612, 357, 276, 105, 143, 13, false], ['TH170', 40, 430, 250, 130, 100, 11, false],
+    ['ST180', 140, 420, 255, 130, 110, 11, false], ['TUI', 472, 310, 130, 130, 216, 8, true],
+  ] as const).map(([k, n, l, w, h, cpp, layers, onTop]) => ({
+    key: `D1|${k}`, label: k, doKey: 'D1', doLabel: 'D1', cartons: n, cartonsPerPallet: cpp, layers, isPalletCarrier: false,
+    weightKg: 5, carton: { l, w, h }, assumed: false, unitless: false, onTop,
+  }))
+
+  it('packPallet: đủ thùng, nằm trong khối, không chồng lấn, không thùng nào treo (đỡ ≥ 50% đáy), cột cùng mã ≤ số lớp', () => {
+    const res = palletizeGroups(items, PAL)
+    const light = new Set(items.filter(i => i.onTop).map(i => i.key))
+    const cap = new Map(items.map(i => [i.key, i.layers!]))
+    let mixed = 0
+    for (const g of res.groups) {
+      if (!g.contents) continue
+      const { cartons } = packPallet(PAL, g.contents, light, cap)
+      if (new Set(g.contents.map(c => c.key)).size > 1) mixed++
+      expect(cartons.length).toBe(g.contents.reduce((s, c) => s + c.n, 0))
+      for (const c of cartons) {
+        expect(c.x).toBeGreaterThanOrEqual(-1); expect(c.y).toBeGreaterThanOrEqual(-1)
+        expect(c.x + c.l).toBeLessThanOrEqual(g.l + 1); expect(c.y + c.w).toBeLessThanOrEqual(g.w + 1)
+        expect(PAL.baseH + c.z + c.h).toBeLessThanOrEqual(PAL.h + 60)
+      }
+      const boxes = cartons.map(c => ({ ...c, group: 0, step: 0 }))
+      expect(overlaps(boxes as PlacedBox[])).toBe(0)
+      for (const c of cartons) {
+        if (c.z === 0) continue
+        const under = cartons.filter(d => d !== c && Math.abs(d.z + d.h - c.z) <= 35)
+        const sup = under.reduce((s, d) => s + Math.max(0, Math.min(c.x + c.l, d.x + d.l) - Math.max(c.x, d.x)) * Math.max(0, Math.min(c.y + c.w, d.y + d.w) - Math.max(c.y, d.y)), 0)
+        expect(sup / (c.l * c.w)).toBeGreaterThanOrEqual(light.has(c.key) ? 0.3 : 0.5)
+      }
+      // hàng nhẹ không nằm dưới hàng thường
+      const topHeavy = Math.max(-1, ...cartons.filter(c => !light.has(c.key)).map(c => c.z))
+      const lowLight = Math.min(Infinity, ...cartons.filter(c => light.has(c.key)).map(c => c.z))
+      if (lowLight < Infinity) expect(lowLight).toBeGreaterThanOrEqual(topHeavy)
+    }
+    expect(mixed).toBeGreaterThan(0)   // có pallet gộp để kiểm
+  })
+
+  it('spacePallets: sàn thừa thành khe giữa các pallet — không chồng lấn, không ra ngoài thùng xe, không bớt pallet', () => {
+    const truck = { length: 9500, width: 2500, height: 2600 }
+    const res = palletizeGroups(items, PAL)
+    const base = computeLoadPlan(truck, res.groups)
+    const p = spacePallets(base)
+    expect(p.placed.length).toBe(base.placed.length)
+    expect(overlaps(p.placed)).toBe(0)
+    for (const b of p.placed) {
+      expect(b.x + b.l).toBeLessThanOrEqual(truck.length + 1)
+      expect(b.y + b.w).toBeLessThanOrEqual(truck.width + 1)
+    }
+    const gaps = p.placed.filter(b => p.placed.some(a => a !== b && a.x + a.l <= b.x + 1 && a.x + a.l > b.x - 100 && Math.min(a.y + a.w, b.y + b.w) > Math.max(a.y, b.y)))
+      .map(b => Math.min(...p.placed.filter(a => a !== b && a.x + a.l <= b.x + 1 && Math.min(a.y + a.w, b.y + b.w) > Math.max(a.y, b.y)).map(a => b.x - a.x - a.l)))
+    expect(Math.max(...gaps)).toBeGreaterThan(0)
+    expect(Math.max(...gaps)).toBeLessThanOrEqual(80 + 1)
+  })
+
+  it('cartonsPerPalletEstimate: mã chưa khai thùng/pallet ⇒ gọn trong chân × số lớp vừa trần (≤ số lớp khai)', () => {
+    const per = cartonsPerLayer(PAL, { l: 420, w: 255 })
+    expect(cartonsPerPalletEstimate(PAL, { l: 420, w: 255, h: 130 }, null)).toBe(per * 11)   // 1500 ÷ 130 = 11 lớp
+    expect(cartonsPerPalletEstimate(PAL, { l: 420, w: 255, h: 130 }, 6)).toBe(per * 6)
+    expect(cartonsPerPalletEstimate(PAL, { l: 1500, w: 1300, h: 130 }, null)).toBeNull()      // không nằm nổi trên chân
   })
 })

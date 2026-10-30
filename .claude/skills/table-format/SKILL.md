@@ -194,6 +194,7 @@ Màn 24" và màn 1280 phải thấy cùng các hàng, cùng thứ tự; chỉ b
 - Thông tin dài theo dữ liệu (tỷ trọng, danh sách theo loại) ⇒ MỘT ô bấm mở chi tiết (`DropdownMenu` nội dung bảng), không trải ngang bắt cuộn.
 - Dưới 1280 vẫn wrap như cũ (máy tính bảng / điện thoại — mục 19 + luật hàng nút CLAUDE.md).
 - **Đo trước khi báo xong:** `PLAYWRIGHT_DIR=… node scripts/qa/ui-layout-sync.mjs <đường-dẫn>` — 1280 / 1536 / 1920 phải cùng số hàng + cùng đỉnh bảng. Bộ đo chỉ thấy trạng thái mặc định; màn có trạng thái sâu (chọn kho, mở kế hoạch, có lọc) thì tự đo thêm ở đúng trạng thái đó.
+- **Điện thoại + form (29/10, lớp C4):** `PLAYWRIGHT_DIR=… node scripts/qa/ui-mobile-sweep.mjs <đường-dẫn>` — 1280 / 390 / 360 giả lập cảm ứng, tự mở các form Tạo / Thêm của trang (chặn lệnh ghi), đo đè nhau · nút bị che / ra ngoài màn · chữ bẻ dọc / cụt / thò. Khuôn hay gặp: phần tử có sàn 44 px (`min-h-11`, `.touch-target`) đặt trong khung `h-7/h-8` cố định ⇒ thò xuống đè ô dưới; khung `flex-1 min-h-0` đứng cạnh khung không co ⇒ màn thấp ép về 0, nội dung tràn đè khung bên.
 
 ## 20. Hiến pháp UI 24/08 — đồng bộ + mobile density (user chốt, áp khi tạo/sửa BẤT KỲ trang nào)
 - **Badge trạng thái = `StatusBadge`** (`components/shared/StatusBadge.tsx`) — tone theo NGỮ NGHĨA: green=hoạt động/OK · blue=hoàn thành · amber=đang chạy/dở · red=chặn/tạm dừng/lỗi · slate=chờ/trung tính · purple=phân loại đặc thù. KHÔNG tự chế `bg-*-100 text-*-700`, KHÔNG Badge nền đặc kiểu button cho trạng thái, KHÔNG trộn outline/filled tùy hứng.

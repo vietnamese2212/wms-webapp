@@ -67,7 +67,9 @@ export function SingleSelect({
   function close() { setOpen(false); setSearch(''); onSearchChange?.('') }
 
   return (
-    <div className={triggerClassName}>
+    // max-sm:!h-auto: nơi gọi hay đặt h-7/h-8/h-9 cố định cho khung, mà nút trên điện thoại cao 44 px ⇒ nút thò ra ngoài khung,
+    // đè lên ô bên dưới trong form (rà 29/10). Điện thoại để khung cao theo nút; máy tính giữ chiều cao nơi gọi đặt.
+    <div className={`${triggerClassName} max-sm:!h-auto`}>
       <div className="relative">
         <button
           ref={triggerRef}

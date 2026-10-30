@@ -310,7 +310,8 @@ function TraceGuide({ isV2 }: { isV2: boolean }) {
               <TableRow key={r.k}>
                 <TableCell className={TD}>{r.dir}</TableCell>
                 <TableCell className={`${TD} font-semibold`}>{r.k}</TableCell>
-                <TableCell className={`${TD} !whitespace-normal`}>{r.q}</TableCell>
+                {/* min-w: cột duy nhất được xuống dòng — không có sàn thì cột Ví dụ (nowrap) ép nó còn 60 px, bẻ 8 dòng trên điện thoại (rà 29/10) */}
+                <TableCell className={`${TD} !whitespace-normal min-w-[12rem]`}>{r.q}</TableCell>
                 <TableCell className={`${TD} font-mono text-slate-500`}>{r.ex}</TableCell>
               </TableRow>
             ))}

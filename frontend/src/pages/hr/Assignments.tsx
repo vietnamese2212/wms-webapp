@@ -82,11 +82,12 @@ export default function Assignments() {
   return (
     <div className="flex flex-col h-full sm:p-3">
       <div className="flex flex-col flex-1 min-h-0 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm">
-        <div className="border-b border-slate-200 px-3 py-2.5 sm:rounded-t-xl flex items-center gap-3">
-          <h1 className="text-base font-semibold text-slate-800">Phân công lịch làm việc</h1>
+        {/* flex-wrap + nhãn tab nowrap: 360 px không đủ chỗ cho tiêu đề + 3 tab ⇒ trước đây "Quy tắc ca" bẻ 3 dòng (rà 29/10); nay cụm tab xuống hàng */}
+        <div className="border-b border-slate-200 px-3 py-2.5 sm:rounded-t-xl flex items-center gap-x-3 gap-y-2 flex-wrap xl:flex-nowrap">
+          <h1 className="text-base font-semibold text-slate-800 whitespace-nowrap">Phân công lịch làm việc</h1>
           <div className="flex rounded-lg border border-slate-200 overflow-hidden text-xs font-medium">
             {tabs.map((t, i) => (
-              <button key={t.key} onClick={() => setTab(t.key)} className={`px-3 py-1.5 ${i > 0 ? 'border-l border-slate-200 ' : ''}${tab === t.key ? 'bg-sky-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}>{t.label}</button>
+              <button key={t.key} onClick={() => setTab(t.key)} className={`px-3 py-1.5 whitespace-nowrap ${i > 0 ? 'border-l border-slate-200 ' : ''}${tab === t.key ? 'bg-sky-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}>{t.label}</button>
             ))}
           </div>
         </div>

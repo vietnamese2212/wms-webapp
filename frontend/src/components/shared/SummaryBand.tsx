@@ -73,7 +73,9 @@ export function SummaryBand({ tiles, className, compact, inline }: { tiles: Band
               </span>
             )}
           </div>
-          <div className={`font-semibold leading-tight tabular-nums whitespace-nowrap ${compact ? 'text-xs' : 'text-xs sm:text-base'} ${t.danger ? 'text-red-300' : t.accent ? 'text-amber-300' : 'text-white'}`}>
+          {/* Điện thoại cho XUỐNG DÒNG (rà 29/10): giá trị là CHỮ ("Mọi kho trong phạm vi" ở Cước) nowrap thì thò sang ô bên 18 px ở 360;
+              con số không có khoảng trắng nên vẫn nguyên một dòng, không bị cắt. Desktop giữ một dòng như cũ. */}
+          <div className={`font-semibold leading-tight tabular-nums sm:whitespace-nowrap ${compact ? 'text-xs' : 'text-xs sm:text-base'} ${t.danger ? 'text-red-300' : t.accent ? 'text-amber-300' : 'text-white'}`}>
             {t.value}
           </div>
         </div>

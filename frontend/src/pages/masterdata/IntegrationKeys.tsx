@@ -372,7 +372,9 @@ export default function IntegrationKeys() {
 
   return (
     <div className="flex flex-col h-full sm:p-3">
-      <div className="flex flex-col flex-1 min-h-0 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm">
+      {/* min-h-[16rem]: hai khung AI Vision + Goong bên dưới không co ⇒ màn thấp (điện thoại) ép khung này về ~0, tiêu đề bảng + nút
+          "Tạo key" thò ra nằm DƯỚI khung AI Vision, bấm không được (rà 29/10). Không co dưới 16rem — thiếu chỗ thì <main> cuộn. */}
+      <div className="flex flex-col flex-1 min-h-[16rem] bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm">
         {/* Toolbar */}
         {/* ≥ 1280 MỘT hàng ở mọi màn (14/10 — đồng bộ các cỡ màn máy tính): đo 1280 hai nút rớt xuống hàng 2, 1536 / 1920 một hàng ⇒
             bảng nhảy 28 px theo màn; nay dòng hướng dẫn URL là phần duy nhất được co (cắt "…", rê chuột xem đủ) */}

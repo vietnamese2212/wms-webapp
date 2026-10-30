@@ -82,6 +82,10 @@ function measure(inDialog) {
     const cx = r.left + r.width / 2, cy = r.top + r.height / 2
     if (!pointVisible(el, cx, cy)) continue
     const hit = document.elementFromPoint(cx, cy)
+    // bị thanh CỐ ĐỊNH (điều hướng đáy) che lúc chưa cuộn mà khung chứa còn cuộn xuống được ⇒ người dùng cuộn là bấm được, không tính
+    const fixedHit = (() => { for (let p = hit; p; p = p.parentElement) if (getComputedStyle(p).position === 'fixed') return p; return null })()
+    const canScrollDown = (() => { for (let p = el.parentElement; p && p !== document.body; p = p.parentElement) if (/(auto|scroll)/.test(getComputedStyle(p).overflowY) && p.scrollHeight - p.clientHeight - p.scrollTop > 1) return true; return false })()
+    if (fixedHit && !fixedHit.contains(el) && canScrollDown) continue
     if (hit && hit !== el && !el.contains(hit) && !hit.contains(el) && !(el.id && hit.closest(`label[for="${el.id}"]`)))
       out.push({ k: 'nút-bị-che', d: `"${lab(el)}" bị che bởi <${hit.tagName.toLowerCase()}> "${lab(hit)}"` })
     if (el.tagName === 'BUTTON' && el.scrollHeight > el.clientHeight + 3 && getComputedStyle(el).overflowY !== 'visible') out.push({ k: 'nhãn-nút-tràn', d: `"${lab(el)}" ${el.scrollHeight}>${el.clientHeight}` })

@@ -769,7 +769,8 @@ export default function TMSSettings() {
                 shownVT.length === 0 ? (
                   <div className="p-12 text-center text-slate-400 text-sm">{vehicleTypes.length === 0 ? 'Chưa có loại xe nào' : 'Không có loại xe khớp bộ lọc'}</div>
                 ) : (
-                  <Table>
+                  // nowrap mọi ô (luật bảng, table-format mục 9): 360 px tên "XE PALLET (16-17 PALLET)" bẻ 3 dòng, dòng cao thấp lệch nhau (rà 29/10) — khung ngoài đã cuộn ngang
+                  <Table className="[&_th]:whitespace-nowrap [&_td]:whitespace-nowrap">
                     <TableHeader>
                       <TableRow>
                         {vtEdit && <TableHead className="px-2 py-1.5 w-7" />}

@@ -7,7 +7,7 @@ import { effectiveNoQr, markItemsNoQrIfQty, isQtyLike } from '../../lib/inventor
 import { effCartonsPerPallet } from '../../utils/palletCalc'
 import { sumLoads, type LoadMat } from '../../utils/loadCalc'
 import { loadUtilization } from '../../services/freight'
-import { applyWarehouseOverrides, loadWarehouseOverridesMany, underloadPctAt } from '../../services/vehicleModelScope'
+import { applyWarehouseOverrides, loadWarehouseOverrides, loadWarehouseOverridesMany, underloadPctAt } from '../../services/vehicleModelScope'
 import { estimateFreightSafely, sapLoadRefs, sapRefKey, loadOfWithSap } from '../../services/freightEstimate'
 import { normalizeQR } from '../../utils/qrParser'
 import { wrongFormatHint, getDeliveryConfirmation } from './systemSettingController'
@@ -750,23 +750,31 @@ async function fetchGDOFull(id: string) {
     // `work_mode` (10/09): trang chuyến phải biết kho có chạy Hướng dẫn không — chuyến ĐANG XUẤT ở kho
     // Hướng dẫn mà 0 việc là BẤT THƯỜNG (bật cờ sau khi chuyến đã bắt đầu ⇒ không ai sắp lại hộ), phải
     // hiện lý do + nút Sắp lại chứ không ẩn khối đi như trước. Đi ké embed sẵn có, không thêm round-trip.
-    .select('*, warehouse:Warehouse(id,code,name,inventory_mode,work_mode,require_weigh_on_start,require_gate_on_start), gate_registration:gate_registrations!gate_registration_id(id,registration_number,date,license_plate,company_name_raw,driver_name,status,direction,registered_at,entry_at,exit_at,called_at), dock:Location!dock_location_id(id,location_code,row,kind,dock_capacity)')
+    // `vehicle_model` (31/10): dòng xe CON của chuyến — sơ đồ Xếp xe 3D lấy TẢI TRỌNG ở đây (bốc xá trải tới cửa theo % tải)
+    .select('*, warehouse:Warehouse(id,code,name,inventory_mode,work_mode,require_weigh_on_start,require_gate_on_start), gate_registration:gate_registrations!gate_registration_id(id,registration_number,date,license_plate,company_name_raw,driver_name,status,direction,registered_at,entry_at,exit_at,called_at), dock:Location!dock_location_id(id,location_code,row,kind,dock_capacity), vehicle_model:vehicle_model!vehicle_model_id(id,sap_code,name,capacity_mode,max_pallets,max_tons,max_drops,tariff_unit,is_active)')
     .eq('id', id).single()
   if (error || !gdo) return null
+  type VmRow = { id: string; sap_code: string; name: string; capacity_mode: string | null; max_pallets: number | null; max_tons: number | string | null; max_drops: number | null; tariff_unit: string | null; is_active: boolean }
+  const vm0 = gdo as unknown as { warehouse_id?: string | null; vehicle_model?: VmRow | null }
 
   // Phiếu cân gắn chuyến + ước tính KL hàng (kg) — đối chiếu KL cân thực với KL tính từ
   // Material.weight_kg (migration 20260801_weigh_gate). RPC quét cả chuyến (DO⋈Item⋈Material) mà
   // fetchGDOFull nằm trên đường nóng (mọi mutation + refetch sau mỗi lần quét) → CHỈ chạy khi kho
   // bật rule cân; kho khác chạy bù nếu chuyến CÓ phiếu gắn tay (hiếm).
   const requireWeighFlag = (gdo as unknown as { warehouse?: { require_weigh_on_start?: boolean | null } | null }).warehouse?.require_weigh_on_start === true
-  const [wtRes, westRes0] = await Promise.all([
+  const [wtRes, westRes0, vmOverrides] = await Promise.all([
     supabase.from('WeighTicket')
       .select('id, ticket_no, weigh_date, license_plate, tare_kg, gross_kg, net_kg, is_complete, in_time, out_time')
       .eq('gdo_id', id).order('in_time', { ascending: true, nullsFirst: false }),
     requireWeighFlag
       ? supabase.rpc('gdo_weight_estimates', { p_gdo_ids: [id] })
       : Promise.resolve({ data: null as unknown }),
+    // sức chứa của dòng xe HIỆU LỰC theo kho (kho đè ?? Chung) — cùng luật cột Tải ở danh sách; đi song song, không thêm round-trip
+    vm0.vehicle_model && vm0.warehouse_id ? loadWarehouseOverrides(vm0.warehouse_id) : Promise.resolve([]),
   ])
+  const vmEff = vm0.vehicle_model
+    ? applyWarehouseOverrides([{ ...vm0.vehicle_model, max_tons: vm0.vehicle_model.max_tons == null ? null : Number(vm0.vehicle_model.max_tons) }], vmOverrides)[0]
+    : null
   let westData = westRes0.data
   if (!requireWeighFlag && (wtRes.data ?? []).length > 0)
     westData = (await supabase.rpc('gdo_weight_estimates', { p_gdo_ids: [id] })).data
@@ -869,6 +877,7 @@ async function fetchGDOFull(id: string) {
     dest_warehouse: unl.dest ? { id: unl.dest.id, code: unl.dest.code, name: unl.dest.name, inventory_mode: unl.dest.inventory_mode } : null,
     unlinked_hint: unl.hint && unl.policy !== 'NONE' ? { ...unl.hint, policy: unl.policy } : null,
     planned_vehicle_type: plannedVehicleType,
+    vehicle_model: vmEff ? { id: vmEff.id, sap_code: vmEff.sap_code, name: vmEff.name, capacity_mode: vmEff.capacity_mode, max_pallets: vmEff.max_pallets, max_tons: vmEff.max_tons, tariff_unit: vmEff.tariff_unit, underload_pct: null } : null,
     weigh_tickets: wtRes.data ?? [],
     weight_estimate: weightEstimate,
     tasks_summary: tasksSummary,

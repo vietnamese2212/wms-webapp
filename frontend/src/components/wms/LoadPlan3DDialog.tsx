@@ -525,22 +525,37 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
       ? palletFloorSlots(palSpec, { length: truckL, width: truckW, height: truckH }) : 0),
     [isPalletTruck, palSpec, truckOk, truckL, truckW, truckH, palFitErr])
 
+  // TẢI TRỌNG (31/10, user: "chắc chắn phải có tải trọng"): của DÒNG XE CON gắn với chuyến (Cài đặt TMS → Dòng xe, đã đè
+  // theo kho — getGDO trả về), không khai thêm chỗ khác. Chỉ dòng xe tính theo TẤN: dòng xe tính theo pallet ghi tấn làm
+  // ghi chú. Chuyến chưa gắn dòng xe ⇒ null = như trước. Tải hàng chỉ tính khi MỌI mã đã khai kg (thiếu ⇒ chưa biết tải).
+  const payloadKg = useMemo(() => {
+    const t = Number(gdo.vehicle_model?.max_tons)
+    return gdo.vehicle_model?.capacity_mode === 'TON' && t > 0 ? t * 1000 : null
+  }, [gdo.vehicle_model])
+  const cargoKg = useMemo(() => {
+    let kg = 0
+    for (const g of groups) { const w = Number(g.weightKg); if (g.count > 0 && !(w > 0)) return null; kg += g.count * (w || 0) }
+    return kg
+  }, [groups])
+
   const plan: LoadPlan | null = useMemo(() => {
     if (!truckOk || !groups.length || palFitErr) return null
     const truck = { length: truckL, width: truckW, height: truckH }
     // Thùng "Lên nóc" (topCarton) KHÔNG đi qua thuật toán thùng-sàn (nó dựng tháp lẻ loi khi
     // trộn với pallet): xếp pallet trước (count 0 giữ nguyên CHỈ SỐ nhóm cho nhãn/màu), rồi
     // rải thùng lên MẶT các pallet bằng spreadOnTopOfPallets.
-    // Xe pallet: sàn thừa dàn thành KHE giữa các pallet. Xe thường: trải sàn tới sát cửa khi hàng đã phủ ≥ 75% sàn
-    // (luật 11 lõi — loại xe chưa khai tải trọng nên chưa xét theo % tải).
+    // Xe pallet: sàn thừa dàn thành KHE giữa các pallet. Xe thường: trải sàn theo % TẢI của dòng xe (luật 11 lõi — gần đủ
+    // tải thì tới sát cửa); chưa biết tải (chuyến chưa gắn dòng xe / mã thiếu kg) ⇒ hàng đã phủ ≥ 75% sàn thì tới cửa.
     const topIdx = groups.map((g, i) => (g.topCarton ? i : -1)).filter(i => i >= 0)
     if (!topIdx.length) {
       const p = computeLoadPlan(truck, groups)
-      return isPalletTruck ? spacePallets(p) : spreadToDoor(truck, groups, p, null)
+      return isPalletTruck ? spacePallets(p) : spreadToDoor(truck, groups, p, payloadKg && cargoKg != null ? (cargoKg / payloadKg) * 100 : null)
     }
     const base = spacePallets(computeLoadPlan(truck, groups.map(g => (g.topCarton ? { ...g, count: 0 } : g))))
     return spreadOnTopOfPallets(base, topIdx, groups)
-  }, [truckOk, truckL, truckW, truckH, groups, palFitErr, isPalletTruck])
+  }, [truckOk, truckL, truckW, truckH, groups, palFitErr, isPalletTruck, payloadKg, cargoKg])
+  // % tải của phần ĐÃ XẾP (cùng số với ô Khối lượng) — vượt 100 ⇒ báo đỏ
+  const loadPct = plan && payloadKg && plan.weightKg > 0 ? Math.round((plan.weightKg / payloadKg) * 100) : null
 
   // ── TAB TIẾN ĐỘ = xếp lại theo TRÌNH TỰ QUÉT THẬT (user chốt 26/08): mã quét trước nằm
   // sâu phía cabin; số lượng = phần ĐÃ quét. Khác hẳn Dự toán — không tô lại vị trí dự kiến. ──
@@ -1263,6 +1278,12 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
                   <div className="rounded-lg bg-sky-800 text-white py-1.5">
                     <p className="text-[9px] uppercase text-sky-200">Khối lượng</p>
                     <p className="text-sm font-semibold tabular-nums">{plan.weightKg > 0 ? `${Math.round(plan.weightKg)} kg` : '—'}</p>
+                    {payloadKg != null && (
+                      <p className={`text-[10px] tabular-nums ${loadPct != null && loadPct > 100 ? 'font-semibold text-red-300' : 'text-sky-200'}`}
+                        title={`Tải trọng dòng xe ${gdo.vehicle_model?.name ?? ''} (Cài đặt TMS → Dòng xe)`}>
+                        / {(payloadKg / 1000).toLocaleString('vi-VN')} t{loadPct != null ? ` · ${loadPct}%` : ''}
+                      </p>
+                    )}
                   </div>
                 </>
               ) : (
@@ -1300,6 +1321,11 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
                   ? '→ hàng đã xuất thật, nhưng lòng xe khai chỉ chứa được ngần này — kiểm lại kích thước lòng thùng.'
                   : '→ cần xe lớn hơn hoặc tách chuyến.'}
               </p>
+            </div>
+          )}
+          {mode === 'plan' && loadPct != null && loadPct > 100 && (
+            <div className="rounded-lg border border-red-200 bg-red-50 px-2.5 py-2 text-[11px] text-red-700">
+              <b>Vượt tải trọng</b> dòng xe {gdo.vehicle_model?.name}: <b className="tabular-nums">{Math.round(plan!.weightKg).toLocaleString('vi-VN')} kg</b> / {payloadKg!.toLocaleString('vi-VN')} kg ({loadPct}%) — cần xe lớn hơn hoặc tách chuyến.
             </div>
           )}
           {assumedCount > 0 && (

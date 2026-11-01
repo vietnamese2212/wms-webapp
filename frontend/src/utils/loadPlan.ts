@@ -46,8 +46,9 @@
 // 11. BỐC XÁ TRẢI SÀN THEO % TẢI, gần đủ tải thì TỚI SÁT CỬA (user 29/10) — `spreadToDoor`.
 // 12. PALLET XẾP TỪNG THÙNG theo LỚP PHẲNG phủ kín, không thùng treo, không tháp (user 28/10) — `packPallet`.
 // 13. Mã chưa khai thùng/pallet ⇒ ƯỚC theo cỡ thùng thay vì "1 mã = 1 pallet" — `cartonsPerPalletEstimate`.
-// 14. KHE 5 CM giữa các pallet, cả dọc lẫn ngang; sát vách không phải chừa (user 01/11) — xe pallet xếp khối bằng
-//     `placePallets` thay cho `computeLoadPlan`; `palletFloorSlots` đếm chỗ đã trừ khe.
+// 14. XE PALLET XẾP THEO LÀN, NHIỀU PALLET NHẤT (user 01/11: "logic là tối ưu nhất"): thử mọi cách chia bề ngang thành
+//     làn quay dọc / quay ngang, khe 5 cm giữa hai làn, trong làn pallet nối sát — `placePallets` thay cho
+//     `computeLoadPlan`; `palletFloorSlots` đếm chỗ cùng cách (9,6 × 2,4 m: 9 + 8 = 17).
 // 1 step = 1 lượt đặt (1 chân mới / 1 cụm đè lên chân dở / 1 cụm lên nóc) — cho thanh
 // trượt "xếp theo thứ tự". Đơn vị: mm.
 
@@ -1832,15 +1833,35 @@ export function palletsTooTall(groups: LoadGroup[], truck: TruckDims): string[] 
     .map(g => `${g.label} (cao ${(g.h / 1000).toFixed(2)}m)`))]
 }
 
-/** Khe giữa hai pallet kề nhau, mm (luật 14 — `placePallets`). */
+/** Khe giữa hai LÀN pallet kề nhau, mm (luật 14 — `placePallets`). */
 export const PALLET_GAP = 50
 
-/** Số CHỖ pallet trên sàn xe (1 lớp, chừa khe `gap` giữa các pallet, sát vách) — để đối chiếu với sức chứa danh
- *  nghĩa ("16-17 pallet"). */
+// LÀN pallet chạy dọc xe: `o` = 'L' cạnh l của khối nằm dọc xe · 'W' cạnh w nằm dọc xe; `w` = bề ngang làn
+type PalletLane = { o: 'L' | 'W'; w: number }
+const laneAcross = (b: { l: number; w: number }, o: 'L' | 'W') => (o === 'L' ? b.w : b.l)
+const laneAlong = (b: { l: number; w: number }, o: 'L' | 'W') => (o === 'L' ? b.l : b.w)
+/** Mọi cách chia bề ngang xe thành làn (không kể thứ tự làn): mỗi làn một loại trong `kinds`, làn kề nhau cách `gap`. */
+function laneSets(kinds: PalletLane[], width: number, gap: number): PalletLane[][] {
+  const out: PalletLane[][] = []
+  const walk = (from: number, cur: PalletLane[], used: number) => {
+    if (cur.length) out.push([...cur])
+    for (let i = from; i < kinds.length; i++) {
+      const add = kinds[i].w + (cur.length ? gap : 0)
+      if (used + add <= width + 1e-6) { cur.push(kinds[i]); walk(i, cur, used + add); cur.pop() }
+    }
+  }
+  walk(0, [], 0)
+  return out
+}
+
+/** Số CHỖ pallet trên sàn xe (1 lớp) theo cách chia làn tối ưu của `placePallets` (khe `gap` giữa hai làn) — để đối
+ *  chiếu với sức chứa danh nghĩa ("16-17 pallet"). Xe 9,6 × 2,4 m: 9 quay ngang + 8 quay dọc = 17. */
 export function palletFloorSlots(spec: PalletSpec, truck: TruckDims, gap = PALLET_GAP): number {
-  const grid = (l: number, w: number) =>
-    Math.floor((truck.length + gap) / (l + gap)) * Math.floor((truck.width + gap) / (w + gap))
-  return Math.max(grid(spec.l, spec.w), grid(spec.w, spec.l))
+  const kinds: PalletLane[] = [{ o: 'L', w: spec.w }, ...(spec.l !== spec.w ? [{ o: 'W' as const, w: spec.l }] : [])]
+  let best = 0
+  for (const set of laneSets(kinds, truck.width, gap))
+    best = Math.max(best, set.reduce((s, k) => s + Math.floor(truck.length / laneAlong(spec, k.o) + 1e-9), 0))
+  return best
 }
 
 // Pallet chuẩn dùng chung (user chốt 26/08): Loscam 1200×1000mm, cao 1650mm khi ĐÃ XẾP HÀNG —
@@ -2143,26 +2164,84 @@ export function packPallet(spec: PalletSpec, layers: PalletLayer[], light: Set<s
   return { cartons: out, deck: { x: -x0, y: -y0, l: L, w: W } }
 }
 
-// ─── 14. KHE GIỮA CÁC PALLET ───────────────────────────────────────────────────────────────────
-/** XẾP KHỐI PALLET CÓ KHE (user 01/11: "giữa các pallet là 5cm, 4 phía"; mốc: xe pallet 9,5 × 2,5 m vẫn vừa đúng 17
- *  pallet đơn mẫu): pallet nào cũng cách pallet kề nó ≥ `gap` cả dọc lẫn ngang; sát vách thì không phải chừa (chừa vách
- *  thì xe 2,5 m mất làn thứ hai: 2 × 1,2 + 3 × 0,05 = 2,55 m). Thay cách cũ `spacePallets` (xếp sát rồi dàn sàn thừa
- *  thành khe ≤ 80mm — xe vừa khít thì khe 0). Cách làm: NỞ mỗi khối + lòng xe thêm `gap` theo hai chiều sàn, xếp bằng
- *  `computeLoadPlan`, rồi CO khối lại — hai khối không giao nhau sau khi nở thì cách nhau ≥ `gap`, khối cuối dãy được
- *  chạm vách. Sàn thừa dọc xe để ở cửa; bề ngang thừa chia ĐỀU hai bên vách (hàng cân giữa xe). Nhóm thùng "lên nóc"
- *  (count 0) đặt sau bằng `spreadOnTopOfPallets`. */
-export function placePallets(truck: TruckDims, groups: LoadGroup[], gap = PALLET_GAP): LoadPlan {
-  const p = computeLoadPlan({ ...truck, length: truck.length + gap, width: truck.width + gap },
-    groups.map(g => ({ ...g, l: g.l + gap, w: g.w + gap })))
-  const placed = p.placed.map(b => ({ ...b, l: b.l - gap, w: b.w - gap }))
-  const dy = Math.floor((truck.width - placed.reduce((m, b) => Math.max(m, b.y + b.w), 0)) / 2)
-  if (dy > 0) for (const b of placed) b.y += dy
+// ─── 14. XẾP PALLET TRÊN SÀN — NHIỀU PALLET NHẤT ───────────────────────────────────────────────
+/** XẾP KHỐI PALLET (xe pallet, user 01/11: "logic là tối ưu nhất"; "giữa các pallet 5cm"; lòng 9,6 × 2,4 m chở 17 pallet
+ *  = 9 quay ngang + 8 quay dọc, không đặt được 2 pallet quay cạnh 1,2 m ngang xe). Sàn chia thành LÀN chạy dọc xe, mỗi làn
+ *  một hướng khối (cạnh l hay cạnh w nằm dọc xe) và một bề (theo khối thật — khối có thùng chờm mép rộng hơn chân); hai
+ *  làn kề nhau cách `gap`; trong làn các pallet nối SÁT nhau (bốc bằng xe nâng theo làn). THỬ MỌI cách chia bề ngang
+ *  thành làn, lấy cách chở NHIỀU pallet nhất — bằng nhau thì hàng ngắn hơn (dồn về cabin), rồi ít đổi hướng hơn. Xe rộng
+ *  2,5 m: 1,2 + 0,05 + 1,2 = 2,45 m ⇒ tự chọn 2 làn quay ngang. Pallet lần lượt theo thứ tự bốc (đơn đầu ở sâu trong
+ *  cabin; trong đơn khối chân to trước), mỗi pallet vào làn đang NGẮN nhất còn vừa ⇒ mỗi đơn chiếm một đoạn ngang xe. Cả
+ *  dải làn đặt giữa bề ngang (hai bên vách thừa bằng nhau — tải cân); sàn thừa dọc xe để ở cửa. Thay cách cũ (xếp bằng
+ *  `computeLoadPlan` của thùng rời — chọn làn theo độ phủ bề ngang nên xe 2,4 m chỉ ra 14). Khối pallet một tầng (không
+ *  chồng); nhóm "lên nóc" bỏ qua (thùng rời nằm nóc đặt sau bằng `spreadOnTopOfPallets`). */
+export function placePallets(truck: TruckDims, groupsIn: LoadGroup[], gap = PALLET_GAP): LoadPlan {
+  const doOrder: string[] = []
+  for (const g of groupsIn) if (!doOrder.includes(g.doKey)) doOrder.push(g.doKey)
+  const fits = (g: LoadGroup, o: 'L' | 'W') => laneAcross(g, o) <= truck.width && laneAlong(g, o) <= truck.length && g.h <= truck.height
+  const idx = groupsIn.map((_, i) => i).filter(i => groupsIn[i].count > 0 && !groupsIn[i].onTop)
+    .sort((a, b) => doOrder.indexOf(groupsIn[a].doKey) - doOrder.indexOf(groupsIn[b].doKey)
+      || groupsIn[b].l * groupsIn[b].w - groupsIn[a].l * groupsIn[a].w || a - b)
+  const units = idx.flatMap(gi => Array.from({ length: groupsIn[gi].count }, () => gi))
+  const kinds: PalletLane[] = []
+  for (const gi of idx) for (const o of ['L', 'W'] as const) {
+    const g = groupsIn[gi], w = laneAcross(g, o)
+    if (fits(g, o) && !kinds.some(k => k.o === o && k.w === w)) kinds.push({ o, w })
+  }
+  kinds.sort((a, b) => b.w - a.w || (a.o < b.o ? -1 : 1))
+  type Try = { at: { gi: number; lane: number; x: number }[]; len: number; lanes: PalletLane[] }
+  // độ PHÍ chiều dài của khối trong làn = cạnh dọc xe ÷ cạnh dọc ngắn nhất làn hướng đó nhận được (khối chờm mép dài 1,29 m
+  // trong làn quay dọc phí 7,5%; xoay sang làn quay ngang chỉ chiếm 1,0 m như pallet thường)
+  const minAlong = { L: Infinity, W: Infinity }
+  for (const gi of idx) for (const o of ['L', 'W'] as const) if (fits(groupsIn[gi], o)) minAlong[o] = Math.min(minAlong[o], laneAlong(groupsIn[gi], o))
+  const waste = (g: LoadGroup, o: 'L' | 'W') => Math.round((laneAlong(g, o) / minAlong[o]) * 1000)
+  // `byWaste`: khối vào làn ít phí nhất, rồi làn ngắn nhất · không thì làn ngắn nhất; bằng nhau ⇒ làn hẹp hơn (để làn rộng
+  // cho khối rộng). Thử cả hai, lấy cách chở nhiều hơn.
+  const run = (lanes: PalletLane[], byWaste: boolean): Try => {
+    const front = lanes.map(() => 0), at: Try['at'] = []
+    for (const gi of units) {
+      const g = groupsIn[gi]
+      let pick = -1
+      lanes.forEach((ln, i) => {
+        if (laneAcross(g, ln.o) > ln.w || !fits(g, ln.o) || front[i] + laneAlong(g, ln.o) > truck.length + 1e-6) return
+        if (pick < 0) { pick = i; return }
+        const dw = byWaste ? waste(g, ln.o) - waste(g, lanes[pick].o) : 0, df = front[i] - front[pick]
+        if (dw < 0 || (dw === 0 && (df < -1e-6 || (Math.abs(df) <= 1e-6 && ln.w < lanes[pick].w)))) pick = i
+      })
+      if (pick < 0) continue
+      at.push({ gi, lane: pick, x: front[pick] })
+      front[pick] += laneAlong(g, lanes[pick].o)
+    }
+    return { at, len: Math.max(0, ...front), lanes }
+  }
+  const turns = (t: Try) => new Set(t.lanes.map(l => l.o)).size
+  let best: Try = { at: [], len: 0, lanes: [] }
+  for (const lanes of laneSets(kinds, truck.width, gap)) for (const byWaste of [false, true]) {
+    const r = run(lanes, byWaste)
+    if (r.at.length > best.at.length || (r.at.length === best.at.length && best.lanes.length > 0
+      && (r.len < best.len - 1e-6 || (Math.abs(r.len - best.len) <= 1e-6 && turns(r) < turns(best))))) best = r
+  }
+  // dải làn đặt giữa bề ngang; khối hẹp hơn làn nằm giữa làn
+  const total = best.lanes.reduce((s, l) => s + l.w, 0) + Math.max(0, best.lanes.length - 1) * gap
+  const ys: number[] = []
+  let y = Math.max(0, Math.floor((truck.width - total) / 2))
+  for (const l of best.lanes) { ys.push(y); y += l.w + gap }
+  const placed: PlacedBox[] = best.at.map((a, k) => {
+    const g = groupsIn[a.gi], ln = best.lanes[a.lane], w = laneAcross(g, ln.o)
+    return { x: a.x, y: ys[a.lane] + Math.floor((ln.w - w) / 2), z: 0, l: laneAlong(g, ln.o), w, h: g.h, group: a.gi, step: k + 1 }
+  })
+  const n = groupsIn.map(() => 0)
+  for (const b of placed) n[b.group]++
   const vol = truck.length * truck.width * truck.height
-  const maxX = placed.reduce((m, b) => Math.max(m, b.x + b.l), 0)
   return {
-    ...p, truck, groups, placed,
+    truck, groups: groupsIn, placed,
+    leftover: groupsIn.map((g, i) => ({ group: i, count: Math.max(0, g.count) - n[i] })).filter(x => x.count > 0),
+    stepCount: placed.length,
     volumePct: vol > 0 ? Math.round((placed.reduce((s, b) => s + b.l * b.w * b.h, 0) / vol) * 1000) / 10 : 0,
-    lengthUsedPct: truck.length > 0 ? Math.round((maxX / truck.length) * 100) : 0,
+    placedCount: placed.length,
+    totalCount: groupsIn.reduce((s, g) => s + Math.max(0, g.count), 0),
+    weightKg: Math.round(placed.reduce((s, b) => s + (groupsIn[b.group].weightKg ?? 0), 0) * 10) / 10,
+    lengthUsedPct: truck.length > 0 ? Math.round((Math.max(0, ...placed.map(b => b.x + b.l)) / truck.length) * 100) : 0,
   }
 }
 

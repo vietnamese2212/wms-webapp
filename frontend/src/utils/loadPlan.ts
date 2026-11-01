@@ -44,9 +44,10 @@
 //    khối sàn chiếm TRỌN hàng ngang (ranh các mã thẳng ngang thùng); xe chật ⇒ cách cũ.
 // 11-13 (30/10, chuyển từ MalCargo về lõi — nơi gọi tự chạy SAU `computeLoadPlan` / `palletizeGroups`):
 // 11. BỐC XÁ TRẢI SÀN THEO % TẢI, gần đủ tải thì TỚI SÁT CỬA (user 29/10) — `spreadToDoor`.
-// 12. PALLET XẾP TỪNG THÙNG theo LỚP PHẲNG phủ kín, không thùng treo, không tháp (user 28/10) — `packPallet`;
-//     sàn thừa dàn thành KHE giữa các pallet — `spacePallets`.
+// 12. PALLET XẾP TỪNG THÙNG theo LỚP PHẲNG phủ kín, không thùng treo, không tháp (user 28/10) — `packPallet`.
 // 13. Mã chưa khai thùng/pallet ⇒ ƯỚC theo cỡ thùng thay vì "1 mã = 1 pallet" — `cartonsPerPalletEstimate`.
+// 14. KHE 5 CM giữa các pallet, cả dọc lẫn ngang; sát vách không phải chừa (user 01/11) — xe pallet xếp khối bằng
+//     `placePallets` thay cho `computeLoadPlan`; `palletFloorSlots` đếm chỗ đã trừ khe.
 // 1 step = 1 lượt đặt (1 chân mới / 1 cụm đè lên chân dở / 1 cụm lên nóc) — cho thanh
 // trượt "xếp theo thứ tự". Đơn vị: mm.
 
@@ -1831,10 +1832,14 @@ export function palletsTooTall(groups: LoadGroup[], truck: TruckDims): string[] 
     .map(g => `${g.label} (cao ${(g.h / 1000).toFixed(2)}m)`))]
 }
 
-/** Số CHỖ pallet trên sàn xe (1 lớp) — để đối chiếu với sức chứa danh nghĩa ("16-17 pallet"). */
-export function palletFloorSlots(spec: PalletSpec, truck: TruckDims): number {
+/** Khe giữa hai pallet kề nhau, mm (luật 14 — `placePallets`). */
+export const PALLET_GAP = 50
+
+/** Số CHỖ pallet trên sàn xe (1 lớp, chừa khe `gap` giữa các pallet, sát vách) — để đối chiếu với sức chứa danh
+ *  nghĩa ("16-17 pallet"). */
+export function palletFloorSlots(spec: PalletSpec, truck: TruckDims, gap = PALLET_GAP): number {
   const grid = (l: number, w: number) =>
-    Math.floor(truck.length / l) * Math.floor(truck.width / w)
+    Math.floor((truck.length + gap) / (l + gap)) * Math.floor((truck.width + gap) / (w + gap))
   return Math.max(grid(spec.l, spec.w), grid(spec.w, spec.l))
 }
 
@@ -2138,32 +2143,27 @@ export function packPallet(spec: PalletSpec, layers: PalletLayer[], light: Set<s
   return { cartons: out, deck: { x: -x0, y: -y0, l: L, w: W } }
 }
 
-/** KHE GIỮA CÁC PALLET (user 28/10: "tạo khoảng hở giữa các pallet"): dàn phần sàn còn THỪA thành khe đều
- *  (≤ 80mm) — không bớt chỗ pallet nào. Mỗi pallet lùi `bậc × khe`, bậc = số pallet nối nhau đứng TRƯỚC nó
- *  trong cùng dải (dọc: cùng khoảng bề ngang; ngang: cùng khoảng chiều dài) ⇒ pallet đặt xoay / khối rộng
- *  hơn chân (thùng chờm mép) ở làn bên cạnh cũng không bị đẩy đè lên. Chạy trên sơ đồ CHỈ có khối pallet. */
-export function spacePallets(plan: LoadPlan): LoadPlan {
-  const T = plan.truck
-  const placed = plan.placed.map(b => ({ ...b }))
-  const spread = (pos: 'x' | 'y', len: 'l' | 'w', cross: 'x' | 'y', crossLen: 'l' | 'w', room: number) => {
-    const bs = [...placed].sort((a, b) => a[pos] - b[pos])
-    const depth = new Map<PlacedBox, number>()
-    for (const b of bs) {
-      let d = 0
-      for (const a of bs) {
-        if (a === b || a[pos] + a[len] > b[pos] + 1) continue
-        if (Math.min(a[cross] + a[crossLen], b[cross] + b[crossLen]) - Math.max(a[cross], b[cross]) > 1) d = Math.max(d, (depth.get(a) ?? 0) + 1)
-      }
-      depth.set(b, d)
-    }
-    let gap = 80
-    for (const b of bs) { const d = depth.get(b)!; if (d > 0) gap = Math.min(gap, (room - b[pos] - b[len]) / d) }
-    if (gap > 0) for (const b of bs) b[pos] += depth.get(b)! * gap
-  }
-  spread('x', 'l', 'y', 'w', T.length)
-  spread('y', 'w', 'x', 'l', T.width)
+// ─── 14. KHE GIỮA CÁC PALLET ───────────────────────────────────────────────────────────────────
+/** XẾP KHỐI PALLET CÓ KHE (user 01/11: "giữa các pallet là 5cm, 4 phía"; mốc: xe pallet 9,5 × 2,5 m vẫn vừa đúng 17
+ *  pallet đơn mẫu): pallet nào cũng cách pallet kề nó ≥ `gap` cả dọc lẫn ngang; sát vách thì không phải chừa (chừa vách
+ *  thì xe 2,5 m mất làn thứ hai: 2 × 1,2 + 3 × 0,05 = 2,55 m). Thay cách cũ `spacePallets` (xếp sát rồi dàn sàn thừa
+ *  thành khe ≤ 80mm — xe vừa khít thì khe 0). Cách làm: NỞ mỗi khối + lòng xe thêm `gap` theo hai chiều sàn, xếp bằng
+ *  `computeLoadPlan`, rồi CO khối lại — hai khối không giao nhau sau khi nở thì cách nhau ≥ `gap`, khối cuối dãy được
+ *  chạm vách. Sàn thừa dọc xe để ở cửa; bề ngang thừa chia ĐỀU hai bên vách (hàng cân giữa xe). Nhóm thùng "lên nóc"
+ *  (count 0) đặt sau bằng `spreadOnTopOfPallets`. */
+export function placePallets(truck: TruckDims, groups: LoadGroup[], gap = PALLET_GAP): LoadPlan {
+  const p = computeLoadPlan({ ...truck, length: truck.length + gap, width: truck.width + gap },
+    groups.map(g => ({ ...g, l: g.l + gap, w: g.w + gap })))
+  const placed = p.placed.map(b => ({ ...b, l: b.l - gap, w: b.w - gap }))
+  const dy = Math.floor((truck.width - placed.reduce((m, b) => Math.max(m, b.y + b.w), 0)) / 2)
+  if (dy > 0) for (const b of placed) b.y += dy
+  const vol = truck.length * truck.width * truck.height
   const maxX = placed.reduce((m, b) => Math.max(m, b.x + b.l), 0)
-  return { ...plan, placed, lengthUsedPct: T.length > 0 ? Math.round((maxX / T.length) * 100) : 0 }
+  return {
+    ...p, truck, groups, placed,
+    volumePct: vol > 0 ? Math.round((placed.reduce((s, b) => s + b.l * b.w * b.h, 0) / vol) * 1000) / 10 : 0,
+    lengthUsedPct: truck.length > 0 ? Math.round((maxX / truck.length) * 100) : 0,
+  }
 }
 
 // ─── 13. ƯỚC SỐ THÙNG / PALLET ─────────────────────────────────────────────────────────────────

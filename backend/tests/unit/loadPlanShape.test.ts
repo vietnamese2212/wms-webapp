@@ -4,7 +4,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   computeLoadPlan, palletizeGroups, levelFill, palletPattern, layerPattern,
-  spreadToDoor, spreadTarget, packPallet, spacePallets, cartonsPerPalletEstimate, cartonsPerLayer,
+  spreadToDoor, spreadTarget, packPallet, placePallets, palletFloorSlots, PALLET_GAP, cartonsPerPalletEstimate, cartonsPerLayer,
   type LoadGroup, type PlacedBox, type PalletSpec, type PalletizeInput,
 } from '../../../frontend/src/utils/loadPlan'
 
@@ -175,7 +175,7 @@ describe('loadPlan — hình khối vuông vắn', () => {
 
 // Luật 11-13 (30/10 — chuyển từ MalCargo về lõi): trải sàn tới cửa · từng thùng trên pallet · khe pallet · ước thùng/pallet.
 // Số liệu = 2 chuyến mẫu của MalCargo (container 40ft xếp xá; xe pallet 15 tấn 6 mã).
-describe('loadPlan — luật 11-13 (trải tới cửa, thùng trên pallet, khe pallet, ước thùng/pallet)', () => {
+describe('loadPlan — luật 11-14 (trải tới cửa, thùng trên pallet, ước thùng/pallet, khe pallet 5 cm)', () => {
   const PAL: PalletSpec = { l: 1200, w: 1000, h: 1650, baseH: 150, baseColor: '#a07a4e', weightKg: 25 }
   const minus = (n: number) => (b: { x: number; l: number }) => n - (b.x + b.l)
 
@@ -242,21 +242,34 @@ describe('loadPlan — luật 11-13 (trải tới cửa, thùng trên pallet, kh
     expect(mixed).toBeGreaterThan(0)   // có pallet gộp để kiểm
   })
 
-  it('spacePallets: sàn thừa thành khe giữa các pallet — không chồng lấn, không ra ngoài thùng xe, không bớt pallet', () => {
+  it('placePallets: khe 5 cm giữa MỌI cặp pallet (dọc hoặc ngang), sát vách được, xe 9,5 × 2,5 m vẫn đủ 17 pallet đơn mẫu', () => {
     const truck = { length: 9500, width: 2500, height: 2600 }
     const res = palletizeGroups(items, PAL)
-    const base = computeLoadPlan(truck, res.groups)
-    const p = spacePallets(base)
-    expect(p.placed.length).toBe(base.placed.length)
+    expect(res.palletCount).toBe(17)
+    const p = placePallets(truck, res.groups)
+    expect(p.placedCount).toBe(17)
     expect(overlaps(p.placed)).toBe(0)
     for (const b of p.placed) {
-      expect(b.x + b.l).toBeLessThanOrEqual(truck.length + 1)
-      expect(b.y + b.w).toBeLessThanOrEqual(truck.width + 1)
+      expect(b.x).toBeGreaterThanOrEqual(0); expect(b.y).toBeGreaterThanOrEqual(0)
+      expect(b.x + b.l).toBeLessThanOrEqual(truck.length)
+      expect(b.y + b.w).toBeLessThanOrEqual(truck.width)
     }
-    const gaps = p.placed.filter(b => p.placed.some(a => a !== b && a.x + a.l <= b.x + 1 && a.x + a.l > b.x - 100 && Math.min(a.y + a.w, b.y + b.w) > Math.max(a.y, b.y)))
-      .map(b => Math.min(...p.placed.filter(a => a !== b && a.x + a.l <= b.x + 1 && Math.min(a.y + a.w, b.y + b.w) > Math.max(a.y, b.y)).map(a => b.x - a.x - a.l)))
-    expect(Math.max(...gaps)).toBeGreaterThan(0)
-    expect(Math.max(...gaps)).toBeLessThanOrEqual(80 + 1)
+    // hai pallet bất kỳ tách nhau ≥ 50mm theo ÍT NHẤT một chiều sàn; pallet kề nhau cách ĐÚNG 50mm (không dàn rộng hơn)
+    let tight = 0
+    for (const a of p.placed) for (const b of p.placed) {
+      if (a === b) continue
+      const gx = Math.max(b.x - a.x - a.l, a.x - b.x - b.l), gy = Math.max(b.y - a.y - a.w, a.y - b.y - b.w)
+      expect(Math.max(gx, gy)).toBeGreaterThanOrEqual(PALLET_GAP)
+      if (Math.max(gx, gy) === PALLET_GAP) tight++
+    }
+    expect(tight).toBeGreaterThan(0)
+    // bề ngang thừa chia đều hai bên vách
+    const y0 = Math.min(...p.placed.map(b => b.y)), y1 = Math.max(...p.placed.map(b => b.y + b.w))
+    expect(Math.abs(y0 - (truck.width - y1))).toBeLessThanOrEqual(1)
+    // đếm chỗ trên sàn đã trừ khe: 9,5 × 2,5 m ⇒ 9 × 2 (chân 1,0 m dọc xe); xe 8 tấn 7,4 × 2,35 m ⇒ 5 × 2 (trước 6 × 2)
+    expect(palletFloorSlots(PAL, truck)).toBe(18)
+    expect(palletFloorSlots(PAL, { length: 7400, width: 2350, height: 2300 })).toBe(10)
+    expect(palletFloorSlots(PAL, { length: 7400, width: 2350, height: 2300 }, 0)).toBe(12)
   })
 
   it('cartonsPerPalletEstimate: mã chưa khai thùng/pallet ⇒ gọn trong chân × số lớp vừa trần (≤ số lớp khai)', () => {

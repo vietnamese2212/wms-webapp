@@ -20,7 +20,7 @@ import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import {
   computeLoadPlan, GROUP_COLORS, palletizeGroups, palletFitError, palletFloorSlots, palletsTooTall,
-  spreadOnTopOfPallets, DEFAULT_PALLET, cartonBoxOf, packPallet, spacePallets, spreadToDoor, cartonsPerPalletEstimate,
+  spreadOnTopOfPallets, DEFAULT_PALLET, cartonBoxOf, packPallet, placePallets, spreadToDoor, cartonsPerPalletEstimate,
   type LoadGroup, type LoadPlan, type PalletSpec, type PalletizeInput, type PalletCarton,
 } from '@/utils/loadPlan'
 import type { GDO } from '@/types'
@@ -544,14 +544,14 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
     // Thùng "Lên nóc" (topCarton) KHÔNG đi qua thuật toán thùng-sàn (nó dựng tháp lẻ loi khi
     // trộn với pallet): xếp pallet trước (count 0 giữ nguyên CHỈ SỐ nhóm cho nhãn/màu), rồi
     // rải thùng lên MẶT các pallet bằng spreadOnTopOfPallets.
-    // Xe pallet: sàn thừa dàn thành KHE giữa các pallet. Xe thường: trải sàn theo % TẢI của dòng xe (luật 11 lõi — gần đủ
-    // tải thì tới sát cửa); chưa biết tải (chuyến chưa gắn dòng xe / mã thiếu kg) ⇒ hàng đã phủ ≥ 75% sàn thì tới cửa.
+    // Xe pallet: KHE 5 CM giữa các pallet (luật 14 lõi — `placePallets`). Xe thường: trải sàn theo % TẢI của dòng xe (luật
+    // 11 lõi — gần đủ tải thì tới sát cửa); chưa biết tải (chuyến chưa gắn dòng xe / mã thiếu kg) ⇒ hàng đã phủ ≥ 75% sàn thì tới cửa.
     const topIdx = groups.map((g, i) => (g.topCarton ? i : -1)).filter(i => i >= 0)
     if (!topIdx.length) {
-      const p = computeLoadPlan(truck, groups)
-      return isPalletTruck ? spacePallets(p) : spreadToDoor(truck, groups, p, payloadKg && cargoKg != null ? (cargoKg / payloadKg) * 100 : null)
+      if (isPalletTruck) return placePallets(truck, groups)
+      return spreadToDoor(truck, groups, computeLoadPlan(truck, groups), payloadKg && cargoKg != null ? (cargoKg / payloadKg) * 100 : null)
     }
-    const base = spacePallets(computeLoadPlan(truck, groups.map(g => (g.topCarton ? { ...g, count: 0 } : g))))
+    const base = placePallets(truck, groups.map(g => (g.topCarton ? { ...g, count: 0 } : g)))
     return spreadOnTopOfPallets(base, topIdx, groups)
   }, [truckOk, truckL, truckW, truckH, groups, palFitErr, isPalletTruck, payloadKg, cargoKg])
   // % tải của phần ĐÃ XẾP (cùng số với ô Khối lượng) — vượt 100 ⇒ báo đỏ
@@ -596,9 +596,8 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
     effGroups = effGroups.map((g, i) => ({ ...g, doKey: `${String(i).padStart(3, '0')}|${g.doKey}` }))
     const truck = { length: truckL, width: truckW, height: truckH }
     const topIdx = effGroups.map((g, i) => (g.topCarton ? i : -1)).filter(i => i >= 0)
-    const base0 = computeLoadPlan(truck, topIdx.length
-      ? effGroups.map(g => (g.topCarton ? { ...g, count: 0 } : g)) : effGroups)
-    const base = isPalletTruck ? spacePallets(base0) : base0
+    const baseGroups = topIdx.length ? effGroups.map(g => (g.topCarton ? { ...g, count: 0 } : g)) : effGroups
+    const base = isPalletTruck ? placePallets(truck, baseGroups) : computeLoadPlan(truck, baseGroups)
     const p = topIdx.length ? spreadOnTopOfPallets(base, topIdx, effGroups) : base
     return { plan: p, groups: effGroups }
   // eslint-disable-next-line react-hooks/exhaustive-deps

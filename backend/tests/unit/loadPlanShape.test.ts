@@ -242,9 +242,9 @@ describe('loadPlan — luật 11-14 (trải tới cửa, thùng trên pallet, ư
     expect(mixed).toBeGreaterThan(0)   // có pallet gộp để kiểm
   })
 
-  // xe pallet: chia làn tối ưu, khoảng cách `PALLET_GAP` giữa hai pallet kề nhau cả dọc lẫn ngang; không chồng lấn,
-  // trong lòng xe
-  const palletShape = (p: ReturnType<typeof placePallets>, truck: { length: number; width: number }) => {
+  // xe pallet: chia làn tối ưu, khoảng cách `gap` giữa hai pallet kề nhau cả dọc lẫn ngang; không chồng lấn, trong lòng xe;
+  // làn ép sát hai vách (bề ngang thừa thành rãnh giữa), một làn thì đặt giữa
+  const palletShape = (p: ReturnType<typeof placePallets>, truck: { length: number; width: number }, gap = PALLET_GAP) => {
     expect(overlaps(p.placed)).toBe(0)
     for (const b of p.placed) {
       expect(b.z).toBe(0)
@@ -256,47 +256,58 @@ describe('loadPlan — luật 11-14 (trải tới cửa, thùng trên pallet, ư
     for (const a of p.placed) for (const b of p.placed) {
       if (a === b) continue
       const ovX = Math.min(a.x + a.l, b.x + b.l) - Math.max(a.x, b.x), ovY = Math.min(a.y + a.w, b.y + b.w) - Math.max(a.y, b.y)
-      if (ovX > 1) expect(Math.max(b.y - a.y - a.w, a.y - b.y - b.w)).toBeGreaterThanOrEqual(PALLET_GAP)
-      if (ovY > 1) expect(Math.max(b.x - a.x - a.l, a.x - b.x - b.l)).toBeGreaterThanOrEqual(PALLET_GAP)
+      if (ovX > 1) expect(Math.max(b.y - a.y - a.w, a.y - b.y - b.w)).toBeGreaterThanOrEqual(gap)
+      if (ovY > 1) expect(Math.max(b.x - a.x - a.l, a.x - b.x - b.l)).toBeGreaterThanOrEqual(gap)
     }
-    // hai bên vách thừa bằng nhau
     const y0 = Math.min(...p.placed.map(b => b.y)), y1 = Math.max(...p.placed.map(b => b.y + b.w))
-    expect(Math.abs(y0 - (truck.width - y1))).toBeLessThanOrEqual(PALLET_GAP)
+    if (new Set(p.placed.map(b => b.y)).size > 1) { expect(y0).toBe(0); expect(y1).toBe(truck.width) }
+    else expect(Math.abs(y0 - (truck.width - y1))).toBeLessThanOrEqual(1)
   }
   const fullPallets = (n: number) => palletizeGroups([{ key: 'D1|A', label: 'A', doKey: 'D1', doLabel: 'D1', cartons: 110 * n, cartonsPerPallet: 110, layers: 11,
     isPalletCarrier: false, weightKg: 5, carton: { l: 420, w: 255, h: 130 }, assumed: false, unitless: false, onTop: false }], PAL).groups
+  const lanesOf = (p: ReturnType<typeof placePallets>) => {
+    const m = new Map<number, typeof p.placed>()
+    for (const b of p.placed) { const k = [...m.keys()].find(y => Math.abs(y - b.y) < 300) ?? b.y; m.set(k, [...(m.get(k) ?? []), b]) }
+    return [...m.values()]
+  }
 
-  it('placePallets: chia làn NHIỀU PALLET NHẤT, khoảng cách 5 mm — 2,4 m không đặt được 2 pallet quay ngang; 2,5 m thì được', () => {
-    for (const [L, W, n] of [[9600, 2400, 16], [9500, 2500, 18], [7400, 2350, 13], [9600, 2350, 16], [9640, 2400, 17]] as const) {
+  it('placePallets: chia làn NHIỀU PALLET NHẤT — xếp sát 9,6 × 2,35 m: 9 quay ngang + 8 quay dọc = 17, rãnh giữa 15 cm', () => {
+    // [dài, rộng, khoảng cách, số pallet]
+    for (const [L, W, g, n] of [[9600, 2350, 0, 17], [9600, 2400, 0, 18], [9500, 2500, 0, 18], [7400, 2350, 0, 13],
+      [9600, 2400, 5, 16], [9600, 2350, 5, 16], [9640, 2400, 5, 17], [9500, 2500, 5, 18], [7400, 2350, 5, 13]] as const) {
       const truck = { length: L, width: W, height: 2600 }
-      const p = placePallets(truck, fullPallets(24))
+      const p = placePallets(truck, fullPallets(24), g)
       expect(p.placedCount).toBe(n)
-      expect(palletFloorSlots(PAL, truck)).toBe(n)
-      palletShape(p, truck)
+      expect(palletFloorSlots(PAL, truck, g)).toBe(n)
+      palletShape(p, truck, g)
     }
-    // khoảng cách 0 (sát tuyệt đối): 2,4 m vừa khít 2 pallet quay ngang ⇒ 18; hẹp hơn chút ⇒ 9 quay ngang + 8 quay dọc = 17
-    expect(placePallets({ length: 9600, width: 2400, height: 2600 }, fullPallets(24), 0).placedCount).toBe(18)
-    expect(placePallets({ length: 9600, width: 2390, height: 2600 }, fullPallets(24), 0).placedCount).toBe(17)
-    // 9,6 × 2,4 khoảng cách 5 mm: đúng 2 làn — làn chân 1,0 m dọc xe 9 pallet, làn chân 1,2 m dọc xe 7 pallet (8 × 1,2 m
-    // + 7 khe = 9,635 m > 9,6 m); pallet nối nhau trong làn cách đúng 5 mm
-    const p = placePallets({ length: 9600, width: 2400, height: 2600 }, fullPallets(24))
-    const lanes = new Map<number, typeof p.placed>()
-    for (const b of p.placed) lanes.set(b.y, [...(lanes.get(b.y) ?? []), b])
-    expect([...lanes.values()].map(ls => `${ls.length}×${ls[0].l}`).sort()).toEqual(['7×1200', '9×1000'])
-    for (const ls of lanes.values()) ls.sort((a, b) => a.x - b.x).forEach((b, i) => expect(b.x).toBe(i * (b.l + PALLET_GAP)))
+    // 9,6 × 2,35 xếp sát: làn chân 1,0 m dọc xe 9 pallet ép vách trái, làn chân 1,2 m dọc xe 8 pallet (vừa khít 9,6 m) ép
+    // vách phải; rãnh giữa = 2,35 − 1,2 − 1,0 = 0,15 m
+    const p = placePallets({ length: 9600, width: 2350, height: 2600 }, fullPallets(24))
+    const ls = lanesOf(p)
+    expect(ls.map(l => `${l.length}×${l[0].l}`).sort()).toEqual(['8×1200', '9×1000'])
+    for (const l of ls) l.sort((a, b) => a.x - b.x).forEach((b, i) => expect(b.x).toBe(i * b.l))
+    const [a, b] = ls.sort((u, v) => u[0].y - v[0].y)
+    expect(b[0].y - (a[0].y + a[0].w)).toBe(150)
+    // khoảng cách 5 mm: làn 1,2 m dọc xe chỉ còn 7 (8 × 1,2 + 7 × 0,005 = 9,635 m), pallet trong làn cách đúng 5 mm
+    const q = placePallets({ length: 9600, width: 2400, height: 2600 }, fullPallets(24), 5)
+    const qs = lanesOf(q)
+    expect(qs.map(l => `${l.length}×${l[0].l}`).sort()).toEqual(['7×1200', '9×1000'])
+    for (const l of qs) l.sort((u, v) => u.x - v.x).forEach((u, i) => expect(u.x).toBe(i * (u.l + 5)))
   })
 
-  it('placePallets: đơn mẫu 6 mã (17 pallet, có pallet chờm mép) — lòng 9,64 × 2,4 m đủ 17, đơn đầu nằm phía cabin', () => {
-    const truck = { length: 9640, width: 2400, height: 2600 }
+  it('placePallets: đơn mẫu 6 mã (17 pallet, có pallet chờm mép) vừa xe 9,6 × 2,35 m xếp sát, đơn đầu nằm phía cabin', () => {
+    const truck = { length: 9600, width: 2350, height: 2600 }
     const res = palletizeGroups(items, PAL)
     expect(res.palletCount).toBe(17)
     const p = placePallets(truck, res.groups)
     expect(p.placedCount).toBe(17)
     palletShape(p, truck)
-    expect(placePallets({ ...truck, length: 9600 }, res.groups).placedCount).toBe(16)
+    expect(placePallets(truck, res.groups, 5).placedCount).toBe(16)
+    expect(placePallets({ ...truck, length: 9640 }, res.groups, 5).placedCount).toBe(17)
     // hai đơn: đơn đầu (D1) trước, đơn sau (D2) ra phía cửa
     const two = [...res.groups, ...fullPallets(3).map(g => ({ ...g, key: 'D2|A|full', doKey: 'D2', doLabel: 'D2' }))]
-    const q = placePallets({ length: 12000, width: 2400, height: 2600 }, two)
+    const q = placePallets({ length: 12000, width: 2350, height: 2600 }, two)
     const xs = (d: string) => q.placed.filter(b => two[b.group].doKey === d).map(b => b.x)
     expect(Math.min(...xs('D2'))).toBeGreaterThanOrEqual(Math.max(...xs('D1')) - 1300)
     expect(Math.max(...xs('D2'))).toBeGreaterThan(Math.max(...xs('D1')))

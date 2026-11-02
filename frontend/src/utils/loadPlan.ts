@@ -47,8 +47,8 @@
 // 12. PALLET XẾP TỪNG THÙNG theo LỚP PHẲNG phủ kín, không thùng treo, không tháp (user 28/10) — `packPallet`.
 // 13. Mã chưa khai thùng/pallet ⇒ ƯỚC theo cỡ thùng thay vì "1 mã = 1 pallet" — `cartonsPerPalletEstimate`.
 // 14. XE PALLET XẾP THEO LÀN, NHIỀU PALLET NHẤT (user 01/11: "logic là tối ưu nhất"): thử mọi cách chia bề ngang thành
-//     làn quay dọc / quay ngang, khe 5 cm giữa hai làn, trong làn pallet nối sát — `placePallets` thay cho
-//     `computeLoadPlan`; `palletFloorSlots` đếm chỗ cùng cách (9,6 × 2,4 m: 9 + 8 = 17).
+//     làn quay dọc / quay ngang, khoảng cách / sai số `PALLET_GAP` (5 mm) giữa hai pallet kề nhau cả dọc lẫn ngang —
+//     `placePallets` thay cho `computeLoadPlan`; `palletFloorSlots` đếm chỗ cùng cách.
 // 1 step = 1 lượt đặt (1 chân mới / 1 cụm đè lên chân dở / 1 cụm lên nóc) — cho thanh
 // trượt "xếp theo thứ tự". Đơn vị: mm.
 
@@ -1833,8 +1833,9 @@ export function palletsTooTall(groups: LoadGroup[], truck: TruckDims): string[] 
     .map(g => `${g.label} (cao ${(g.h / 1000).toFixed(2)}m)`))]
 }
 
-/** Khe giữa hai LÀN pallet kề nhau, mm (luật 14 — `placePallets`). */
-export const PALLET_GAP = 50
+/** KHOẢNG CÁCH / SAI SỐ giữa hai pallet kề nhau, mm — cả dọc lẫn ngang xe, sát vách không chừa (luật 14, user 01/11:
+ *  "khoảng cách giữa các pallet là 5mm"; thực tế pallet dồn sát nhưng không tuyệt đối). Nơi gọi có cài đặt thì truyền vào. */
+export const PALLET_GAP = 5
 
 // LÀN pallet chạy dọc xe: `o` = 'L' cạnh l của khối nằm dọc xe · 'W' cạnh w nằm dọc xe; `w` = bề ngang làn
 type PalletLane = { o: 'L' | 'W'; w: number }
@@ -1854,13 +1855,14 @@ function laneSets(kinds: PalletLane[], width: number, gap: number): PalletLane[]
   return out
 }
 
-/** Số CHỖ pallet trên sàn xe (1 lớp) theo cách chia làn tối ưu của `placePallets` (khe `gap` giữa hai làn) — để đối
- *  chiếu với sức chứa danh nghĩa ("16-17 pallet"). Xe 9,6 × 2,4 m: 9 quay ngang + 8 quay dọc = 17. */
+/** Số CHỖ pallet trên sàn xe (1 lớp) theo cách chia làn tối ưu của `placePallets` (`gap` giữa hai pallet kề nhau) — để
+ *  đối chiếu với sức chứa danh nghĩa ("16-17 pallet"). Xe 9,6 × 2,4 m: khe 0 ⇒ 9 quay ngang + 8 quay dọc = 17; khe 5 mm
+ *  ⇒ 9 + 7 = 16 (8 × 1,2 m + 7 khe = 9,635 m). */
 export function palletFloorSlots(spec: PalletSpec, truck: TruckDims, gap = PALLET_GAP): number {
   const kinds: PalletLane[] = [{ o: 'L', w: spec.w }, ...(spec.l !== spec.w ? [{ o: 'W' as const, w: spec.l }] : [])]
   let best = 0
   for (const set of laneSets(kinds, truck.width, gap))
-    best = Math.max(best, set.reduce((s, k) => s + Math.floor(truck.length / laneAlong(spec, k.o) + 1e-9), 0))
+    best = Math.max(best, set.reduce((s, k) => s + Math.floor((truck.length + gap) / (laneAlong(spec, k.o) + gap) + 1e-9), 0))
   return best
 }
 
@@ -2165,12 +2167,12 @@ export function packPallet(spec: PalletSpec, layers: PalletLayer[], light: Set<s
 }
 
 // ─── 14. XẾP PALLET TRÊN SÀN — NHIỀU PALLET NHẤT ───────────────────────────────────────────────
-/** XẾP KHỐI PALLET (xe pallet, user 01/11: "logic là tối ưu nhất"; "giữa các pallet 5cm"; lòng 9,6 × 2,4 m chở 17 pallet
- *  = 9 quay ngang + 8 quay dọc, không đặt được 2 pallet quay cạnh 1,2 m ngang xe). Sàn chia thành LÀN chạy dọc xe, mỗi làn
- *  một hướng khối (cạnh l hay cạnh w nằm dọc xe) và một bề (theo khối thật — khối có thùng chờm mép rộng hơn chân); hai
- *  làn kề nhau cách `gap`; trong làn các pallet nối SÁT nhau (bốc bằng xe nâng theo làn). THỬ MỌI cách chia bề ngang
+/** XẾP KHỐI PALLET (xe pallet, user 01/11: "logic là tối ưu nhất"; "khoảng cách / sai số giữa các pallet 5mm", cả 4 phía;
+ *  lòng 2,4 m không đặt được 2 pallet quay cạnh 1,2 m ngang xe: 1,2 + 0,005 + 1,2 > 2,4). Sàn chia thành LÀN chạy dọc xe, mỗi
+ *  làn một hướng khối (cạnh l hay cạnh w nằm dọc xe) và một bề (theo khối thật — khối có thùng chờm mép rộng hơn chân); hai
+ *  làn kề nhau cách `gap`, pallet nối nhau trong làn cũng cách `gap`; sát vách không chừa. THỬ MỌI cách chia bề ngang
  *  thành làn, lấy cách chở NHIỀU pallet nhất — bằng nhau thì hàng ngắn hơn (dồn về cabin), rồi ít đổi hướng hơn. Xe rộng
- *  2,5 m: 1,2 + 0,05 + 1,2 = 2,45 m ⇒ tự chọn 2 làn quay ngang. Pallet lần lượt theo thứ tự bốc (đơn đầu ở sâu trong
+ *  2,5 m: 1,2 + 0,005 + 1,2 ⇒ tự chọn 2 làn quay ngang. Pallet lần lượt theo thứ tự bốc (đơn đầu ở sâu trong
  *  cabin; trong đơn khối chân to trước), mỗi pallet vào làn đang NGẮN nhất còn vừa ⇒ mỗi đơn chiếm một đoạn ngang xe. Cả
  *  dải làn đặt giữa bề ngang (hai bên vách thừa bằng nhau — tải cân); sàn thừa dọc xe để ở cửa. Thay cách cũ (xếp bằng
  *  `computeLoadPlan` của thùng rời — chọn làn theo độ phủ bề ngang nên xe 2,4 m chỉ ra 14). Khối pallet một tầng (không
@@ -2210,7 +2212,7 @@ export function placePallets(truck: TruckDims, groupsIn: LoadGroup[], gap = PALL
       })
       if (pick < 0) continue
       at.push({ gi, lane: pick, x: front[pick] })
-      front[pick] += laneAlong(g, lanes[pick].o)
+      front[pick] += laneAlong(g, lanes[pick].o) + gap   // pallet kế trong làn cách `gap`
     }
     return { at, len: Math.max(0, ...front), lanes }
   }

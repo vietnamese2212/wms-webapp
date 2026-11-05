@@ -340,7 +340,7 @@ describe('loadPlan — luật 15 (hàng gửi một dải liền)', () => {
     expect(p.placedCount).toBe(p.totalCount)
     expect(overlaps(p.placed)).toBe(0)
     const top = Math.max(...p.placed.map(b => b.z + b.h)), body = Math.max(...heavy.map(b => b.z + b.h))
-    expect(top - body).toBeLessThanOrEqual(300)
+    expect(top - body).toBeLessThanOrEqual(400)
   })
 
   it('mỗi mã gửi MỘT khối, hai mã liền nhau — không nằm hai đầu xe, không đè nhau', () => {
@@ -354,6 +354,26 @@ describe('loadPlan — luật 15 (hàng gửi một dải liền)', () => {
     const [a, c] = light
     const onTopOf = (x: PlacedBox, y: PlacedBox) => Math.abs(x.z - (y.z + y.h)) < 1 && x.x < y.x + y.l && x.x + x.l > y.x && x.y < y.y + y.w && x.y + x.w > y.y
     expect(a.some(x => c.some(y => onTopOf(x, y) || onTopOf(y, x)))).toBe(false)
+  })
+
+  it('luật 17: mã gửi đầu gom gọn gần đủ lớp sát cabin, không trải khắp xe', () => {
+    const tui = light[0]
+    const span = Math.max(...tui.map(b => b.x + b.l)) - Math.min(...tui.map(b => b.x))
+    const high = Math.max(...tui.map(b => b.z + b.h)) - Math.min(...tui.map(b => b.z))
+    expect(Math.min(...tui.map(b => b.x))).toBeLessThanOrEqual(50)
+    expect(span).toBeLessThanOrEqual(2400)
+    expect(high).toBeGreaterThanOrEqual(900)
+  })
+
+  it('luật 16: một chân một loại hàng — hai mã cùng cỡ thành hai khối, hàng thường không nằm trên mã khác', () => {
+    const gs2 = [grp('A', 'D1', 300, 420, 255, 130, { maxLayers: 11 }), grp('B', 'D1', 305, 420, 255, 130, { maxLayers: 11 }), grp('C', 'D1', 200, 430, 250, 100, { maxLayers: 14 })]
+    const r = computeLoadPlan({ length: 7400, width: 2350, height: 2150 }, gs2)
+    expect(r.placedCount).toBe(r.totalCount)
+    for (const a of r.placed) for (const c of r.placed) {
+      if (a.group === c.group) continue
+      const ix = Math.min(a.x + a.l, c.x + c.l) - Math.max(a.x, c.x), iy = Math.min(a.y + a.w, c.y + c.w) - Math.max(a.y, c.y)
+      expect(ix > 20 && iy > 20).toBe(false)
+    }
   })
 
   it('xe chật: không chở kém cách cũ — hàng gửi vẫn đặt được hết khi có chỗ', () => {

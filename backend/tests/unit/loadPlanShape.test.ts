@@ -356,13 +356,13 @@ describe('loadPlan — luật 15 (hàng gửi một dải liền)', () => {
     expect(a.some(x => c.some(y => onTopOf(x, y) || onTopOf(y, x)))).toBe(false)
   })
 
-  it('luật 17: mã gửi đầu gom gọn gần đủ lớp sát cabin, không trải khắp xe', () => {
+  it('luật 17-18: mã gửi đầu gom gọn sát cabin, không trải khắp xe', () => {
     const tui = light[0]
     const span = Math.max(...tui.map(b => b.x + b.l)) - Math.min(...tui.map(b => b.x))
     const high = Math.max(...tui.map(b => b.z + b.h)) - Math.min(...tui.map(b => b.z))
     expect(Math.min(...tui.map(b => b.x))).toBeLessThanOrEqual(50)
     expect(span).toBeLessThanOrEqual(2400)
-    expect(high).toBeGreaterThanOrEqual(900)
+    expect(high).toBeGreaterThanOrEqual(600)
   })
 
   it('luật 16: một chân một loại hàng — hai mã cùng cỡ thành hai khối, hàng thường không nằm trên mã khác', () => {
@@ -382,5 +382,92 @@ describe('loadPlan — luật 15 (hàng gửi một dải liền)', () => {
     const r = computeLoadPlan(small, tight)
     expect(r.placedCount).toBe(r.totalCount)
     expect(overlaps(r.placed)).toBe(0)
+  })
+})
+
+// Luật 18 (user 05/11, ảnh 2 chuyến xe 9,6 m): "còn nhiều khoảng hở; có quyền quay ngang, dọc, miễn hàng nào ngang thì cả hàng ngang";
+// mã ít thùng từng thành tháp giữa xe; Túi 8 lớp trên thạch 1-2 lớp thành tháp hàng nhẹ.
+describe('loadPlan — luật 18 (mỗi hàng ngang một hướng)', () => {
+  const truck = { length: 9600, width: 2350, height: 2600 }
+  const heavyOf = (gs: LoadGroup[], p: ReturnType<typeof computeLoadPlan>) => p.placed.filter(b => !gs[b.group].onTop)
+  const uniformRows = (gs: LoadGroup[], p: ReturnType<typeof computeLoadPlan>) => {
+    gs.forEach((g, gi) => {
+      if (g.onTop) return
+      const rows = new Map<number, Set<number>>()
+      for (const b of p.placed) if (b.group === gi && b.z === 0) { if (!rows.has(b.x)) rows.set(b.x, new Set()); rows.get(b.x)!.add(b.l) }
+      for (const v of rows.values()) expect(v.size).toBe(1)
+    })
+  }
+  const a = [
+    grp('ST110', 'D1', 740, 420, 255, 100, { maxLayers: 28 }), grp('C85', 'D1', 612, 357, 276, 105, { maxLayers: 13 }),
+    grp('TH170', 'D1', 20, 430, 250, 130, { maxLayers: 11 }), grp('ST180', 'D1', 140, 420, 255, 130, { maxLayers: 11 }),
+    grp('TUI', 'D1', 472, 310, 130, 130, { maxLayers: 8, onTop: true }), grp('XX', 'D1', 200, 342, 259, 226, { maxLayers: 6, onTop: true }),
+  ]
+  const b = [
+    grp('ST110', 'D1', 740, 420, 255, 100, { maxLayers: 28 }), grp('TH100', 'D1', 479, 430, 250, 100, { maxLayers: 28 }),
+    grp('C85', 'D1', 612, 357, 276, 105, { maxLayers: 13 }), grp('TH170', 'D1', 40, 430, 250, 130, { maxLayers: 11 }),
+    grp('ST180', 'D1', 140, 420, 255, 130, { maxLayers: 11 }), grp('TUI', 'D1', 472, 310, 130, 130, { maxLayers: 8, onTop: true }),
+  ]
+  const pa = computeLoadPlan(truck, a), pb = computeLoadPlan(truck, b)
+
+  it('chở hết, không chồng lấn, mỗi hàng ngang của mã đứng sàn chỉ một hướng', () => {
+    for (const [gs, p] of [[a, pa], [b, pb]] as const) {
+      expect(p.placedCount).toBe(p.totalCount)
+      expect(overlaps(p.placed)).toBe(0)
+      uniformRows(gs, p)
+    }
+  })
+
+  it('mã ít thùng nằm thấp sát cửa, không thành tháp giữa xe', () => {
+    for (const [gs, p] of [[a, pa], [b, pb]] as const) {
+      const gi = gs.findIndex(g => g.key.endsWith('TH170') || g.label === 'TH170')
+      const bs = p.placed.filter(x => x.group === gi)
+      expect(Math.max(...bs.map(x => x.z + x.h))).toBeLessThanOrEqual(700)
+      const door = Math.max(...heavyOf(gs, p).map(x => x.x + x.l))
+      expect(Math.max(...bs.map(x => x.x + x.l))).toBe(door)
+    }
+  })
+
+  it('hàng nhẹ không thành tháp: nền đủ dày, đỉnh gần thân hàng', () => {
+    const gi = b.findIndex(g => g.onTop), bs = pb.placed.filter(x => x.group === gi)
+    const z0 = Math.min(...bs.map(x => x.z)), z1 = Math.max(...bs.map(x => x.z + x.h))
+    expect(z0).toBeGreaterThanOrEqual(0.5 * (z1 - z0))
+    expect(z1).toBeLessThanOrEqual(1500)
+    expect(z1 - Math.max(...heavyOf(b, pb).map(x => x.z + x.h))).toBeLessThanOrEqual(400)
+  })
+})
+
+// Luật 19-20 (user 05/11): "hở rộng quá không được"; "phần tiếp giáp 2 đơn đè lên nhau được"; hàng nhẹ nhiều hơn nặng đứng sàn; thứ tự khối tự tìm.
+describe('loadPlan — luật 19-20', () => {
+  const truck = { length: 9200, width: 2350, height: 2400 }
+  it('hở vách quá 20 cm mà trộn hướng sát hơn thì trộn', () => {
+    const p = computeLoadPlan(truck, [grp('TO', 'D1', 250, 600, 400, 300, { maxLayers: 6 }), grp('NHO', 'D1', 900, 200, 150, 100, { maxLayers: 18 })])
+    expect(p.placedCount).toBe(p.totalCount)
+    expect(overlaps(p.placed)).toBe(0)
+    const to = p.placed.filter(b => b.group === 0 && !b.z)
+    expect(truck.width - Math.max(...to.map(b => b.y + b.w))).toBeLessThanOrEqual(200)
+    expect(new Set(to.map(b => b.l)).size).toBe(2)
+  })
+  it('hở vách không quá 20 cm thì không trộn hướng', () => {
+    const p = computeLoadPlan(truck, [grp('C85', 'D1', 700, 357, 276, 105, { maxLayers: 13 })])
+    const rows = new Map<number, Set<number>>()
+    for (const b of p.placed) if (!b.z) { if (!rows.has(b.x)) rows.set(b.x, new Set()); rows.get(b.x)!.add(b.l) }
+    for (const v of rows.values()) expect(v.size).toBe(1)
+  })
+  it('đơn sau đè lên hàng thấp cuối đơn trước, không để lõm', () => {
+    const t8 = { length: 7400, width: 2350, height: 2150 }
+    const gs = [grp('ST110', 'D1', 180, 420, 255, 100, { maxLayers: 28 }), grp('TH170', 'D1', 8, 430, 250, 130, { maxLayers: 11 }), grp('C85', 'D2', 150, 357, 276, 105, { maxLayers: 13 }), grp('ST180', 'D2', 10, 420, 255, 130, { maxLayers: 11 })]
+    const p = computeLoadPlan(t8, gs)
+    expect(p.placedCount).toBe(p.totalCount)
+    expect(overlaps(p.placed)).toBe(0)
+    const low = p.placed.filter(b => b.group === 1), onTop = p.placed.filter(b => b.group === 2 && b.z > 0 && low.some(l => Math.min(l.x + l.l, b.x + b.l) - Math.max(l.x, b.x) > 20 && Math.min(l.y + l.w, b.y + b.w) - Math.max(l.y, b.y) > 20))
+    expect(onTop.length).toBeGreaterThan(0)
+  })
+  it('hàng nhẹ nhiều hơn hàng nặng: mã nhẹ lớn nhất đứng sàn, không tháp', () => {
+    const t8 = { length: 7400, width: 2350, height: 2150 }
+    const p = computeLoadPlan(t8, [grp('ST110', 'D1', 200, 420, 255, 100, { maxLayers: 28 }), grp('TUI', 'D1', 700, 310, 130, 130, { maxLayers: 8, onTop: true }), grp('XX', 'D1', 200, 342, 259, 226, { maxLayers: 6, onTop: true }), grp('NL', 'D1', 30, 600, 500, 400, { maxLayers: 4, onTop: true })])
+    expect(p.placedCount).toBe(p.totalCount)
+    expect(p.placed.some(b => (b.group === 2 || b.group === 3) && !b.z)).toBe(true)
+    expect(Math.max(...p.placed.map(b => b.z + b.h))).toBeLessThanOrEqual(1600)
   })
 })

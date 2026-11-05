@@ -435,6 +435,13 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
   const placements = useLoadPlanPrefsStore(s => s.placements)
   const setPlacement = useLoadPlanPrefsStore(s => s.setPlacement)
   const whId = gdo.warehouse_id
+  // Xe xá: hàng gửi xếp phía trên (mặc định) hay đứng khối riêng dưới sàn — nhớ theo kho × user
+  const lightOwnLoose = useLoadPlanPrefsStore(s => (whId ? s.lightOwnLoose?.[whId] === true : false))
+  const setLightOwnLoose = useLoadPlanPrefsStore(s => s.setLightOwnLoose)
+  const looseOf = (g: PlanGroup): PlanGroup => {
+    const c = looseCap(g)
+    return lightOwnLoose ? { ...c, onTop: false } : c
+  }
   const placeOf = (cat: string | null): LoadPlacement =>
     (cat && whId ? placements[`${whId}|${cat}`] ?? 'MIX' : 'MIX')
   const catList = useMemo(
@@ -502,9 +509,9 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
         .map(g => ({ ...g, onTop: true, topCarton: true }))
       return [...(palletized?.groups ?? []), ...top]
     }
-    return cartonGroups.filter(g => !g.isPallet).map(looseCap)
+    return cartonGroups.filter(g => !g.isPallet).map(looseOf)
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isPalletTruck, palletized, cartonGroups, placements, whId])
+  }, [isPalletTruck, palletized, cartonGroups, placements, whId, lightOwnLoose])
 
   const droppedPallets = useMemo(
     () => (isPalletTruck ? [] : cartonGroups.filter(g => g.isPallet)), [isPalletTruck, cartonGroups])
@@ -566,7 +573,7 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
       .map(g => ({ ...g, count: g.done }))
       .sort((a, b) => ((a.firstScanAt ?? '9999') < (b.firstScanAt ?? '9999') ? -1 : 1))
     if (!scanned.length) return null
-    let effGroups: PlanGroup[] = isPalletTruck ? scanned : scanned.map(looseCap)
+    let effGroups: PlanGroup[] = isPalletTruck ? scanned : scanned.map(looseOf)
     if (isPalletTruck && palSpec) {
       const items: PalletizeInput[] = scanned
         .filter(g => !onTopActive(g, scanned))
@@ -601,7 +608,7 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
     const p = topIdx.length ? spreadOnTopOfPallets(base, topIdx, effGroups) : base
     return { plan: p, groups: effGroups }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, truckOk, truckL, truckW, truckH, palFitErr, cartonGroups, isPalletTruck, palSpec, placements, whId])
+  }, [mode, truckOk, truckL, truckW, truckH, palFitErr, cartonGroups, isPalletTruck, palSpec, placements, whId, lightOwnLoose])
 
   // Sơ đồ đang VẼ: Tiến độ có hàng đã quét → plan xếp-theo-quét; còn lại → plan Dự toán
   const progressActive = mode === 'progress' && progressPlan != null
@@ -1086,6 +1093,19 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
               </p>
             )}
           </div>
+
+          {/* Xe xá có hàng gửi: xếp phía trên hàng khác (một dải liền) hay đứng khối riêng dưới sàn (user 04/11) */}
+          {!isPalletTruck && whId && cartonGroups.some(g => !g.isPallet && g.onTop) && (
+            <button type="button" role="switch" aria-checked={lightOwnLoose}
+              onClick={() => setLightOwnLoose(whId, !lightOwnLoose)}
+              title={lightOwnLoose ? 'Hàng gửi đứng khối riêng dưới sàn' : 'Hàng gửi xếp phía trên hàng khác, thành một dải liền'}
+              className="flex w-full items-center justify-between gap-2 rounded-md border border-input bg-white px-2 h-8 text-xs font-medium">
+              Hàng gửi: xếp riêng
+              <span className={`relative h-4 w-7 shrink-0 rounded-full transition-colors ${lightOwnLoose ? 'bg-primary' : 'bg-slate-300'}`}>
+                <span className={`absolute left-0.5 top-0.5 h-3 w-3 rounded-full bg-white transition-transform ${lightOwnLoose ? 'translate-x-3' : ''}`} />
+              </span>
+            </button>
+          )}
 
           {/* ── Quy cách pallet: lấy từ MÃ PALLET trong danh mục (chân + đế + màu) — chỉ hỏi tay
               khi danh mục chưa khai (26/08 vòng 3: user hỏi "ô này để làm gì vì pallet có quy

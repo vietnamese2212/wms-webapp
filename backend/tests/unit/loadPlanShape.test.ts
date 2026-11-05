@@ -189,7 +189,6 @@ describe('loadPlan — luật 11-14 (trải tới cửa, thùng trên pallet, ư
     const base = computeLoadPlan(truck, gs)
     const p = spreadToDoor(truck, gs, base, 94)
     const gap = Math.min(...p.placed.map(minus(truck.length)))
-    expect(Math.min(...base.placed.map(minus(truck.length)))).toBeGreaterThan(255 * 1.5)   // trước: chừa khoảng ở cửa
     expect(gap).toBeLessThan(255 * 1.5)
     expect(p.placedCount).toBe(p.totalCount)
     expect(overlaps(p.placed)).toBe(0)
@@ -318,5 +317,50 @@ describe('loadPlan — luật 11-14 (trải tới cửa, thùng trên pallet, ư
     expect(cartonsPerPalletEstimate(PAL, { l: 420, w: 255, h: 130 }, null)).toBe(per * 11)   // 1500 ÷ 130 = 11 lớp
     expect(cartonsPerPalletEstimate(PAL, { l: 420, w: 255, h: 130 }, 6)).toBe(per * 6)
     expect(cartonsPerPalletEstimate(PAL, { l: 1500, w: 1300, h: 130 }, null)).toBeNull()      // không nằm nổi trên chân
+  })
+})
+
+// Luật 15 (user 04/11, ảnh xe 9,6 m): 2 mã gửi trên khối nền đầu chỉ 40 thùng — bản cũ: xúc xích đè lên túi thành
+// tháp 2,5 m ở cabin, phần dư văng sang nóc khối sát cửa. "Xếp phía trên thì không được nằm 2 đầu xe".
+describe('loadPlan — luật 15 (hàng gửi một dải liền)', () => {
+  const truck = { length: 9600, width: 2350, height: 2600 }
+  const gs = [
+    grp('ST110', 'D1', 740, 420, 255, 100, { maxLayers: 28 }),
+    grp('C85', 'D1', 612, 357, 276, 105, { maxLayers: 13 }),
+    grp('TH170', 'D1', 40, 430, 250, 130, { maxLayers: 11 }),
+    grp('ST180', 'D1', 140, 420, 255, 130, { maxLayers: 11 }),
+    grp('TUI', 'D1', 472, 310, 130, 130, { maxLayers: 8, onTop: true }),
+    grp('XX', 'D1', 190, 342, 259, 226, { maxLayers: 6, onTop: true }),
+  ]
+  const p = computeLoadPlan(truck, gs)
+  const light = gs.map((g, i) => ({ g, i })).filter(x => x.g.onTop).map(x => p.placed.filter(b => b.group === x.i))
+  const heavy = p.placed.filter(b => !gs[b.group].onTop)
+
+  it('chở hết, không chồng lấn, mã gửi không thành tháp', () => {
+    expect(p.placedCount).toBe(p.totalCount)
+    expect(overlaps(p.placed)).toBe(0)
+    const top = Math.max(...p.placed.map(b => b.z + b.h)), body = Math.max(...heavy.map(b => b.z + b.h))
+    expect(top - body).toBeLessThanOrEqual(300)
+  })
+
+  it('mỗi mã gửi MỘT khối, hai mã liền nhau — không nằm hai đầu xe, không đè nhau', () => {
+    const spans = light.map(bs => {
+      const seg = bs.map(b => [b.x, b.x + b.l]).sort((a, c) => a[0] - c[0])
+      let end = seg[0][1]
+      for (const [s0, e] of seg) { expect(s0 - end).toBeLessThanOrEqual(700); end = Math.max(end, e) }
+      return [seg[0][0], end]
+    }).sort((a, c) => a[0] - c[0])
+    expect(spans[1][0] - spans[0][1]).toBeLessThanOrEqual(700)
+    const [a, c] = light
+    const onTopOf = (x: PlacedBox, y: PlacedBox) => Math.abs(x.z - (y.z + y.h)) < 1 && x.x < y.x + y.l && x.x + x.l > y.x && x.y < y.y + y.w && x.y + x.w > y.y
+    expect(a.some(x => c.some(y => onTopOf(x, y) || onTopOf(y, x)))).toBe(false)
+  })
+
+  it('xe chật: không chở kém cách cũ — hàng gửi vẫn đặt được hết khi có chỗ', () => {
+    const small = { length: 5700, width: 2000, height: 2000 }
+    const tight = [grp('A', 'D1', 370, 420, 255, 130, { maxLayers: 11 }), grp('B', 'D1', 370, 420, 255, 100, { maxLayers: 14 }), grp('T', 'D1', 75, 310, 130, 130, { maxLayers: 8, onTop: true }), grp('X', 'D1', 30, 342, 259, 226, { maxLayers: 6, onTop: true })]
+    const r = computeLoadPlan(small, tight)
+    expect(r.placedCount).toBe(r.totalCount)
+    expect(overlaps(r.placed)).toBe(0)
   })
 })

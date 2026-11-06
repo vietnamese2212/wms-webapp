@@ -200,6 +200,30 @@ describe('loadPlan — luật 11-14 (trải tới cửa, thùng trên pallet, ư
     expect(spreadTarget(null, 80)).toBe(100)
   })
 
+  // User 06/11 (ảnh container 3.700 thùng): 'hàng nhẹ lẽ ra lên hàng đầu, nhiều lớp, nằm trên hàng khác' — lõi đã gom đúng,
+  // bước trải tới cửa chạy lại với ít lớp hơn thì lõi lùi về trải phẳng (hàng gửi dài 8,6 m)
+  it('trải tới cửa KHÔNG làm tan khối hàng gửi đã gom ở đầu xe (container 40ft, 92% tải)', () => {
+    const truck = { length: 12032, width: 2352, height: 2393 }
+    const gs = [
+      grp('A180', 'D1', 1450, 425, 260, 145, { maxLayers: 15 }),
+      grp('A110', 'D1', 1500, 425, 240, 105, { maxLayers: 20 }),
+      grp('NHE', 'D1', 600, 315, 140, 135, { maxLayers: 11, onTop: true }),
+      grp('LY', 'D1', 150, 360, 250, 265, { maxLayers: 5 }),
+    ]
+    const p = spreadToDoor(truck, gs, computeLoadPlan(truck, gs), 92)
+    const li = p.groups.findIndex(g => g.onTop), light = p.placed.filter(b => b.group === li)
+    const x0 = Math.min(...light.map(b => b.x)), x1 = Math.max(...light.map(b => b.x + b.l))
+    expect(x0).toBeLessThan(100)                                      // ngay đầu xe
+    expect(x1 - x0).toBeLessThanOrEqual(3000)                         // gom gọn, không trải dọc xe
+    expect(Math.min(...light.map(b => b.z))).toBeGreaterThan(0)       // nằm trên hàng khác
+    const cols = new Map<string, number>()
+    for (const b of light) cols.set(b.x + '|' + b.y, (cols.get(b.x + '|' + b.y) ?? 0) + 1)
+    expect(Math.max(...cols.values())).toBeGreaterThanOrEqual(5)      // nhiều lớp
+    expect(p.placedCount).toBe(p.totalCount)
+    expect(Math.min(...p.placed.map(minus(truck.length)))).toBeLessThan(240 * 1.5)   // vẫn tới sát cửa
+    expect(overlaps(p.placed)).toBe(0)
+  })
+
   // Đơn mẫu xe pallet: 6 mã, phần lẻ dồn pallet gộp, thạch túi (nhẹ) trên cùng
   const items: PalletizeInput[] = ([
     ['ST110', 740, 420, 255, 100, 140, 14, false], ['C100', 479, 430, 250, 100, 143, 14, false],

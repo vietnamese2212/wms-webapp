@@ -74,6 +74,8 @@
 //     tốt nhất. Hàng gửi nhiều hơn hàng nặng của đơn ⇒ mã gửi lớn nhất đứng sàn cho tới khi nền gánh nổi (`lightsToFloor`); xe chật mà vậy phải bỏ thùng ⇒ giữ nguyên.
 // 20. HỞ VÁCH RỘNG QUÁ KHÔNG ĐƯỢC (user 05/11): hàng một hướng mà hở vách quá 10 cm (user 06/11: xe 1,9 m hở 11-18 cm "không hợp lý", trước đó 20 cm), trộn hai hướng phủ sát hơn ⇒ khối đó được trộn (ngoại lệ của luật 18).
 //     PHẦN TIẾP GIÁP HAI ĐƠN ĐƯỢC ĐÈ LÊN NHAU (user 05/11): hàng thấp mã ít thùng cuối đơn trước được khối đầu đơn sau đè lên, tới ngang khối liền kề, không để lõm.
+// 21. TRẢI TỚI CỬA KHÔNG LÀM TAN KHỐI HÀNG GỬI (user 06/11, ảnh container 3.700 thùng: "hàng nhẹ lẽ ra lên hàng đầu, nhiều lớp, nằm trên hàng khác, ưu tiên lên trước"): `spreadToDoor` hạ lớp một mã mà
+//     hàng gửi đã gom bị trải ra dọc xe ⇒ không nhận, thử mã kế tiếp; hạ một lớp chưa bớt được hàng thùng nào thì thử tiếp tối đa 3 lớp thay vì dừng hẳn.
 // 1 step = 1 lượt đặt (1 chân mới / 1 cụm đè lên chân dở / 1 cụm lên nóc) — cho thanh
 // trượt "xếp theo thứ tự". Đơn vị: mm.
 
@@ -113,6 +115,7 @@ export interface LoadOptions {
   quick?: boolean          // chỉ cần biết chở hết không (gợi ý xe, ✓/✗ từng xe): bỏ bước tìm thứ tự
   order?: number[]         // thứ tự khối đã chọn (trải tới cửa chạy lại lõi, giữ nguyên thứ tự)
   keepLights?: boolean     // không đưa hàng gửi xuống sàn
+  spreading?: boolean      // lần chạy lại của trải tới cửa (luật 21): các khối đang bị chính bước này hạ lớp
 }
 
 export interface LoadPlan {
@@ -500,7 +503,7 @@ function tinyFloor(groups: LoadGroup[], W: number): Set<number> {
 
 // Luật 17: mã gửi nào đủ lớp trên khối nền nào cho đỉnh thấp nhất = mốc; mã khác hạ lớp ngang mốc (lệch tối đa ~nửa thùng).
 // Chỗ tính theo chiều dài dọc xe (số hàng thùng thật trên bề ngang xe), không theo diện tích — thùng to lát sàn kém hơn diện tích.
-function planLights(H: number, W: number, Len: number, floors: { gi: number; g: LoadGroup; n: number }[], lights: { gi: number; g: LoadGroup; n: number }[]) {
+function planLights(H: number, W: number, Len: number, floors: { gi: number; g: LoadGroup; n: number }[], lights: { gi: number; g: LoadGroup; n: number }[], spreading = false) {
   const capOf = (g: LoadGroup) => g.maxLayers ?? LIGHT_MAX_DEFAULT
   const lane = (g: LoadGroup) => { const a = Math.floor(W / g.w), c = Math.floor(W / g.l); return a * g.l <= c * g.w || !c ? { n: Math.max(1, a), d: g.l } : { n: c, d: g.w } }
   const lenOf = (l: { g: LoadGroup }, n: number, t: number) => { const o = lane(l.g); return Math.ceil(Math.ceil(n / t) / o.n) * o.d }   // dài cần để đặt n thùng, t lớp
@@ -564,7 +567,8 @@ function planLights(H: number, W: number, Len: number, floors: { gi: number; g: 
   const restFloors = floors.filter(b => !used.has(b.gi))
   const restVol = restFloors.reduce((a, b) => a + b.n * b.g.l * b.g.w * b.g.h, 0)
   const reach = Math.max(0, ...restFloors.map(b => qMax(b) * b.g.h))
-  if (restFloors.length && (level > reach + 250 || restVol / (W * level) < 800)) return null
+  // trải tới cửa: khối kế thấp vì đang bị chính bước đó hạ lớp, không phải không với tới mốc (luật 21)
+  if (restFloors.length && ((!spreading && level > reach + 250) || restVol / (W * level) < 800)) return null
   // mọi mã nặng đều làm nền, không còn khối kế tiếp đối chiếu: giữ cỡ "khoảng 10 lớp", không gom quá ngực người
   if (!restFloors.length && level > 1600) return null
   return { level, fixT, bases, order: order.map(l => l.gi) }
@@ -957,7 +961,7 @@ export function computeLoadPlan(truck: TruckDims, groupsArg: LoadGroup[], opts: 
       // vẫn dùng thềm kiểu cũ bên dưới.
       // Luật 17: khối nền đứng trước, hàng gửi đủ lớp trên đó, khối nặng kế tiếp cao gần bằng mốc
       const lightPlan = band && rows && doLights.length && new Set(doFloor.filter(gi => !tiny.has(gi)).map(gi => classKeyOf(groupsIn[gi]))).size >= 2
-        ? planLights(truck.height, truck.width, truck.length, doFloor.filter(gi => !tiny.has(gi)).map(gi => ({ gi, g: groupsIn[gi], n: avail(gi) })).filter(x => x.n > 0), doLights.map(gi => ({ gi, g: groupsIn[gi], n: avail(gi) })).filter(x => x.n > 0))
+        ? planLights(truck.height, truck.width, truck.length, doFloor.filter(gi => !tiny.has(gi)).map(gi => ({ gi, g: groupsIn[gi], n: avail(gi) })).filter(x => x.n > 0), doLights.map(gi => ({ gi, g: groupsIn[gi], n: avail(gi) })).filter(x => x.n > 0), opts.spreading)
         : null
       let nextForce: number | null = null
       const firstGi = lightPlan ? lightPlan.bases[0]?.gi : doFloor.find(gi => !tiny.has(gi))
@@ -2454,17 +2458,28 @@ export function spreadToDoor(T: TruckDims, groupsArg: LoadGroup[], base: LoadPla
   const doorX = groups.map((_, gi) => Math.max(0, ...base.placed.filter(b => b.group === gi).map(b => b.x + b.l)))
   const tinyG = tinyFloor(groups, T.width)
   const order = groups.map((_, gi) => gi).filter(gi => !groups[gi].onTop && !tinyG.has(gi)).sort((a, b) => doorX[b] - doorX[a])
-  let best = base, cap = layersOf(base), runs = 0, failed = false
+  let best = base, cap = layersOf(base), capBest = cap, stale = 0, runs = 0, failed = false
   const baseTowers = towers(base, T)
+  // chiều dài dọc xe của hàng gửi (luật 21: khối đã gom không được tan ra khi trải tới cửa)
+  const lightSpan = (p: LoadPlan) => {
+    const xs = p.placed.filter(b => groups[b.group]?.onTop)
+    return xs.length ? Math.max(...xs.map(b => b.x + b.l)) - Math.min(...xs.map(b => b.x)) : 0
+  }
+  const baseSpan = lightSpan(base)
   for (const gi of order) {
     while (cap[gi] > 1 && runs < SPREAD_RUNS && !done(best)) {
       const next = cap.map((c, i) => (i === gi ? c - 1 : c))
       runs++
-      const p = computeLoadPlan(T, groups.map((g, i) => (next[i] > 0 ? { ...g, maxLayers: Math.min(g.maxLayers ?? Infinity, next[i]) } : g)), { order: base.floorOrder, keepLights: true })
-      // hạ nữa là bỏ thùng / không dài thêm / đẻ tháp ⇒ thôi (lần thử hỏng chậm gấp ~8 lần — không thử mã khác nữa)
-      if (leftOf(p) || p.lengthUsedPct <= best.lengthUsedPct || towers(p, T) > baseTowers) { failed = true; break }
-      best = p; cap = next
+      const p = computeLoadPlan(T, groups.map((g, i) => (next[i] > 0 ? { ...g, maxLayers: Math.min(g.maxLayers ?? Infinity, next[i]) } : g)), { order: base.floorOrder, keepLights: true, spreading: true })
+      // hạ nữa là bỏ thùng / đẻ tháp ⇒ thôi (lần thử hỏng chậm gấp ~8 lần — không thử mã khác nữa)
+      if (leftOf(p) || towers(p, T) > baseTowers) { failed = true; break }
+      // hàng gửi tan ra ⇒ mã này không hạ được, thử mã kế tiếp
+      if (lightSpan(p) > baseSpan * 1.25 + 300) break
+      // chưa dài thêm: có thể chưa bớt được hàng thùng nào ⇒ thử tiếp tối đa 3 lớp
+      if (p.lengthUsedPct <= best.lengthUsedPct) { if (++stale > 3) { failed = true; break } cap = next; continue }
+      best = p; cap = next; capBest = next; stale = 0
     }
+    cap = capBest; stale = 0
     if (failed || runs >= SPREAD_RUNS || done(best)) break
   }
   return best

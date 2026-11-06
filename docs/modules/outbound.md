@@ -61,3 +61,7 @@ tính theo chuyến IN_PROGRESS / PAUSED, nhả khi Hoàn thành / Bỏ bắt đ
 ## 06/11 — Cảnh 3D của Xếp xe 3D giống MalCargo
 
 User: "3d của supplyc cũng như của cargo". `LoadPlan3DDialog` chỉ còn tính dữ liệu + bảng điều khiển; cảnh ở `components/wms/loadplan3d/` (chép từ MalCargo, nạp `lazy`): xe dựng theo đúng lòng thùng (tên loại xe / dòng xe có "cont" ⇒ đầu kéo + rơ-moóc + container), thùng in tên + mã, pallet gỗ tô `Material.pallet_color`, trời + bóng đổ, nút Góc nhìn + Hiện / Ẩn vách. Màu CỐ ĐỊNH theo mã (`colors.ts`), ô màu ở danh sách khớp thùng trên xe. Giữ nguyên: Dự toán / Tiến độ, phần đã xuất mờ (mesh riêng trong `cargo.ts`), soi mã, nhãn tên + số lớp (`marks.ts`). Luật xếp không đổi.
+
+## 06/11 — Trải tới cửa không làm tan khối hàng gửi (luật 21 `loadPlan.ts`)
+
+User (ảnh container 3.700 thùng): "hàng nhẹ lẽ ra lên hàng đầu, nhiều lớp, nằm trên hàng khác, ưu tiên lên trước". Lõi đã gom đúng, nhưng `spreadToDoor` chạy lại với ít lớp hơn thì lõi lùi về trải phẳng. Nay: hạ lớp mã nào mà hàng gửi dài ra quá 1,25 lần + 30 cm ⇒ không nhận, thử mã kế; hạ một lớp chưa dài thêm thì thử tiếp tối đa 3 lớp. Ngưỡng do Claude đặt. Chuyến dạng này tính lâu hơn (~1,5 → ~5 giây, trên luồng chính).

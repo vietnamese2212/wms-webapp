@@ -122,3 +122,22 @@ input[type='password']::-ms-clear { display: none; }
     text-wrap: balance;
   }
 }
+
+/* TAB KPI — phong cách "trung tâm điều hành" (11/2026, mẫu Du lieu mau/ui kpi). Chỉ áp trong .kpi-console:
+   các màn khác của app vẫn giữ Inter + bộ màu sky. Đổi màu khối nổi bật ở --k-brand. Bộ màu đã qua
+   validate_palette (skill dataviz): vàng tương phản thấp nên trạng thái LUÔN đi kèm nhãn chữ. */
+.kpi-console {
+  --k-brand: #1f4e9e; --k-data: #1f4e9e;
+  --k-surface: #ffffff; --k-surface-2: #f6f8fb;
+  --k-ink: #16213a; --k-muted: #66728c; --k-line: #e2e6ee;
+  --k-ok: #17946a; --k-warn: #e39a25; --k-bad: #dc4448; --k-none: #c3cbd9;
+  font-family: 'Montserrat', 'Inter', system-ui, sans-serif;
+  color: var(--k-ink);
+}
+.dark .kpi-console {
+  --k-data: #5e8fe6;
+  --k-surface: #162034; --k-surface-2: #1c2840;
+  --k-ink: #e8edf7; --k-muted: #97a3bc; --k-line: #26324b;
+  --k-ok: #2aae7d; --k-warn: #dd9b2c; --k-bad: #e85a5f; --k-none: #4a5874;
+}
+.k-card { background: var(--k-surface); border: 1px solid var(--k-line); border-radius: 14px; min-width: 0; }

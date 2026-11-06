@@ -31,3 +31,13 @@ bình 2,4 s, có lần 17,5 s (max của hàm là 30 s). User duyệt 11/10: s�
 `DASHBOARD_CACHE_SECONDS_DEFAULT` = 1800, staging `SystemSetting.dashboard_cache_seconds` = 1800 (production đổi tay ở Cài đặt WMS › Hệ
 thống). Để cache dài không lừa người xem, RPC ghép `computed_at` vào payload (cả nhánh cache lẫn tính) và header trang chủ in
 "· Số liệu lúc hh:mm" — cùng khuôn Giám sát vận hành. Tab Năng suất vẫn có lời gọi riêng theo khoảng ngày (không qua cache này). 
+
+## 06/11/2026 — tab KPI theo phong cách "trung tâm điều hành" (mẫu `Du lieu mau/ui kpi`)
+
+Chỉ đổi GIAO DIỆN tab KPI, không đổi số, không thêm request: mọi biểu đồ đọc đúng 2 payload đã có (`GET /wms/kpi` + `/wms/kpi/series`).
+Bố cục trên xuống: thanh lọc · **Sức khoẻ KPI** (% đạt + donut đèn bấm để lọc) · **Đèn theo nhóm** (thanh chồng, bấm tới nhóm) · **Lệch mục tiêu nhiều nhất** (bấm để soi) · **Xu hướng** + **So sánh kho** của MỘT KPI đang soi (`kpiFocus` trong filter store) · **Bản đồ đèn theo kỳ** (KPI × kỳ) + **Sức chứa** (đồng hồ vạch) · thẻ từng KPI theo nhóm · bảng KPI theo kho.
+
+- **Khung `.kpi-console` (index.css):** Montserrat + bộ màu riêng, CHỈ áp trong tab KPI và hộp phóng to; màn khác vẫn Inter + sky. Khối nổi bật dùng `--k-brand` = xanh đậm `#1F4E9E`, KHÔNG dùng đỏ thương hiệu LOF của mẫu: đỏ trong app = lỗi / không đạt (khối "tỷ lệ đạt" tô đỏ sẽ đọc thành đang hỏng) và app chạy nhiều đơn vị. Đổi màu = một dòng `--k-brand`.
+- **Biểu đồ của mẫu KHÔNG làm vì app chưa có số:** bản đồ GPS, nhiệt độ kho lạnh, năng suất theo khung giờ, treemap ngành hàng, chi phí vận tải theo nhà xe. Không vẽ số giả.
+- **File:** `components/wms/KpiCharts.tsx` (donut · thanh chồng · xếp hạng kho · bản đồ nhiệt · đồng hồ) · `KpiLineChart.tsx` (thêm vùng tô + đường cong đơn điệu) · `utils/kpiView.ts` (phép tính thuần, test `backend/tests/unit/kpiView.test.ts`). Tab này dùng `KpiPanel` thay `DashPanel`; các tab khác của Tổng quan vẫn `DashPanel`.
+- **So hai kỳ trên thẻ** ("▲ 0,4 điểm so 09/26") tính từ chuỗi đã có, là kỳ MỚI NHẤT so với kỳ có số liền trước; số lớn trên thẻ vẫn là CẢ KHOẢNG. Kỳ đang chạy dở (tháng hiện tại) cũng được so — đọc tooltip để thấy hai kỳ nào.

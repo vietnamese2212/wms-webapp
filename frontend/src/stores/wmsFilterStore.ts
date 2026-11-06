@@ -322,6 +322,7 @@ interface DashboardFilters {
   kpiGrain: string
   kpiCompare: string
   kpiGroup: string
+  kpiFocus: string          // KPI đang soi ở biểu đồ Xu hướng + So sánh kho của tab KPI
 }
 // Fill hàng phục vụ nhặt lẻ: đề xuất theo NGÀY XUẤT của kho, lệnh fill, kết quả theo người
 interface FillFilters {
@@ -648,7 +649,7 @@ const INBOUND_DEFAULT: InboundFilters = {
 // và để scopedPersist reset về default khi đổi user (tránh user kế thừa filter người trước).
 function initialFilters() {
   return {
-    dashboard: { warehouseId: '', prodFrom: '', prodTo: '', svcFrom: '', svcTo: '', kpiFrom: '', kpiTo: '', kpiGrain: '', kpiCompare: '', kpiGroup: '' },
+    dashboard: { warehouseId: '', prodFrom: '', prodTo: '', svcFrom: '', svcTo: '', kpiFrom: '', kpiTo: '', kpiGrain: '', kpiCompare: '', kpiGroup: '', kpiFocus: '' },
     warehouseCost: { view: 'voucher' as const, periodFrom: '', periodTo: '', warehouseId: '', items: [], search: '', page: 1, pageSize: 50 },
     lotTrace: { ...LOT_TRACE_DEFAULT },
     traceInv: { from: '', to: '', search: '', page: 1 },

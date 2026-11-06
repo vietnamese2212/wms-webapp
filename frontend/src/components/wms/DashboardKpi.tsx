@@ -8,13 +8,20 @@
 //   · Mỗi KPI THEO KỲ = thẻ số + BIỂU ĐỒ ĐƯỜNG nhỏ (thực tế ↔ mục tiêu) + nút phóng to (dialog 80% màn hình:
 //     trục, tooltip, bảng số, chu kỳ riêng). KPI ẢNH CHỤP TỒN (không có "theo kỳ") = thanh mục tiêu.
 //   · Thiếu dữ liệu → nói rõ cần cài đặt / thao tác gì (empty_hint). Chưa có mục tiêu → nút "Đặt mục tiêu" ngay trên thẻ.
+// 11/2026 — phong cách "trung tâm điều hành" (mẫu Du lieu mau/ui kpi): khung .kpi-console (Montserrat + bộ màu riêng ở index.css),
+//   hàng đầu = sức khoẻ KPI · nhóm · lệch nhiều nhất; hàng 2 = xu hướng + so sánh kho của KPI đang soi; hàng 3 = bản đồ nhiệt + sức chứa.
+//   Mọi biểu đồ mới đọc đúng 2 payload đã có (/kpi + /kpi/series) — KHÔNG thêm request nào.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Target, Warehouse, AlertTriangle, CircleDashed, Settings2, Maximize2, Table2, Pencil, BookOpen } from 'lucide-react'
+import { AlertTriangle, CircleDashed, Settings2, Maximize2, Table2, Pencil, BookOpen } from 'lucide-react'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
-import { DashPanel, DASH_SK } from '@/components/wms/DashboardPanel'
+import { DASH_SK } from '@/components/wms/DashboardPanel'
+import { GroupStack, KpiHeatmap, KpiPanel, RagDonut, TickGauge, WarehouseRank, type GroupRow, type RagKey } from '@/components/wms/KpiCharts'
+import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
+import { SingleSelect } from '@/components/shared/SingleSelect'
+import { kpiGap, lastDelta } from '@/utils/kpiView'
 import { FormSheet } from '@/components/shared/FormSheet'
 import { InfoTip } from '@/components/shared/InfoTip'
 import { StatusBadge, type BadgeTone } from '@/components/shared/StatusBadge'
@@ -44,23 +51,23 @@ const asGrain = (s: string): KpiGrain => (['day', 'week', 'month', 'year'].inclu
 /** Ô Từ–Đến đổi kiểu theo chu kỳ (date / week / month / year) — luôn quy về ngày đầu và ngày cuối kỳ.
  *  Bề rộng ĐỦ cho nhãn dài của trình duyệt ("tháng 10 năm 2025", "Tuần 36, 2026") — user 09/09 báo ô tháng bị cắt. */
 function GrainRange({ grain, from, to, onChange }: { grain: KpiGrain; from: string; to: string; onChange: (f: string, t: string) => void }) {
-  const cls = 'h-7 text-[11px] w-40 min-w-[9.5rem] px-1.5'
+  const cls = 'h-9 rounded-[10px] text-xs min-w-0 flex-1 sm:flex-none sm:w-40 px-2'
   if (grain === 'day') return (
-    <div className="flex items-center gap-1">
+    <div className="flex items-center gap-1 min-w-0 w-full sm:w-auto">
       <Input type="date" value={from} onChange={e => e.target.value && onChange(e.target.value, to < e.target.value ? e.target.value : to)} className={cls} />
       <span className="text-slate-400 text-[11px]">→</span>
       <Input type="date" value={to} onChange={e => e.target.value && onChange(from > e.target.value ? e.target.value : from, e.target.value)} className={cls} />
     </div>
   )
   if (grain === 'week') return (
-    <div className="flex items-center gap-1" title="Tuần ISO — thứ Hai đầu tuần">
+    <div className="flex items-center gap-1 min-w-0 w-full sm:w-auto" title="Tuần ISO — thứ Hai đầu tuần">
       <Input type="week" value={toWeekInput(from)} onChange={e => { const m = /^(\d{4})-W(\d{2})$/.exec(e.target.value); if (!m) return; const f = isoWeekMonday(Number(m[1]), Number(m[2])); onChange(f, to < f ? addDays(f, 6) : to) }} className={cls} />
       <span className="text-slate-400 text-[11px]">→</span>
       <Input type="week" value={toWeekInput(to)} onChange={e => { const m = /^(\d{4})-W(\d{2})$/.exec(e.target.value); if (!m) return; const t = addDays(isoWeekMonday(Number(m[1]), Number(m[2])), 6); onChange(from > t ? addDays(t, -6) : from, t) }} className={cls} />
     </div>
   )
   if (grain === 'month') return (
-    <div className="flex items-center gap-1">
+    <div className="flex items-center gap-1 min-w-0 w-full sm:w-auto">
       <Input type="month" value={from.slice(0, 7)} onChange={e => { if (!/^\d{4}-\d{2}$/.test(e.target.value)) return; const f = `${e.target.value}-01`; onChange(f, to < f ? monthEnd(f) : to) }} className={cls} />
       <span className="text-slate-400 text-[11px]">→</span>
       <Input type="month" value={to.slice(0, 7)} onChange={e => { if (!/^\d{4}-\d{2}$/.test(e.target.value)) return; const t = monthEnd(`${e.target.value}-01`); onChange(from > t ? `${e.target.value}-01` : from, t) }} className={cls} />
@@ -68,18 +75,18 @@ function GrainRange({ grain, from, to, onChange }: { grain: KpiGrain; from: stri
   )
   return (
     <div className="flex items-center gap-1">
-      <Input type="number" min={2020} max={2100} value={from.slice(0, 4)} onChange={e => { const y = Number(e.target.value); if (y < 2000 || y > 2100) return; const f = `${y}-01-01`; onChange(f, to < f ? `${y}-12-31` : to) }} className="h-7 text-[11px] w-24 px-1.5" />
+      <Input type="number" min={2020} max={2100} value={from.slice(0, 4)} onChange={e => { const y = Number(e.target.value); if (y < 2000 || y > 2100) return; const f = `${y}-01-01`; onChange(f, to < f ? `${y}-12-31` : to) }} className="h-9 rounded-[10px] text-xs w-24 px-2" />
       <span className="text-slate-400 text-[11px]">→</span>
-      <Input type="number" min={2020} max={2100} value={to.slice(0, 4)} onChange={e => { const y = Number(e.target.value); if (y < 2000 || y > 2100) return; const t = `${y}-12-31`; onChange(from > t ? `${y}-01-01` : from, t) }} className="h-7 text-[11px] w-24 px-1.5" />
+      <Input type="number" min={2020} max={2100} value={to.slice(0, 4)} onChange={e => { const y = Number(e.target.value); if (y < 2000 || y > 2100) return; const t = `${y}-12-31`; onChange(from > t ? `${y}-01-01` : from, t) }} className="h-9 rounded-[10px] text-xs w-24 px-2" />
     </div>
   )
 }
 function GrainPills({ value, onChange }: { value: KpiGrain; onChange: (g: KpiGrain) => void }) {
   return (
-    <div className="flex rounded border border-slate-200 dark:border-slate-700 overflow-hidden text-[11px] font-medium">
+    <div className="flex shrink-0 rounded-[10px] border border-[var(--k-line)] overflow-hidden bg-[var(--k-surface)] text-xs font-semibold">
       {GRAINS.map(g => (
         <button key={g.key} type="button" onClick={() => onChange(g.key)}
-          className={`px-2 h-7 border-l first:border-l-0 border-slate-200 dark:border-slate-700 ${value === g.key ? 'bg-sky-600 text-white' : 'bg-white dark:bg-slate-800/60 text-slate-600 dark:text-slate-300 hover:bg-slate-50'}`}>
+          className={`px-3 h-9 ${value === g.key ? 'bg-[var(--k-brand)] text-white' : 'text-[var(--k-muted)] hover:bg-[var(--k-surface-2)]'}`}>
           {g.label}
         </button>
       ))}
@@ -88,7 +95,7 @@ function GrainPills({ value, onChange }: { value: KpiGrain; onChange: (g: KpiGra
 }
 
 // ── Đèn ───────────────────────────────────────────────────────────────────────────────────────
-const RAG_STRIPE: Record<string, string> = { G: 'bg-emerald-500', Y: 'bg-amber-500', R: 'bg-red-500', none: 'bg-slate-300 dark:bg-slate-600' }
+const RAG_DOT: Record<string, string> = { G: 'bg-[var(--k-ok)]', Y: 'bg-[var(--k-warn)]', R: 'bg-[var(--k-bad)]', none: 'bg-[var(--k-none)]' }
 const RAG_TEXT: Record<string, string> = { G: 'text-emerald-600 dark:text-emerald-400', Y: 'text-amber-600 dark:text-amber-400', R: 'text-red-600 dark:text-red-400', none: 'text-slate-500' }
 const RAG_TONE: Record<string, BadgeTone> = { G: 'green', Y: 'amber', R: 'red', none: 'slate' }
 const RAG_LABEL: Record<string, string> = { G: 'Đạt', Y: 'Cần chú ý', R: 'Không đạt', none: '—' }
@@ -146,7 +153,7 @@ function Delta({ def, k }: { def: KpiDefPublic; k: KpiValue }) {
 /** Thanh mục tiêu cho KPI ẢNH CHỤP (không có chuỗi theo kỳ): vùng đạt/chú ý/không đạt trên một trục + vạch giá trị */
 function TargetBar({ def, k }: { def: KpiDefPublic; k: KpiValue }) {
   const t = k.t
-  if (!t) return <div className="h-2 mt-1.5 mb-0.5 rounded-sm bg-slate-100 dark:bg-slate-700/60" />
+  if (!t) return <div className="h-2.5 my-1 rounded-full bg-[var(--k-surface-2)]" />
   const max = def.unit === '%' ? 100 : Math.max(1e-9, k.value ?? 0, ...t) * 1.15
   const pct = (x: number) => `${Math.max(0, Math.min(100, (x / max) * 100))}%`
   const G = 'bg-emerald-500/25', Y = 'bg-amber-500/25', R = 'bg-red-500/20'
@@ -154,9 +161,9 @@ function TargetBar({ def, k }: { def: KpiDefPublic; k: KpiValue }) {
     : def.dir === 'down' ? [[0, t[0], G], [t[0], t[1], Y], [t[1], max, R]]
     : [[0, t[0], Y], [t[0], t[1], G], [t[1], t[2], Y], [t[2], max, R]]
   return (
-    <div className="relative h-2 mt-1.5 mb-0.5 rounded-sm overflow-hidden bg-slate-100 dark:bg-slate-700/60" title={targetText(def, t)}>
+    <div className="relative h-2.5 my-1 rounded-full overflow-hidden bg-[var(--k-surface-2)]" title={targetText(def, t)}>
       {segs.map(([a, b, c], i) => b > a && <span key={i} className={`absolute top-0 bottom-0 ${c}`} style={{ left: pct(a), width: `calc(${pct(b)} - ${pct(a)})` }} />)}
-      {k.value != null && <span className="absolute top-0 bottom-0 w-[3px] -ml-px rounded-sm bg-slate-900 dark:bg-white shadow" style={{ left: pct(k.value) }} />}
+      {k.value != null && <span className="absolute top-0 bottom-0 w-[3px] -ml-px rounded-sm bg-[var(--k-ink)]" style={{ left: pct(k.value) }} />}
     </div>
   )
 }
@@ -166,64 +173,78 @@ function seriesPoints(grain: KpiGrain, buckets: KpiBucket[] | undefined, prev: K
 }
 
 // ── Thẻ KPI ───────────────────────────────────────────────────────────────────────────────────
+/** So hai kỳ gần nhất có số — tô theo CHIỀU TỐT, không theo dấu (cùng luật với Delta). */
+function TrendDelta({ def, points }: { def: KpiDefPublic; points: ChartPoint[] | null }) {
+  const d = points ? lastDelta(points) : null
+  if (!d) return <span />
+  const flat = Math.abs(d.delta) < Math.pow(10, -def.decimals) / 2
+  const up = d.delta > 0
+  const good = flat || def.dir === 'band' ? null : (up === (def.dir === 'up'))
+  const cls = good == null ? 'text-[var(--k-muted)]' : good ? 'text-[var(--k-ok)]' : 'text-[var(--k-bad)]'
+  return (
+    <span className="whitespace-nowrap" title={`${d.label}: ${fmtValue(def, d.curr)} · ${d.prevLabel}: ${fmtValue(def, d.prev)}`}>
+      <b className={`font-semibold tabular-nums ${cls}`}>{flat ? '≈' : up ? '▲' : '▼'} {fmtNum(Math.abs(d.delta), def.decimals)}{def.unit === '%' ? ' điểm' : ''}</b>
+      {' '}so {d.prevLabel}
+    </span>
+  )
+}
+
 function KpiCard({ def, k, points, canTarget, onExpand, onSetTarget, onEditNote }: {
   def: KpiDefPublic; k: KpiValue; points: ChartPoint[] | null; canTarget: boolean
   onExpand: () => void; onSetTarget: () => void; onEditNote?: () => void
 }) {
   const r = ragKey(k.rag)
   const noData = k.value == null
+  const valueText = fmtValue(def, k.value)
   return (
-    <div className="relative rounded-lg bg-white dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 pl-3.5 pr-2 py-2 overflow-hidden flex flex-col">
-      <span className={`absolute left-0 top-0 bottom-0 w-1 ${RAG_STRIPE[r]}`} />
-      <div className="flex items-start gap-1">
-        <div className="text-[10px] uppercase tracking-wide text-slate-500 dark:text-slate-400 leading-tight flex-1 min-w-0">
-          {def.name}{def.snapshot && <span className="ml-1 normal-case tracking-normal text-slate-400">· hiện tại</span>}
+    <div className="k-card flex flex-col gap-1.5 px-4 pt-3.5 pb-3">
+      <div className="flex items-start gap-1.5">
+        <div className="flex-1 min-w-0 text-[13px] font-semibold leading-snug">
+          {def.name}{def.snapshot && <span className="ml-1 text-[11px] font-medium text-[var(--k-muted)]">· hiện tại</span>}
         </div>
         <KpiInfoTip def={def} onEdit={onEditNote} />
         {!def.snapshot && (
           <button type="button" onClick={onExpand} title="Phóng to biểu đồ" aria-label={`Phóng to ${def.name}`}
-            className="h-5 w-5 -mt-0.5 -mr-1 rounded text-slate-400 hover:text-sky-600 hover:bg-sky-50 dark:hover:bg-white/5 flex items-center justify-center shrink-0">
-            <Maximize2 className="h-3 w-3" />
+            className="h-6 w-6 -mr-1 rounded-md text-[var(--k-muted)] hover:text-[var(--k-data)] hover:bg-[var(--k-surface-2)] flex items-center justify-center shrink-0">
+            <Maximize2 className="h-3.5 w-3.5" />
           </button>
         )}
       </div>
-      <div className="flex items-baseline gap-2 flex-wrap">
-        <span className={`text-2xl font-semibold leading-tight ${noData ? 'text-slate-400' : 'text-slate-900 dark:text-white'}`}>{fmtValue(def, k.value)}</span>
-        {!noData && def.unit !== '%' && <span className="text-[10px] text-slate-500">{def.unit}</span>}
-        <Delta def={def} k={k} />
-        <span className="flex-1" />
-        {!noData && <StatusBadge tone={RAG_TONE[r]} title={`Mục tiêu ${SRC_LABEL[k.t_source]}`} className="!text-[9px] !px-1.5 shrink-0">{RAG_LABEL[r]}</StatusBadge>}
+      <div className="flex items-baseline gap-1.5 min-w-0">
+        <span className={`${valueText.length > 9 ? 'text-xl' : 'text-[28px]'} font-semibold leading-tight tracking-tight tabular-nums whitespace-nowrap ${noData ? 'text-[var(--k-none)]' : ''}`}>{valueText}</span>
+        {!noData && def.unit !== '%' && <span className="text-xs font-medium text-[var(--k-muted)] whitespace-nowrap">{def.unit}</span>}
+        {!noData && k.rag && <StatusBadge tone={RAG_TONE[r]} title={`Mục tiêu ${SRC_LABEL[k.t_source]}`} className="!rounded-md !text-[11px] !px-2 ml-auto shrink-0 self-center">{RAG_LABEL[r]}</StatusBadge>}
       </div>
+      {k.sub && <div className="-mt-1 truncate text-[11px] text-[var(--k-muted)]" title={k.sub}>{k.sub}</div>}
       {/* Theo kỳ → biểu đồ đường nhỏ · ảnh chụp → thanh mục tiêu */}
       {def.snapshot
         ? <TargetBar def={def} k={k} />
-        : <div className="mt-1 -mx-1">{points && points.length > 0
-            ? <KpiLineChart def={def} points={points} target={k.t} compact />
-            : <div className="h-11 rounded bg-slate-50 dark:bg-slate-700/40" />}</div>}
-      <div className="flex items-center justify-between gap-2 text-[9px] leading-tight mt-0.5">
-        <span className="text-slate-500 truncate">{noData ? 'chưa có dữ liệu trong kỳ' : (k.sub ?? '')}</span>
+        : points && points.length > 0
+          ? <KpiLineChart def={def} points={points} target={k.t} compact />
+          : <div className="h-[52px] rounded-lg bg-[var(--k-surface-2)]" />}
+      <div className="mt-auto flex flex-wrap items-center justify-between gap-x-2 gap-y-0.5 text-[11px] leading-tight text-[var(--k-muted)]">
+        {noData ? <span>chưa có dữ liệu trong kỳ</span> : <TrendDelta def={def} points={points} />}
         {k.t
-          ? <span className="shrink-0 tabular-nums text-slate-600 dark:text-slate-300" title={`Mục tiêu ${SRC_LABEL[k.t_source]} · ${DIR_HINT[def.dir]}`}>{targetShort(def, k.t)}</span>
+          ? <span className="shrink-0 tabular-nums" title={`Mục tiêu ${SRC_LABEL[k.t_source]} · ${DIR_HINT[def.dir]}`}>{targetShort(def, k.t)}</span>
           : canTarget
-            ? <button type="button" onClick={onSetTarget} className="shrink-0 text-sky-600 hover:text-sky-700 font-medium underline-offset-2 hover:underline">Đặt mục tiêu</button>
-            : <span className="shrink-0 text-slate-400 italic">chưa đặt mục tiêu</span>}
+            ? <button type="button" onClick={onSetTarget} className="shrink-0 text-[var(--k-data)] font-semibold underline-offset-2 hover:underline">Đặt mục tiêu</button>
+            : <span className="shrink-0 italic">chưa đặt mục tiêu</span>}
       </div>
       {noData && (
-        <div className="mt-1 text-[9px] leading-tight text-slate-600 dark:text-slate-300 bg-slate-50 dark:bg-slate-700/40 rounded px-1.5 py-1">
+        <div className="text-[11px] leading-snug rounded-lg bg-[var(--k-surface-2)] px-2 py-1.5">
           <b>Để có số:</b> {def.empty_hint}
         </div>
       )}
-      {!noData && def.note && <div className="text-[9px] text-amber-600 dark:text-amber-400 mt-0.5 leading-tight">{def.note}</div>}
+      {!noData && def.note && <div className="truncate text-[11px] leading-tight text-amber-700 dark:text-amber-400" title={def.note}>{def.note}</div>}
     </div>
   )
 }
 
 function UnavailableCard({ u }: { u: { no: number; name: string; need: string } }) {
   return (
-    <div className="rounded-lg border border-dashed border-slate-300 dark:border-slate-600 px-3 py-2 bg-slate-50/60 dark:bg-slate-800/30">
-      <div className="text-[10px] uppercase tracking-wide text-slate-400 flex items-center gap-1"><CircleDashed className="h-3 w-3" /> {u.name}</div>
-      <div className="text-lg font-semibold text-slate-300 dark:text-slate-600 leading-tight">—</div>
-      <div className="text-[9px] text-slate-500 leading-tight"><b>Chưa có nguồn — cần:</b> {u.need}</div>
+    <div className="rounded-[14px] border border-dashed border-[var(--k-none)] px-4 py-3">
+      <div className="flex items-start gap-1.5 text-[13px] font-semibold leading-snug text-[var(--k-muted)]"><CircleDashed className="h-3.5 w-3.5 mt-0.5 shrink-0" /> {u.name}</div>
+      <div className="mt-1 text-[11px] leading-snug text-[var(--k-muted)]"><b>Chưa có nguồn — cần:</b> {u.need}</div>
     </div>
   )
 }
@@ -252,7 +273,7 @@ function KpiChartDialog({ def, warehouseId, init, onClose, onEditNote }: {
   const errMsg = (q.error as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message
   return (
     <Dialog open={!!def} onOpenChange={v => { if (!v) onClose() }}>
-      <DialogContent className="w-[96vw] max-w-[96vw] h-[92dvh] sm:w-[80vw] sm:max-w-[80vw] sm:h-[80vh] max-h-none p-0 gap-0 flex flex-col overflow-hidden">
+      <DialogContent onOpenAutoFocus={e => e.preventDefault()} className="kpi-console w-[96vw] max-w-[96vw] h-[92dvh] sm:w-[80vw] sm:max-w-[80vw] sm:h-[80vh] max-h-none p-0 gap-0 flex flex-col overflow-hidden">
         {def && (
           <>
             <div className="border-b border-slate-200 dark:border-slate-700 px-4 py-3 pr-10 shrink-0">
@@ -263,7 +284,7 @@ function KpiChartDialog({ def, warehouseId, init, onClose, onEditNote }: {
             <div className="px-4 py-2 flex flex-wrap items-center gap-2 border-b border-slate-100 dark:border-slate-700/60 shrink-0">
               <GrainPills value={grain} onChange={g => { setGrain(g); setRange(defaultRange(g)) }} />
               <GrainRange grain={grain} from={range.from} to={range.to} onChange={(f, tt) => setRange({ from: f, to: tt })} />
-              <select value={compare} onChange={e => setCompare(e.target.value)} className="h-7 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-[11px] px-1.5">
+              <select value={compare} onChange={e => setCompare(e.target.value)} className="h-9 rounded-[10px] border border-[var(--k-line)] bg-[var(--k-surface)] text-xs px-2">
                 <option value="">Không so sánh</option>
                 <option value="prev">So kỳ liền trước</option>
                 <option value="yoy">So cùng kỳ năm trước</option>
@@ -290,10 +311,10 @@ function KpiChartDialog({ def, warehouseId, init, onClose, onEditNote }: {
                       ['Cao nhất', fmtValue(def, vals.length ? Math.max(...vals) : null), ''],
                       ['Kỳ mới nhất', fmtValue(def, [...points].reverse().find(p => p.value != null)?.value ?? null), targetShort(def, t)],
                     ].map(([l, v, s]) => (
-                      <div key={l} className="rounded border border-slate-200 dark:border-slate-700 px-2.5 py-1.5">
-                        <div className="text-[9px] uppercase tracking-wide text-slate-500">{l}</div>
-                        <div className="text-lg font-semibold text-slate-900 dark:text-white leading-tight">{v}</div>
-                        {s && <div className="text-[9px] text-slate-500">{s}</div>}
+                      <div key={l} className="rounded-[10px] bg-[var(--k-surface-2)] px-3 py-2">
+                        <div className="text-[11px] font-medium text-[var(--k-muted)]">{l}</div>
+                        <div className="text-lg font-semibold leading-tight tabular-nums">{v}</div>
+                        {s && <div className="text-[11px] text-[var(--k-muted)]">{s}</div>}
                       </div>
                     ))}
                   </div>
@@ -727,18 +748,7 @@ function KpiMeaningSheet({ open, onClose, canEdit, focusId }: {
   )
 }
 
-// ── Đèn tổng bấm được = bộ lọc thẻ theo đèn (09/09) — khai ở module để không remount (ratchet component_defined_inside_component) ──
-type RagPick = '' | 'G' | 'Y' | 'R' | 'none'
-function RagPill({ k, tone, label, cur, onPick }: { k: RagPick; tone: BadgeTone; label: string; cur: RagPick; onPick: (v: RagPick) => void }) {
-  const active = cur === k
-  return (
-    <button type="button" onClick={() => onPick(active ? '' : k)} aria-pressed={active}
-      title={active ? 'Bấm lại để bỏ lọc' : 'Bấm để chỉ hiện các KPI này'}
-      className={`rounded-full transition-shadow ${active ? 'ring-2 ring-sky-500 ring-offset-1' : cur ? 'opacity-50 hover:opacity-100' : 'hover:ring-1 hover:ring-slate-300'}`}>
-      <StatusBadge tone={tone}>{label}</StatusBadge>
-    </button>
-  )
-}
+type RagPick = '' | RagKey
 
 // ── Tab chính ─────────────────────────────────────────────────────────────────────────────────
 export function DashboardKpi({ warehouseId }: { warehouseId: string }) {
@@ -777,29 +787,47 @@ export function DashboardKpi({ warehouseId }: { warehouseId: string }) {
   const tableGroup = f.kpiGroup || d?.groups?.[0]?.key || 'delivery'
   const tableDefs = (d?.defs ?? []).filter(x => x.group === tableGroup)
   const n = d?.notes
+  // Có đèn = đo được VÀ có mục tiêu. Tỷ lệ đạt chỉ tính trên nhóm này, KPI chưa có đèn không kéo số xuống.
+  const lit = counts.G + counts.Y + counts.R
+  const okPct = lit > 0 ? (counts.G / lit) * 100 : null
+  const groupRows: GroupRow[] = useMemo(() => (d?.groups ?? []).map(g => {
+    const r: GroupRow = { key: g.key, label: g.label, G: 0, Y: 0, R: 0, none: 0, unavailable: d?.unavailable.filter(u => u.group === g.key).length ?? 0 }
+    for (const k of d?.kpis ?? []) if (defById.get(k.id)?.group === g.key) r[ragKey(k.rag) as RagKey]++
+    return r
+  }), [d, defById])
+  // KPI lệch mục tiêu nhiều nhất: đỏ trước vàng, trong cùng đèn thì lệch tương đối lớn hơn đứng trước
+  const worst = useMemo(() => (d?.kpis ?? [])
+    .filter(k => k.rag === 'R' || k.rag === 'Y')
+    .map(k => { const def = defById.get(k.id)!; return { k, def, gap: kpiGap(def.dir, k.value, k.t) } })
+    .sort((a, b) => (a.k.rag === b.k.rag ? (b.gap?.rel ?? 0) - (a.gap?.rel ?? 0) : a.k.rag === 'R' ? -1 : 1)), [d, defById])
+  // KPI đang soi: người dùng chọn; chưa chọn thì KPI theo kỳ lệch nhiều nhất, không có thì KPI theo kỳ đầu tiên
+  const periodsWithData = (id: string) => (s.data?.buckets ?? []).filter(b => b.values[id] != null).length
+  const focusDef = (f.kpiFocus ? defById.get(f.kpiFocus) : undefined)
+    ?? worst.find(x => !x.def.snapshot && periodsWithData(x.def.id) >= 2)?.def
+    ?? worst.find(x => !x.def.snapshot)?.def ?? d?.defs.find(x => !x.snapshot) ?? null
+  const focusKpi = focusDef ? d?.kpis.find(k => k.id === focusDef.id) : undefined
+  const focusPoints = focusDef && s.data ? seriesPoints(grain, s.data.buckets, undefined, focusDef.id) : []
+  const focusOpts = (d?.kpis ?? []).map(k => { const x = defById.get(k.id)!; return { value: x.id, label: x.name, sub: d?.groups.find(g => g.key === x.group)?.label } })
+  const kpiOf = (id: string) => d?.kpis.find(k => k.id === id)
+  const zone = kpiOf('util_zone'), zoneDef = defById.get('util_zone')
+  const goGroup = (key: string) => { setRagFilter(''); setTimeout(() => document.getElementById(`kpi-group-${key}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 0) }
   const seriesErr = (s.error as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message
   const grainWord = GRAIN_LABEL[grain]
 
+  const toolItems: ActionItem[] = []
+  if (canNote) toolItems.push({ key: 'note', icon: BookOpen, label: 'Diễn giải', tip: 'Sửa câu diễn giải của từng KPI', onClick: () => setNote({ open: true, focusId: null }) })
+  if (canTarget) toolItems.push({ key: 'target', icon: Settings2, label: 'Mục tiêu', tip: 'Đặt ngưỡng đèn xanh / vàng cho từng KPI', onClick: () => setSheet({ open: true, focusId: null }) })
+
   return (
-    <div className="space-y-3">
+    <div className="kpi-console space-y-3 sm:space-y-4">
       {/* MỘT hàng bộ lọc — chu kỳ · Từ–Đến theo chu kỳ · mục tiêu (không còn chip Kỳ / So sánh — user 09/09) */}
-      <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/60 px-2.5 py-1.5 flex flex-wrap items-center gap-2">
+      <div className="k-card px-3 py-2.5 flex flex-wrap xl:flex-nowrap items-center gap-2">
         <GrainPills value={grain} onChange={g => { const r = defaultRange(g); setDashboard({ kpiGrain: g, kpiFrom: r.from, kpiTo: r.to }) }} />
         <GrainRange grain={grain} from={from} to={to} onChange={(a, b) => setDashboard({ kpiFrom: a, kpiTo: b })} />
-        <span className="flex-1 min-w-2" />
-        <span className="text-[10px] tabular-nums text-slate-500 dark:text-slate-400">
+        <span className="flex-1 min-w-0 truncate text-xs font-medium tabular-nums text-[var(--k-muted)] sm:text-right" title={`${formatDate(from)} – ${formatDate(to)}`}>
           {formatDate(from)} – {formatDate(to)} · {dayCount(from, to)} ngày · {nBuckets} {grainWord}
         </span>
-        {canNote && (
-          <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={() => setNote({ open: true, focusId: null })}>
-            <BookOpen className="h-3.5 w-3.5" /> Diễn giải
-          </Button>
-        )}
-        {canTarget && (
-          <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={() => setSheet({ open: true, focusId: null })}>
-            <Settings2 className="h-3.5 w-3.5" /> Mục tiêu
-          </Button>
-        )}
+        {toolItems.length > 0 && <ActionCluster items={toolItems} className="w-auto shrink-0" />}
       </div>
       {tooMany && (
         <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-700 dark:text-amber-400 flex flex-wrap items-center gap-2">
@@ -821,25 +849,8 @@ export function DashboardKpi({ warehouseId }: { warehouseId: string }) {
         </div>
       )}
 
-      {d && (
-        <div className="flex flex-wrap items-center gap-2 text-[11px]">
-          <Target className="h-3.5 w-3.5 text-sky-500" />
-          <button type="button" onClick={() => setRagFilter('')} className={`text-slate-600 dark:text-slate-300 ${ragFilter ? 'underline underline-offset-2 hover:text-sky-700' : ''}`}
-            title={ragFilter ? 'Bấm để hiện lại tất cả' : ''}>
-            <b>{d.kpis.length}</b>/{d.kpis.length + d.unavailable.length} KPI đo được
-          </button>
-          <RagPill k="G" tone="green" label={`${counts.G} đạt`} cur={ragFilter} onPick={setRagFilter} />
-          <RagPill k="Y" tone="amber" label={`${counts.Y} cần chú ý`} cur={ragFilter} onPick={setRagFilter} />
-          <RagPill k="R" tone="red" label={`${counts.R} không đạt`} cur={ragFilter} onPick={setRagFilter} />
-          <RagPill k="none" tone="slate" label={`${counts.none} chưa có dữ liệu / chưa đặt mục tiêu`} cur={ragFilter} onPick={setRagFilter} />
-          {ragFilter
-            ? <span className="text-sky-700 dark:text-sky-400 font-medium">Đang lọc: {ragFilter === 'none' ? 'chưa có dữ liệu / chưa đặt mục tiêu' : RAG_LABEL[ragFilter].toLowerCase()} · <button type="button" className="underline underline-offset-2" onClick={() => setRagFilter('')}>bỏ lọc</button></span>
-            : <span className="text-slate-500">· bấm vào đèn để lọc · số lớn = cả khoảng đã chọn · đường = theo từng {grainWord}</span>}
-        </div>
-      )}
-
       {n && (n.lines_no_weight > 0 || n.loc_uncapped > 0 || n.warehouses_no_labor > 0 || n.categories_filtered) && (
-        <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 space-y-1 text-[11px] text-amber-700 dark:text-amber-400">
+        <div className="rounded-[14px] border border-amber-500/40 bg-amber-500/10 px-3.5 py-2.5 space-y-1 text-[11px] text-amber-700 dark:text-amber-400">
           {n.warehouses_no_labor > 0 && <div className="flex gap-1.5"><AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-px" /><span><b>{n.warehouses_no_labor} kho có hàng nhưng chưa chấm công</b> — các KPI theo giờ công của kho đó để trống. Ghi công ở màn Chấm công.</span></div>}
           {n.lines_no_weight > 0 && <div className="flex gap-1.5"><AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-px" /><span><b>{fmtNum(n.lines_no_weight, 0)} dòng hàng chưa khai khối lượng thùng</b> — không vào tấn (DOH, vòng quay, tấn/giờ thấp hơn thực). Khai ở Mã hàng › KL/thùng.</span></div>}
           {n.loc_uncapped > 0 && <div className="flex gap-1.5"><AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-px" /><span><b>{fmtNum(n.loc_uncapped, 0)} vị trí</b> chưa khai sức chứa hoặc khai quá 1.000 pallet ("không giới hạn") — bị loại khỏi % sử dụng chỗ và tràn chỗ. Khai ở trang Vị trí kho.</span></div>}
@@ -848,86 +859,218 @@ export function DashboardKpi({ warehouseId }: { warehouseId: string }) {
       )}
 
       {q.isLoading && !d && (
-        <div className="grid grid-cols-1 min-[420px]:grid-cols-2 lg:grid-cols-4 gap-2">{Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} className={`h-[132px] rounded-lg ${DASH_SK}`} />)}</div>
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 sm:gap-4">{Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className={`h-[220px] rounded-[14px] ${DASH_SK}`} />)}</div>
       )}
-      {d && d.groups.map(g => {
-        const all = d.kpis.filter(k => defById.get(k.id)?.group === g.key)
-        const ks = ragFilter ? all.filter(k => ragKey(k.rag) === ragFilter) : all
-        // KPI chưa có nguồn chỉ hiện khi không lọc hoặc lọc "chưa có dữ liệu"
-        const un = (!ragFilter || ragFilter === 'none') ? d.unavailable.filter(u => u.group === g.key) : []
-        if (!ks.length && !un.length) return null
-        const gc = { G: 0, Y: 0, R: 0, none: 0 }
-        for (const k of all) gc[ragKey(k.rag) as keyof typeof gc]++
-        return (
-          <DashPanel key={g.key} title={g.label} icon={Target} extra={<>
-            {/* Tiêu đề nhóm phải đọc ra ngay: bao nhiêu đo được, đèn ra sao, bao nhiêu chưa có nguồn (user 09/09) */}
-            <span className="ml-1 flex items-center gap-1.5 flex-wrap">
-              <StatusBadge tone="sky" className="!text-[10px] font-semibold">{all.length} đo được</StatusBadge>
-              {gc.G > 0 && <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-700 dark:text-emerald-400"><span className="h-2 w-2 rounded-full bg-emerald-500" />{gc.G} đạt</span>}
-              {gc.Y > 0 && <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-700 dark:text-amber-400"><span className="h-2 w-2 rounded-full bg-amber-500" />{gc.Y} chú ý</span>}
-              {gc.R > 0 && <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-red-700 dark:text-red-400"><span className="h-2 w-2 rounded-full bg-red-500" />{gc.R} không đạt</span>}
-              {gc.none > 0 && <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-slate-500"><span className="h-2 w-2 rounded-full bg-slate-300" />{gc.none} chưa có số</span>}
-              {d.unavailable.filter(u => u.group === g.key).length > 0 && (
-                <StatusBadge tone="slate" className="!text-[10px] font-semibold border border-dashed border-slate-300">{d.unavailable.filter(u => u.group === g.key).length} chưa có nguồn</StatusBadge>
-              )}
-            </span>
-          </>}>
-            <div className={`p-2 grid grid-cols-1 min-[420px]:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2 ${s.isFetching && s.data ? 'opacity-90' : ''}`}>
-              {ks.map(k => {
-                const def = defById.get(k.id)!
-                return <KpiCard key={k.id} def={def} k={k} canTarget={canTarget}
-                  points={def.snapshot ? null : (s.data ? seriesPoints(grain, s.data.buckets, s.data.compare?.buckets, def.id) : null)}
-                  onExpand={() => setExpanded(def)} onSetTarget={() => setSheet({ open: true, focusId: def.id })}
-                  onEditNote={canNote ? () => setNote({ open: true, focusId: def.id }) : undefined} />
-              })}
-              {un.map(u => <UnavailableCard key={u.no} u={u} />)}
-            </div>
-          </DashPanel>
-        )
-      })}
 
       {d && (
-        <DashPanel title="KPI theo kho" icon={Warehouse} extra={<>
-          <span className="text-[9px] text-slate-500">{d.by_warehouse.length} kho có số liệu · cả khoảng đã chọn · đèn theo mục tiêu riêng kho nếu có</span>
-          <span className="flex-1" />
-          <div className="flex items-center gap-1 flex-wrap">
-            {d.groups.map(g => (
-              <button key={g.key} type="button" onClick={() => setDashboard({ kpiGroup: g.key })}
-                className={`h-6 px-2 rounded text-[10px] font-medium border transition-colors ${tableGroup === g.key ? 'bg-sky-600 text-white border-sky-600' : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-50'}`}>{g.label}</button>
-            ))}
+        <>
+          {/* Hàng 1 — đọc ra ngay: đạt bao nhiêu, nhóm nào yếu, KPI nào lệch nhất */}
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,1.1fr)_minmax(0,1.2fr)] gap-3 sm:gap-4">
+            <section className="k-card overflow-hidden flex flex-col">
+              <div className="bg-[var(--k-brand)] px-4 sm:px-5 py-3.5 text-white">
+                <div className="flex items-baseline justify-between gap-2">
+                  <h2 className="text-[15px] font-semibold">Sức khoẻ KPI</h2>
+                  <span className="text-[11px] font-medium text-white/75 whitespace-nowrap">{d.kpis.length}/{d.kpis.length + d.unavailable.length} KPI đo được</span>
+                </div>
+                <div className="mt-1.5 flex items-baseline gap-2">
+                  <span className="text-[34px] font-semibold leading-none tracking-tight tabular-nums">{okPct == null ? '—' : `${fmtNum(okPct, 0)}%`}</span>
+                  <span className="text-xs text-white/80">{lit > 0 ? `đạt · ${counts.G}/${lit} KPI có đèn` : 'chưa KPI nào có đèn'}</span>
+                </div>
+                <div className="mt-2.5 h-1.5 rounded-full bg-white/25 overflow-hidden"><div className="h-full rounded-full bg-white" style={{ width: `${okPct ?? 0}%` }} /></div>
+              </div>
+              <div className="flex-1 flex items-center px-4 sm:px-5 py-3">
+                <RagDonut counts={counts} center={d.kpis.length} sub="KPI đo được" active={ragFilter} onPick={setRagFilter} />
+              </div>
+            </section>
+
+            <KpiPanel title="Đèn theo nhóm" hint="bấm để tới nhóm">
+              <GroupStack rows={groupRows} onPick={goGroup} />
+            </KpiPanel>
+
+            <KpiPanel title="Lệch mục tiêu nhiều nhất" hint="bấm để soi" className="md:col-span-2 xl:col-span-1">
+              {worst.length === 0
+                ? <p className="px-5 py-8 text-xs text-[var(--k-muted)]">Mọi KPI có đèn đều đang đạt mục tiêu.</p>
+                : (
+                  <ol className="px-2 sm:px-3 py-2">
+                    {worst.slice(0, 6).map((x, i) => (
+                      <li key={x.k.id}>
+                        <button type="button" onClick={() => setDashboard({ kpiFocus: x.def.id })} aria-pressed={focusDef?.id === x.def.id}
+                          className={`flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left hover:bg-[var(--k-surface-2)] ${focusDef?.id === x.def.id ? 'bg-[var(--k-surface-2)]' : ''}`}>
+                          <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold text-white ${RAG_DOT[ragKey(x.k.rag)]}`}>{i + 1}</span>
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate text-xs font-semibold" title={x.def.name}>{x.def.name}</span>
+                            <span className="block truncate text-[11px] text-[var(--k-muted)]">{targetShort(x.def, x.k.t)}</span>
+                          </span>
+                          <span className="shrink-0 text-right">
+                            <span className="block text-xs font-semibold tabular-nums">{fmtValue(x.def, x.k.value)}</span>
+                            {x.gap && x.gap.side && <span className={`block text-[11px] font-medium tabular-nums ${x.k.rag === 'R' ? 'text-[var(--k-bad)]' : 'text-amber-700 dark:text-amber-400'}`}>{x.gap.side === 'short' ? 'thiếu' : 'vượt'} {fmtNum(x.gap.gap, x.def.decimals)}{x.def.unit === '%' ? ' điểm' : ''}</span>}
+                          </span>
+                        </button>
+                      </li>
+                    ))}
+                  </ol>
+                )}
+            </KpiPanel>
           </div>
-        </>}>
-          <div className="overflow-x-auto">
-            <table className="min-w-full text-left">
-              <thead>
-                <tr className="bg-slate-50 dark:bg-slate-800">
-                  <th className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap sticky left-0 z-10 bg-slate-50 dark:bg-slate-800">Kho</th>
-                  {tableDefs.map(x => <th key={x.id} className="text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap text-right" title={`${x.name} (${x.unit})`}>{x.short}</th>)}
-                </tr>
-                <tr className="bg-slate-50 dark:bg-slate-800 border-t border-slate-100 dark:border-slate-700/60">
-                  <th className="text-[9px] font-normal text-slate-400 px-2 py-1 whitespace-nowrap sticky left-0 z-10 bg-slate-50 dark:bg-slate-800">Mục tiêu</th>
-                  {tableDefs.map(x => { const t = d.kpis.find(k => k.id === x.id)?.t ?? null
-                    return <th key={x.id} className="text-[9px] font-normal text-slate-400 px-2 py-1 whitespace-nowrap text-right tabular-nums" title={targetText(x, t)}>
-                      {t ? (x.dir === 'band' ? `${fmtNum(t[0], 1)}–${fmtNum(t[1], 1)}` : `${x.dir === 'up' ? '≥' : '≤'} ${fmtNum(t[0], 2)}`) : '—'}</th> })}
-                </tr>
-              </thead>
-              <tbody>
-                {d.by_warehouse.length === 0 && <TableEmptyRow colSpan={tableDefs.length + 1}>Không kho nào có số liệu trong kỳ.</TableEmptyRow>}
-                {d.by_warehouse.map(w => {
-                  const byId = new Map(w.kpis.map(k => [k.id, k]))
-                  return (
-                    <tr key={w.warehouse_id} className="border-t border-slate-100 dark:border-slate-700/60">
-                      <td className="px-2 py-1 text-[10px] whitespace-nowrap sticky left-0 z-10 bg-white dark:bg-slate-800/60 font-medium text-slate-700 dark:text-slate-200">{w.warehouse_name}</td>
-                      {tableDefs.map(x => { const k = byId.get(x.id); const r = ragKey(k?.rag ?? null)
-                        return <td key={x.id} className={`px-2 py-1 text-[10px] whitespace-nowrap text-right tabular-nums font-semibold ${RAG_TEXT[r]}`} title={k ? `${x.name}: ${fmtValue(x, k.value)} · ${k.sub ?? ''} · ${targetText(x, k.t)}` : ''}>
-                          {k?.value != null && <span className={`inline-block h-1.5 w-1.5 rounded-full mr-1 align-middle ${RAG_STRIPE[r]}`} />}{fmtValue(x, k?.value)} {k && <Delta def={x} k={k} />}</td> })}
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
+
+          {/* Hàng 2 — một KPI đang soi: đường theo kỳ + so giữa các kho */}
+          {focusDef && (
+            <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,2fr)_minmax(0,1fr)] gap-3 sm:gap-4">
+              <KpiPanel title="Xu hướng" right={<>
+                <SingleSelect options={focusOpts} value={focusDef.id} onChange={v => v && setDashboard({ kpiFocus: v })} triggerClassName="h-9 w-[13rem] sm:w-[20rem] max-w-full" />
+                {!focusDef.snapshot && (
+                  <button type="button" onClick={() => setExpanded(focusDef)} title="Phóng to: bảng số, so kỳ, chu kỳ riêng" aria-label={`Phóng to ${focusDef.name}`}
+                    className="h-9 w-9 shrink-0 rounded-[10px] border border-[var(--k-line)] text-[var(--k-muted)] hover:text-[var(--k-data)] flex items-center justify-center"><Maximize2 className="h-4 w-4" /></button>
+                )}
+              </>}>
+                <div className="px-3 sm:px-4 py-3 space-y-2">
+                  <div className="flex items-baseline gap-2 flex-wrap px-1">
+                    <span className="text-2xl font-semibold tracking-tight tabular-nums">{fmtValue(focusDef, focusKpi?.value)}</span>
+                    {focusDef.unit !== '%' && <span className="text-xs font-medium text-[var(--k-muted)]">{focusDef.unit}</span>}
+                    {focusKpi?.rag && <StatusBadge tone={RAG_TONE[focusKpi.rag]} className="!rounded-md !text-[11px] !px-2">{RAG_LABEL[focusKpi.rag]}</StatusBadge>}
+                    <span className="text-xs text-[var(--k-muted)]">{focusKpi?.sub ?? ''}</span>
+                    <span className="ml-auto text-xs tabular-nums text-[var(--k-muted)]">{targetShort(focusDef, focusKpi?.t ?? null)}</span>
+                  </div>
+                  {focusDef.snapshot
+                    ? (
+                      <div className="px-1 py-6">
+                        {focusKpi && <TargetBar def={focusDef} k={focusKpi} />}
+                        <p className="mt-2 text-xs text-[var(--k-muted)]">KPI này là ảnh chụp tồn hiện tại nên không có đường theo kỳ. {targetText(focusDef, focusKpi?.t ?? null)}.</p>
+                      </div>
+                    )
+                    : s.isError
+                      ? <p className="px-1 py-10 text-xs text-[var(--k-muted)]">Biểu đồ chưa vẽ được — {seriesErr ?? 'thu hẹp khoảng hoặc đổi chu kỳ lớn hơn'}.</p>
+                      : !s.data
+                        ? <Skeleton className={`h-[260px] w-full rounded-lg ${DASH_SK}`} />
+                        : focusPoints.some(p => p.value != null)
+                          ? (
+                            <div className={s.isFetching ? 'opacity-70 transition-opacity' : 'transition-opacity'}>
+                              <KpiLineChart def={focusDef} points={focusPoints} target={focusKpi?.t ?? null} height={260} grain={grain} />
+                              <div className="mt-1 px-1"><KpiChartLegend hasPrev={false} /></div>
+                            </div>
+                          )
+                          : <p className="px-1 py-10 text-xs text-[var(--k-muted)]">Chưa có số theo kỳ trong khoảng này. {focusDef.empty_hint}</p>}
+                </div>
+              </KpiPanel>
+              <KpiPanel title="So sánh kho" hint={focusDef.short}>
+                <WarehouseRank def={focusDef} rows={d.by_warehouse.map(w => ({ id: w.warehouse_id, name: w.warehouse_name, k: w.kpis.find(k => k.id === focusDef.id) }))} />
+              </KpiPanel>
+            </div>
+          )}
+
+          {/* Hàng 3 — mọi KPI × mọi kỳ + sức chứa hiện tại */}
+          <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,2fr)_minmax(0,1fr)] gap-3 sm:gap-4">
+            <KpiPanel title="Bản đồ đèn theo kỳ" hint={`mỗi ô một ${grainWord} · bấm để phóng to`}>
+              {s.data
+                ? <div className={s.isFetching ? 'opacity-70 transition-opacity' : 'transition-opacity'}>
+                    <KpiHeatmap defs={d.defs.filter(x => !x.snapshot)} buckets={s.data.buckets} targets={s.data.targets} grain={grain} onOpen={setExpanded} />
+                  </div>
+                : s.isError
+                  ? <p className="px-5 py-8 text-xs text-[var(--k-muted)]">Bản đồ chưa vẽ được — {seriesErr ?? 'thu hẹp khoảng hoặc đổi chu kỳ lớn hơn'}.</p>
+                  : <div className="p-4"><Skeleton className={`h-[260px] w-full rounded-lg ${DASH_SK}`} /></div>}
+            </KpiPanel>
+            {zone && zoneDef && (
+              <KpiPanel title="Sức chứa" hint="hiện tại" right={zone.rag ? <StatusBadge tone={RAG_TONE[zone.rag]} className="!rounded-md !text-[11px] !px-2">{RAG_LABEL[zone.rag]}</StatusBadge> : undefined}>
+                <div className="flex h-full flex-col justify-center px-4 sm:px-5 py-3">
+                  <TickGauge value={zone.value} label={fmtValue(zoneDef, zone.value)} sub={zone.sub ?? zoneDef.short} marks={zone.t?.slice(0, 2) ?? []} />
+                  <p className="-mt-3 text-center text-xs font-medium text-[var(--k-muted)]">{zoneDef.name} · {targetShort(zoneDef, zone.t)}</p>
+                  <div className="mt-3 grid grid-cols-3 gap-2">
+                    {['util_pos', 'empty_loc', 'overflow'].map(id => {
+                      const x = defById.get(id), k = kpiOf(id)
+                      if (!x || !k) return null
+                      return (
+                        <div key={id} className="min-w-0 rounded-[10px] bg-[var(--k-surface-2)] px-2.5 py-2" title={`${x.name}${k.sub ? `: ${k.sub}` : ''}`}>
+                          <div className="truncate text-[11px] font-medium text-[var(--k-muted)]">{x.short}</div>
+                          <div className="flex items-center gap-1.5 text-sm font-semibold tabular-nums">
+                            <span className={`h-2 w-2 shrink-0 rounded-full ${RAG_DOT[ragKey(k.rag)]}`} />{fmtValue(x, k.value)}
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              </KpiPanel>
+            )}
           </div>
-        </DashPanel>
+
+          {/* Từng KPI theo nhóm — thẻ nằm thẳng trên nền, tiêu đề nhóm đọc ra đèn */}
+          {ragFilter && (
+            <div className="text-xs font-medium text-[var(--k-muted)]">
+              Đang lọc thẻ: {ragFilter === 'none' ? 'chưa có đèn' : RAG_LABEL[ragFilter].toLowerCase()} · <button type="button" className="font-semibold text-[var(--k-data)] underline underline-offset-2" onClick={() => setRagFilter('')}>bỏ lọc</button>
+            </div>
+          )}
+          {d.groups.map(g => {
+            const all = d.kpis.filter(k => defById.get(k.id)?.group === g.key)
+            const ks = ragFilter ? all.filter(k => ragKey(k.rag) === ragFilter) : all
+            // KPI chưa có nguồn chỉ hiện khi không lọc hoặc lọc "chưa có đèn"
+            const un = (!ragFilter || ragFilter === 'none') ? d.unavailable.filter(u => u.group === g.key) : []
+            if (!ks.length && !un.length) return null
+            const gc = groupRows.find(r => r.key === g.key)!
+            return (
+              <section key={g.key} id={`kpi-group-${g.key}`} className="scroll-mt-2">
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-1 pb-2 pt-1">
+                  <h2 className="text-[15px] font-semibold">{g.label}</h2>
+                  <span className="flex flex-wrap items-center gap-x-2.5 gap-y-0.5 text-xs font-medium text-[var(--k-muted)]">
+                    <span>{all.length} đo được</span>
+                    {gc.G > 0 && <span className="inline-flex items-center gap-1"><span className={`h-2 w-2 rounded-full ${RAG_DOT.G}`} />{gc.G} đạt</span>}
+                    {gc.Y > 0 && <span className="inline-flex items-center gap-1"><span className={`h-2 w-2 rounded-full ${RAG_DOT.Y}`} />{gc.Y} chú ý</span>}
+                    {gc.R > 0 && <span className="inline-flex items-center gap-1"><span className={`h-2 w-2 rounded-full ${RAG_DOT.R}`} />{gc.R} không đạt</span>}
+                    {gc.none > 0 && <span className="inline-flex items-center gap-1"><span className={`h-2 w-2 rounded-full ${RAG_DOT.none}`} />{gc.none} chưa có đèn</span>}
+                    {gc.unavailable > 0 && <span>· {gc.unavailable} chưa có nguồn</span>}
+                  </span>
+                </div>
+                <div className="grid grid-cols-1 min-[520px]:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+                  {ks.map(k => {
+                    const def = defById.get(k.id)!
+                    return <KpiCard key={k.id} def={def} k={k} canTarget={canTarget}
+                      points={def.snapshot ? null : (s.data ? seriesPoints(grain, s.data.buckets, s.data.compare?.buckets, def.id) : null)}
+                      onExpand={() => setExpanded(def)} onSetTarget={() => setSheet({ open: true, focusId: def.id })}
+                      onEditNote={canNote ? () => setNote({ open: true, focusId: def.id }) : undefined} />
+                  })}
+                  {un.map(u => <UnavailableCard key={u.no} u={u} />)}
+                </div>
+              </section>
+            )
+          })}
+
+          <KpiPanel title="KPI theo kho" hint={`${d.by_warehouse.length} kho có số liệu · đèn theo mục tiêu riêng kho nếu có`} right={
+            <select value={tableGroup} onChange={e => setDashboard({ kpiGroup: e.target.value })} aria-label="Nhóm KPI"
+              className="h-9 rounded-[10px] border border-[var(--k-line)] bg-[var(--k-surface)] px-2 text-xs font-medium">
+              {d.groups.map(g => <option key={g.key} value={g.key}>{g.label}</option>)}
+            </select>
+          }>
+            <div className="overflow-x-auto">
+              <table className="min-w-full text-left">
+                <thead>
+                  <tr>
+                    <th className="sticky left-0 z-10 bg-[var(--k-surface)] px-4 py-2 text-xs font-medium text-[var(--k-muted)] whitespace-nowrap">Kho</th>
+                    {tableDefs.map(x => <th key={x.id} className="px-3 py-2 text-right text-xs font-medium text-[var(--k-muted)] whitespace-nowrap" title={`${x.name} (${x.unit})`}>{x.short}</th>)}
+                  </tr>
+                  <tr className="border-t border-[var(--k-line)] bg-[var(--k-surface-2)]">
+                    <th className="sticky left-0 z-10 bg-[var(--k-surface-2)] px-4 py-1.5 text-[11px] font-medium text-[var(--k-muted)] whitespace-nowrap">Mục tiêu</th>
+                    {tableDefs.map(x => { const t = d.kpis.find(k => k.id === x.id)?.t ?? null
+                      return <th key={x.id} className="px-3 py-1.5 text-right text-[11px] font-medium tabular-nums text-[var(--k-muted)] whitespace-nowrap" title={targetText(x, t)}>
+                        {t ? (x.dir === 'band' ? `${fmtNum(t[0], 1)}–${fmtNum(t[1], 1)}` : `${x.dir === 'up' ? '≥' : '≤'} ${fmtNum(t[0], 2)}`) : '—'}</th> })}
+                  </tr>
+                </thead>
+                <tbody>
+                  {d.by_warehouse.length === 0 && <TableEmptyRow colSpan={tableDefs.length + 1}>Không kho nào có số liệu trong kỳ.</TableEmptyRow>}
+                  {d.by_warehouse.map(w => {
+                    const byId = new Map(w.kpis.map(k => [k.id, k]))
+                    return (
+                      <tr key={w.warehouse_id} className="border-t border-[var(--k-line)]">
+                        <td className="sticky left-0 z-10 bg-[var(--k-surface)] px-4 py-2 text-xs font-semibold whitespace-nowrap">{w.warehouse_name}</td>
+                        {tableDefs.map(x => { const k = byId.get(x.id); const r = ragKey(k?.rag ?? null)
+                          return <td key={x.id} className={`px-3 py-2 text-right text-xs font-semibold tabular-nums whitespace-nowrap ${RAG_TEXT[r]}`} title={k ? `${x.name}: ${fmtValue(x, k.value)} · ${k.sub ?? ''} · ${targetText(x, k.t)}` : ''}>
+                            {k?.value != null && <span className={`mr-1.5 inline-block h-2 w-2 rounded-full align-middle ${RAG_DOT[r]}`} />}{fmtValue(x, k?.value)} {k && <Delta def={x} k={k} />}</td> })}
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </KpiPanel>
+        </>
       )}
 
       <KpiChartDialog def={expanded} warehouseId={warehouseId} init={{ grain, from, to, compare: '' }} onClose={() => setExpanded(null)}

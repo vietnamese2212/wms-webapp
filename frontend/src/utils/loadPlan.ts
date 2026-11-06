@@ -72,7 +72,7 @@
 // 19. TỰ TÌM THỨ TỰ KHỐI (user 05/11: "đã là cách tối ưu chưa", 01/11: "logic là tối ưu nhất"): thứ tự các khối sàn của từng đơn không cố định theo diện tích —
 //     thử các thứ tự, chấm điểm hình khối (`shapePenalty`: thùng bỏ lại, tháp, lõm, khoảng hở, đỉnh cao hơn mặt bằng cả xe, hàng gửi trải dài, nền mỏng, bậc ngược ra cửa), lấy cách
 //     tốt nhất. Hàng gửi nhiều hơn hàng nặng của đơn ⇒ mã gửi lớn nhất đứng sàn cho tới khi nền gánh nổi (`lightsToFloor`); xe chật mà vậy phải bỏ thùng ⇒ giữ nguyên.
-// 20. HỞ VÁCH RỘNG QUÁ KHÔNG ĐƯỢC (user 05/11): hàng một hướng mà hở vách quá 20 cm, trộn hai hướng phủ sát hơn ⇒ khối đó được trộn (ngoại lệ của luật 18).
+// 20. HỞ VÁCH RỘNG QUÁ KHÔNG ĐƯỢC (user 05/11): hàng một hướng mà hở vách quá 10 cm (user 06/11: xe 1,9 m hở 11-18 cm "không hợp lý", trước đó 20 cm), trộn hai hướng phủ sát hơn ⇒ khối đó được trộn (ngoại lệ của luật 18).
 //     PHẦN TIẾP GIÁP HAI ĐƠN ĐƯỢC ĐÈ LÊN NHAU (user 05/11): hàng thấp mã ít thùng cuối đơn trước được khối đầu đơn sau đè lên, tới ngang khối liền kề, không để lõm.
 // 1 step = 1 lượt đặt (1 chân mới / 1 cụm đè lên chân dở / 1 cụm lên nóc) — cho thanh
 // trượt "xếp theo thứ tự". Đơn vị: mm.
@@ -392,7 +392,7 @@ function lightBand(o: {
   return null
 }
 
-const WALL_GAP_MAX = 200   // mm — luật 20: hở vách quá mức này mà trộn hướng phủ sát hơn thì trộn
+const WALL_GAP_MAX = 100   // mm — luật 20: hở vách quá mức này mà trộn hướng phủ sát hơn thì trộn
 
 // Luật 18: chọn số hàng ngang mỗi hướng cho một mã, mức thân trong [Lmin, Lmax]. Chia khít hẳn (không thùng nổi) được dài hơn tới 12%, kể cả
 // dùng hàng hướng thưa hơn; không khít thì chỉ dùng hướng dày (hàng hướng thưa hở vách nhiều) — hướng dày không đặt được mới thôi.

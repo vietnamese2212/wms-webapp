@@ -393,6 +393,8 @@ describe('loadPlan — luật 18 (mỗi hàng ngang một hướng)', () => {
   const uniformRows = (gs: LoadGroup[], p: ReturnType<typeof computeLoadPlan>) => {
     gs.forEach((g, gi) => {
       if (g.onTop) return
+      // luật 20: một hướng hở vách quá 10 cm thì được trộn — không xét ở đây (C85 trên xe 2,35 m hở 14 cm)
+      if (Math.min(truck.width % g.l, truck.width % g.w) > 100) return
       const rows = new Map<number, Set<number>>()
       for (const b of p.placed) if (b.group === gi && b.z === 0) { if (!rows.has(b.x)) rows.set(b.x, new Set()); rows.get(b.x)!.add(b.l) }
       for (const v of rows.values()) expect(v.size).toBe(1)
@@ -440,7 +442,17 @@ describe('loadPlan — luật 18 (mỗi hàng ngang một hướng)', () => {
 // Luật 19-20 (user 05/11): "hở rộng quá không được"; "phần tiếp giáp 2 đơn đè lên nhau được"; hàng nhẹ nhiều hơn nặng đứng sàn; thứ tự khối tự tìm.
 describe('loadPlan — luật 19-20', () => {
   const truck = { length: 9200, width: 2350, height: 2400 }
-  it('hở vách quá 20 cm mà trộn hướng sát hơn thì trộn', () => {
+  // user 06/11, chuyến thật xe rộng 1,9 m: 420×255 một hướng hở 11,5 cm "không hợp lý" ⇒ 2 dài + 4 hẹp còn hở 4 cm
+  it('hở vách quá 10 cm mà trộn hướng sát hơn thì trộn (xe rộng 1,9 m)', () => {
+    const t = { length: 4300, width: 1900, height: 1900 }
+    const p = computeLoadPlan(t, [grp('ST110', 'D1', 300, 420, 255, 100, { maxLayers: 14 })])
+    expect(p.placedCount).toBe(p.totalCount)
+    expect(overlaps(p.placed)).toBe(0)
+    const floor = p.placed.filter(b => !b.z)
+    expect(new Set(floor.map(b => b.l)).size).toBe(2)
+    expect(t.width - Math.max(...floor.map(b => b.y + b.w))).toBeLessThanOrEqual(40)
+  })
+  it('hở vách quá 10 cm mà trộn hướng sát hơn thì trộn', () => {
     const p = computeLoadPlan(truck, [grp('TO', 'D1', 250, 600, 400, 300, { maxLayers: 6 }), grp('NHO', 'D1', 900, 200, 150, 100, { maxLayers: 18 })])
     expect(p.placedCount).toBe(p.totalCount)
     expect(overlaps(p.placed)).toBe(0)
@@ -448,8 +460,8 @@ describe('loadPlan — luật 19-20', () => {
     expect(truck.width - Math.max(...to.map(b => b.y + b.w))).toBeLessThanOrEqual(200)
     expect(new Set(to.map(b => b.l)).size).toBe(2)
   })
-  it('hở vách không quá 20 cm thì không trộn hướng', () => {
-    const p = computeLoadPlan(truck, [grp('C85', 'D1', 700, 357, 276, 105, { maxLayers: 13 })])
+  it('hở vách không quá 10 cm thì không trộn hướng', () => {
+    const p = computeLoadPlan(truck, [grp('ST110', 'D1', 700, 420, 255, 100, { maxLayers: 14 })])   // 9 × 255 hở 5,5 cm
     const rows = new Map<number, Set<number>>()
     for (const b of p.placed) if (!b.z) { if (!rows.has(b.x)) rows.set(b.x, new Set()); rows.get(b.x)!.add(b.l) }
     for (const v of rows.values()) expect(v.size).toBe(1)

@@ -75,7 +75,7 @@
 // 20. HỞ VÁCH RỘNG QUÁ KHÔNG ĐƯỢC (user 05/11): hàng một hướng mà hở vách quá 10 cm (user 06/11: xe 1,9 m hở 11-18 cm "không hợp lý", trước đó 20 cm), trộn hai hướng phủ sát hơn ⇒ khối đó được trộn (ngoại lệ của luật 18).
 //     PHẦN TIẾP GIÁP HAI ĐƠN ĐƯỢC ĐÈ LÊN NHAU (user 05/11): hàng thấp mã ít thùng cuối đơn trước được khối đầu đơn sau đè lên, tới ngang khối liền kề, không để lõm.
 // 21. TRẢI TỚI CỬA KHÔNG LÀM TAN KHỐI HÀNG GỬI (user 06/11, ảnh container 3.700 thùng: "hàng nhẹ lẽ ra lên hàng đầu, nhiều lớp, nằm trên hàng khác, ưu tiên lên trước"): `spreadToDoor` hạ lớp một mã mà
-//     hàng gửi đã gom bị trải ra dọc xe ⇒ không nhận, thử mã kế tiếp; hạ một lớp chưa bớt được hàng thùng nào thì thử tiếp tối đa 3 lớp thay vì dừng hẳn.
+//     hàng gửi đã gom bị trải ra dọc xe ⇒ không nhận, thử mã kế tiếp; mã chưa dài thêm lần nào thì thử tiếp tối đa 3 lớp thay vì dừng hẳn; đã dài thêm mà hạ nữa không dài thêm ⇒ sang mã kế (lần thử làm tan hàng gửi chậm hơn hẳn).
 // 1 step = 1 lượt đặt (1 chân mới / 1 cụm đè lên chân dở / 1 cụm lên nóc) — cho thanh
 // trượt "xếp theo thứ tự". Đơn vị: mm.
 
@@ -2458,7 +2458,7 @@ export function spreadToDoor(T: TruckDims, groupsArg: LoadGroup[], base: LoadPla
   const doorX = groups.map((_, gi) => Math.max(0, ...base.placed.filter(b => b.group === gi).map(b => b.x + b.l)))
   const tinyG = tinyFloor(groups, T.width)
   const order = groups.map((_, gi) => gi).filter(gi => !groups[gi].onTop && !tinyG.has(gi)).sort((a, b) => doorX[b] - doorX[a])
-  let best = base, cap = layersOf(base), capBest = cap, stale = 0, runs = 0, failed = false
+  let best = base, cap = layersOf(base), capBest = cap, stale = 0, gained = false, runs = 0, failed = false
   const baseTowers = towers(base, T)
   // chiều dài dọc xe của hàng gửi (luật 21: khối đã gom không được tan ra khi trải tới cửa)
   const lightSpan = (p: LoadPlan) => {
@@ -2475,11 +2475,15 @@ export function spreadToDoor(T: TruckDims, groupsArg: LoadGroup[], base: LoadPla
       if (leftOf(p) || towers(p, T) > baseTowers) { failed = true; break }
       // hàng gửi tan ra ⇒ mã này không hạ được, thử mã kế tiếp
       if (lightSpan(p) > baseSpan * 1.25 + 300) break
-      // chưa dài thêm: có thể chưa bớt được hàng thùng nào ⇒ thử tiếp tối đa 3 lớp
-      if (p.lengthUsedPct <= best.lengthUsedPct) { if (++stale > 3) { failed = true; break } cap = next; continue }
-      best = p; cap = next; capBest = next; stale = 0
+      // chưa dài thêm: mã chưa dài lần nào thì có thể chưa bớt được hàng thùng nào ⇒ thử tiếp tối đa 3 lớp; đã dài rồi ⇒ sang mã kế
+      if (p.lengthUsedPct <= best.lengthUsedPct) {
+        if (gained) break
+        if (++stale > 3) { failed = true; break }
+        cap = next; continue
+      }
+      best = p; cap = next; capBest = next; stale = 0; gained = true
     }
-    cap = capBest; stale = 0
+    cap = capBest; stale = 0; gained = false
     if (failed || runs >= SPREAD_RUNS || done(best)) break
   }
   return best

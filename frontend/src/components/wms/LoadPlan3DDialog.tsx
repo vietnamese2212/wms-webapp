@@ -5,10 +5,11 @@
 //  - "Dự toán": toàn bộ kế hoạch + thanh trượt thứ tự xếp; phần ĐÃ XUẤT thật mờ đi theo tiến độ quét.
 //  - "Tiến độ": chỉ hiện thùng ĐÃ XUẤT thật (quét QR / lưu thủ công; nhặt lẻ CHỈ tính khi đã xác nhận cuối).
 //  gdo đến từ useGDO (realtime invalidate) → quét tới đâu sơ đồ tự cập nhật tới đó.
-// Mỗi MẢNG hàng có nhãn tên + mũi tên chỉ xuống khối (sprite + cone).
-import { useEffect, useMemo, useRef, useState } from 'react'
+// Mỗi MẢNG hàng có nhãn tên + mũi tên chỉ xuống khối. Cảnh 3D ở loadplan3d/ (chép từ MalCargo, 06/11 — user: "3d của supplyc
+// cũng như của cargo"): xe thật theo lòng thùng, thùng in tên + mã, pallet gỗ theo màu danh mục, màu CỐ ĐỊNH theo mã.
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import { qtyEntryDecimal, unitLabel, hasEntry } from '@/utils/qtyUnits'
-import { X, Boxes, ChevronLeft, ChevronRight } from 'lucide-react'
+import { X, Boxes, ChevronLeft, ChevronRight, ChevronDown, Check, Eye, EyeOff, Rotate3d } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -19,24 +20,17 @@ import { useLoadPlanPrefsStore, type LoadPlacement } from '@/stores/loadPlanPref
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import {
-  computeLoadPlan, GROUP_COLORS, palletizeGroups, palletFitError, palletFloorSlots, palletsTooTall,
+  computeLoadPlan, palletizeGroups, palletFitError, palletFloorSlots, palletsTooTall,
   spreadOnTopOfPallets, DEFAULT_PALLET, cartonBoxOf, packPallet, placePallets, spreadToDoor, cartonsPerPalletEstimate,
   type LoadGroup, type LoadPlan, type PalletSpec, type PalletizeInput, type PalletCarton,
 } from '@/utils/loadPlan'
 import type { GDO } from '@/types'
+import { itemColors, shownColor } from './loadplan3d/colors'
+import type { CartonPrint, SceneGroup, SceneMarks, ViewPreset } from './loadplan3d/TruckScene'
 
 // Dòng xe ghi nhớ lòng thùng (mm) — SystemSetting 'truck_models'. ĐỘC LẬP với Loại xe TMS
 // (user chốt 13/07: 1 loại xe booking có nhiều dòng xe thực tế, dims không treo trên Loại xe).
 type TruckModel = { name: string; l: number; w: number; h: number }
-
-type ThreeCtx = {
-  THREE: typeof import('three')
-  scene: import('three').Scene
-  camera: import('three').PerspectiveCamera
-  renderer: import('three').WebGLRenderer
-  controls: import('three/examples/jsm/controls/OrbitControls.js').OrbitControls
-  boxGroup: import('three').Group
-}
 
 // done = thùng ĐÃ XUẤT thật (nhặt lẻ chưa xác nhận KHÔNG tính).
 // cpp/isPallet đi kèm để chế độ XE PALLET gom được hàng lên pallet mà không phải duyệt lại gdo.
@@ -80,68 +74,19 @@ function withCartons<T extends LoadGroup>(blocks: T[], src: PlanGroup[], spec: P
   })
 }
 
-// Toạ độ trên pallet (theo dài × rộng của KHỐI) → toạ độ trên xe; khối đặt XOAY trên xe ⇒ đổi trục
-function onPallet<T extends { x: number; y: number; l: number; w: number }>(b: { x: number; y: number; l: number }, L: number, cs: T[]): T[] {
-  const turned = Math.abs(b.l - L) > 1
-  return cs.map(c => (turned ? { ...c, x: b.x + c.y, y: b.y + c.x, l: c.w, w: c.l } : { ...c, x: b.x + c.x, y: b.y + c.y }))
-}
+// Cảnh 3D (three + mọi thứ dựng xe) nạp khi sơ đồ mở — không phình bundle chính
+const TruckScene = lazy(() => import('./loadplan3d/TruckScene'))
+const VIEWS: [ViewPreset, string][] = [['overview', 'Tổng thể'], ['rear', 'Nhìn từ cửa sau'], ['side', 'Nhìn bên hông'], ['top', 'Nhìn từ trên']]
 
-function disposeChildren(THREE: typeof import('three'), group: import('three').Group) {
-  for (const child of [...group.children]) {
-    group.remove(child)
-    const mesh = child as import('three').Mesh
-    if (mesh.geometry) mesh.geometry.dispose()
-    const mat = mesh.material as (import('three').Material & { map?: import('three').Texture | null }) | import('three').Material[] | undefined
-    if (Array.isArray(mat)) mat.forEach(m => m.dispose())
-    else if (mat) { mat.map?.dispose?.(); mat.dispose() }
+// Khoá nhóm = `đơn|mã` (pallet thêm `|full`, pallet gộp `đơn|mixed|…`) — mã nằm ở phần thứ hai
+const codeOfKey = (key: string) => key.split('|')[1] ?? key
+// Màu khối theo MÃ: pallet chỉ chứa một mã ⇒ màu mã đó; gộp nhiều mã ⇒ khoá riêng, không có trong bảng màu = xám
+function colorKeyOf(g: LoadGroup): string {
+  if (g.contents?.length) {
+    const codes = [...new Set(g.contents.map(c => codeOfKey(c.key)))]
+    return codes.length === 1 ? codes[0] : g.key
   }
-}
-
-// Sprite nhãn tên mảng hàng (canvas → texture) — canvas TỰ GIÃN theo độ dài chữ (hiện ĐỦ tên, không cắt)
-function makeLabelSprite(THREE: typeof import('three'), text: string, color: string) {
-  const font = 'bold 34px system-ui, sans-serif'
-  const measure = document.createElement('canvas').getContext('2d')!
-  measure.font = font
-  const textW = measure.measureText(text).width
-  const canvas = document.createElement('canvas')
-  canvas.width = Math.max(220, Math.ceil(textW) + 60)
-  canvas.height = 96
-  const ctx = canvas.getContext('2d')!
-  ctx.fillStyle = 'rgba(255,255,255,0.92)'
-  ctx.strokeStyle = color; ctx.lineWidth = 6
-  ctx.beginPath()
-  ctx.roundRect(4, 4, canvas.width - 8, canvas.height - 8, 18)
-  ctx.fill(); ctx.stroke()
-  ctx.fillStyle = '#0f172a'
-  ctx.font = font
-  ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
-  ctx.fillText(text, canvas.width / 2, canvas.height / 2)
-  const tex = new THREE.CanvasTexture(canvas)
-  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false }))
-  return { sprite, aspect: canvas.width / canvas.height }
-}
-
-// Badge nhỏ tối màu — ký hiệu SỐ LỚP của 1 vùng chân (1 badge cho cả vùng cùng số lớp)
-function makeBadgeSprite(THREE: typeof import('three'), text: string) {
-  const font = 'bold 40px system-ui, sans-serif'
-  const measure = document.createElement('canvas').getContext('2d')!
-  measure.font = font
-  const textW = measure.measureText(text).width
-  const canvas = document.createElement('canvas')
-  canvas.width = Math.max(140, Math.ceil(textW) + 56)
-  canvas.height = 88
-  const ctx = canvas.getContext('2d')!
-  ctx.fillStyle = 'rgba(15,23,42,0.88)'
-  ctx.beginPath()
-  ctx.roundRect(4, 4, canvas.width - 8, canvas.height - 8, 40)
-  ctx.fill()
-  ctx.fillStyle = '#ffffff'
-  ctx.font = font
-  ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
-  ctx.fillText(text, canvas.width / 2, canvas.height / 2)
-  const tex = new THREE.CanvasTexture(canvas)
-  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false }))
-  return { sprite, aspect: canvas.width / canvas.height }
+  return g.key.split('|')[1] === 'mixed' ? g.key : codeOfKey(g.key)
 }
 
 export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClose: () => void; gdo: GDO }) {
@@ -631,364 +576,91 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
     ? topGroups[0].qtyUnit ?? 'thùng' : 'khối'
   const unitWord = isPalletTruck ? (topCount > 0 ? 'khối' : 'pallet') : 'thùng'
 
-  // Tiến độ hiển thị: thứ tự "đã xuất" đi theo đúng thứ tự xếp của kế hoạch (ordinal trong nhóm)
-  const ordinals = useMemo(() => {
-    if (!plan) return []
-    const counters = new Map<number, number>()
-    return plan.placed.map(b => {
-      const n = counters.get(b.group) ?? 0
-      counters.set(b.group, n + 1)
-      return n
+  // ── Dữ liệu cho cảnh 3D ─────────────────────────────────────────────────────
+  const [view, setView] = useState<{ preset: ViewPreset; n: number }>({ preset: 'overview', n: 0 })
+  const [walls, setWalls] = useState<'open' | 'glass'>('open')
+  const [viewMenu, setViewMenu] = useState(false)
+  // Màu CỐ ĐỊNH theo mã — tính trên toàn bộ mã của chuyến, đổi chế độ / kiểu xếp không đổi màu
+  const colors = useMemo(() => itemColors(cartonGroups.map(g => codeOfKey(g.key))), [cartonGroups])
+  const colorOf = (g: LoadGroup) => shownColor(colorKeyOf(g), colors)
+  const prints = useMemo(() => {
+    const m = new Map<string, CartonPrint>()
+    for (const g of cartonGroups) { const code = codeOfKey(g.key); if (!m.has(code)) m.set(code, { code, name: g.label, l: g.l, w: g.w, h: g.h }) }
+    return m
+  }, [cartonGroups])
+  const sceneMeta: SceneGroup[] = useMemo(() => viewGroups.map(g => {
+    const colorKey = colorKeyOf(g)
+    return {
+      colorKey, itemId: colors.has(colorKey) ? colorKey : null,
+      done: mode === 'plan' ? g.done : 0,   // Tiến độ: sơ đồ chỉ chứa hàng đã quét, không có gì để làm mờ
+      deck: g.deck,
+      cartons: g.cartons?.map(({ key, ...c }) => ({ ...c, itemId: codeOfKey(key) })),
+    }
+  }), [viewGroups, mode, colors])
+  // Tiến độ chưa quét gì ⇒ xe trống
+  const scenePlan = mode === 'progress' && !progressActive ? null : viewPlan
+  // Lòng thùng đang gõ dở (9 → 96 → 960 → 9600) chưa dựng xe
+  const truckDrawable = truckL >= 1000 && truckW >= 1000 && truckH >= 1000
+  const pickedVehicle = picked?.key.startsWith('veh:') ? [...pickVehicles, ...boxVehicles].find(v => `veh:${v.id}` === picked.key) ?? null : null
+  // Dòng container: theo xe / dòng xe đang chọn, chưa chọn thì theo loại xe của chuyến
+  const truckName = pickedVehicle ? vehicleTypes.find(t => t.id === pickedVehicle.vehicle_type_id)?.name ?? ''
+    : picked && picked.key !== '__trip__' ? picked.label
+    : [tripVt?.name, gdo.vehicle_model?.name, gdo.planned_vehicle_type].filter(Boolean).join(' ')
+  const scenePlate = pickedVehicle?.license_plate ?? (picked && picked.key !== '__trip__' ? '' : plate)
+  const sceneTruck = useMemo(
+    () => (truckOk && truckDrawable ? { l: truckL, w: truckW, h: truckH, container: /\bcont/i.test(truckName), plate: scenePlate } : null),
+    [truckOk, truckDrawable, truckL, truckW, truckH, truckName, scenePlate])
+  const sceneFocus = useMemo(() => {
+    if (!selectedKeys.size) return null
+    return new Set(viewGroups.flatMap((g, i) => (selectedKeys.has(g.key) ? [i] : [])))
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selKey, viewGroups])
+
+  // Nhãn: hàng đang thấy theo chế độ — Dự toán theo thanh trượt; Tiến độ hiện hết phần đã quét
+  const sceneMarks: SceneMarks | null = useMemo(() => {
+    if (!scenePlan) return null
+    const shown = scenePlan.placed.filter(b => mode === 'progress' || b.step <= maxStep)
+    // Tên MẢNG hàng: chỉ mã đang CHỌN + khối của BƯỚC hiện tại; bật "tất cả nhãn" mới vẽ hết
+    const curStepGi = mode === 'plan' && maxStep > 0 ? scenePlan.placed.find(b => b.step === maxStep)?.group ?? -1 : -1
+    const byGroup = new Map<number, { cx: number; cy: number; top: number; n: number }>()
+    for (const b of shown) {
+      const a = byGroup.get(b.group) ?? { cx: 0, cy: 0, top: 0, n: 0 }
+      a.cx += b.x + b.l / 2; a.cy += b.y + b.w / 2; a.top = Math.max(a.top, b.z + b.h); a.n++
+      byGroup.set(b.group, a)
+    }
+    const labels = [...byGroup].filter(([gi]) => showLabels || selectedKeys.has(viewGroups[gi].key) || gi === curStepGi).map(([gi, a]) => {
+      const g = viewGroups[gi]
+      const gUnit = isPalletTruck && !g.topCarton ? 'pallet' : (g.qtyUnit ?? 'thùng')
+      const countTxt = mode === 'progress' ? `${g.done} ${gUnit}` : (g.done > 0 ? `${g.done}/${g.count} ${gUnit}` : `${g.count} ${gUnit}`)
+      return { text: `${g.label} · ${countTxt}`, color: colorOf(g), x: a.cx / a.n, y: a.cy / a.n, top: a.top }
     })
-  }, [plan])
-
-  // ── Three.js ────────────────────────────────────────────────────────────────
-  const mountRef = useRef<HTMLDivElement>(null)
-  const ctxRef = useRef<ThreeCtx | null>(null)
-  const [ready, setReady] = useState(false)
-  const camKeyRef = useRef('')
-
-  useEffect(() => {
-    if (!open) return
-    let disposed = false
-    let raf = 0
-    const mount = mountRef.current
-    if (!mount) return
-    ;(async () => {
-      const THREE = await import('three')
-      const { OrbitControls } = await import('three/examples/jsm/controls/OrbitControls.js')
-      if (disposed || !mountRef.current) return
-      const scene = new THREE.Scene()
-      scene.background = new THREE.Color(0xf1f5f9)
-      const camera = new THREE.PerspectiveCamera(50, mount.clientWidth / Math.max(1, mount.clientHeight), 1, 100000)
-      const renderer = new THREE.WebGLRenderer({ antialias: true })
-      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
-      renderer.setSize(mount.clientWidth, mount.clientHeight)
-      mount.appendChild(renderer.domElement)
-      const controls = new OrbitControls(camera, renderer.domElement)
-      controls.enableDamping = true
-      controls.zoomToCursor = true            // zoom TỰ DO về vị trí con trỏ (không chỉ zoom vào tâm)
-      controls.screenSpacePanning = true      // kéo pan theo mặt phẳng màn hình → soi mọi góc xe
-      scene.add(new THREE.AmbientLight(0xffffff, 0.75))
-      const dir = new THREE.DirectionalLight(0xffffff, 0.9)
-      dir.position.set(1, 2, 1.2)
-      scene.add(dir)
-      const boxGroup = new THREE.Group()
-      scene.add(boxGroup)
-      ctxRef.current = { THREE, scene, camera, renderer, controls, boxGroup }
-      camKeyRef.current = ''
-      setReady(true)
-      const loop = () => { if (disposed) return; controls.update(); renderer.render(scene, camera); raf = requestAnimationFrame(loop) }
-      loop()
-    })()
-    const onResize = () => {
-      const c = ctxRef.current
-      if (!c || !mountRef.current) return
-      const { clientWidth: w, clientHeight: h } = mountRef.current
-      c.camera.aspect = w / Math.max(1, h)
-      c.camera.updateProjectionMatrix()
-      c.renderer.setSize(w, h)
+    // SỐ LỚP theo VÙNG: gom chân theo số lớp — vùng liền nhau cùng số lớp = 1 nhãn; khu vực có số lớp KHÁC → nhãn riêng
+    const cols = new Map<string, { cx: number; cy: number; count: number; top: number }>()
+    for (const b of shown) {
+      const k = `${b.x}|${b.y}`
+      const c = cols.get(k) ?? { cx: b.x + b.l / 2, cy: b.y + b.w / 2, count: 0, top: 0 }
+      c.count++; c.top = Math.max(c.top, b.z + b.h)
+      cols.set(k, c)
     }
-    const ro = new ResizeObserver(onResize)
-    ro.observe(mount)
-    return () => {
-      disposed = true
-      cancelAnimationFrame(raf)
-      ro.disconnect()
-      const c = ctxRef.current
-      if (c) {
-        disposeChildren(c.THREE, c.boxGroup)
-        c.controls.dispose()
-        c.renderer.dispose()
-        c.renderer.domElement.remove()
+    const byCount = new Map<number, { cx: number; cy: number; top: number }[]>()
+    for (const c of cols.values()) { const a = byCount.get(c.count); if (a) a.push(c); else byCount.set(c.count, [c]) }
+    const badges: SceneMarks['badges'] = []
+    for (const [count, list] of byCount) {
+      // cụm theo x liền kề (hở > 1200 mm = vùng mới)
+      const clusters: (typeof list)[] = []
+      for (const c of [...list].sort((a, b) => a.cx - b.cx)) {
+        const last = clusters[clusters.length - 1]
+        if (last && c.cx - last[last.length - 1].cx <= 1200) last.push(c); else clusters.push([c])
       }
-      ctxRef.current = null
-      setReady(false)
-    }
-  }, [open])
-
-  // Vẽ lại khung xe + thùng khi plan / bước / chế độ đổi (KHÔNG tạo lại renderer)
-  useEffect(() => {
-    const c = ctxRef.current
-    if (!ready || !c) return
-    const { THREE, boxGroup } = c
-    disposeChildren(THREE, boxGroup)
-    const dPlan = viewPlan          // Tiến độ có hàng quét → plan xếp-theo-trình-tự-quét
-    const dGroups = viewGroups
-    if (!dPlan) return
-    const { length: L, width: W, height: H } = dPlan.truck
-    const toX = (x: number, l: number) => x + l / 2 - L / 2
-    const toY = (z: number, h: number) => z + h / 2
-    const toZ = (y: number, w: number) => y + w / 2 - W / 2
-
-    // Khung lòng thùng xe + sàn + khối cabin
-    const frame = new THREE.LineSegments(
-      new THREE.EdgesGeometry(new THREE.BoxGeometry(L, H, W)),
-      new THREE.LineBasicMaterial({ color: 0x475569 }),
-    )
-    frame.position.set(0, H / 2, 0)
-    boxGroup.add(frame)
-    const floor = new THREE.Mesh(new THREE.BoxGeometry(L, 20, W), new THREE.MeshLambertMaterial({ color: 0xcbd5e1 }))
-    floor.position.set(0, -10, 0)
-    boxGroup.add(floor)
-
-    // ĐẦU XE TẢI (stylized) — chỉ để nhận hướng đầu xe: TÁCH XA thùng + tông XÁM NHẠT trong suốt
-    // (không màu sắc — thùng hàng phải nổi rõ nhất)
-    const ghostMat = new THREE.MeshLambertMaterial({ color: 0xcbd5e1, transparent: true, opacity: 0.4 })
-    const ghostMat2 = new THREE.MeshLambertMaterial({ color: 0x94a3b8, transparent: true, opacity: 0.35 })
-    const edgeMat = new THREE.LineBasicMaterial({ color: 0x94a3b8 })
-    const cabLen = Math.min(1600, L * 0.25), cabW = W * 0.94, cabH = H * 0.62
-    const cabX = -L / 2 - 550 - cabLen / 2   // tách hẳn khỏi thùng hàng
-    const cabin = new THREE.Mesh(new THREE.BoxGeometry(cabLen, cabH, cabW), ghostMat)
-    cabin.position.set(cabX, cabH / 2, 0)
-    boxGroup.add(cabin)
-    const cabEdge = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(cabLen, cabH, cabW)), edgeMat)
-    cabEdge.position.copy(cabin.position)
-    boxGroup.add(cabEdge)
-    // Kính lái (mặt trước cabin)
-    const glass = new THREE.Mesh(new THREE.BoxGeometry(30, cabH * 0.38, cabW * 0.85), ghostMat2)
-    glass.position.set(cabX - cabLen / 2 - 15, cabH * 0.68, 0)
-    boxGroup.add(glass)
-    // Mũi xe (hood) thấp phía trước
-    const noseLen = cabLen * 0.45
-    const nose = new THREE.Mesh(new THREE.BoxGeometry(noseLen, cabH * 0.42, cabW), ghostMat)
-    nose.position.set(cabX - cabLen / 2 - noseLen / 2, cabH * 0.21, 0)
-    boxGroup.add(nose)
-    const noseEdge = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(noseLen, cabH * 0.42, cabW)), edgeMat)
-    noseEdge.position.copy(nose.position)
-    boxGroup.add(noseEdge)
-    // Bánh xe — xám mờ, 1 cặp dưới cabin + 2 cặp cuối thùng
-    const wheelR = Math.min(500, H * 0.22)
-    const wheelGeo = new THREE.CylinderGeometry(wheelR, wheelR, 300, 18)
-    const wheelXs = [cabX, L / 2 - 900, L / 2 - 900 - wheelR * 2.4]
-    for (const wx of wheelXs) for (const side of [-1, 1]) {
-      const wheel = new THREE.Mesh(wheelGeo, ghostMat2)
-      wheel.rotation.x = Math.PI / 2
-      wheel.position.set(wx, -wheelR * 0.4, side * (W / 2 - 160))
-      boxGroup.add(wheel)
-    }
-
-    // Chọn thùng hiển thị theo chế độ:
-    //  - Dự toán: theo thanh trượt (step ≤ maxStep); phần đã xuất thật → MỜ; chân đang xếp (step=maxStep) → SÁNG.
-    //  - Tiến độ: CHỈ thùng đã xuất thật (ordinal trong nhóm < done), theo đúng thứ tự xếp.
-    type Kind = 'normal' | 'done' | 'current'
-    const buckets = new Map<string, { boxes: { b: (typeof dPlan.placed)[number] }[]; gi: number; kind: Kind }>()
-    dPlan.placed.forEach((b, i) => {
-      const g = dGroups[b.group]
-      let show = false, kind: Kind = 'normal'
-      if (mode === 'progress') {
-        // Plan tiến độ CHỈ chứa hàng đã quét → hiện hết; fallback (chưa quét gì) giữ lọc cũ
-        show = progressActive ? true : ordinals[i] < g.done
-      } else {
-        show = b.step <= maxStep
-        if (ordinals[i] < g.done) kind = 'done'
-        if (b.step === maxStep) kind = 'current'
-      }
-      if (!show) return
-      const bk = `${b.group}|${kind}`
-      if (!buckets.has(bk)) buckets.set(bk, { boxes: [], gi: b.group, kind })
-      buckets.get(bk)!.boxes.push({ b })
-    })
-
-    // Thùng trên pallet tô theo MÃ (dòng hàng): màu của khối riêng của mã đó; mã chỉ nằm trong pallet gộp thì màu kế tiếp
-    const keyColor = new Map<string, string>()
-    dGroups.forEach((g, i) => { const k = g.key.replace(/\|(full|plt)$/, ''); if (!keyColor.has(k)) keyColor.set(k, GROUP_COLORS[i % GROUP_COLORS.length]) })
-    const colorOfKey = (k: string) => {
-      if (!keyColor.has(k)) keyColor.set(k, GROUP_COLORS[(dGroups.length + keyColor.size) % GROUP_COLORS.length])
-      return keyColor.get(k)!
-    }
-
-    // Spotlight: có mã đang CHỌN từ panel → khối khác chìm mờ, khối chọn nổi
-    const spotlight = selectedKeys.size > 0
-    const visibleByGroup = new Map<number, { cx: number; cy: number; top: number; n: number }>()
-    for (const { boxes, gi, kind } of buckets.values()) {
-      const dimmed = spotlight && !selectedKeys.has(dGroups[gi].key)
-      const mkMat = (hex: string) => {
-        const color = new THREE.Color(hex)
-        return new THREE.MeshLambertMaterial({
-          color,
-          transparent: dimmed || kind === 'done',
-          opacity: dimmed ? 0.07 : kind === 'done' ? 0.28 : 1,
-          emissive: !dimmed && (kind === 'current' || (spotlight && selectedKeys.has(dGroups[gi].key))) ? color : new THREE.Color(0x000000),
-          emissiveIntensity: kind === 'current' ? 0.45 : spotlight && !dimmed ? 0.2 : 0,
-        })
-      }
-      const groupMat = () => mkMat(GROUP_COLORS[gi % GROUP_COLORS.length])   // tạo khi dùng — vật liệu thừa không ai dọn
-      // ĐẾ PALLET (26/08): khối pallet vẽ 2 phần — đế MÀU RIÊNG đồng nhất (phân biệt rõ, user
-      // chốt) + hàng phía trên mang màu nhóm. Loscam rỗng: cả khối là đế. Khối thường: 1 phần.
-      const base = dGroups[gi].base
-      const baseH = base ? Math.min(base.h, ...boxes.map(({ b }) => b.h)) : 0
-      const goods = boxes.filter(({ b }) => b.h - baseH > 1)
-      const mkInst = (mesh: import('three').InstancedMesh, list: typeof boxes,
-                      zOff: number, hOf: (bh: number) => number) => {
-        const m = new THREE.Matrix4()
-        list.forEach(({ b }, i) => {
-          const hh = hOf(b.h)
-          m.makeScale(Math.max(1, b.l - 10), Math.max(1, hh - 8), Math.max(1, b.w - 10))   // hở nhìn rõ từng khối
-          m.setPosition(toX(b.x, b.l), toY(b.z + zOff, hh), toZ(b.y, b.w))
-          mesh.setMatrixAt(i, m)
-        })
-        mesh.instanceMatrix.needsUpdate = true
-        boxGroup.add(mesh)
-      }
-      if (base && baseH > 0) {
-        // Đế: cùng chế độ chìm/mờ với khối (spotlight/done) nhưng KHÔNG phát sáng — đế là mốc
-        // nhìn, không phải thứ đang thao tác.
-        const baseMat = new THREE.MeshLambertMaterial({
-          color: new THREE.Color(base.color),
-          transparent: dimmed || kind === 'done',
-          opacity: dimmed ? 0.07 : kind === 'done' ? 0.28 : 1,
-        })
-        // PALLET 4 CỔNG (user chốt 26/08): đế vẽ 2 tầng — MẶT pallet (ván trên) + 9 CHÂN xếp
-        // lưới 3×3, để HỞ LỖ càng xe nâng ở CẢ 4 PHÍA cho trực quan, thay cho khối đặc cũ.
-        // Khối có ruột: đế đúng chỗ CHÂN pallet trong khối (khối rộng hơn chân khi thùng chờm mép).
-        const g = dGroups[gi]
-        const decks = g.deck ? boxes.map(({ b }) => ({ b: { ...b, ...onPallet(b, g.l, [g.deck!])[0] } })) : boxes
-        const deckH = Math.max(20, baseH * 0.35)
-        const blockH = baseH - deckH
-        mkInst(new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), baseMat, decks.length),
-          decks, blockH, () => deckH)
-        if (blockH > 4) {
-          const legs = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), baseMat, decks.length * 9)
-          const lm = new THREE.Matrix4()
-          let li = 0
-          for (const { b } of decks) {
-            const bl = Math.max(40, b.l * 0.16), bw = Math.max(40, b.w * 0.19)   // cỡ chân ~ Loscam 3×3
-            const xs = [b.x + bl / 2 + 5, b.x + b.l / 2, b.x + b.l - bl / 2 - 5]
-            const ys = [b.y + bw / 2 + 5, b.y + b.w / 2, b.y + b.w - bw / 2 - 5]
-            for (const cx of xs) for (const cy of ys) {
-              lm.makeScale(bl, Math.max(1, blockH - 2), bw)
-              lm.setPosition(toX(cx, 0), toY(b.z, blockH), toZ(cy, 0))
-              legs.setMatrixAt(li++, lm)
-            }
-          }
-          legs.instanceMatrix.needsUpdate = true
-          boxGroup.add(legs)
-        }
-        if (g.cartons?.length) {
-          // TỪNG THÙNG THẬT đã xếp (luật 12 lõi) — mỗi mã một màu, pallet gộp thấy rõ mã nào nằm đâu
-          const byKey = new Map<string, typeof boxes>()
-          for (const { b } of goods) for (const c of onPallet(b, g.l, g.cartons)) {
-            if (!byKey.has(c.key)) byKey.set(c.key, [])
-            byKey.get(c.key)!.push({ b: { ...b, x: c.x, y: c.y, z: b.z + baseH + c.z, l: c.l, w: c.w, h: c.h } })
-          }
-          for (const [k, list] of byKey)
-            mkInst(new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), mkMat(colorOfKey(k)), list.length), list, 0, bh => bh)
-        } else if (goods.length)
-          mkInst(new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), groupMat(), goods.length),
-            goods, baseH, bh => bh - baseH)
-      } else {
-        mkInst(new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), groupMat(), boxes.length),
-          boxes, 0, bh => bh)
-      }
-      boxes.forEach(({ b }) => {
-        const agg = visibleByGroup.get(gi) ?? { cx: 0, cy: 0, top: 0, n: 0 }
-        agg.cx += b.x + b.l / 2; agg.cy += b.y + b.w / 2
-        agg.top = Math.max(agg.top, b.z + b.h); agg.n++
-        visibleByGroup.set(gi, agg)
+      for (const cl of clusters) badges.push({
+        text: `${count} lớp`,
+        x: cl.reduce((s, c) => s + c.cx, 0) / cl.length, y: cl.reduce((s, c) => s + c.cy, 0) / cl.length,
+        top: Math.max(...cl.map(c => c.top)),
       })
     }
-
-    // Nhãn tên MẢNG hàng — GOM VÀO 1 MẶT PHẲNG (băng nhãn trên nóc xe, z=0), dàn không đè nhau.
-    // Chỉ vẽ nhãn cho: mã đang CHỌN (spotlight) + khối của BƯỚC hiện tại; bật "tất cả nhãn" mới vẽ hết.
-    const curStepGi = mode === 'plan' && maxStep > 0 ? dPlan.placed.find(b => b.step === maxStep)?.group ?? -1 : -1
-    const labelGis = [...visibleByGroup.keys()].filter(gi =>
-      showLabels || selectedKeys.has(dGroups[gi].key) || gi === curStepGi)
-    if (labelGis.length) {
-      const labelH = 240
-      const entries = labelGis
-        .map(gi => [gi, visibleByGroup.get(gi)!] as const)
-        .map(([gi, agg]) => {
-          const g = dGroups[gi]
-          const gUnit = isPalletTruck && !g.topCarton ? 'pallet' : (g.qtyUnit ?? 'thùng')
-          const countTxt = mode === 'progress' ? `${g.done} ${gUnit}` : (g.done > 0 ? `${g.done}/${g.count} ${gUnit}` : `${g.count} ${gUnit}`)
-          const { sprite, aspect } = makeLabelSprite(THREE, `${g.label} · ${countTxt}`, GROUP_COLORS[gi % GROUP_COLORS.length])
-          return {
-            gi, sprite, w: labelH * aspect,
-            bx: toX(agg.cx / agg.n, 0), bz: toZ(agg.cy / agg.n, 0), btop: agg.top,
-          }
-        })
-        .sort((a, b) => a.bx - b.bx)   // theo vị trí khối dọc thân xe
-      const GAP = 150
-      const rowY = [H + 380, H + 380 + labelH + 60, H + 380 + (labelH + 60) * 2]
-      const rowCursor = rowY.map(() => -Infinity)
-      for (const e of entries) {
-        // Chọn hàng đặt được gần vị trí khối nhất (không chồng nhãn trước đó trong hàng)
-        let best = 0, bestX = 0, bestDist = Infinity
-        for (let r = 0; r < rowY.length; r++) {
-          const x = Math.max(e.bx, rowCursor[r] + GAP + e.w / 2)
-          const dist = Math.abs(x - e.bx) + r * 50   // ưu tiên hàng thấp khi ngang nhau
-          if (dist < bestDist) { bestDist = dist; best = r; bestX = x }
-        }
-        rowCursor[best] = bestX + e.w / 2
-        const y = rowY[best]
-        e.sprite.position.set(bestX, y, 0)
-        e.sprite.scale.set(e.w, labelH, 1)
-        boxGroup.add(e.sprite)
-        // Đường dẫn từ đáy nhãn → nóc khối + mũi tên cone
-        const color = GROUP_COLORS[e.gi % GROUP_COLORS.length]
-        const lineGeo = new THREE.BufferGeometry().setFromPoints([
-          new THREE.Vector3(bestX, y - labelH / 2, 0), new THREE.Vector3(e.bx, e.btop + 140, e.bz),
-        ])
-        boxGroup.add(new THREE.Line(lineGeo, new THREE.LineBasicMaterial({ color })))
-        const cone = new THREE.Mesh(new THREE.ConeGeometry(50, 120, 10), new THREE.MeshLambertMaterial({ color }))
-        cone.position.set(e.bx, e.btop + 80, e.bz)
-        cone.rotation.x = Math.PI
-        boxGroup.add(cone)
-      }
-    }
-
-    // KÝ HIỆU SỐ LỚP theo VÙNG: gom chân theo số lớp — vùng liền nhau cùng số lớp = 1 badge;
-    // khu vực có số lớp KHÁC → badge riêng (không ghi từng chân).
-    {
-      const colInfo = new Map<string, { cx: number; cy: number; count: number; top: number }>()
-      for (const bk of buckets.values()) for (const { b } of bk.boxes) {
-        const k = `${b.x}|${b.y}`
-        const c = colInfo.get(k) ?? { cx: b.x + b.l / 2, cy: b.y + b.w / 2, count: 0, top: 0 }
-        c.count++
-        c.top = Math.max(c.top, b.z + b.h)
-        colInfo.set(k, c)
-      }
-      const byCount = new Map<number, { cx: number; cy: number; top: number }[]>()
-      for (const c of colInfo.values()) {
-        if (!byCount.has(c.count)) byCount.set(c.count, [])
-        byCount.get(c.count)!.push(c)
-      }
-      for (const [count, colsOfCount] of byCount) {
-        // cụm theo x liền kề (hở > 1200mm = vùng mới)
-        const sorted = [...colsOfCount].sort((a, b) => a.cx - b.cx)
-        const clusters: typeof sorted[] = []
-        for (const c of sorted) {
-          const last = clusters[clusters.length - 1]
-          if (last && c.cx - last[last.length - 1].cx <= 1200) last.push(c)
-          else clusters.push([c])
-        }
-        for (const cl of clusters) {
-          const mx = cl.reduce((s, c) => s + c.cx, 0) / cl.length
-          const my = cl.reduce((s, c) => s + c.cy, 0) / cl.length
-          const mtop = Math.max(...cl.map(c => c.top))
-          const { sprite, aspect } = makeBadgeSprite(THREE, `${count} lớp`)
-          sprite.position.set(toX(mx, 0), mtop + 130, toZ(my, 0))
-          const bh = 170
-          sprite.scale.set(bh * aspect, bh, 1)
-          boxGroup.add(sprite)
-        }
-      }
-    }
-
-    // Camera lần đầu / khi đổi cỡ xe
-    const camKey = `${L}x${W}x${H}`
-    if (camKeyRef.current !== camKey) {
-      camKeyRef.current = camKey
-      c.camera.position.set(L * 0.75, H * 2.1, W * 2.6)
-      c.camera.near = Math.max(1, L / 500)
-      c.camera.far = L * 30
-      c.camera.updateProjectionMatrix()
-      c.controls.target.set(0, H / 3, 0)
-      c.controls.update()
-    }
+    return { labels, badges }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready, viewPlan, viewGroups, progressActive, maxStep, mode, showLabels, ordinals, selKey])
+  }, [scenePlan, viewGroups, maxStep, mode, showLabels, selKey, isPalletTruck, colors])
 
   if (!open) return null
 
@@ -1028,8 +700,11 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
       <div className="flex-1 min-h-0 flex flex-col lg:flex-row">
         {/* Canvas 3D */}
         <div className="flex-1 min-h-0 relative">
-          <div ref={mountRef} className="absolute inset-0" />
-          {!plan && (
+          <Suspense fallback={<div className="absolute inset-0 grid place-items-center bg-slate-100 text-sm text-slate-500">Đang dựng xe…</div>}>
+            <TruckScene className="absolute inset-0" truck={sceneTruck} plan={scenePlan} meta={sceneMeta} colors={colors} prints={prints}
+              step={mode === 'plan' ? maxStep : null} focus={sceneFocus} marks={sceneMarks} view={view} walls={walls} />
+          </Suspense>
+          {(!plan || !sceneTruck) && (
             <div className="absolute inset-0 flex items-center justify-center bg-slate-100">
               <p className="text-sm text-slate-500 px-6 text-center">
                 {cartonGroups.length === 0 ? 'Chuyến chưa có mã hàng nào có số lượng thùng.' : 'Chọn loại xe và nhập kích thước lòng thùng (mm) để dựng sơ đồ.'}
@@ -1040,6 +715,35 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
             <div className="absolute top-2 left-1/2 -translate-x-1/2 bg-green-600/95 text-white text-[11px] rounded-full px-3 py-1 shadow">
               Tiến độ thực tế: đã xuất <b className="tabular-nums">{sumDone}/{plan.totalCount}</b> {unitWord}
               {sumDone === 0 && ' — chưa quét thùng nào'}
+            </div>
+          )}
+          {/* Góc nhìn + vách thùng */}
+          {plan && sceneTruck && (
+            <div className="absolute top-2 right-2">
+              <Button size="sm" variant="outline" className="h-8 gap-1 bg-white px-2 text-xs font-semibold" aria-expanded={viewMenu} aria-label="Góc nhìn" title="Góc nhìn" onClick={() => setViewMenu(v => !v)}>
+                <Rotate3d className="h-4 w-4" />
+                <span className="hidden sm:inline">{VIEWS.find(([p]) => p === view.preset)?.[1]}</span>
+                <ChevronDown className="h-3.5 w-3.5 text-slate-500" />
+              </Button>
+              {viewMenu && (
+                <>
+                  <div className="fixed inset-0" onClick={() => setViewMenu(false)} />
+                  <div className="absolute right-0 top-full z-10 mt-1 w-48 overflow-hidden rounded-lg border border-slate-200 bg-white py-1 shadow-lg">
+                    {VIEWS.map(([p, label]) => (
+                      <button key={p} type="button" onClick={() => { setView(v => ({ preset: p, n: v.n + 1 })); setViewMenu(false) }}
+                        className="touch-target flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-50">
+                        {view.preset === p ? <Check className="h-3.5 w-3.5 shrink-0 text-sky-600" /> : <span className="w-3.5 shrink-0" />}{label}
+                      </button>
+                    ))}
+                    <div className="my-1 border-t border-slate-200" />
+                    <button type="button" onClick={() => { setWalls(w => (w === 'open' ? 'glass' : 'open')); setViewMenu(false) }}
+                      className="touch-target flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-50">
+                      {walls === 'open' ? <Eye className="h-3.5 w-3.5 shrink-0" /> : <EyeOff className="h-3.5 w-3.5 shrink-0" />}
+                      {walls === 'open' ? 'Hiện vách thùng' : 'Ẩn vách thùng'}
+                    </button>
+                  </div>
+                </>
+              )}
             </div>
           )}
           {/* Thanh bước — chỉ chế độ Dự toán */}
@@ -1375,7 +1079,7 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
                 {groups.map((g, i) => g.doLabel === dl && (
                   <div key={g.key} onClick={() => toggleSelect(g.key)}
                     className={`flex items-start gap-2 text-[11px] cursor-pointer rounded px-1 -mx-1 py-0.5 ${selectedKeys.has(g.key) ? 'bg-sky-100 ring-1 ring-sky-300' : 'hover:bg-slate-50'}`}>
-                    <span className="h-3 w-3 mt-0.5 rounded-sm shrink-0" style={{ background: GROUP_COLORS[i % GROUP_COLORS.length] }} />
+                    <span className="h-3 w-3 mt-0.5 rounded-sm shrink-0" style={{ background: colorOf(g) }} />
                     <span className="flex-1 min-w-0 break-words leading-tight">
                       {g.label}
                       {g.assumed && <span className="text-red-500 font-bold ml-0.5" title="Chưa khai kích thước thùng — đang tính bằng cỡ mặc định. Khai ở Mã hàng → Thùng D×R×C.">*</span>}

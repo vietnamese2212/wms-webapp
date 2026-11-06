@@ -57,3 +57,7 @@ thì nó mới nhả slot ra — để user họ có trách nhiệm làm cho xon
 tính theo chuyến IN_PROGRESS / PAUSED, nhả khi Hoàn thành / Bỏ bắt đầu / Huỷ — kể cả chuyến bị điều vận rút (kho phải trả hàng + Bỏ bắt đầu).
 ĐỪNG đề xuất nút "Xe rời cửa" / nhả khi Ra cổng / hàng chờ cửa. Cuốn chiếu = sức chứa cửa: "Cửa pallet 1" · "Cửa Pallet 2" của Ba Vì 1 → 2 xe
 (sửa qua Sơ đồ kho, staging); cửa cont / sca vốn 2 xe.
+
+## 06/11 — Cảnh 3D của Xếp xe 3D giống MalCargo
+
+User: "3d của supplyc cũng như của cargo". `LoadPlan3DDialog` chỉ còn tính dữ liệu + bảng điều khiển; cảnh ở `components/wms/loadplan3d/` (chép từ MalCargo, nạp `lazy`): xe dựng theo đúng lòng thùng (tên loại xe / dòng xe có "cont" ⇒ đầu kéo + rơ-moóc + container), thùng in tên + mã, pallet gỗ tô `Material.pallet_color`, trời + bóng đổ, nút Góc nhìn + Hiện / Ẩn vách. Màu CỐ ĐỊNH theo mã (`colors.ts`), ô màu ở danh sách khớp thùng trên xe. Giữ nguyên: Dự toán / Tiến độ, phần đã xuất mờ (mesh riêng trong `cargo.ts`), soi mã, nhãn tên + số lớp (`marks.ts`). Luật xếp không đổi.

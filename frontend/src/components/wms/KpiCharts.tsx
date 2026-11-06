@@ -5,7 +5,7 @@ import { useState, type ReactNode } from 'react'
 import type { KpiBucket, KpiDefPublic, KpiGrain, KpiValue } from '@/api/hooks'
 import { useEdgeFade } from '@/hooks/useEdgeFade'
 import { fmtNum } from '@/utils/productivity'
-import { kpiGap } from '@/utils/kpiView'
+import { kpiGap, squarify } from '@/utils/kpiView'
 import { bucketLabel, fmtValue, ragOf } from '@/components/wms/KpiLineChart'
 
 export type RagKey = 'G' | 'Y' | 'R' | 'none'
@@ -256,5 +256,138 @@ export function TickGauge({ value, marks, label, sub }: { value: number | null; 
       <text x={CX} y={CY - 8} textAnchor="middle" className="fill-[var(--k-ink)] text-[32px] font-semibold tabular-nums">{label}</text>
       {sub && <text x={CX} y={CY + 14} textAnchor="middle" className="fill-[var(--k-muted)] text-[11px]">{sub}</text>}
     </svg>
+  )
+}
+
+// ── Dùng chung cho các tab Tổng quan và Giám sát vận hành (11/2026) ──────────────────────────────
+/** Vòng % — một giá trị, tâm in số. Trên khối xanh đậm truyền color trắng + track trắng mờ. */
+export function RingMeter({ pct, size = 64, stroke = 8, color = 'var(--k-data)', track = 'var(--k-line)', center, label }: {
+  pct: number | null; size?: number; stroke?: number; color?: string; track?: string; center?: ReactNode; label: string
+}) {
+  const r = (size - stroke) / 2, C = 2 * Math.PI * r
+  const p = pct == null ? 0 : Math.max(0, Math.min(100, pct))
+  return (
+    <div className="relative shrink-0" style={{ width: size, height: size }} role="img" aria-label={label}>
+      <svg viewBox={`0 0 ${size} ${size}`} className="h-full w-full -rotate-90">
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={track} strokeWidth={stroke} />
+        {p > 0 && <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={color} strokeWidth={stroke} strokeLinecap="round" strokeDasharray={`${(p / 100) * C} ${C}`} />}
+      </svg>
+      <div className="absolute inset-0 flex items-center justify-center font-semibold tabular-nums leading-none" style={{ fontSize: Math.round(size * 0.24) }}>
+        {center ?? (pct == null ? '—' : `${Math.round(p)}%`)}
+      </div>
+    </div>
+  )
+}
+
+/** Thanh xếp hạng: bên gọi tự sắp thứ tự. Nhiều dòng thì cuộn trong thẻ, không cắt bớt. */
+export type RankRow = { key: string; label: string; value: number | null; text: string; color?: string; title?: string }
+export function RankBars({ rows, max, empty, note }: { rows: RankRow[]; max?: number; empty: string; note?: ReactNode }) {
+  if (rows.length === 0) return <p className="px-4 sm:px-5 py-8 text-xs text-[var(--k-muted)]">{empty}</p>
+  const top = max ?? Math.max(1e-9, ...rows.map(r => r.value ?? 0))
+  return (
+    <div className="px-4 sm:px-5 py-3">
+      <div className="max-h-[300px] space-y-2 overflow-y-auto pr-1">
+        {rows.map(r => (
+          <div key={r.key} title={r.title ?? `${r.label}: ${r.text}`} className="grid grid-cols-[minmax(0,6.5rem)_minmax(0,1fr)_auto] items-center gap-2 text-xs sm:grid-cols-[minmax(0,8rem)_minmax(0,1fr)_auto]">
+            <span className="truncate text-[var(--k-muted)]">{r.label}</span>
+            <span className="relative h-4 rounded-[5px] bg-[var(--k-surface-2)]">
+              {r.value != null && r.value > 0 && <span className="absolute inset-y-0 left-0 min-w-[3px] rounded-[5px]" style={{ width: `${Math.min(100, (r.value / top) * 100)}%`, background: r.color ?? 'var(--k-data)' }} />}
+            </span>
+            <span className="min-w-[3.25rem] text-right font-semibold tabular-nums">{r.text}</span>
+          </div>
+        ))}
+      </div>
+      {note && <p className="mt-2.5 text-[11px] text-[var(--k-muted)]">{note}</p>}
+    </div>
+  )
+}
+
+/** Treemap một sắc: ô to = nhiều, đậm nhạt theo tỷ trọng. Tên + số in trực tiếp trên ô (bảng màu nhiều sắc của mẫu không qua được
+ *  validate_palette); ô quá nhỏ không đủ chỗ in thì đọc qua tooltip. Quá 8 nhóm thì gom phần nhỏ thành "Khác". */
+export function Treemap({ items, unit, height = 280 }: { items: Array<{ key: string; label: string; value: number }>; unit: string; height?: number }) {
+  const W = 150, H = 100
+  const sorted = items.filter(i => i.value > 0).sort((a, b) => b.value - a.value)
+  const rest = sorted.slice(8)
+  const shown = rest.length > 1
+    ? [...sorted.slice(0, 8), { key: '__other', label: `Khác (${rest.length})`, value: rest.reduce((s, i) => s + i.value, 0) }]
+    : sorted
+  const total = shown.reduce((s, i) => s + i.value, 0)
+  if (total <= 0) return <p className="px-5 py-8 text-xs text-[var(--k-muted)]">Chưa có tồn trong phạm vi đang xem.</p>
+  const biggest = shown[0].value
+  return (
+    <div className="p-3 sm:px-4">
+    <div className="relative" style={{ height }}>
+      {squarify(shown, W, H).map(t => {
+        const share = t.value / total
+        const alpha = 0.22 + 0.78 * Math.sqrt(t.value / biggest)
+        return (
+          <div key={t.key} className="absolute p-[1.5px]" style={{ left: `${(t.x / W) * 100}%`, top: `${(t.y / H) * 100}%`, width: `${(t.w / W) * 100}%`, height: `${(t.h / H) * 100}%` }}
+            title={`${t.label}: ${fmtNum(t.value, 0)} ${unit} · ${fmtNum(share * 100, 1)}%`}>
+            <div className="relative h-full overflow-hidden rounded-[6px]">
+              <div className="absolute inset-0 bg-[var(--k-data)]" style={{ opacity: alpha }} />
+              {t.w / W >= 0.12 && t.h / H >= 0.14 && (
+                <div className={`relative flex h-full flex-col items-center justify-center px-1 text-center ${alpha > 0.6 ? 'text-white' : ''}`}>
+                  <div className="max-w-full truncate text-xs font-medium">{t.label}</div>
+                  <div className="text-[15px] font-semibold tabular-nums leading-tight">{fmtNum(t.value, 0)}</div>
+                </div>
+              )}
+            </div>
+          </div>
+        )
+      })}
+    </div>
+    <div className="mt-2 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-[var(--k-muted)]">
+      {shown.map(t => <span key={t.key} className="whitespace-nowrap">{t.label} <b className="font-semibold tabular-nums text-[var(--k-ink)]">{fmtNum(t.value, 0)}</b></span>)}
+    </div>
+    </div>
+  )
+}
+
+/** Khối nổi bật nền xanh đậm + các số bên dưới — mẫu "Luồng nhập xuất". */
+export function HeroPanel({ title, hint, top, children }: { title: ReactNode; hint?: ReactNode; top: ReactNode; children?: ReactNode }) {
+  return (
+    <section className="k-card flex flex-col overflow-hidden">
+      <div className="bg-[var(--k-brand)] px-4 py-3.5 text-white sm:px-5">
+        <div className="flex items-baseline justify-between gap-2">
+          <h2 className="text-[15px] font-semibold">{title}</h2>
+          {hint && <span className="whitespace-nowrap text-[11px] font-medium text-white/75">{hint}</span>}
+        </div>
+        {top}
+      </div>
+      {children && <div className="grid flex-1 grid-cols-2 content-center gap-x-4 gap-y-3 px-4 py-3.5 sm:px-5">{children}</div>}
+    </section>
+  )
+}
+export function HeroStat({ label, value, title }: { label: string; value: ReactNode; title?: string }) {
+  return (
+    <div className="min-w-0" title={title}>
+      <div className="text-xs text-[var(--k-muted)]">{label}</div>
+      <div className="text-xl font-semibold tabular-nums leading-tight">{value}</div>
+    </div>
+  )
+}
+
+/** Hai cột mỗi kỳ trên nền xanh đậm (CÙNG đơn vị, một trục). Nhiều kỳ thì thưa nhãn, số đọc qua tooltip. */
+export function FlowBars({ rows, aLabel, bLabel }: { rows: Array<{ key: string; label: string; a: number; b: number; title: string }>; aLabel: string; bLabel: string }) {
+  const max = Math.max(1e-9, ...rows.flatMap(r => [r.a, r.b]))
+  const every = Math.ceil(rows.length / 8)
+  return (
+    <div className="mt-3">
+      <div className="flex h-[104px] items-end gap-1.5">
+        {rows.map(r => (
+          <div key={r.key} title={r.title} className="flex h-full min-w-0 flex-1 items-end justify-center gap-[3px]">
+            <span className="w-full max-w-[9px] rounded-t-[3px] bg-white" style={{ height: `${(r.a / max) * 100}%`, minHeight: r.a > 0 ? 2 : 0 }} />
+            <span className="w-full max-w-[9px] rounded-t-[3px] bg-white/55" style={{ height: `${(r.b / max) * 100}%`, minHeight: r.b > 0 ? 2 : 0 }} />
+          </div>
+        ))}
+      </div>
+      <div className="mt-1 flex gap-1.5 text-[10px] tabular-nums text-white/75">
+        {rows.map((r, i) => <span key={r.key} className="min-w-0 flex-1 overflow-visible whitespace-nowrap text-center">{i % every === 0 ? r.label : ''}</span>)}
+      </div>
+      <div className="mt-1.5 flex gap-3 text-[11px] text-white/85">
+        <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-[3px] bg-white" />{aLabel}</span>
+        <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-[3px] bg-white/55" />{bLabel}</span>
+      </div>
+    </div>
   )
 }

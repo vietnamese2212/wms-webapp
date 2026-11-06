@@ -6,10 +6,13 @@
 //
 // TẤN = chứng từ, cộng CẢ nhập lẫn xuất (bốc hàng nhập cũng là công). CÔNG = module Chấm công.
 // Mọi tỷ số lấy từ `utils/productivity.ts` (một nguồn), thiếu mẫu số thì hiện "—" chứ không hiện 0.
+//
+// 11/2026 — phong cách "trung tâm điều hành": biểu đồ đọc đúng payload /wms/dashboard/productivity đã có, không thêm request.
 import { useMemo, useState } from 'react'
-import { Gauge, Scale, Users, Clock3, TrendingUp, AlertTriangle, Wallet, Warehouse } from 'lucide-react'
+import { TrendingUp, AlertTriangle } from 'lucide-react'
 import { Skeleton } from '@/components/ui/skeleton'
-import { DashPanel, DashTile, DASH_SK } from '@/components/wms/DashboardPanel'
+import { StatCard, DASH_SK } from '@/components/wms/DashboardPanel'
+import { FlowBars, HeroPanel, HeroStat, KpiPanel, RankBars } from '@/components/wms/KpiCharts'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { useProductivity, type ProductivityRow } from '@/api/hooks'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
@@ -37,9 +40,8 @@ function dayCount(from: string, to: string): number {
   return isNaN(a) || isNaN(b) ? 0 : Math.floor((b - a) / 86400000) + 1
 }
 
-// Khối card + ô KPI dùng CHUNG với các tab khác của Dashboard (một khuôn, không tự dựng lại)
 const sk = DASH_SK
-const Tile = DashTile
+const monthLabel = (m: string) => `${m.slice(5)}/${m.slice(2, 4)}`
 
 // ── XEM THEO THÁNG ────────────────────────────────────────────────────────────────────────────
 // Cột = tháng, chọn được CHỈ SỐ muốn nhìn. Mỗi cột kèm ▲▼ % so THÁNG LIỀN TRƯỚC — không có mũi
@@ -59,13 +61,13 @@ const METRICS: Array<{ key: string; label: string; unit: string; goodUp: boolean
 // "▲21.758%" — đúng toán nhưng đọc thành tin giả; số phần trăm chỉ có nghĩa khi mẫu số có nghĩa.
 function Delta({ cur, prev, goodUp, floor = 0 }: { cur: number | null; prev: number | null; goodUp: boolean; floor?: number }) {
   if (cur == null || prev == null || prev === 0 || Math.abs(prev) < floor)
-    return <span className="text-[9px] text-slate-300">—</span>
+    return <span className="text-[10px] text-[var(--k-muted)]">—</span>
   const p = (cur - prev) / Math.abs(prev)
-  if (Math.abs(p) < 0.005) return <span className="text-[9px] text-slate-400">≈</span>
+  if (Math.abs(p) < 0.005) return <span className="text-[10px] text-[var(--k-muted)]">≈</span>
   const up = p > 0
   const good = up === goodUp
   return (
-    <span className={`text-[9px] tabular-nums font-medium ${good ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-500'}`}>
+    <span className="text-[10px] tabular-nums font-semibold" style={{ color: good ? 'var(--k-ok)' : 'var(--k-bad)' }}>
       {up ? '▲' : '▼'}{fmtPct(Math.abs(p), 0)}
     </span>
   )
@@ -81,49 +83,46 @@ function MonthlyTrend({ rows, onPick12 }: { rows: TrendRow[]; onPick12: () => vo
   const last = vals[vals.length - 1], prev = vals[vals.length - 2]
 
   return (
-    <DashPanel title="Xem theo tháng" icon={TrendingUp} extra={<>
-      <span className="text-[9px] text-slate-500">{rows.length} tháng · ▲▼ so tháng liền trước</span>
-      <span className="flex-1" />
-      <button type="button" onClick={onPick12} className="text-[10px] text-sky-600 hover:text-sky-700">12 tháng</button>
-    </>}>
-      <div className="px-2.5 py-1.5 flex items-center gap-1 flex-wrap border-b border-slate-100 dark:border-slate-700/60">
+    <KpiPanel title="Xem theo tháng" hint={`${rows.length} tháng · ▲▼ so tháng liền trước`}
+      right={<button type="button" onClick={onPick12} className="text-[11px] font-medium text-[var(--k-data)] hover:underline whitespace-nowrap">12 tháng</button>}>
+      <div className="px-4 sm:px-5 py-2 flex items-center gap-1 flex-wrap xl:flex-nowrap border-b border-[var(--k-line)]">
         {METRICS.map(m => (
           <button key={m.key} type="button" onClick={() => setMetric(m.key)}
-            className={`h-6 px-2 rounded text-[10px] font-medium border transition-colors ${m.key === metric
-              ? 'bg-sky-600 text-white border-sky-600'
-              : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-white/5'}`}>
+            className={`h-7 px-2.5 rounded-[8px] text-[11px] font-semibold whitespace-nowrap border transition-colors ${m.key === metric
+              ? 'bg-[var(--k-brand)] text-white border-[var(--k-brand)]'
+              : 'text-[var(--k-muted)] border-[var(--k-line)] hover:bg-[var(--k-surface-2)]'}`}>
             {m.label}
           </button>
         ))}
         <span className="flex-1" />
-        <span className="text-[10px] text-slate-500">
-          Tháng cuối: <b className="text-slate-700 dark:text-slate-200">{fmt(last ?? null)}</b> <Delta cur={last ?? null} prev={prev ?? null} goodUp={M.goodUp} floor={floor} />
+        <span className="text-[11px] text-[var(--k-muted)] whitespace-nowrap">
+          Tháng cuối: <b className="text-[var(--k-ink)]">{fmt(last ?? null)}</b> <Delta cur={last ?? null} prev={prev ?? null} goodUp={M.goodUp} floor={floor} />
         </span>
       </div>
 
-      <div className="p-3 overflow-x-auto">
-        <div className="flex items-end gap-2 min-w-max h-40">
+      <div className="px-4 sm:px-5 py-3 overflow-x-auto">
+        <div className="flex items-end gap-2 min-w-max xl:min-w-0 h-44">
           {rows.map((m, i) => {
             const v = vals[i]
-            const h = v == null ? 0 : Math.max(3, (v / max) * 96)
+            const h = v == null ? 0 : Math.max(3, (v / max) * 104)
             return (
-              <div key={m.month} className="flex flex-col items-center justify-end gap-1 w-16">
+              <div key={m.month} className="flex flex-1 flex-col items-center justify-end gap-1 min-w-[3.5rem]">
                 <Delta cur={v} prev={i > 0 ? vals[i - 1] : null} goodUp={M.goodUp} floor={floor} />
-                <span className="text-[9px] tabular-nums text-slate-600 dark:text-slate-300">{fmt(v)}</span>
+                <span className="text-[11px] font-semibold tabular-nums">{fmt(v)}</span>
                 {v == null
-                  ? <div className="w-9 border-b-2 border-dashed border-slate-300 dark:border-slate-600" title="Chưa có dữ liệu chấm công tháng này" />
-                  : <div className="w-9 rounded-t bg-sky-500/80 hover:bg-sky-500" style={{ height: `${h}px` }}
+                  ? <div className="w-10 border-b-2 border-dashed border-[var(--k-none)]" title="Chưa có dữ liệu chấm công tháng này" />
+                  : <div className="w-10 max-w-full rounded-t-[4px] bg-[var(--k-data)] hover:opacity-85" style={{ height: `${h}px` }}
                       title={`${m.month}: ${fmtNum(m.tons, 1)} tấn · ${fmtNum(m.work_days, 0)} công · ${fmtNum(m.ot_hours, 1)} giờ OT`} />}
-                <span className="text-[9px] text-slate-600 dark:text-slate-300">{m.month.slice(5)}/{m.month.slice(2, 4)}</span>
+                <span className="text-[11px] text-[var(--k-muted)]">{monthLabel(m.month)}</span>
               </div>
             )
           })}
         </div>
-        <div className="mt-1 text-[9px] text-slate-400">
+        <div className="mt-1.5 text-[11px] text-[var(--k-muted)]">
           Cột đứt nét = tháng chưa có dữ liệu để tính chỉ số này (thường là chưa chấm công).
         </div>
       </div>
-    </DashPanel>
+    </KpiPanel>
   )
 }
 
@@ -180,6 +179,10 @@ export function DashboardProductivity({ warehouseId }: { warehouseId: string }) 
   const rows = useMemo(() => allRows.filter(r => r.tons > 0 || r.work_days > 0 || (r.cost ?? 0) > 0), [allRows])
   const hiddenRows = allRows.length - rows.length
   const trend = data?.by_month ?? []
+  const rankRows = useMemo(() => [...rows].filter(r => r.tons > 0).sort((a, b) => b.tons - a.tons).map(r => ({
+    key: r.warehouse_id, label: r.warehouse_name, value: r.tons, text: fmtNum(r.tons, 1),
+    title: `${r.warehouse_name}: ${fmtNum(r.tons, 1)} tấn (nhập ${fmtNum(r.tons_in, 1)} + xuất ${fmtNum(r.tons_out, 1)}) · tấn/công ${fmtNum(tonsPerWorkDay(r), 2)}`,
+  })), [rows])
 
   // Cảnh báo dữ liệu — số liệu THIẾU phải nói ra, đừng để người đọc tưởng năng suất kém
   const noLabor = !!t && t.work_days === 0
@@ -187,19 +190,19 @@ export function DashboardProductivity({ warehouseId }: { warehouseId: string }) 
   const noWeight = t?.lines_no_weight ?? 0
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-3 sm:space-y-4">
       {/* Chọn kỳ = FilterBar chuẩn (chip desktop · nút "Lọc" + sheet trên mobile), không tự chế ô lọc */}
-      <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/60 px-2.5 py-1.5 flex flex-wrap items-center gap-2">
+      <div className="k-card px-3 py-2 flex flex-wrap xl:flex-nowrap items-center gap-2">
         <FilterSheetButton defs={filterDefs} className="sm:hidden" />
         <FilterBar defs={filterDefs} />
         <span className="flex-1 min-w-2" />
-        <span className="text-[10px] tabular-nums text-slate-500 dark:text-slate-400">
+        <span className="text-xs font-medium tabular-nums text-[var(--k-muted)] whitespace-nowrap">
           {formatDate(from)} – {formatDate(to)} · {dayCount(from, to)} ngày
         </span>
       </div>
 
       {isError && (
-        <div className="rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2.5 text-sm text-red-600 dark:text-red-400">
+        <div className="rounded-[14px] border border-red-500/40 bg-red-500/10 px-3 py-2.5 text-sm text-red-600 dark:text-red-400">
           Không tải được số liệu năng suất
           {(() => {
             const m = (error as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message
@@ -209,28 +212,23 @@ export function DashboardProductivity({ warehouseId }: { warehouseId: string }) 
       )}
 
       {/* Ô chỉ số */}
-      <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-2">
+      <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3 sm:gap-4">
         {isLoading
-          ? Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className={`h-[72px] rounded-lg ${sk}`} />)
+          ? Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className={`h-[104px] rounded-[14px] ${sk}`} />)
           : (
             <>
-              <Tile icon={Scale} tone="text-sky-600 dark:text-sky-400" label="Sản lượng (tấn)"
-                value={fmtNum(t?.tons, 1)}
+              <StatCard twoLines label="Sản lượng (tấn)" value={fmtNum(t?.tons, 1)}
                 sub={`nhập ${fmtNum(t?.tons_in, 0)} + xuất ${fmtNum(t?.tons_out, 0)}`} />
-              <Tile icon={Gauge} tone="text-indigo-500" label="Tấn / công"
-                value={fmtNum(t ? tonsPerWorkDay(t) : null, 2)}
+              <StatCard twoLines label="Tấn / công" value={fmtNum(t ? tonsPerWorkDay(t) : null, 2)}
                 sub={`1 công = ${fmtNum(data?.std_hours, 1)} giờ chuẩn`} />
-              <Tile icon={Gauge} tone="text-violet-500" label="Tấn / giờ công"
-                value={fmtNum(t ? tonsPerWorkHour(t) : null, 3)}
+              <StatCard twoLines label="Tấn / giờ công" value={fmtNum(t ? tonsPerWorkHour(t) : null, 3)}
                 sub="mẫu số có cả giờ tăng ca" />
-              <Tile icon={Users} tone="text-emerald-500" label="Số công lao động"
-                value={fmtNum(t?.work_days, 0)}
+              <StatCard twoLines label="Số công lao động" value={fmtNum(t?.work_days, 0)}
                 sub={`${fmtNum(t?.headcount, 0)} người · ${fmtNum(t?.work_hours, 0)} giờ`} />
-              <Tile icon={Clock3} tone="text-amber-500" label="Giờ tăng ca"
-                value={fmtNum(t?.ot_hours, 1)}
+              <StatCard twoLines label="Giờ tăng ca" value={fmtNum(t?.ot_hours, 1)}
                 sub={`nghỉ phép ${fmtNum(t?.leave_days, 0)} công`} />
-              <Tile icon={TrendingUp} tone="text-amber-500" label="Tỷ lệ tăng ca"
-                value={fmtPct(t ? otRate(t) : null, 1)} danger={!!t && (otRate(t) ?? 0) > 0.15}
+              <StatCard twoLines label="Tỷ lệ tăng ca" value={fmtPct(t ? otRate(t) : null, 1)}
+                tone={t && (otRate(t) ?? 0) > 0.15 ? 'warn' : undefined}
                 sub="giờ OT / tổng giờ công" />
             </>
           )}
@@ -238,24 +236,20 @@ export function DashboardProductivity({ warehouseId }: { warehouseId: string }) 
 
       {/* Ô TIỀN — chỉ hiện khi có quyền warehouse_cost.view (BE đã cắt khoá tiền khỏi payload) */}
       {!isLoading && !data?.cost_hidden && t && (
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
-          <Tile icon={Wallet} tone="text-rose-500" label="Chi phí kho (kỳ)"
-            value={fmtNum(t.cost, 0)}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+          <StatCard label="Chi phí kho (kỳ)" value={fmtNum(t.cost, 0)}
             sub={data?.cost_shared ? `gồm ${fmtNum(data.cost_shared, 0)} chi phí chung` : 'đồng'} />
-          <Tile icon={Wallet} tone="text-rose-500" label="Chi phí / tấn"
-            value={fmtNum(costPerTon(t.cost ?? 0, t.tons), 0)}
+          <StatCard label="Chi phí / tấn" value={fmtNum(costPerTon(t.cost ?? 0, t.tons), 0)}
             sub={data?.cost_shared ? 'đồng / tấn · gồm chi phí chung' : 'đồng / tấn'} />
-          <Tile icon={Wallet} tone="text-emerald-600" label="Chi phí nhân công / tấn"
-            value={fmtNum(costPerTon(t.cost_labor ?? 0, t.tons), 0)} sub="đồng / tấn" />
-          <Tile icon={Wallet} tone="text-slate-500" label="Chi phí / công"
-            value={fmtNum(t.work_days > 0 ? (t.cost ?? 0) / t.work_days : null, 0)} sub="đồng / ngày công" />
+          <StatCard label="Chi phí nhân công / tấn" value={fmtNum(costPerTon(t.cost_labor ?? 0, t.tons), 0)} sub="đồng / tấn" />
+          <StatCard label="Chi phí / công" value={fmtNum(t.work_days > 0 ? (t.cost ?? 0) / t.work_days : null, 0)} sub="đồng / ngày công" />
         </div>
       )}
 
       {/* Nói thẳng chỗ dữ liệu còn thiếu — không để người đọc tưởng năng suất kém */}
       {!isLoading && (noLabor || someNoLabor || noWeight > 0 || data?.categories_filtered
         || (!data?.cost_hidden && ((t?.warehouses_no_cost ?? 0) > 0 || (t?.months_no_cost ?? 0) > 0 || data?.cost_prorated))) && (
-        <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 space-y-1 text-[11px] text-amber-700 dark:text-amber-400">
+        <div className="rounded-[14px] border border-amber-500/40 bg-amber-500/10 px-3.5 py-2.5 space-y-1 text-[11px] text-amber-700 dark:text-amber-400">
           {noLabor && (
             <div className="flex gap-1.5"><AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-px" />
               <span><b>Kỳ này chưa có dữ liệu chấm công</b> — mọi chỉ số theo công đang để trống. Ghi công hằng ngày ở màn Chấm công thì các ô "tấn/công", "giờ tăng ca" mới có số.</span></div>
@@ -287,36 +281,55 @@ export function DashboardProductivity({ warehouseId }: { warehouseId: string }) 
         </div>
       )}
 
+      {/* Luồng nhập xuất theo tháng + sản lượng theo kho */}
+      {!isLoading && t && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 sm:gap-4">
+          <HeroPanel title="Luồng nhập xuất" hint="tấn theo tháng"
+            top={trend.length > 0
+              ? <FlowBars aLabel="Nhập" bLabel="Xuất" rows={trend.map(m => ({
+                  key: m.month, label: monthLabel(m.month), a: m.tons_in, b: m.tons_out,
+                  title: `${monthLabel(m.month)}: nhập ${fmtNum(m.tons_in, 1)} tấn · xuất ${fmtNum(m.tons_out, 1)} tấn` }))} />
+              : <p className="mt-3 text-xs text-white/85">Chưa có nhập xuất trong kỳ.</p>}>
+            <HeroStat label="Tấn nhập" value={fmtNum(t.tons_in, 0)} />
+            <HeroStat label="Tấn xuất" value={fmtNum(t.tons_out, 0)} />
+            <HeroStat label="Chuyến" value={fmtNum(t.trips, 0)} />
+            <HeroStat label="Người" value={fmtNum(t.headcount, 0)} />
+          </HeroPanel>
+          <KpiPanel title="Sản lượng theo kho" hint="tấn, cả nhập lẫn xuất">
+            <RankBars rows={rankRows} empty="Không kho nào phát sinh nhập/xuất trong kỳ." />
+          </KpiPanel>
+        </div>
+      )}
+
       {/* XEM THEO THÁNG — biểu đồ có lên/xuống (user chốt 27/08) */}
       {!isLoading && (trend.length > 1 ? (
         <MonthlyTrend rows={trend} onPick12={() => setDashboard({ prodFrom: monthStart(11), prodTo: TODAY() })} />
       ) : (
-        <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/60 px-3 py-2 flex items-center gap-2 flex-wrap">
-          <TrendingUp className="h-3.5 w-3.5 text-sky-500 shrink-0" />
-          <span className="text-[11px] text-slate-600 dark:text-slate-300">
+        <div className="k-card px-3.5 py-2.5 flex items-center gap-2 flex-wrap">
+          <TrendingUp className="h-3.5 w-3.5 text-[var(--k-data)] shrink-0" />
+          <span className="text-xs">
             Kỳ đang chọn chỉ có 1 tháng nên chưa vẽ được xu hướng.
           </span>
           <button type="button" onClick={() => setDashboard({ prodFrom: monthStart(11), prodTo: TODAY() })}
-            className="h-7 px-2 rounded text-[11px] font-medium bg-sky-600 text-white hover:bg-sky-700">
+            className="h-7 px-2.5 rounded-[8px] text-[11px] font-semibold bg-[var(--k-brand)] text-white hover:opacity-90">
             Xem 12 tháng gần nhất
           </button>
         </div>
       ))}
 
       {/* Bảng theo kho */}
-      <DashPanel title="Năng suất theo kho" icon={Warehouse} extra={
-        <span className="text-[9px] text-slate-500">
+      <KpiPanel title="Năng suất theo kho" hint={<>
           {fmtNum(rows.length, 0)} kho có phát sinh{hiddenRows > 0 ? ` · ẩn ${fmtNum(hiddenRows, 0)} kho không phát sinh` : ''}
           {!data?.cost_hidden && (data?.cost_shared ?? 0) > 0 ? ' · cột Chi phí là tiền RIÊNG của kho (chưa gánh chi phí chung)' : ''}
-        </span>}>
+        </>}>
         <div className="overflow-x-auto">
           <table className="min-w-full text-left">
             <thead>
-              <tr className="bg-slate-50 dark:bg-slate-800">
+              <tr className="bg-[var(--k-surface-2)]">
                 {['Kho', 'Tấn nhập', 'Tấn xuất', 'Tổng tấn', 'Chuyến', 'Công', 'Giờ công', 'Tấn/công', 'Tấn/giờ', 'Giờ OT', '% OT', 'Người',
                   ...(data?.cost_hidden ? [] : ['Chi phí', 'Chi phí/tấn'])]
                   .map((h, i) => (
-                    <th key={h} className={`text-[9px] font-medium text-slate-500 px-2 py-1.5 whitespace-nowrap ${i === 0 ? 'sticky left-0 z-10 bg-slate-50 dark:bg-slate-800' : 'text-right'}`}>{h}</th>
+                    <th key={h} className={`text-[11px] font-medium text-[var(--k-muted)] px-3 py-2 whitespace-nowrap ${i === 0 ? 'sticky left-0 z-10 bg-[var(--k-surface-2)]' : 'text-right'}`}>{h}</th>
                   ))}
               </tr>
             </thead>
@@ -332,22 +345,22 @@ export function DashboardProductivity({ warehouseId }: { warehouseId: string }) 
               {!isLoading && rows.map((r: ProductivityRow) => {
                 const rate = otRate(r)
                 return (
-                  <tr key={r.warehouse_id} className="border-t border-slate-100 dark:border-slate-700/60">
-                    <td className="px-2 py-1 text-[10px] whitespace-nowrap sticky left-0 z-10 bg-white dark:bg-slate-800/60 font-medium text-slate-700 dark:text-slate-200">{r.warehouse_name}</td>
-                    <td className="px-2 py-1 text-[10px] whitespace-nowrap text-right tabular-nums text-slate-600 dark:text-slate-300">{fmtNum(r.tons_in, 1)}</td>
-                    <td className="px-2 py-1 text-[10px] whitespace-nowrap text-right tabular-nums text-slate-600 dark:text-slate-300">{fmtNum(r.tons_out, 1)}</td>
-                    <td className="px-2 py-1 text-[10px] whitespace-nowrap text-right tabular-nums font-semibold text-slate-800 dark:text-slate-100">{fmtNum(r.tons, 1)}</td>
-                    <td className="px-2 py-1 text-[10px] whitespace-nowrap text-right tabular-nums text-slate-600 dark:text-slate-300">{fmtNum(r.trips, 0)}</td>
-                    <td className="px-2 py-1 text-[10px] whitespace-nowrap text-right tabular-nums text-slate-600 dark:text-slate-300">{fmtNum(r.work_days, 0)}</td>
-                    <td className="px-2 py-1 text-[10px] whitespace-nowrap text-right tabular-nums text-slate-600 dark:text-slate-300">{fmtNum(r.work_hours, 0)}</td>
-                    <td className="px-2 py-1 text-[10px] whitespace-nowrap text-right tabular-nums font-semibold text-indigo-600 dark:text-indigo-400">{fmtNum(tonsPerWorkDay(r), 2)}</td>
-                    <td className="px-2 py-1 text-[10px] whitespace-nowrap text-right tabular-nums text-violet-600 dark:text-violet-400">{fmtNum(tonsPerWorkHour(r), 3)}</td>
-                    <td className="px-2 py-1 text-[10px] whitespace-nowrap text-right tabular-nums text-slate-600 dark:text-slate-300">{fmtNum(r.ot_hours, 1)}</td>
-                    <td className={`px-2 py-1 text-[10px] whitespace-nowrap text-right tabular-nums font-medium ${rate != null && rate > 0.15 ? 'text-amber-600 dark:text-amber-400' : 'text-slate-600 dark:text-slate-300'}`}>{fmtPct(rate, 1)}</td>
-                    <td className="px-2 py-1 text-[10px] whitespace-nowrap text-right tabular-nums text-slate-600 dark:text-slate-300">{fmtNum(r.headcount, 0)}</td>
+                  <tr key={r.warehouse_id} className="border-t border-[var(--k-line)]">
+                    <td className="px-3 py-1.5 text-[11px] whitespace-nowrap sticky left-0 z-10 bg-[var(--k-surface)] font-semibold">{r.warehouse_name}</td>
+                    <td className="px-3 py-1.5 text-[11px] whitespace-nowrap text-right tabular-nums">{fmtNum(r.tons_in, 1)}</td>
+                    <td className="px-3 py-1.5 text-[11px] whitespace-nowrap text-right tabular-nums">{fmtNum(r.tons_out, 1)}</td>
+                    <td className="px-3 py-1.5 text-[11px] whitespace-nowrap text-right tabular-nums font-semibold">{fmtNum(r.tons, 1)}</td>
+                    <td className="px-3 py-1.5 text-[11px] whitespace-nowrap text-right tabular-nums">{fmtNum(r.trips, 0)}</td>
+                    <td className="px-3 py-1.5 text-[11px] whitespace-nowrap text-right tabular-nums">{fmtNum(r.work_days, 0)}</td>
+                    <td className="px-3 py-1.5 text-[11px] whitespace-nowrap text-right tabular-nums">{fmtNum(r.work_hours, 0)}</td>
+                    <td className="px-3 py-1.5 text-[11px] whitespace-nowrap text-right tabular-nums font-semibold text-[var(--k-data)]">{fmtNum(tonsPerWorkDay(r), 2)}</td>
+                    <td className="px-3 py-1.5 text-[11px] whitespace-nowrap text-right tabular-nums text-[var(--k-data)]">{fmtNum(tonsPerWorkHour(r), 3)}</td>
+                    <td className="px-3 py-1.5 text-[11px] whitespace-nowrap text-right tabular-nums">{fmtNum(r.ot_hours, 1)}</td>
+                    <td className="px-3 py-1.5 text-[11px] whitespace-nowrap text-right tabular-nums font-medium" style={rate != null && rate > 0.15 ? { color: 'var(--k-warn)' } : undefined}>{fmtPct(rate, 1)}</td>
+                    <td className="px-3 py-1.5 text-[11px] whitespace-nowrap text-right tabular-nums">{fmtNum(r.headcount, 0)}</td>
                     {!data?.cost_hidden && <>
-                      <td className="px-2 py-1 text-[10px] whitespace-nowrap text-right tabular-nums text-slate-600 dark:text-slate-300">{fmtNum(r.cost, 0)}</td>
-                      <td className="px-2 py-1 text-[10px] whitespace-nowrap text-right tabular-nums font-semibold text-rose-600 dark:text-rose-400">{fmtNum(costPerTon(r.cost ?? 0, r.tons), 0)}</td>
+                      <td className="px-3 py-1.5 text-[11px] whitespace-nowrap text-right tabular-nums">{fmtNum(r.cost, 0)}</td>
+                      <td className="px-3 py-1.5 text-[11px] whitespace-nowrap text-right tabular-nums font-semibold">{fmtNum(costPerTon(r.cost ?? 0, r.tons), 0)}</td>
                     </>}
                   </tr>
                 )
@@ -355,7 +368,7 @@ export function DashboardProductivity({ warehouseId }: { warehouseId: string }) 
             </tbody>
           </table>
         </div>
-      </DashPanel>
+      </KpiPanel>
     </div>
   )
 }

@@ -39,5 +39,16 @@ Bố cục trên xuống: thanh lọc · **Sức khoẻ KPI** (% đạt + donut 
 
 - **Khung `.kpi-console` (index.css):** Montserrat + bộ màu riêng, CHỈ áp trong tab KPI và hộp phóng to; màn khác vẫn Inter + sky. Khối nổi bật dùng `--k-brand` = xanh đậm `#1F4E9E`, KHÔNG dùng đỏ thương hiệu LOF của mẫu: đỏ trong app = lỗi / không đạt (khối "tỷ lệ đạt" tô đỏ sẽ đọc thành đang hỏng) và app chạy nhiều đơn vị. Đổi màu = một dòng `--k-brand`.
 - **Biểu đồ của mẫu KHÔNG làm vì app chưa có số:** bản đồ GPS, nhiệt độ kho lạnh, năng suất theo khung giờ, treemap ngành hàng, chi phí vận tải theo nhà xe. Không vẽ số giả.
-- **File:** `components/wms/KpiCharts.tsx` (donut · thanh chồng · xếp hạng kho · bản đồ nhiệt · đồng hồ) · `KpiLineChart.tsx` (thêm vùng tô + đường cong đơn điệu) · `utils/kpiView.ts` (phép tính thuần, test `backend/tests/unit/kpiView.test.ts`). Tab này dùng `KpiPanel` thay `DashPanel`; các tab khác của Tổng quan vẫn `DashPanel`.
+- **File:** `components/wms/KpiCharts.tsx` (donut · thanh chồng · xếp hạng kho · bản đồ nhiệt · đồng hồ) · `KpiLineChart.tsx` (thêm vùng tô + đường cong đơn điệu) · `utils/kpiView.ts` (phép tính thuần, test `backend/tests/unit/kpiView.test.ts`). Khung và thẻ dùng chung cả module: xem mục dưới.
 - **So hai kỳ trên thẻ** ("▲ 0,4 điểm so 09/26") tính từ chuỗi đã có, là kỳ MỚI NHẤT so với kỳ có số liền trước; số lớn trên thẻ vẫn là CẢ KHOẢNG. Kỳ đang chạy dở (tháng hiện tại) cũng được so — đọc tooltip để thấy hai kỳ nào.
+
+## 06/11/2026 — đồng bộ CẢ MODULE theo phong cách đó (user: "đồng bộ hết, gồm cả control tower"; chỉ Dashboard + Giám sát vận hành)
+
+Giao diện đổi, số không đổi, không thêm request: tab Tổng quan · Nhập · Xuất · Tồn kho vẫn dùng chung MỘT lời gọi `/wms/dashboard`, Năng suất và Dịch vụ vẫn một lời gọi riêng khi mở tab.
+
+- **Khung dùng chung — màn / tab MỚI của module này dùng, không tự dựng:** lớp `.kpi-console` đặt ở gốc trang · `StatCard` (`DashboardPanel.tsx`, thay `DashTile`) · `KpiPanel` (thay `DashPanel`, đã xoá) · từ `KpiCharts.tsx`: `RingMeter` `RankBars` `Treemap` `HeroPanel`/`HeroStat` `FlowBars` `TickGauge`.
+- **Biểu đồ mới, đều từ số đã có:** treemap Tồn theo loại hàng + xếp hạng Pallet theo kho + đồng hồ sức chứa (Tổng quan, Tồn kho) · khối Tiến độ xuất (Tổng quan, Xuất) · Luồng nhập xuất theo tháng + Sản lượng theo kho (Năng suất) · vòng OTIF + So sánh kho xuất + Mã giao thiếu (Dịch vụ).
+- **Đồng hồ sức chứa chỉ cộng khu ĐÃ KHAI sức chứa**; khu chưa khai ghi rõ số khu không tính, cộng vào sẽ thổi %.
+- **Treemap một sắc xanh, tên + số in trực tiếp:** bảng pastel nhiều sắc của mẫu trượt `validate_palette` (CVD ΔE 2,7, thường 9,9). Quá 8 nhóm gom "Khác"; luôn có danh sách đủ nhóm bên dưới vì ô nhỏ không in được chữ, điện thoại không có tooltip. Không cộng "số mã" qua các kho: một mã ở hai kho sẽ đếm đôi.
+- **Tab Nhập còn thưa là đúng số:** payload hôm nay chỉ có phiếu + SL nhập; muốn thêm phải thêm trường ở RPC `dashboard_all_cached`, chưa làm. Thẻ "Chuyến đủ hàng" ở Dịch vụ là `in_full_pct` (theo CHUYẾN), trước đây có trong payload mà chưa hiện.
+- **C81:** hàng thẻ hẹp truyền `twoLines` (giữ sẵn chỗ 2 dòng từ 1280) thì đỉnh khối trùng nhau ở 1280 / 1536 / 1920. Còn một chỗ lệch có chủ đích ở Năng suất: khung cảnh báo vàng xuống dòng ở màn hẹp (~17 px) vì không cắt câu cảnh báo.

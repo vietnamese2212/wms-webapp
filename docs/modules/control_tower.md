@@ -19,4 +19,15 @@ Giám sát vận hành (menu Tổng quan) — dashboard realtime + chế độ T
 
 ## Actions
 
-view 
+view
+
+## 06/11/2026 — đồng bộ phong cách "trung tâm điều hành" với Dashboard
+
+Dùng cùng khung với module Dashboard (`.kpi-console`, `StatCard`, `KpiPanel`, `RingMeter`) — chi tiết ở [dashboard.md](dashboard.md). Giao diện đổi, số không đổi, vẫn một lời gọi `/wms/control-tower`.
+
+- **Màn TV vẫn tối:** bộ màu tối ăn theo selector `.dark .kpi-console`, mà overlay TV mang `dark` ở chính nó, nên `ConsoleBody` tự đặt lại `kpi-console`; bỏ lớp đó là thẻ trong TV ra màu sáng.
+- **Nhịp theo giờ tách hai dải, mỗi dải một thang:** SL xuất quy đổi và pallet nhập khác đơn vị, chung một trục thì pallet bị đè bẹp, đọc thành "gần như không nhập".
+- **Hàng xuất theo mã:** % trên dòng là con số có màu, không thanh bar (luật 19/10).
+- **Xe trong cổng:** thời gian ở lại + giờ vào đứng ngay sau biển số, cột sau dài không đẩy chúng ra ngoài khung.
+- **Chuyến đang soạn:** cố định 2 dòng ở mọi cỡ màn; một hàng làm mất tên NPP ở 1280, tự xuống dòng thì mỗi cỡ màn một chiều cao (C81).
+- **Chưa làm vì payload chưa có số:** trạng thái cửa dock, nhật ký hoạt động gần đây của mẫu.

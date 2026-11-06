@@ -63,3 +63,44 @@ export function monotonePath(pts: Array<{ x: number; y: number }>): string {
   }
   return d
 }
+
+/** Bố trí TREEMAP kiểu "squarified": diện tích mỗi ô tỉ lệ đúng với value, ô càng gần vuông càng dễ so.
+ *  Bỏ qua value ≤ 0; trả toạ độ cùng hệ với w × h (bên gọi quy ra %). */
+export function squarify<T extends { value: number }>(items: T[], w: number, h: number):
+  Array<T & { x: number; y: number; w: number; h: number }> {
+  const sorted = items.filter(i => i.value > 0).sort((a, b) => b.value - a.value)
+  const total = sorted.reduce((s, i) => s + i.value, 0)
+  const out: Array<T & { x: number; y: number; w: number; h: number }> = []
+  if (total <= 0 || w <= 0 || h <= 0) return out
+  const scale = (w * h) / total
+  let x = 0, y = 0, rw = w, rh = h
+  let row: Array<{ item: T; area: number }> = []
+  const sumOf = (r: typeof row) => r.reduce((s, c) => s + c.area, 0)
+  const worst = (r: typeof row, side: number) => {
+    const s = sumOf(r), areas = r.map(c => c.area)
+    return Math.max((side * side * Math.max(...areas)) / (s * s), (s * s) / (side * side * Math.min(...areas)))
+  }
+  const flush = () => {
+    const s = sumOf(row)
+    if (rw >= rh) {
+      const cw = s / rh
+      let cy = y
+      for (const c of row) { const ch = c.area / cw; out.push({ ...c.item, x, y: cy, w: cw, h: ch }); cy += ch }
+      x += cw; rw -= cw
+    } else {
+      const ch = s / rw
+      let cx = x
+      for (const c of row) { const cw = c.area / ch; out.push({ ...c.item, x: cx, y, w: cw, h: ch }); cx += cw }
+      y += ch; rh -= ch
+    }
+    row = []
+  }
+  for (const item of sorted) {
+    const cell = { item, area: item.value * scale }
+    const side = Math.min(rw, rh)
+    if (row.length === 0 || worst([...row, cell], side) <= worst(row, side)) row.push(cell)
+    else { flush(); row.push(cell) }
+  }
+  if (row.length) flush()
+  return out
+}

@@ -123,7 +123,7 @@ input[type='password']::-ms-clear { display: none; }
   }
 }
 
-/* TAB KPI — phong cách "trung tâm điều hành" (11/2026, mẫu Du lieu mau/ui kpi). Chỉ áp trong .kpi-console:
+/* MODULE DASHBOARD + GIÁM SÁT VẬN HÀNH — phong cách "trung tâm điều hành" (11/2026, mẫu Du lieu mau/ui kpi). Chỉ áp trong .kpi-console:
    các màn khác của app vẫn giữ Inter + bộ màu sky. Đổi màu khối nổi bật ở --k-brand. Bộ màu đã qua
    validate_palette (skill dataviz): vàng tương phản thấp nên trạng thái LUÔN đi kèm nhãn chữ. */
 .kpi-console {

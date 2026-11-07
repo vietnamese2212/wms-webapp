@@ -234,6 +234,25 @@ describe('loadPlan — luật 11-14 (trải tới cửa, thùng trên pallet, ư
     weightKg: 5, carton: { l, w, h }, assumed: false, unitless: false, onTop,
   }))
 
+  // User 07/11 (ảnh pallet gộp cao 2,03 m, 'xây tháp'): lớp ghép 7 thùng cao 265 + hàng nhẹ cao 135 ⇒ hàng nhẹ không được tính là chỗ đỡ, lớp trên chỉ đứng nửa chân
+  it('packPallet: lớp ghép lấp phẳng, pallet gộp không thành tháp', () => {
+    const spec = { l: 1200, w: 1000, h: 1650, baseH: 150, baseColor: '#1d4ed8' }
+    const lt = { key: 'NHE', n: 152, per: 28, l: 315, w: 140, h: 135 }
+    const contents = [
+      { key: 'LY', n: 13, per: 13, l: 360, w: 250, h: 265 }, { key: 'LY', n: 7, per: 13, l: 360, w: 250, h: 265 },
+      lt,
+    ]
+    const { cartons } = packPallet(spec, contents, new Set(['NHE']), new Map([['LY', 5], ['NHE', 11]]))
+    expect(cartons.length).toBe(172)
+    expect(spec.baseH + Math.max(...cartons.map(c => c.z + c.h))).toBeLessThanOrEqual(spec.h)
+    const nhe = cartons.filter(c => c.key === 'NHE')
+    const perLevel = new Map<number, number>()
+    for (const c of nhe) perLevel.set(c.z, (perLevel.get(c.z) ?? 0) + 1)
+    // lớp đầy phía trên phải phủ gần kín chân, không chỉ nửa pallet
+    expect(Math.max(...perLevel.values())).toBeGreaterThanOrEqual(20)
+    expect(overlaps(cartons.map(c => ({ ...c, group: 0, step: 0 })) as PlacedBox[])).toBe(0)
+  })
+
   it('packPallet: đủ thùng, nằm trong khối, không chồng lấn, không thùng nào treo (đỡ ≥ 50% đáy), cột cùng mã ≤ số lớp', () => {
     const res = palletizeGroups(items, PAL)
     const light = new Set(items.filter(i => i.onTop).map(i => i.key))

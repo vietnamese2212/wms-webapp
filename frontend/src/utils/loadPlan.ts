@@ -76,6 +76,8 @@
 //     PHẦN TIẾP GIÁP HAI ĐƠN ĐƯỢC ĐÈ LÊN NHAU (user 05/11): hàng thấp mã ít thùng cuối đơn trước được khối đầu đơn sau đè lên, tới ngang khối liền kề, không để lõm.
 // 21. TRẢI TỚI CỬA KHÔNG LÀM TAN KHỐI HÀNG GỬI (user 06/11, ảnh container 3.700 thùng: "hàng nhẹ lẽ ra lên hàng đầu, nhiều lớp, nằm trên hàng khác, ưu tiên lên trước"): `spreadToDoor` hạ lớp một mã mà
 //     hàng gửi đã gom bị trải ra dọc xe ⇒ không nhận, thử mã kế tiếp; mã chưa dài thêm lần nào thì thử tiếp tối đa 3 lớp thay vì dừng hẳn; đã dài thêm mà hạ nữa không dài thêm ⇒ sang mã kế (lần thử làm tan hàng gửi chậm hơn hẳn).
+// 22. LỚP GHÉP LẤP PHẲNG (user 07/11, ảnh pallet gộp cao 2,03 m: "xây tháp"): trong lớp ghép của pallet gộp, thùng thấp hơn hẳn thùng cao thì chồng thêm thùng cùng mã cho ngang mặt lớp —
+//     không thế thì lớp trên chỉ đứng được trên phần thùng cao, mỗi lớp hụt nửa pallet, chồng thành tháp (`packPallet`).
 // 1 step = 1 lượt đặt (1 chân mới / 1 cụm đè lên chân dở / 1 cụm lên nóc) — cho thanh
 // trượt "xếp theo thứ tự". Đơn vị: mm.
 
@@ -2541,7 +2543,8 @@ export function packPallet(spec: PalletSpec, layers: PalletLayer[], light: Set<s
     else runs.push({ ...ly, left: ly.n })
   }
   // k = số lớp CÙNG MÃ chồng thẳng tới thùng này (tính cả nó) — không được vượt số lớp tối đa của mã
-  type Box = Omit<PalletCarton, 'z'> & { k: number }
+  // dz = cao hơn đáy lớp bao nhiêu (thùng chồng thêm cho ngang mặt lớp ghép)
+  type Box = Omit<PalletCarton, 'z'> & { k: number; dz?: number }
   const levels: Box[][] = []
   const heavy = runs.filter(r => !light.has(r.key)), lite = runs.filter(r => light.has(r.key))
   const patOf = (r: Run, n = r.per) => runPattern(spec, { n, per: r.per, l: r.l, w: r.w }) ?? []
@@ -2556,7 +2559,8 @@ export function packPallet(spec: PalletSpec, layers: PalletLayer[], light: Set<s
   // Riêng ô của MẪU LỚP ĐỦ (thùng chờm mép theo quy cách — 430×250 11/lớp đặt lên lớp 10/lớp gọn trong chân):
   // đỡ ≥ 50% mà TRỌNG TÂM thùng nằm trên thùng dưới cũng được (như chính pallet chẵn của mã đó).
   const MIN_SUP = 0.7, PIT = 35
-  const topOf = (below: Box[]) => { const t = Math.max(...below.map(b => b.h)); return below.filter(b => b.h >= t - PIT) }
+  const topAt = (b: Box) => (b.dz ?? 0) + b.h
+  const topOf = (below: Box[]) => { const t = Math.max(...below.map(topAt)); return below.filter(b => topAt(b) >= t - PIT) }
   const supportOn = (below: Box[] | undefined, p: Rect) => {
     if (!below) return overlapArea(p, { x: 0, y: 0, l: L, w: W }) / (p.l * p.w)
     return topOf(below).reduce((s, b) => s + overlapArea(p, b), 0) / (p.l * p.w)
@@ -2638,6 +2642,20 @@ export function packPallet(spec: PalletSpec, layers: PalletLayer[], light: Set<s
         if (align && align !== 'none' && r === fs[0]) for (const p of align) if (left.get(r)! > 0 && inDeck(p) && ok(p) && !lv.some(b => hit(b, p))) add(r, p)
         put(r)
       }
+      // LỚP GHÉP LẤP PHẲNG (user 07/11, ảnh pallet gộp cao 2,03 m "xây tháp"): thùng thấp hơn hẳn thùng cao trong lớp ⇒ chồng thêm thùng
+      // cùng mã cho ngang mặt lớp. Không thế thì lớp trên chỉ đứng được trên phần thùng cao, mỗi lớp hụt nửa pallet, chồng thành tháp.
+      const levelTop = lv.length ? Math.max(...lv.map(b => b.h)) : 0
+      for (const b of [...lv]) {
+        const r = runs.find(x => x.key === b.key && x.h === b.h)
+        if (!r) continue
+        let top = b.h, kk = b.k
+        while (left.get(r)! > 0 && top < levelTop - PIT && top + b.h <= levelTop + PIT && (loose || kk < maxOf(b.key))) {
+          kk++
+          lv.push({ ...b, dz: top, k: kk })
+          top += b.h
+          left.set(r, left.get(r)! - 1)
+        }
+      }
       return { lv, left }
     }
     type Cand = ReturnType<typeof sim> & { rank: number[] }
@@ -2655,7 +2673,7 @@ export function packPallet(spec: PalletSpec, layers: PalletLayer[], light: Set<s
         const nx = group.some(r => c.left.get(r)! > 0 && !light.has(r.key)) ? null : runs.find(r => light.has(r.key) && c.left.get(r)! > 0)
         const bad = nx ? Math.min(...flips(patOf(nx, Math.min(nx.per, c.left.get(nx)!)))
           .map(p => p.reduce((t, q) => t + (ownOn(c.lv, q, nx.key) > maxOf(nx.key) ? 1 : Math.max(0, MIN_SUP - supportOn(c.lv, q))), 0))) : 0
-        const area = c.lv.reduce((s, b) => s + overlapArea(b, { x: 0, y: 0, l: L, w: W }), 0)
+        const area = c.lv.filter(b => !b.dz).reduce((s, b) => s + overlapArea(b, { x: 0, y: 0, l: L, w: W }), 0)
         const bx = (Math.max(...c.lv.map(b => b.x + b.l)) - Math.min(...c.lv.map(b => b.x))) * (Math.max(...c.lv.map(b => b.y + b.w)) - Math.min(...c.lv.map(b => b.y)))
         cands.push({ ...c, rank: [-placed, bad, -area, bx] })
       }
@@ -2692,8 +2710,8 @@ export function packPallet(spec: PalletSpec, layers: PalletLayer[], light: Set<s
   const out: PalletCarton[] = []
   let z = 0
   for (const lv of levels) {
-    for (const b of lv) out.push({ key: b.key, x: b.x - x0, y: b.y - y0, z, l: b.l, w: b.w, h: b.h })
-    z += Math.max(...lv.map(b => b.h))
+    for (const b of lv) out.push({ key: b.key, x: b.x - x0, y: b.y - y0, z: z + (b.dz ?? 0), l: b.l, w: b.w, h: b.h })
+    z += Math.max(...lv.map(topAt))
   }
   return { cartons: out, deck: { x: -x0, y: -y0, l: L, w: W } }
 }

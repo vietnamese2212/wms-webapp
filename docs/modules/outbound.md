@@ -65,3 +65,7 @@ User: "3d của supplyc cũng như của cargo". `LoadPlan3DDialog` chỉ còn t
 ## 06/11 — Trải tới cửa không làm tan khối hàng gửi (luật 21 `loadPlan.ts`)
 
 User (ảnh container 3.700 thùng): "hàng nhẹ lẽ ra lên hàng đầu, nhiều lớp, nằm trên hàng khác, ưu tiên lên trước". Lõi đã gom đúng, nhưng `spreadToDoor` chạy lại với ít lớp hơn thì lõi lùi về trải phẳng. Nay: hạ lớp mã nào mà hàng gửi dài ra quá 1,25 lần + 30 cm ⇒ không nhận, thử mã kế; mã chưa dài thêm lần nào thì thử tiếp tối đa 3 lớp, đã dài rồi mà hạ nữa không dài thêm ⇒ sang mã kế. Ngưỡng do Claude đặt. Chuyến dạng này tính ~2 giây (trước luật này ~1,5 giây), trên luồng chính.
+
+## 07/11 — Lớp ghép pallet gộp lấp phẳng (luật 22 `loadPlan.ts`)
+
+User (ảnh pallet gộp cao 2,03 m): "xây tháp". Lớp ghép 7 thùng cao 265 + hàng nhẹ cao 135 ⇒ hàng nhẹ không tính là chỗ đỡ, các lớp trên chỉ đứng nửa chân. Nay `packPallet` chồng thêm thùng thấp cùng mã cho ngang mặt lớp (`Box.dz`), lớp trên phủ được cả chân. Không đổi cách tính số pallet.

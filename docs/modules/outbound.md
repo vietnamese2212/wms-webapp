@@ -69,3 +69,7 @@ User (ảnh container 3.700 thùng): "hàng nhẹ lẽ ra lên hàng đầu, nhi
 ## 07/11 — Lớp ghép pallet gộp lấp phẳng (luật 22 `loadPlan.ts`)
 
 User (ảnh pallet gộp cao 2,03 m): "xây tháp". Lớp ghép 7 thùng cao 265 + hàng nhẹ cao 135 ⇒ hàng nhẹ không tính là chỗ đỡ, các lớp trên chỉ đứng nửa chân. Nay `packPallet` chồng thêm thùng thấp cùng mã cho ngang mặt lớp (`Box.dz`), lớp trên phủ được cả chân. Không đổi cách tính số pallet.
+
+## 07/11 — Xếp xe 3D tính chạy nền, tin quét không tính lại sơ đồ
+
+Đo chuyến 3.700 thùng: mỗi tin quét / mỗi lần đổi cấu hình khoá màn ~2,7 giây (`useMemo` trên luồng màn hình, `gdo` realtime đổi là tính lại). Nay phần tính ở `components/wms/loadplan3d/planJob.ts` (hàm thuần), chạy trong `plan.worker.ts` qua `usePlanJob.ts`: đầu vào đổi lúc đang tính ⇒ huỷ hẳn lượt dở (`terminate`), 12 kết quả gần nhất hiện ngay từ bộ nhớ, đang tính thì giữ sơ đồ cũ + dòng "Đang tính lại sơ đồ…"; không nạp được worker ⇒ tính trên màn hình như cũ. **Dự toán không nhận số đã quét** (`withoutScan`): quét thêm chỉ đổi phần mờ / số đếm (`withProgress`), không tính lại, không dựng lại xe khi số không đổi. Tiến độ xếp theo trình tự quét thật nên quét thêm vẫn tính lại, chỉ lúc đang mở tab đó. Sơ đồ + mảng nhóm luôn đi cùng một kết quả (`plan.placed[].group` trỏ theo mảng nhóm) — đừng ghép sơ đồ cũ với nhóm mới. Lõi `loadPlan.ts` không đổi: 24 sơ đồ so bản cũ giống hệt. Vitest: `backend/tests/unit/loadPlanJob.test.ts`.

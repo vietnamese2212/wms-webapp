@@ -1,6 +1,6 @@
 // Sơ đồ xếp xe 3D — hướng dẫn xếp thùng carton lên thùng xe cho chuyến xuất.
 // Thuật toán ở utils/loadPlan.ts (4 luật: theo đơn · chân đều · dãy 1 kích thước · hàng nhẹ lên nóc).
-// Three.js nạp LAZY (dynamic import) — không phình bundle chính.
+// Three.js nạp LAZY (dynamic import) — không phình bundle chính. Phần TÍNH chạy nền (loadplan3d/planJob.ts, plan.worker.ts, usePlanJob.ts).
 // 2 CHẾ ĐỘ (user chốt 12/07):
 //  - "Dự toán": toàn bộ kế hoạch + thanh trượt thứ tự xếp; phần ĐÃ XUẤT thật mờ đi theo tiến độ quét.
 //  - "Tiến độ": chỉ hiện thùng ĐÃ XUẤT thật (quét QR / lưu thủ công; nhặt lẻ CHỈ tính khi đã xác nhận cuối).
@@ -9,7 +9,7 @@
 // cũng như của cargo"): xe thật theo lòng thùng, thùng in tên + mã, pallet gỗ theo màu danh mục, màu CỐ ĐỊNH theo mã.
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import { qtyEntryDecimal, unitLabel, hasEntry } from '@/utils/qtyUnits'
-import { X, Boxes, ChevronLeft, ChevronRight, ChevronDown, Check, Eye, EyeOff, Rotate3d } from 'lucide-react'
+import { X, Boxes, ChevronLeft, ChevronRight, ChevronDown, Check, Eye, EyeOff, Rotate3d, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -20,59 +20,18 @@ import { useLoadPlanPrefsStore, type LoadPlacement } from '@/stores/loadPlanPref
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import {
-  computeLoadPlan, palletizeGroups, palletFitError, palletFloorSlots, palletsTooTall,
-  spreadOnTopOfPallets, DEFAULT_PALLET, cartonBoxOf, packPallet, placePallets, spreadToDoor, cartonsPerPalletEstimate,
-  type LoadGroup, type LoadPlan, type PalletSpec, type PalletizeInput, type PalletCarton,
+  palletFitError, palletFloorSlots, palletsTooTall, DEFAULT_PALLET, cartonBoxOf,
+  type LoadGroup, type PalletSpec, type TruckDims,
 } from '@/utils/loadPlan'
 import type { GDO } from '@/types'
 import { itemColors, shownColor } from './loadplan3d/colors'
 import type { CartonPrint, SceneGroup, SceneMarks, ViewPreset } from './loadplan3d/TruckScene'
+import { hasBaseIn, perPalletOf, withProgress, withoutScan, type PlanGroup, type PlanInput, type Placements } from './loadplan3d/planJob'
+import { usePlanJob } from './loadplan3d/usePlanJob'
 
 // Dòng xe ghi nhớ lòng thùng (mm) — SystemSetting 'truck_models'. ĐỘC LẬP với Loại xe TMS
 // (user chốt 13/07: 1 loại xe booking có nhiều dòng xe thực tế, dims không treo trên Loại xe).
 type TruckModel = { name: string; l: number; w: number; h: number }
-
-// done = thùng ĐÃ XUẤT thật (nhặt lẻ chưa xác nhận KHÔNG tính).
-// cpp/isPallet đi kèm để chế độ XE PALLET gom được hàng lên pallet mà không phải duyệt lại gdo.
-// category = Loại hàng của mã — quyết định CÁCH LÊN XE (gộp chung / pallet riêng / lên nóc);
-// topCarton = khối này là THÙNG rời nằm nóc ở chế độ xe pallet (không đếm vào số pallet).
-type PlanGroup = LoadGroup & {
-  done: number; cpp: number | null; isPallet: boolean
-  category: string | null; topCarton?: boolean
-  // Số lượng NGHIỆP VỤ + đơn vị tính của MÃ (user chốt 26/08: danh sách hiện "290 thùng" /
-  // "200 cái" theo danh mục ĐVT, không hiện "2 pallet"). Không có (pallet gộp/Loscam) → đếm pallet.
-  qty?: number; qtyDone?: number; qtyUnit?: string
-  // mã KHÔNG có đơn vị "thùng" (base cái/kg) — pallet hoá phải tính theo tỷ lệ pallet, xem
-  // `PalletizeInput.unitless` trong loadPlan.ts
-  unitless?: boolean
-  // Mốc quét ĐẦU TIÊN của mã (scanned_at) — tab Tiến độ xếp lại sơ đồ theo TRÌNH TỰ QUÉT THẬT
-  // (user chốt 26/08: "dự toán là dự kiến, tiến độ là lên thực tế — có thể khác nhau")
-  firstScanAt?: string | null
-  // Số lớp khi xếp XÁ (Material.loose_stack_layers) — xe thường chồng theo số này, trống = như maxLayers
-  looseLayers?: number | null
-  // Khối PALLET: từng thùng đã xếp trên mặt pallet (`packPallet`) + chỗ tấm gỗ trong khối — vẽ từng thùng
-  cartons?: PalletCarton[]
-  deck?: { x: number; y: number; l: number; w: number }
-}
-
-// Xe thường: chồng theo "Chồng khi xếp xá" của mã (sữa 110ml: pallet 14 lớp, xá 28) — chưa khai thì như pallet
-const looseCap = (g: PlanGroup): PlanGroup => (g.looseLayers ? { ...g, maxLayers: g.looseLayers } : g)
-
-// Thùng/pallet: mã chưa khai mà có cỡ thùng THẬT ⇒ ƯỚC theo cỡ thùng (`palletizeGroups` coi thiếu quy cách là
-// "1 mã = 1 pallet" bất kể số thùng). Cỡ giả định / mã tính theo cái / pallet Loscam ⇒ giữ cách cũ.
-const perPalletOf = (g: PlanGroup, spec: PalletSpec) =>
-  g.cpp ?? (g.isPallet || g.assumed || g.unitless ? null : cartonsPerPalletEstimate(spec, g, g.maxLayers))
-
-// Khối pallet có ruột ⇒ xếp từng thùng theo lớp phẳng phủ kín; khối cao đúng đỉnh thùng thật đã xếp
-function withCartons<T extends LoadGroup>(blocks: T[], src: PlanGroup[], spec: PalletSpec): T[] {
-  const light = new Set(src.filter(g => g.onTop).map(g => g.key))
-  const cap = new Map(src.filter(g => g.maxLayers).map(g => [g.key, g.maxLayers!]))
-  return blocks.map(g => {
-    if (!g.contents) return g
-    const { cartons, deck } = packPallet(spec, g.contents, light, cap)
-    return cartons.length ? { ...g, cartons, deck, h: spec.baseH + Math.max(...cartons.map(c => c.z + c.h)) } : g
-  })
-}
 
 // Cảnh 3D (three + mọi thứ dựng xe) nạp khi sơ đồ mở — không phình bundle chính
 const TruckScene = lazy(() => import('./loadplan3d/TruckScene'))
@@ -383,80 +342,20 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
   // Xe xá: hàng gửi xếp phía trên (mặc định) hay đứng khối riêng dưới sàn — nhớ theo kho × user
   const lightOwnLoose = useLoadPlanPrefsStore(s => (whId ? s.lightOwnLoose?.[whId] === true : false))
   const setLightOwnLoose = useLoadPlanPrefsStore(s => s.setLightOwnLoose)
-  const looseOf = (g: PlanGroup): PlanGroup => {
-    const c = looseCap(g)
-    return lightOwnLoose ? { ...c, onTop: false } : c
-  }
   const placeOf = (cat: string | null): LoadPlacement =>
     (cat && whId ? placements[`${whId}|${cat}`] ?? 'MIX' : 'MIX')
   const catList = useMemo(
     () => [...new Set(cartonGroups.filter(g => !g.isPallet && g.category).map(g => g.category as string))].sort(),
     [cartonGroups])
-  // "Lên nóc" chỉ có nghĩa khi CÓ hàng khác làm nền. Chuyến toàn hàng khai "Lên nóc" mà vẫn ép
-  // lên nóc thì không có mặt nào để đặt → sơ đồ TRỐNG TRƠN, ô "Xếp được" hiện 0/0 mà không một
-  // dòng cảnh báo (bắt được trên đơn THẬT 15/08: 4 chuyến toàn FG02). Không có nền thì hàng đó
-  // phải tự đứng pallet của nó — đúng thực tế xe chở toàn POSM.
-  const hasBaseIn = (list: PlanGroup[]) =>
-    list.some(g => !g.isPallet && g.count > 0 && placeOf(g.category) !== 'ON_TOP')
-  const onTopActive = (g: PlanGroup, list: PlanGroup[]) =>
-    !g.isPallet && placeOf(g.category) === 'ON_TOP' && hasBaseIn(list)
+  const place: Placements = useMemo(
+    () => Object.fromEntries(catList.map(c => [c, placeOf(c)])),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [catList, placements, whId])
   const topNoBase = useMemo(
-    () => isPalletTruck && !hasBaseIn(cartonGroups)
+    () => isPalletTruck && !hasBaseIn(cartonGroups, place)
       && cartonGroups.some(g => !g.isPallet && g.count > 0 && placeOf(g.category) === 'ON_TOP'),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [isPalletTruck, cartonGroups, placements, whId])
-
-  const palletized = useMemo(() => {
-    if (!isPalletTruck || !palSpec) return null
-    const items: PalletizeInput[] = cartonGroups
-      // Loại hàng khai "Lên nóc" KHÔNG palletize — đi thẳng làm thùng rời nằm nóc (bên dưới).
-      // Trừ khi chuyến KHÔNG có hàng nền: lúc đó chính nó phải lên pallet (xem `hasBaseIn`).
-      .filter(g => !onTopActive(g, cartonGroups))
-      .map(g => ({
-        key: g.key, label: g.label, doKey: g.doKey, doLabel: g.doLabel,
-        cartons: g.count, cartonsPerPallet: perPalletOf(g, palSpec), isPalletCarrier: g.isPallet,
-        weightKg: g.weightKg,
-        // Cao pallet tính từ thùng × quy cách — mã chưa khai thì dùng CỠ GIẢ ĐỊNH kèm nhãn
-        // (user chốt vòng 7: quy cách 140 vs 216 thùng/pallet phải ra chiều cao KHÁC NHAU,
-        // đồng cao 1650 hết là sai; nhãn "cỡ giả định" vẫn giữ để biết số là ước lượng).
-        carton: { l: g.l, w: g.w, h: g.h },
-        assumed: g.assumed, unitless: g.unitless,
-        // Số lớp thật ⇒ thùng/lớp = quy cách ÷ số lớp (user 28/10: "110 thùng – 11 lớp ⇒ 1 lớp 10 thùng");
-        // hàng gửi (stack_on_top) nằm TRÊN CÙNG pallet gộp
-        layers: g.maxLayers, onTop: g.onTop,
-        // "Pallet riêng": phần dư của loại này gom bể riêng, không trộn pallet lẻ chung
-        remPool: !g.isPallet && g.category && placeOf(g.category) === 'OWN_PALLET'
-          ? { key: g.category, label: g.category } : undefined,
-      }))
-    const res = palletizeGroups(items, palSpec)
-    // Tiến độ theo TỶ LỆ đã xuất của chính mã đó (pallet gộp không quy được về 1 mã → 0)
-    const srcByKey = new Map(cartonGroups.map(g => [g.key, g]))
-    const withDone: PlanGroup[] = withCartons(res.groups, cartonGroups, palSpec).map(g => {
-      const src = srcByKey.get(g.key.replace(/\|(full|plt)$/, ''))
-      const r = src && src.count > 0 ? src.done / src.count : 0
-      return {
-        ...g, done: Math.floor(g.count * r), cpp: null, isPallet: false, category: null,
-        // Dòng pallet NGUYÊN của 1 mã: danh sách hiện SL + ĐVT của mã đó (pallet gộp không quy
-        // được về 1 mã → để trống, hiện số pallet)
-        qty: src?.qty, qtyDone: src?.qtyDone, qtyUnit: src?.qtyUnit,
-      }
-    })
-    return { ...res, groups: withDone }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isPalletTruck, palSpec, cartonGroups, placements, whId])
-
-  // Nhóm THỰC SỰ đưa vào thuật toán xếp: xe pallet = khối pallet + THÙNG RỜI của loại "Lên nóc"
-  // (onTop — thuật toán tự đặt lên nóc các khối, không chiếm chỗ pallet trên sàn)
-  const groups: PlanGroup[] = useMemo(() => {
-    if (isPalletTruck) {
-      const top = cartonGroups
-        .filter(g => onTopActive(g, cartonGroups))
-        .map(g => ({ ...g, onTop: true, topCarton: true }))
-      return [...(palletized?.groups ?? []), ...top]
-    }
-    return cartonGroups.filter(g => !g.isPallet).map(looseOf)
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isPalletTruck, palletized, cartonGroups, placements, whId, lightOwnLoose])
+    [isPalletTruck, cartonGroups, place])
 
   const droppedPallets = useMemo(
     () => (isPalletTruck ? [] : cartonGroups.filter(g => g.isPallet)), [isPalletTruck, cartonGroups])
@@ -466,12 +365,6 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
     () => (isPalletTruck && palSpec && truckOk
       ? palletFitError(palSpec, { length: truckL, width: truckW, height: truckH }) : null),
     [isPalletTruck, palSpec, truckOk, truckL, truckW, truckH])
-  // Pallet đầy cao TÍNH TỪ THÙNG (mỗi mã một khác) — khối nào vượt lòng xe phải báo TÊN ngay,
-  // không để thuật toán im lặng bỏ lại rồi hiện "xếp được N/M" khó hiểu.
-  const tooTall = useMemo(
-    () => (isPalletTruck && palletized && truckOk
-      ? palletsTooTall(palletized.groups, { length: truckL, width: truckW, height: truckH }) : []),
-    [isPalletTruck, palletized, truckOk, truckL, truckW, truckH])
   const floorSlots = useMemo(
     () => (isPalletTruck && palSpec && truckOk && !palFitErr
       ? palletFloorSlots(palSpec, { length: truckL, width: truckW, height: truckH }) : 0),
@@ -484,81 +377,50 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
     const t = Number(gdo.vehicle_model?.max_tons)
     return gdo.vehicle_model?.capacity_mode === 'TON' && t > 0 ? t * 1000 : null
   }, [gdo.vehicle_model])
-  const cargoKg = useMemo(() => {
-    let kg = 0
-    for (const g of groups) { const w = Number(g.weightKg); if (g.count > 0 && !(w > 0)) return null; kg += g.count * (w || 0) }
-    return kg
-  }, [groups])
 
-  const plan: LoadPlan | null = useMemo(() => {
-    if (!truckOk || !groups.length || palFitErr) return null
-    const truck = { length: truckL, width: truckW, height: truckH }
-    // Thùng "Lên nóc" (topCarton) KHÔNG đi qua thuật toán thùng-sàn (nó dựng tháp lẻ loi khi
-    // trộn với pallet): xếp pallet trước (count 0 giữ nguyên CHỈ SỐ nhóm cho nhãn/màu), rồi
-    // rải thùng lên MẶT các pallet bằng spreadOnTopOfPallets.
-    // Xe pallet: KHE 5 CM giữa các pallet (luật 14 lõi — `placePallets`). Xe thường: trải sàn theo % TẢI của dòng xe (luật
-    // 11 lõi — gần đủ tải thì tới sát cửa); chưa biết tải (chuyến chưa gắn dòng xe / mã thiếu kg) ⇒ hàng đã phủ ≥ 75% sàn thì tới cửa.
-    const topIdx = groups.map((g, i) => (g.topCarton ? i : -1)).filter(i => i >= 0)
-    if (!topIdx.length) {
-      if (isPalletTruck) return placePallets(truck, groups)
-      return spreadToDoor(truck, groups, computeLoadPlan(truck, groups), payloadKg && cargoKg != null ? (cargoKg / payloadKg) * 100 : null)
-    }
-    const base = placePallets(truck, groups.map(g => (g.topCarton ? { ...g, count: 0 } : g)))
-    return spreadOnTopOfPallets(base, topIdx, groups)
-  }, [truckOk, truckL, truckW, truckH, groups, palFitErr, isPalletTruck, payloadKg, cargoKg])
+  // ── TÍNH SƠ ĐỒ: chạy nền (loadplan3d/planJob.ts). Dự toán không nhận số đã quét ⇒ tin quét không tính lại; Tiến độ xếp theo
+  // trình tự quét thật ⇒ có quét thêm mới tính lại, chỉ khi đang mở tab đó. Sơ đồ + nhóm của nó luôn đi CÙNG NHAU (`plan.placed[].group`
+  // trỏ theo mảng nhóm): đang tính thì giữ nguyên cặp cũ, không ghép sơ đồ cũ với nhóm mới. ──
+  const truck: TruckDims | null = useMemo(
+    () => (truckOk && !palFitErr ? { length: truckL, width: truckW, height: truckH } : null),
+    [truckOk, palFitErr, truckL, truckW, truckH])
+  const jobBase = useMemo(
+    () => ({ pallet: isPalletTruck, spec: isPalletTruck ? palSpec : null, place, lightOwnLoose, truck, payloadKg }),
+    [isPalletTruck, palSpec, place, lightOwnLoose, truck, payloadKg])
+  const planInput: PlanInput | null = useMemo(
+    () => (cartonGroups.length ? { ...jobBase, groups: cartonGroups.map(withoutScan) } : null),
+    [jobBase, cartonGroups])
+  const progressInput: PlanInput | null = useMemo(
+    () => (mode === 'progress' && truck && cartonGroups.some(g => !g.isPallet && g.done > 0) ? { ...jobBase, groups: cartonGroups } : null),
+    [mode, truck, jobBase, cartonGroups])
+  const draft = usePlanJob('plan', planInput)
+  const progress = usePlanJob('progress', progressInput)
+  const plan = draft.result?.plan ?? null
+  const palletized = draft.result?.palletized ?? null
+  // Sơ đồ đang hiện là xe pallet hay xe thường — vừa đổi kiểu xe mà chưa tính xong thì chữ vẫn theo sơ đồ đang thấy
+  const drawnPallet = draft.result?.pallet ?? isPalletTruck
+  // Số đã quét chỉ đổi khi thật sự có quét thêm — tin realtime không đổi gì thì khỏi dựng lại cảnh 3D
+  const scanSig = cartonGroups.map(g => g.done).join()
+  const groups: PlanGroup[] = useMemo(
+    () => (draft.result ? withProgress(draft.result, cartonGroups) : []),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [draft.result, scanSig])
+  // Pallet đầy cao TÍNH TỪ THÙNG (mỗi mã một khác) — khối nào vượt lòng xe phải báo TÊN ngay,
+  // không để thuật toán im lặng bỏ lại rồi hiện "xếp được N/M" khó hiểu.
+  const tooTall = useMemo(
+    () => (draft.result?.pallet && truckOk
+      ? palletsTooTall(draft.result.groups.filter(g => !g.topCarton), { length: truckL, width: truckW, height: truckH }) : []),
+    [draft.result, truckOk, truckL, truckW, truckH])
   // % tải của phần ĐÃ XẾP (cùng số với ô Khối lượng) — vượt 100 ⇒ báo đỏ
   const loadPct = plan && payloadKg && plan.weightKg > 0 ? Math.round((plan.weightKg / payloadKg) * 100) : null
 
-  // ── TAB TIẾN ĐỘ = xếp lại theo TRÌNH TỰ QUÉT THẬT (user chốt 26/08): mã quét trước nằm
-  // sâu phía cabin; số lượng = phần ĐÃ quét. Khác hẳn Dự toán — không tô lại vị trí dự kiến. ──
-  const progressPlan = useMemo(() => {
-    if (mode !== 'progress' || !truckOk || palFitErr) return null
-    const scanned: PlanGroup[] = cartonGroups
-      .filter(g => !g.isPallet && g.done > 0)
-      .map(g => ({ ...g, count: g.done }))
-      .sort((a, b) => ((a.firstScanAt ?? '9999') < (b.firstScanAt ?? '9999') ? -1 : 1))
-    if (!scanned.length) return null
-    let effGroups: PlanGroup[] = isPalletTruck ? scanned : scanned.map(looseOf)
-    if (isPalletTruck && palSpec) {
-      const items: PalletizeInput[] = scanned
-        .filter(g => !onTopActive(g, scanned))
-        .map(g => ({
-          key: g.key, label: g.label, doKey: g.doKey, doLabel: g.doLabel,
-          cartons: g.count, cartonsPerPallet: perPalletOf(g, palSpec), isPalletCarrier: false,
-          weightKg: g.weightKg, carton: { l: g.l, w: g.w, h: g.h }, assumed: g.assumed,
-          unitless: g.unitless, layers: g.maxLayers, onTop: g.onTop,
-          remPool: g.category && placeOf(g.category) === 'OWN_PALLET'
-            ? { key: g.category, label: g.category } : undefined,
-        }))
-      const res = palletizeGroups(items, palSpec)
-      const srcByKey = new Map(scanned.map(g => [g.key, g]))
-      const pal: PlanGroup[] = withCartons(res.groups, scanned, palSpec).map(g => {
-        const src = srcByKey.get(g.key.replace(/\|(full|plt)$/, ''))
-        return { ...g, done: g.count, cpp: null, isPallet: false, category: null,
-          qty: src?.qty, qtyDone: src?.qtyDone, qtyUnit: src?.qtyUnit }
-      })
-      const top = scanned
-        .filter(g => onTopActive(g, scanned))
-        .map(g => ({ ...g, onTop: true, topCarton: true }))
-      effGroups = [...pal, ...top]
-    }
-    // computeLoadPlan sắp lại nhóm theo (đơn → diện tích → cỡ) — sẽ ĐẢO mất trình tự quét.
-    // Gắn doKey TUẦN TỰ theo thứ tự quét để trình xếp tôn trọng đúng thứ tự đó (doLabel giữ
-    // nguyên cho nhãn; pooling pallet lẻ đã chạy TRƯỚC bằng doKey thật nên không ảnh hưởng).
-    effGroups = effGroups.map((g, i) => ({ ...g, doKey: `${String(i).padStart(3, '0')}|${g.doKey}` }))
-    const truck = { length: truckL, width: truckW, height: truckH }
-    const topIdx = effGroups.map((g, i) => (g.topCarton ? i : -1)).filter(i => i >= 0)
-    const baseGroups = topIdx.length ? effGroups.map(g => (g.topCarton ? { ...g, count: 0 } : g)) : effGroups
-    const base = isPalletTruck ? placePallets(truck, baseGroups) : computeLoadPlan(truck, baseGroups)
-    const p = topIdx.length ? spreadOnTopOfPallets(base, topIdx, effGroups) : base
-    return { plan: p, groups: effGroups }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, truckOk, truckL, truckW, truckH, palFitErr, cartonGroups, isPalletTruck, palSpec, placements, whId, lightOwnLoose])
-
   // Sơ đồ đang VẼ: Tiến độ có hàng đã quét → plan xếp-theo-quét; còn lại → plan Dự toán
+  const progressPlan = progress.result
   const progressActive = mode === 'progress' && progressPlan != null
   const viewPlan = progressActive ? progressPlan.plan : plan
   const viewGroups: PlanGroup[] = progressActive ? progressPlan.groups : groups
+  const computing = draft.planning || (mode === 'progress' && progress.planning)
+  const jobError = draft.error ?? (mode === 'progress' ? progress.error : null)
 
   useEffect(() => { setMaxStep(plan?.stepCount ?? 0) }, [plan?.stepCount])
 
@@ -568,26 +430,29 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
   const sumDone = groups.reduce((s, g) => s + g.done, 0)
   // Chế độ xe pallet: mỗi KHỐI trên sơ đồ là 1 PALLET — trừ loại "Lên nóc" là THÙNG rời;
   // có lẫn cả hai thì chữ chung dùng "khối", nhãn từng nhóm vẫn nói đúng pallet/thùng.
-  const topGroups = isPalletTruck ? groups.filter(g => g.topCarton) : []
+  const topGroups = drawnPallet ? groups.filter(g => g.topCarton) : []
   const topCount = topGroups.reduce((s, g) => s + g.count, 0)
   // ĐVT của hàng lên nóc lấy theo DANH MỤC (POSM đếm "cái") — cùng một ĐVT thì nói đúng tên,
   // lẫn nhiều ĐVT mới nói chung là "khối"
   const topUnit = [...new Set(topGroups.map(g => g.qtyUnit ?? 'thùng'))].length === 1
     ? topGroups[0].qtyUnit ?? 'thùng' : 'khối'
-  const unitWord = isPalletTruck ? (topCount > 0 ? 'khối' : 'pallet') : 'thùng'
+  const unitWord = drawnPallet ? (topCount > 0 ? 'khối' : 'pallet') : 'thùng'
 
   // ── Dữ liệu cho cảnh 3D ─────────────────────────────────────────────────────
   const [view, setView] = useState<{ preset: ViewPreset; n: number }>({ preset: 'overview', n: 0 })
   const [walls, setWalls] = useState<'open' | 'glass'>('open')
   const [viewMenu, setViewMenu] = useState(false)
   // Màu CỐ ĐỊNH theo mã — tính trên toàn bộ mã của chuyến, đổi chế độ / kiểu xếp không đổi màu
-  const colors = useMemo(() => itemColors(cartonGroups.map(g => codeOfKey(g.key))), [cartonGroups])
+  const itemSig = cartonGroups.map(g => [g.key, g.label, g.l, g.w, g.h].join('~')).join('|')
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const colors = useMemo(() => itemColors(cartonGroups.map(g => codeOfKey(g.key))), [itemSig])
   const colorOf = (g: LoadGroup) => shownColor(colorKeyOf(g), colors)
   const prints = useMemo(() => {
     const m = new Map<string, CartonPrint>()
     for (const g of cartonGroups) { const code = codeOfKey(g.key); if (!m.has(code)) m.set(code, { code, name: g.label, l: g.l, w: g.w, h: g.h }) }
     return m
-  }, [cartonGroups])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [itemSig])
   const sceneMeta: SceneGroup[] = useMemo(() => viewGroups.map(g => {
     const colorKey = colorKeyOf(g)
     return {
@@ -630,7 +495,7 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
     }
     const labels = [...byGroup].filter(([gi]) => showLabels || selectedKeys.has(viewGroups[gi].key) || gi === curStepGi).map(([gi, a]) => {
       const g = viewGroups[gi]
-      const gUnit = isPalletTruck && !g.topCarton ? 'pallet' : (g.qtyUnit ?? 'thùng')
+      const gUnit = drawnPallet && !g.topCarton ? 'pallet' : (g.qtyUnit ?? 'thùng')
       const countTxt = mode === 'progress' ? `${g.done} ${gUnit}` : (g.done > 0 ? `${g.done}/${g.count} ${gUnit}` : `${g.count} ${gUnit}`)
       return { text: `${g.label} · ${countTxt}`, color: colorOf(g), x: a.cx / a.n, y: a.cy / a.n, top: a.top }
     })
@@ -660,7 +525,7 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
     }
     return { labels, badges }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scenePlan, viewGroups, maxStep, mode, showLabels, selKey, isPalletTruck, colors])
+  }, [scenePlan, viewGroups, maxStep, mode, showLabels, selKey, drawnPallet, colors])
 
   if (!open) return null
 
@@ -707,7 +572,7 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
           {(!plan || !sceneTruck) && (
             <div className="absolute inset-0 flex items-center justify-center bg-slate-100">
               <p className="text-sm text-slate-500 px-6 text-center">
-                {cartonGroups.length === 0 ? 'Chuyến chưa có mã hàng nào có số lượng thùng.' : 'Chọn loại xe và nhập kích thước lòng thùng (mm) để dựng sơ đồ.'}
+                {computing && sceneTruck ? 'Đang tính sơ đồ…' : cartonGroups.length === 0 ? 'Chuyến chưa có mã hàng nào có số lượng thùng.' : 'Chọn loại xe và nhập kích thước lòng thùng (mm) để dựng sơ đồ.'}
               </p>
             </div>
           )}
@@ -715,6 +580,12 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
             <div className="absolute top-2 left-1/2 -translate-x-1/2 bg-green-600/95 text-white text-[11px] rounded-full px-3 py-1 shadow">
               Tiến độ thực tế: đã xuất <b className="tabular-nums">{sumDone}/{plan.totalCount}</b> {unitWord}
               {sumDone === 0 && ' — chưa quét thùng nào'}
+            </div>
+          )}
+          {/* Đang tính: sơ đồ cũ vẫn hiện, vẫn xoay được */}
+          {computing && plan && sceneTruck && (
+            <div className="pointer-events-none absolute left-1/2 top-10 flex -translate-x-1/2 items-center gap-1.5 rounded-full bg-slate-900/85 px-3 py-1 text-[11px] text-white shadow">
+              <Loader2 className="h-3 w-3 animate-spin" />Đang tính lại sơ đồ…
             </div>
           )}
           {/* Góc nhìn + vách thùng */}
@@ -891,6 +762,12 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
                 </div>
               )}
             </div>
+          )}
+
+          {jobError && (
+            <p className="text-[11px] text-red-700 bg-red-50 border border-red-200 rounded px-2 py-1.5">
+              <b>Không tính được sơ đồ.</b> {jobError}
+            </p>
           )}
 
           {tooTall.length > 0 && (
@@ -1084,7 +961,7 @@ export function LoadPlan3DDialog({ open, onClose, gdo }: { open: boolean; onClos
                       {g.label}
                       {g.assumed && <span className="text-red-500 font-bold ml-0.5" title="Chưa khai kích thước thùng — đang tính bằng cỡ mặc định. Khai ở Mã hàng → Thùng D×R×C.">*</span>}
                       {g.onTop && <span className="text-[9px] px-1 ml-1 rounded bg-sky-100 text-sky-700 whitespace-nowrap" title="Xếp trên nóc hàng khác">nhẹ↑</span>}
-                      {!isPalletTruck && g.maxLayers != null && <span className="text-[9px] px-1 ml-1 rounded bg-slate-100 text-slate-600 whitespace-nowrap" title="Số lớp xếp tối đa">≤{g.maxLayers} lớp</span>}
+                      {!drawnPallet && g.maxLayers != null && <span className="text-[9px] px-1 ml-1 rounded bg-slate-100 text-slate-600 whitespace-nowrap" title="Số lớp xếp tối đa">≤{g.maxLayers} lớp</span>}
                     </span>
                     {(() => {
                       // SL nghiệp vụ + ĐVT danh mục khi quy về được 1 mã; pallet gộp → đếm pallet

@@ -181,14 +181,52 @@ function exposedSides(all: PlacedBox[], bs: PlacedBox[], truck: TruckDims): numb
 // cột vì 1 thùng nhẹ chỉ chiếm một góc mặt chân). Thùng chỉ đặt lên mặt BẰNG PHẲNG đỡ trọn
 // đáy; đỉnh không vượt `capZ`. Bản đồ cao lưới 10mm trên vùng được phép.
 const LEVEL_R = 10
-export function levelFill(o: {
+interface LevelFillInput {
   boxes: PlacedBox[]                                          // mọi thùng đã đặt (dựng bản đồ cao)
   region: { x: number; y: number; l: number; w: number }[]    // mặt được phép đặt lên
   g: LoadGroup; gi: number; count: number
   capZ: number                                                // trần đỉnh thùng đặt thêm (mm)
   forbidTop?: Set<number>                                     // không đè lên mặt là thùng các mã này
   stepStart: number
-}): { placed: PlacedBox[]; left: number; step: number } {
+}
+// Nhớ kết quả levelFill: kết quả chỉ phụ thuộc đầu vào, mà bước tìm phương án lặp lại rất nhiều lần đúng một phép tính
+// (đơn 18 mã: 672 / 990 lần trùng hệt). Khoá = băm 64 bit từng con số (đúng từng bit, đúng thứ tự thùng), số bước lưu tương đối.
+const FILL_MEMO_BOXES = 200_000   // tổng số thùng đang nhớ; quá thì xoá hết
+const fillMemo = new Map<string, { placed: PlacedBox[]; left: number; steps: number }>()
+let fillMemoBoxes = 0
+const hashF64 = new Float64Array(1), hashU32 = new Uint32Array(hashF64.buffer)
+function fillKey(o: LevelFillInput): string {
+  let h1 = 0x811c9dc5 | 0, h2 = 0x9747b28c | 0
+  const add = (v: number) => {
+    hashF64[0] = v
+    h1 = Math.imul(h1 ^ hashU32[0], 0x01000193); h1 = Math.imul(h1 ^ hashU32[1], 0x01000193); h1 ^= h1 >>> 15
+    h2 = Math.imul(h2 ^ hashU32[1], 0x5bd1e995); h2 = Math.imul(h2 ^ hashU32[0], 0x5bd1e995); h2 ^= h2 >>> 13
+  }
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity
+  for (const r of o.region) {
+    add(r.x); add(r.y); add(r.l); add(r.w)
+    x0 = Math.min(x0, r.x); y0 = Math.min(y0, r.y); x1 = Math.max(x1, r.x + r.l); y1 = Math.max(y1, r.y + r.w)
+  }
+  add(-1); add(o.g.l); add(o.g.w); add(o.g.h); add(o.g.maxLayers ?? Infinity); add(o.gi); add(o.count); add(o.capZ)
+  if (o.forbidTop) for (const t of o.forbidTop) add(t)
+  add(-2)
+  // thùng ngoài vùng không ảnh hưởng kết quả (levelFill cũng bỏ qua)
+  for (const b of o.boxes) {
+    if (b.x >= x1 || b.x + b.l <= x0 || b.y >= y1 || b.y + b.w <= y0) continue
+    add(b.x); add(b.y); add(b.z); add(b.l); add(b.w); add(b.h); add(b.group)
+  }
+  return `${h1}:${h2}`
+}
+export function levelFill(o: LevelFillInput): { placed: PlacedBox[]; left: number; step: number } {
+  const key = fillKey(o), hit = fillMemo.get(key)
+  if (hit) return { placed: hit.placed.map(b => ({ ...b, step: b.step + o.stepStart })), left: hit.left, step: o.stepStart + hit.steps }
+  const r = levelFillRaw(o)
+  if (fillMemoBoxes + r.placed.length > FILL_MEMO_BOXES) { fillMemo.clear(); fillMemoBoxes = 0 }
+  fillMemo.set(key, { placed: r.placed.map(b => ({ ...b, step: b.step - o.stepStart })), left: r.left, steps: r.step - o.stepStart })
+  fillMemoBoxes += r.placed.length + 1
+  return r
+}
+function levelFillRaw(o: LevelFillInput): { placed: PlacedBox[]; left: number; step: number } {
   const { boxes, region, g, gi } = o
   let left = o.count, step = o.stepStart
   const placed: PlacedBox[] = []
@@ -233,20 +271,35 @@ export function levelFill(o: {
   const orients = (g.l === g.w ? [[g.l, g.w]] : [[g.l, g.w], [g.w, g.l]]).map(([l, w]) => ({ l, w }))
   // mức đã thử mà không đặt được thùng nào thì về sau cũng không (ô ở mức đó chỉ có thể bớt đi)
   const dead = new Set<number>()
+  const M = ny + 1, P = new Int32Array((nx + 1) * M)   // prefix sum ô đặt được ở một mức — dùng lại giữa các lượt (hàng / cột 0 luôn 0)
   for (let guard = 0; left > 0 && guard < 400; guard++) {
     // các mức mặt còn đặt được, THẤP trước
     const levels = new Set<number>()
-    for (let k = 0; k < N; k++) if (allowed[k] && cnt[k] < maxL && height[k] + g.h <= o.capZ + 1e-6) levels.add(Math.round(height[k]))
+    let seen = NaN   // ô liền nhau phần lớn cùng cao ⇒ khỏi xét lại
+    for (let k = 0; k < N; k++) {
+      if (!allowed[k] || cnt[k] >= maxL) continue
+      const h = height[k]
+      if (h === seen) continue
+      seen = h
+      if (h + g.h <= o.capZ + 1e-6) levels.add(Math.round(h))
+    }
     let done = false
     for (const z of [...levels].sort((a, b) => a - b)) {
       if (dead.has(z)) continue
       // prefix sum ô đặt được ở mức z
-      const P = new Int32Array((nx + 1) * (ny + 1))
-      for (let i = 0; i < nx; i++) for (let j = 0; j < ny; j++)
-        P[(i + 1) * (ny + 1) + j + 1] = (okAt(i * ny + j, z) ? 1 : 0) + P[i * (ny + 1) + j + 1] + P[(i + 1) * (ny + 1) + j] - P[i * (ny + 1) + j]
+      for (let i = 0; i < nx; i++) {
+        const a0 = i * M, a1 = (i + 1) * M, k0 = i * ny
+        let row = 0
+        for (let j = 0; j < ny; j++) {
+          if (okAt(k0 + j, z)) row++
+          P[a1 + j + 1] = P[a0 + j + 1] + row
+        }
+      }
       const fits = (i: number, j: number, a: number, b: number) =>
         i + a <= nx && j + b <= ny &&
-        P[(i + a) * (ny + 1) + j + b] - P[i * (ny + 1) + j + b] - P[(i + a) * (ny + 1) + j] + P[i * (ny + 1) + j] === a * b
+        P[(i + a) * M + j + b] - P[i * M + j + b] - P[(i + a) * M + j] + P[i * M + j] === a * b
+      // dải [i, i + a) không đủ a × b ô đặt được thì chắc chắn không chứa nổi thùng nào ⇒ khỏi dò từng làn (phần lớn sàn ở một mức cao là như vậy)
+      const stripEmpty = (i: number, a: number, b: number) => P[(i + a) * M + ny] - P[i * M + ny] < a * b
       // lát theo DẢI: mỗi dải 1 mốc x, quét hết chiều ngang; dải có thùng → dải sau lùi đúng 1 thùng
       let bestPos: { i: number; j: number; l: number; w: number }[] = []
       for (const { l, w } of orients) {
@@ -254,7 +307,9 @@ export function levelFill(o: {
         const a = Math.ceil(l / R - 1e-9), b = Math.ceil(w / R - 1e-9)
         const pos: { i: number; j: number; l: number; w: number }[] = []
         const plain: typeof pos = []   // cách cũ: dải nào có thùng thì dải sau lùi trọn một thùng
+        if (b > ny) continue
         for (let i = 0; i + a <= nx;) {
+          if (stripEmpty(i, a, b)) { i++; continue }
           let any = false
           for (let j = 0; j + b <= ny;) {
             if (fits(i, j, a, b)) { plain.push({ i, j, l, w }); any = true; j += b } else j++
@@ -263,11 +318,15 @@ export function levelFill(o: {
         }
         const full = Math.floor(ny / b), laneFree = new Int32Array(ny)   // dải dở: dải sau lùi từng ô lấp nốt các làn ⇒ nhớ từng làn trống từ đâu để né thùng đã chọn
         for (let i = 0; i + a <= nx;) {
+          if (stripEmpty(i, a, b)) { i++; continue }
           let cnt = 0
           for (let j = 0; j + b <= ny;) {
-            let free = true
-            for (let q = j; q < j + b && free; q++) if (laneFree[q] > i) free = false
-            if (free && fits(i, j, a, b)) { pos.push({ i, j, l, w }); laneFree.fill(i + a, j, j + b); cnt++; j += b } else j++
+            if (!fits(i, j, a, b)) { j++; continue }
+            // làn q còn vướng thùng đã chọn ⇒ mọi vị trí phủ q đều không được, nhảy qua q luôn
+            let q = j + b - 1
+            while (q >= j && laneFree[q] <= i) q--
+            if (q >= j) { j = q + 1; continue }
+            pos.push({ i, j, l, w }); laneFree.fill(i + a, j, j + b); cnt++; j += b
           }
           i += cnt >= full ? a : 1
         }

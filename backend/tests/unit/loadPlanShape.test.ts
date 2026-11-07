@@ -171,6 +171,74 @@ describe('loadPlan — hình khối vuông vắn', () => {
       expect(b.z % 100).toBe(0)
     }
   })
+
+  // 07/11, user: đổi xe pallet ⇒ thùng rời mất ~15 giây. levelFill chiếm 86% thời gian, 672/990 lần gọi trùng hệt ⇒ nhớ kết quả.
+  describe('levelFill nhớ kết quả', () => {
+    const floor = (h = 300): PlacedBox[] => {
+      const bs: PlacedBox[] = []
+      for (let i = 0; i < 6; i++) for (let j = 0; j < 4; j++) bs.push({ x: i * 400, y: j * 400, z: 0, l: 400, w: 400, h, group: 0, step: 1 })
+      return bs
+    }
+    const regionOf = (bs: PlacedBox[]) => bs.map(b => ({ x: b.x, y: b.y, l: b.l, w: b.w }))
+    const xyz = (r: { placed: PlacedBox[] }) => r.placed.map(b => [b.x, b.y, b.z, b.l, b.w, b.h, b.group])
+
+    it('cùng đầu vào, khác bước bắt đầu ⇒ cùng vị trí, số bước theo bước bắt đầu', () => {
+      const base = floor(), g = grp('M1', 'D1', 50, 311, 217, 90, { onTop: true })
+      const input = { boxes: base, region: regionOf(base), g, gi: 1, count: 50, capZ: 2000 }
+      const a = levelFill({ ...input, stepStart: 3 }), b = levelFill({ ...input, stepStart: 40 })
+      expect(a.placed.length).toBeGreaterThan(0)
+      expect(xyz(b)).toEqual(xyz(a))
+      expect(b.left).toBe(a.left)
+      expect(b.step - 40).toBe(a.step - 3)
+      expect(b.placed.map(x => x.step - 40)).toEqual(a.placed.map(x => x.step - 3))
+    })
+
+    it('kết quả trả ra bị sửa không ảnh hưởng lần gọi sau', () => {
+      const base = floor(), g = grp('M2', 'D1', 20, 305, 215, 95, { onTop: true })
+      const input = { boxes: base, region: regionOf(base), g, gi: 1, count: 20, capZ: 2000, stepStart: 1 }
+      const first = levelFill(input), want = xyz(first)
+      levelFill(input).placed.forEach(b => { b.x += 999; b.step = -1 })
+      first.placed.forEach(b => { b.z += 999 })
+      const again = levelFill(input)
+      expect(xyz(again)).toEqual(want)
+      expect(again.placed.every(b => b.step > 1)).toBe(true)
+    })
+
+    it('đầu vào khác dù một chi tiết ⇒ không dùng nhầm kết quả cũ', () => {
+      const base = floor(), g = grp('M3', 'D1', 60, 320, 210, 100, { onTop: true })
+      const input = { boxes: base, region: regionOf(base), g, gi: 1, count: 60, capZ: 2000, stepStart: 1 }
+      const ref = levelFill(input)
+      expect(levelFill({ ...input, count: 10 }).placed.length).toBe(10)
+      expect(levelFill({ ...input, capZ: 300 }).placed.length).toBe(0)      // sát trần: không đặt được gì
+      expect(levelFill({ ...input, boxes: floor(500) }).placed.every(b => b.z >= 500)).toBe(true)   // nền cao hơn, cùng vùng
+      expect(levelFill({ ...input, g: { ...g, h: 200 } }).placed.every(b => b.h === 200)).toBe(true)
+      expect(levelFill({ ...input, g: { ...g, maxLayers: 1 } }).placed.every(b => b.z === 300)).toBe(true)
+      expect(xyz(levelFill(input))).toEqual(xyz(ref))
+    })
+  })
+
+  it('levelFill: dải sàn không đủ chỗ thì bỏ qua, vẫn lấp đúng chỗ còn đặt được (khe giữa, mảnh cuối)', () => {
+    // mặt đỡ hai mảnh cách một khe: mảnh trái vừa 2 × 2 thùng, mảnh phải vừa 1 × 2 thùng, khe giữa không đặt được
+    const left = { x: 0, y: 0, l: 800, w: 600 }, right = { x: 1000, y: 0, l: 400, w: 600 }
+    const base: PlacedBox[] = [left, right].map(r => ({ ...r, z: 0, h: 300, group: 0, step: 1 }))
+    const r = levelFill({ boxes: base, region: [left, right], g: grp('K', 'D1', 6, 400, 300, 100, { onTop: true, maxLayers: 1 }), gi: 1, count: 6, capZ: 2000, stepStart: 1 })
+    expect(r.placed.length).toBe(6)
+    expect(r.left).toBe(0)
+    expect(overlaps(r.placed)).toBe(0)
+    for (const b of r.placed) expect(b.x + b.l <= 800 || b.x >= 1000).toBe(true)
+    expect(r.placed.filter(b => b.x >= 1000).length).toBe(2)
+  })
+
+  it('levelFill: làn đang vướng thùng đã chọn thì nhảy đúng tới làn kế, không bỏ sót chỗ', () => {
+    // mảnh dưới dài 800, mảnh trên chỉ có ở x 100–500: thùng thứ hai CHỈ đặt được đúng một chỗ, ngay cạnh làn vừa dùng
+    const a = { x: 0, y: 0, l: 800, w: 300 }, b = { x: 100, y: 300, l: 400, w: 300 }
+    const base: PlacedBox[] = [a, b].map(r => ({ ...r, z: 0, h: 300, group: 0, step: 1 }))
+    const r = levelFill({ boxes: base, region: [a, b], g: grp('L', 'D1', 3, 400, 300, 100, { onTop: true, maxLayers: 1 }), gi: 1, count: 3, capZ: 2000, stepStart: 1 })
+    expect(r.left).toBe(0)
+    expect(r.step).toBe(2)   // cả 3 thùng trong MỘT lượt lát (bỏ sót thì lượt sau mới vá, lệch số bước)
+    expect(overlaps(r.placed)).toBe(0)
+    expect(r.placed.map(p => [p.x, p.y]).sort((u, v) => u[1] - v[1] || u[0] - v[0])).toEqual([[0, 0], [400, 0], [100, 300]])
+  })
 })
 
 // Luật 11-13 (30/10 — chuyển từ MalCargo về lõi): trải sàn tới cửa · từng thùng trên pallet · khe pallet · ước thùng/pallet.

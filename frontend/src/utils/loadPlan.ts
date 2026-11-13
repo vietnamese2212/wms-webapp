@@ -118,10 +118,12 @@ export interface LoadOptions {
   order?: number[]         // thứ tự khối đã chọn (trải tới cửa chạy lại lõi, giữ nguyên thứ tự)
   keepLights?: boolean     // không đưa hàng gửi xuống sàn
   spreading?: boolean      // lần chạy lại của trải tới cửa (luật 21): các khối đang bị chính bước này hạ lớp
+  variant?: { stepped: boolean }   // cách lượt đầu đã chọn (trải tới cửa chạy lại lõi — khỏi thử lại cả ba cách, luật 23)
 }
 
 export interface LoadPlan {
   floorOrder?: number[]    // thứ tự khối sàn lõi đã chọn
+  variant?: { stepped: boolean }   // nền hai bậc dưới hàng gửi (luật 23) hay không
   truck: TruckDims
   groups: LoadGroup[]
   placed: PlacedBox[]
@@ -460,7 +462,8 @@ const WALL_GAP_MAX = 100   // mm — luật 20: hở vách quá mức này mà t
 
 // Luật 18: chọn số hàng ngang mỗi hướng cho một mã, mức thân trong [Lmin, Lmax]. Chia khít hẳn (không thùng nổi) được dài hơn tới 12%, kể cả
 // dùng hàng hướng thưa hơn; không khít thì chỉ dùng hướng dày (hàng hướng thưa hở vách nhiều) — hướng dày không đặt được mới thôi.
-function planRowsOf(g: LoadGroup, C: number, Lmax: number, Lmin: number, H: number, W: number, Len: number) {
+// exactOnly: chỉ nhận phương án không thùng nổi (nền dưới khối gửi phải phẳng — luật 23)
+function planRowsOf(g: LoadGroup, C: number, Lmax: number, Lmin: number, H: number, W: number, Len: number, exactOnly = false) {
   const kinds = (g.l === g.w ? [false] : [false, true])
     .map(swap => ({ swap, fl: swap ? g.w : g.l, n: Math.floor(W / (swap ? g.l : g.w)) }))
     .filter(k => k.n > 0 && k.fl <= Len)
@@ -487,7 +490,7 @@ function planRowsOf(g: LoadGroup, C: number, Lmax: number, Lmin: number, H: numb
   }
   if (!cands.length) return null
   const minD = Math.min(...cands.map(c => c.D))
-  const exact = cands.filter(c => c.spill === 0 && c.D <= minD * 1.12 + 1e-9)
+  const exact = cands.filter(c => c.spill === 0 && (exactOnly || c.D <= minD * 1.12 + 1e-9))
   const pure = cands.filter(c => !c.b)
   const pick = (exact.length ? exact : pure.length ? pure : cands)
     .sort((x, y) => x.D - y.D || x.spill - y.spill || Number(x.a > 0 && x.b > 0) - Number(y.a > 0 && y.b > 0))[0]
@@ -632,7 +635,8 @@ function planLights(H: number, W: number, Len: number, floors: { gi: number; g: 
   if (restFloors.length && ((!spreading && level > reach + 250) || restVol / (W * level) < 800)) return null
   // mọi mã nặng đều làm nền, không còn khối kế tiếp đối chiếu: giữ cỡ "khoảng 10 lớp", không gom quá ngực người
   if (!restFloors.length && level > 1600) return null
-  return { level, fixT, bases, order: order.map(l => l.gi) }
+  // len0: chiều dài khối gửi đầu (đủ lớp) — luật 23 chỉ đổ nền dưới đúng chừng ấy
+  return { level, fixT, bases, order: order.map(l => l.gi), len0: lenOf(first.l, first.l.n, first.t) }
 }
 
 export function computeLoadPlan(truck: TruckDims, groupsArg: LoadGroup[], opts: LoadOptions = {}): LoadPlan {
@@ -673,7 +677,7 @@ export function computeLoadPlan(truck: TruckDims, groupsArg: LoadGroup[], opts: 
   // `fine`: lát phẳng hàng gửi THẬT (levelFill — nặng). Vòng chọn m (~30 lần pack) chỉ cần biết
   // CÒN CHỖ cho bao nhiêu thùng gửi → ước lượng theo diện tích; lát thật 1 lần cho phương án thắng.
   // `rows`: khối chiếm TRỌN hàng ngang (luật 28/10) — tắt khi xe chật mà trọn hàng thì bỏ thùng lại.
-  function pack(m: number, mLast = 1, fine = false, rows = true, band = true) {
+  function pack(m: number, mLast = 1, fine = false, rows = true, band = true, stepped = false) {
     oneCode = band
     const orderFloor = band ? orderNow : orderPlain
     const placed: PlacedBox[] = []
@@ -863,7 +867,8 @@ export function computeLoadPlan(truck: TruckDims, groupsArg: LoadGroup[], opts: 
     // Đổ TOÀN BỘ 1 class (nhiều mã, liền mạch) thành KHỐI BẰNG MẶT — MỘT chiều cao L.
     // PHẦN THỪA cuối khối không đủ bằng mặt → NỔI LÊN TRÊN KHỐI, không đứng sàn.
     // `forceL`: mức thân ép sẵn (khối nền đỡ hàng gửi — luật 10) thay cho mức theo hệ số trải m
-    const pourClass = (members: number[], rowKey: string, forceL?: number) => {
+    // limit: chỉ đổ chừng ấy thùng (một mã) — luật 23, phần còn lại của mã đổ tiếp thành bậc sau
+    const pourClass = (members: number[], rowKey: string, forceL?: number, limit = Infinity) => {
       const live = members.filter(gi => avail(gi) > 0)
       if (!live.length) return
       const maxH = Math.max(...live.map(gi => groupsIn[gi].h))
@@ -885,7 +890,7 @@ export function computeLoadPlan(truck: TruckDims, groupsArg: LoadGroup[], opts: 
       if (forceL != null) { L = Math.max(1, Math.min(forceL, full)); Lfloor = Math.min(Lfloor, L) }
       // Có hàng thừa mà trần không còn chỗ nổi (khối kịch trần) → hạ khối 1 lớp để thừa
       // lên được TRÊN KHỐI (quy trình: không đứng chân ngắn dưới sàn)
-      const C = live.reduce((s, gi) => s + avail(gi), 0)
+      const C = Math.min(limit, live.reduce((s, gi) => s + avail(gi), 0))
       if (C % L !== 0 && (L + 1) * maxH > truck.height) L = Math.max(1, L - 1)
       st.openCol = null; classCols = []; zones = []; rowPlan = null
       // HÀNG NGANG TRỌN (user 28/10: "người bốc xếp xếp từ trong ra ngoài theo thứ tự các mã — xếp
@@ -909,7 +914,7 @@ export function computeLoadPlan(truck: TruckDims, groupsArg: LoadGroup[], opts: 
           rowPlan = [{ swap: k.swap, n: k.n }]
         }
       } else if (band && rows && live.length === 1 && zoneMixFor(g0).length === 1 && !pendingStubs.some(s => s.ck === classKeyOf(g0) && s.doKey === g0.doKey)) {
-        const plan = planRowsOf(g0, C, L, Lfloor, truck.height, truck.width, truck.length)
+        const plan = planRowsOf(g0, C, L, Lfloor, truck.height, truck.width, truck.length, limit < Infinity)
         if (plan) { L = plan.L; colTarget = plan.feet; rowPlan = plan.rows }
       } else if (rows && !pendingStubs.some(s => s.ck === classKeyOf(g0) && s.doKey === g0.doKey)) {
         const lanes = zoneMixFor(g0).map(z => { const d = zoneDims(g0, z); return { n: Math.floor((z.yB - z.yA) / d.fw + 1e-9), fl: d.fl } })
@@ -921,6 +926,7 @@ export function computeLoadPlan(truck: TruckDims, groupsArg: LoadGroup[], opts: 
           if (Lr < Lfloor) break
           if (Lr > L || live.some(gi => (groupsIn[gi].maxLayers ?? Infinity) < Lr)) continue
           if (C - Lr * n > 0 && (Lr + 1) * maxH > truck.height) continue   // thừa không còn chỗ nổi
+          if (limit < Infinity && n * L < C) continue                       // nền dưới khối gửi (luật 23): phẳng, không thùng nổi
           L = Lr; colTarget = n; break
         }
       }
@@ -929,7 +935,7 @@ export function computeLoadPlan(truck: TruckDims, groupsArg: LoadGroup[], opts: 
         const g = groupsIn[gi]
         const myCap = g.maxLayers ?? (g.onTop ? LIGHT_MAX_DEFAULT : Infinity)
         const isLastOfClass = mi === live.length - 1
-        let remaining = avail(gi)
+        let remaining = Math.min(limit, avail(gi))
         while (remaining > 0) {
           // 0) Nhận CỘT THỀM THỪA cùng class làm chân dở — xây tiếp lên mức thân khối
           // (hết hàng gửi thì hàng khác vào, không để ô trống trên nóc thềm)
@@ -1037,8 +1043,21 @@ export function computeLoadPlan(truck: TruckDims, groupsArg: LoadGroup[], opts: 
       joint = null
       if (lightPlan) {
         const cols: Col[] = []
+        // LUẬT 23 (user 13/11, đơn 4.924 thùng container 40ft: "hàng nhẹ trải mỏng khắp nóc xe"): xe chật mà
+        // cả mã nền nằm q lớp thì dài quá, bỏ thùng (TBA 110 2.100 thùng 8 lớp > 12 m) ⇒ lõi từng lùi về dải
+        // mỏng khắp nóc. `stepped`: nền HAI BẬC — chỉ phần nằm dưới khối gửi (đủ hàng ngang cho chiều dài khối
+        // gửi) đứng q lớp, phần còn lại của mã đổ NGAY SAU, cao gần bằng mốc. Vẫn một mã một khối liền.
+        const stepB = stepped && lightPlan.bases.length === 1 ? lightPlan.bases[0] : null
         for (const b of lightPlan.bases) {
-          pourClass([b.gi], `${dk}|${classKeyOf(groupsIn[b.gi])}`, b.q)
+          let lim: number | undefined
+          if (b === stepB) {
+            // đúng cách chia làn pourClass dùng (có thể trộn hai hướng — luật 20): mỗi làn đủ hàng phủ hết chiều dài
+            // khối gửi, đủ q lớp, không thừa thùng nổi
+            const g = groupsIn[b.gi]
+            const feet = zoneMixFor(g).reduce((s, z) => { const d = zoneDims(g, z); return s + Math.floor((z.yB - z.yA) / d.fw + 1e-9) * Math.ceil(lightPlan.len0 / d.fl - 1e-9) }, 0)
+            if (feet > 0 && feet * b.q < avail(b.gi)) lim = feet * b.q
+          }
+          pourClass([b.gi], `${dk}|${classKeyOf(groupsIn[b.gi])}`, b.q, lim)
           for (const c of classCols) cols.push({ ...c, doKey: dk, step: 0, groups: new Set([b.gi]) })
         }
         chain.capMm = Math.min(truck.height, lightPlan.level)
@@ -1046,6 +1065,10 @@ export function computeLoadPlan(truck: TruckDims, groupsArg: LoadGroup[], opts: 
           const r = lightBand({ boxes: placed, cols, lights: lightPlan.order.map(gi => ({ g: groupsIn[gi], gi, count: avail(gi) })), capZ: truck.height, fixT: lightPlan.fixT, stepStart: step })
           if (r) { for (const b of r.placed) { placed.push(b); used[b.group]++ } step = r.step }
         } else for (const gi of lightPlan.order) used[gi] += avail(gi)
+        if (stepB && avail(stepB.gi) > 0) {
+          const g = groupsIn[stepB.gi]
+          pourClass([stepB.gi], `${dk}|${classKeyOf(g)}`, Math.max(1, Math.min(Math.floor(lightPlan.level / g.h), g.maxLayers ?? Infinity)))
+        }
         // khối kế tiếp cao gần bằng mốc nếu phần sàn còn lại chứa nổi các khối sau ở mức đó
         const baseArea = cols.reduce((a, c) => a + c.fl * c.fw, 0)
         const restVol = doFloor.reduce((a, gi) => a + avail(gi) * groupsIn[gi].l * groupsIn[gi].w * groupsIn[gi].h, 0)
@@ -1736,19 +1759,19 @@ export function computeLoadPlan(truck: TruckDims, groupsArg: LoadGroup[], opts: 
     return score(r) >= score(cur)
   }
   const M_GRID = [1, 1.06, 1.13, 1.22, 1.33, 1.5, 1.7, 2, 2.4, 3, 3.8, 5, 6.5, 8.5, 11, 14, 18, 25]
-  const search = (rows: boolean, band = true) => {
-    let best = pack(1, 1, false, rows, band)
+  const search = (rows: boolean, band = true, stepped = false) => {
+    let best = pack(1, 1, false, rows, band, stepped)
     let bestIdx = 0
     let bestM = 1
     for (let i = 1; i < M_GRID.length; i++) {
-      const r = pack(M_GRID[i], 1, false, rows, band)
+      const r = pack(M_GRID[i], 1, false, rows, band, stepped)
       if (better(r, best)) { best = r; bestIdx = i; bestM = M_GRID[i] }
     }
     {
       let lo = M_GRID[bestIdx], hi = M_GRID[bestIdx + 1] ?? M_GRID[bestIdx] * 1.3
       for (let i = 0; i < 4; i++) {
         const mid = (lo + hi) / 2
-        const r = pack(mid, 1, false, rows, band)
+        const r = pack(mid, 1, false, rows, band, stepped)
         if (better(r, best)) { best = r; lo = mid; bestM = mid } else hi = mid
       }
     }
@@ -1757,10 +1780,10 @@ export function computeLoadPlan(truck: TruckDims, groupsArg: LoadGroup[], opts: 
     // luật cũ: phải vẫn xếp đủ + sạch, maxX lớn hơn mới nhận.
     let bestML = 1
     for (const mL of [1.1, 1.2, 1.35, 1.5, 1.7, 2]) {
-      const r = pack(bestM, mL, false, rows, band)
+      const r = pack(bestM, mL, false, rows, band, stepped)
       if (better(r, best)) { best = r; bestML = mL }
     }
-    return { best, bestM, bestML, rows }
+    return { best, bestM, bestML, rows, stepped }
   }
   // Luật 19: tự tìm thứ tự khối từng đơn. Đo nhanh mỗi thứ tự ở vài mức trải (chưa lát hàng gửi), lát thật vài thứ tự tốt nhất, chấm hình khối, lấy cách tốt nhất
   if (!opts.quick && !opts.order) {
@@ -1800,13 +1823,25 @@ export function computeLoadPlan(truck: TruckDims, groupsArg: LoadGroup[], opts: 
   }
   // HÀNG NGANG TRỌN trước; xe chật mà trọn hàng phải bỏ thùng lại ⇒ thử cách cũ (mã sau lấp nốt
   // hàng dở), lấy cách bỏ lại ÍT hơn — không bao giờ chở kém đi vì luật hàng trọn
-  let pick = search(true)
+  const v = opts.variant
+  let pick = search(true, true, !!v?.stepped)
+  let best: PackResult | null = null
   if (leftCnt(pick.best) > 0) {
-    const alt = search(false)
-    if (leftCnt(alt.best) < leftCnt(pick.best)) pick = alt
+    if (v) {
+      // lần chạy lại của trải tới cửa: giữ cách lượt đầu đã chọn, chỉ còn đường lùi cũ
+      const alt = search(false)
+      if (leftCnt(alt.best) < leftCnt(pick.best)) pick = alt
+    } else {
+      // luật 23: khối gửi gom đủ lớp mà bỏ thùng ⇒ thử thêm nền hai bậc + cách cũ (mã sau lấp hàng dở); lát thật cả ba,
+      // lấy cách bỏ lại ÍT nhất, bằng nhau thì hình khối tốt hơn (shapePenalty — cùng thước luật 19)
+      const cands = [pick, ...(groupsIn.some(g => g.onTop && g.count > 0) ? [search(true, true, true)] : []), search(false)]
+      const scored = cands.map(c => { const r = pack(c.bestM, c.bestML, true, c.rows, true, c.stepped); return { c, r, left: leftCnt(r), s: shapePenalty(r.placed, groupsIn, truck) } })
+      scored.sort((a, b) => a.left - b.left || a.s - b.s)
+      pick = scored[0].c; best = scored[0].r
+    }
   }
   // Phương án thắng → xếp lại 1 lần với lát phẳng hàng gửi THẬT
-  let best = pack(pick.bestM, pick.bestML, true, pick.rows)
+  if (!best) best = pack(pick.bestM, pick.bestML, true, pick.rows, true, pick.stepped)
   // Luật 15 không được làm chở kém đi: xe chật, dải bỏ lại thùng ⇒ so với cách cũ, lấy cách bỏ lại ít hơn
   if (leftCnt(best) > 0) {
     let old = search(true, false)
@@ -1829,7 +1864,7 @@ export function computeLoadPlan(truck: TruckDims, groupsArg: LoadGroup[], opts: 
     if (alt.leftover.reduce((a, x) => a + x.count, 0) < leftCnt(best)) return alt
   }
   return {
-    floorOrder: orderNow,
+    floorOrder: orderNow, variant: { stepped: pick.stepped },
     truck, groups: groupsIn, placed, leftover, stepCount: step,
     volumePct: truckVol > 0 ? Math.round((usedVol / truckVol) * 1000) / 10 : 0,
     placedCount: placed.length, totalCount,
@@ -2531,7 +2566,7 @@ export function spreadToDoor(T: TruckDims, groupsArg: LoadGroup[], base: LoadPla
     while (cap[gi] > 1 && runs < SPREAD_RUNS && !done(best)) {
       const next = cap.map((c, i) => (i === gi ? c - 1 : c))
       runs++
-      const p = computeLoadPlan(T, groups.map((g, i) => (next[i] > 0 ? { ...g, maxLayers: Math.min(g.maxLayers ?? Infinity, next[i]) } : g)), { order: base.floorOrder, keepLights: true, spreading: true })
+      const p = computeLoadPlan(T, groups.map((g, i) => (next[i] > 0 ? { ...g, maxLayers: Math.min(g.maxLayers ?? Infinity, next[i]) } : g)), { order: base.floorOrder, keepLights: true, spreading: true, variant: base.variant })
       // hạ nữa là bỏ thùng / đẻ tháp ⇒ thôi (lần thử hỏng chậm gấp ~8 lần — không thử mã khác nữa)
       if (leftOf(p) || towers(p, T) > baseTowers) { failed = true; break }
       // hàng gửi tan ra ⇒ mã này không hạ được, thử mã kế tiếp

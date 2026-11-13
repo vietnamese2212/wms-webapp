@@ -2315,9 +2315,26 @@ export function palletizeGroups(items: PalletizeInput[], spec: PalletSpec): Pall
             return h + c.h + (nx && last.cut && last.cut.n < last.cut.per && nx.h > last.h ? nx.h - last.h : 0)
           }, 0)
         }
+        // LUẬT 24 (user 13/11, đơn thật 85 thùng 7 mã: pallet gộp xếp ra cao 4,47 m mà ước cộng lớp chỉ 1,64 m): cộng lớp không
+        // thấy được nhiều lớp THIẾU THÙNG của nhiều mã không lấp phẳng được với nhau (thùng dồn thành cột). Nhận thêm một mã vào
+        // pallet gộp chỉ khi packPallet xếp THẬT vẫn ≤ trần và không cao hơn mức ước quá một lớp thùng; không thì sang pallet khác.
+        const lightKeys = new Set(poolRems.filter(r => r.light).map(r => r.key))
+        const capMap = new Map(lines.filter(it => it.layers).map(it => [it.key, it.layers!]))
+        const realH = (cs: Chunk[]) => {
+          const ls = [...cs].sort(byWeight).flatMap(c => c.ls)
+          if (!ls.every(l => l.cut)) return null
+          const pk = packPallet(spec, ls.map(l => l.cut!), lightKeys, capMap)
+          return pk.cartons.length ? Math.max(...pk.cartons.map(c => c.z + c.h)) : null
+        }
+        const fits = (cs: Chunk[]) => {
+          const est = stackH(cs)
+          if (est > budget) return false
+          const h = realH(cs)
+          return h == null || (h <= budget && h <= est + Math.max(...cs.flatMap(c => c.ls.map(l => l.h))))
+        }
         const bins: { h: number; cs: Chunk[] }[] = []
         for (const c of [...chunks].sort((a, b) => b.h - a.h)) {
-          const p = bins.find(x => stackH([...x.cs, c]) <= budget)
+          const p = bins.find(x => fits([...x.cs, c]))
           if (p) { p.cs.push(c); p.h = stackH(p.cs) } else bins.push({ h: c.h, cs: [c] })
         }
         const mixedLabel = poolLabel ? `Pallet gộp ${poolLabel}` : 'Pallet gộp (hàng lẻ)'

@@ -325,6 +325,28 @@ describe('loadPlan — luật 11-14 (trải tới cửa, thùng trên pallet, ư
     weightKg: 5, carton: { l, w, h }, assumed: false, unitless: false, onTop,
   }))
 
+  // User 13/11 (đơn thật 85 thùng, 7 mã, mỗi mã vài chục thùng): cộng lớp ước pallet gộp 1,64 m nhưng packPallet xếp thật ra
+  // 4,47 m (thùng dồn thành cột) ⇒ xe pallet không chở được. Luật 24: chia pallet gộp theo chiều cao XẾP THẬT
+  it('luật 24: pallet gộp nhiều mã lẻ — xếp thật vẫn ≤ trần, đủ thùng', () => {
+    const many: PalletizeInput[] = ([
+      ['A110', 9, 425, 240, 105, 150, 14, false], ['SBN', 12, 280, 230, 135, 209, 10, false], ['NHE', 18, 315, 140, 135, 224, 8, true],
+      ['A180', 12, 425, 260, 145, 110, 11, false], ['PET430', 19, 385, 255, 215, 77, 7, false], ['PET240', 7, 320, 215, 180, 128, 8, false],
+      ['TH170', 8, 425, 285, 140, 110, 11, false],
+    ] as const).map(([k, n, l, w, h, cpp, layers, onTop]) => ({
+      key: `D1|${k}`, label: k, doKey: 'D1', doLabel: 'D1', cartons: n, cartonsPerPallet: cpp, layers, isPalletCarrier: false,
+      weightKg: 5, carton: { l, w, h }, assumed: false, unitless: false, onTop,
+    }))
+    const res = palletizeGroups(many, PAL)
+    const light = new Set(many.filter(i => i.onTop).map(i => i.key)), cap = new Map(many.map(i => [i.key, i.layers!]))
+    let n = 0
+    for (const g of res.groups) {
+      const { cartons } = packPallet(PAL, g.contents!, light, cap)
+      n += cartons.length
+      expect(PAL.baseH + Math.max(...cartons.map(c => c.z + c.h))).toBeLessThanOrEqual(PAL.h)   // cũ: 4.470
+    }
+    expect(n).toBe(85)
+  })
+
   // User 07/11 (ảnh pallet gộp cao 2,03 m, 'xây tháp'): lớp ghép 7 thùng cao 265 + hàng nhẹ cao 135 ⇒ hàng nhẹ không được tính là chỗ đỡ, lớp trên chỉ đứng nửa chân
   it('packPallet: lớp ghép lấp phẳng, pallet gộp không thành tháp', () => {
     const spec = { l: 1200, w: 1000, h: 1650, baseH: 150, baseColor: '#1d4ed8' }

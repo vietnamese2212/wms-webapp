@@ -1,10 +1,10 @@
 // CHI TIẾT MẺ CHẾ BIẾN (MES giai đoạn 1, 14/11/2026). Header: mã lô + trạng thái + QA + nút (Rút NVL là việc chính khi mẻ đang mở).
 // Khối NGUYÊN LIỆU ĐÃ RÚT (sổ tiêu hao: tem · NSX · lượng · cách ghi · huỷ dòng hoàn tồn) · khối RA BỒN (lô của mẻ trong từng bồn +
 // sổ nạp / rút). Số lượng NVL in theo đơn vị của MÃ đó (qtyLabel), số bồn in theo đơn vị bồn.
-import { useState } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useEffect, useState } from 'react'
+import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import type { AxiosError } from 'axios'
-import { ArrowLeft, Plus, Pencil, Lock, Unlock, XCircle, ShieldCheck, ShieldAlert, ShieldX, Container, Undo2 } from 'lucide-react'
+import { ArrowLeft, Plus, Pencil, Lock, Unlock, XCircle, ShieldCheck, ShieldAlert, ShieldX, Container, Undo2, Copy, AlertTriangle } from 'lucide-react'
 import { TableBody, TableCell, TableRow } from '@/components/ui/table'
 import { ResizableTable, type RtColDef } from '@/components/shared/ResizableTable'
 import { TableEmptyRow } from '@/components/shared/TableEmptyRow'
@@ -17,6 +17,7 @@ import { BatchFormSheet } from '@/components/wms/production/BatchFormSheet'
 import { ConsumeSheet } from '@/components/wms/production/ConsumeSheet'
 import { BatchFillSheet, nfQty } from '@/components/wms/production/TankSheets'
 import { useAuthStore } from '@/stores/authStore'
+import { useCanSeePath } from '@/hooks/useCanSeePath'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { rowText, statusText } from '@/lib/rowStatus'
 import {
@@ -53,9 +54,15 @@ export default function ProductionBatchDetail() {
   const setQa = useBatchQa()
   const reverse = useReverseConsumption()
   const [ask, confirmNode] = useConfirmDialog()
-  const [consumeOpen, setConsumeOpen] = useState(false)
+  const canSeeTanks = useCanSeePath()('/wms/production/tanks')
+  // Vừa mở mẻ xong (form Mở mẻ chuyển sang đây kèm cờ) ⇒ bật luôn form Rút NVL — việc kế tiếp gần như luôn là rút
+  const loc = useLocation()
+  const fromCreate = !!(loc.state as { consume?: boolean } | null)?.consume
+  const [consumeOpen, setConsumeOpen] = useState(fromCreate && can(perms, 'production', 'consume'))
+  useEffect(() => { if (fromCreate) navigate(loc.pathname, { replace: true, state: null }) }, []) // eslint-disable-line react-hooks/exhaustive-deps -- gỡ cờ một lần: tải lại trang không bật lại form
   const [fillOpen, setFillOpen] = useState(false)
   const [editOpen, setEditOpen] = useState(false)
+  const [cloneOpen, setCloneOpen] = useState(false)
   const [err, setErr] = useState('')
 
   if (q.isLoading) return <div className="p-6 text-sm text-slate-500">Đang tải mẻ…</div>
@@ -81,7 +88,7 @@ export default function ProductionBatchDetail() {
     const needNote = next === 'REJECTED'
     const note = await ask({
       title: next === 'RELEASED' ? `QA thả lô ${b!.batch_code}?` : next === 'REJECTED' ? `QA loại lô ${b!.batch_code}?` : `Giữ QA lô ${b!.batch_code}?`,
-      body: next === 'REJECTED' ? 'Lô bị loại vẫn nằm trong bồn cho tới khi xả bỏ ở màn Bồn. Rút cho đóng gói sẽ bị cảnh báo / chặn theo công tắc của kho.' : undefined,
+      body: next === 'REJECTED' ? 'Lô bị loại không nạp thêm vào bồn được, và bồn đang chứa lô này sẽ KHÔNG rút cho đóng gói được cho tới khi xả bỏ ở màn Bồn.' : undefined,
       danger: next === 'REJECTED', input: { label: needNote ? 'Lý do loại' : 'Ghi chú (tuỳ chọn)', required: needNote },
     })
     if (note === null) return
@@ -105,10 +112,13 @@ export default function ProductionBatchDetail() {
   const actions: ActionItem[] = []
   if (open && can(perms, 'production', 'consume'))
     actions.push({ key: 'consume', icon: Plus, label: 'Rút NVL', tip: 'Rút nguyên liệu vào mẻ — quét tem hoặc chọn lô khi không có tem', primary: true, variant: 'default', onClick: () => setConsumeOpen(true) })
-  if (b.status !== 'CANCELLED' && can(perms, 'production', 'tank_ops'))
-    actions.push({ key: 'fill', icon: Container, label: 'Nạp bồn', tip: 'Nạp bán thành phẩm của mẻ vào bồn', onClick: () => setFillOpen(true) })
+  const canConsume = open && can(perms, 'production', 'consume')
+  const canFill = b.status !== 'CANCELLED' && b.qa_status !== 'REJECTED' && can(perms, 'production', 'tank_ops')
+  // Nạp bồn là bước kế của Rút NVL ⇒ nút có CHỮ (không chỉ icon); người chỉ làm QA thì "QA thả" là nút có chữ
+  if (canFill)
+    actions.push({ key: 'fill', icon: Container, label: 'Nạp bồn', tip: 'Nạp bán thành phẩm của mẻ vào bồn', primary: true, onClick: () => setFillOpen(true) })
   if (b.status !== 'CANCELLED' && can(perms, 'production', 'qa_release')) {
-    if (b.qa_status !== 'RELEASED') actions.push({ key: 'qa-ok', icon: ShieldCheck, label: 'QA thả', tip: 'QA cho phép dùng lô bán thành phẩm này', onClick: () => void doQa('RELEASED'), disabled: busy })
+    if (b.qa_status !== 'RELEASED') actions.push({ key: 'qa-ok', icon: ShieldCheck, label: 'QA thả', tip: 'QA cho phép dùng lô bán thành phẩm này', primary: !canConsume && !canFill, onClick: () => void doQa('RELEASED'), disabled: busy })
     if (b.qa_status !== 'HOLD') actions.push({ key: 'qa-hold', icon: ShieldAlert, label: 'Giữ QA', tip: 'Đưa lô về trạng thái chờ QA', onClick: () => void doQa('HOLD'), disabled: busy })
     if (b.qa_status !== 'REJECTED') actions.push({ key: 'qa-no', icon: ShieldX, label: 'QA loại', tip: 'Loại lô (bắt buộc lý do)', danger: true, onClick: () => void doQa('REJECTED'), disabled: busy })
   }
@@ -116,6 +126,7 @@ export default function ProductionBatchDetail() {
     if (b.status !== 'CANCELLED') actions.push({ key: 'edit', icon: Pencil, label: 'Sửa', tip: 'Sửa ngày / máy / ca / kế hoạch / ghi chú (mã lô và mã BTP chỉ đổi khi chưa rút, chưa nạp)', onClick: () => setEditOpen(true) })
     if (open) actions.push({ key: 'close', icon: Lock, label: 'Đóng mẻ', tip: 'Đóng mẻ — không rút thêm nguyên liệu', onClick: () => void doStatus('close'), disabled: busy })
     if (b.status === 'CLOSED') actions.push({ key: 'reopen', icon: Unlock, label: 'Mở lại', tip: 'Mở lại mẻ để rút thêm / huỷ dòng rút', onClick: () => void doStatus('reopen'), disabled: busy })
+    actions.push({ key: 'clone', icon: Copy, label: 'Mở mẻ giống', tip: 'Mở mẻ mới cùng kho · mã bán thành phẩm · máy · ca · kế hoạch (ngày hôm nay, mã lô mới)', onClick: () => setCloneOpen(true) })
     if (b.status !== 'CANCELLED') actions.push({ key: 'cancel', icon: XCircle, label: 'Huỷ mẻ', tip: 'Huỷ mẻ mở nhầm (chưa rút, chưa nạp)', danger: true, onClick: () => void doStatus('cancel'), disabled: busy })
   }
   const canReverse = open && can(perms, 'production', 'reverse')
@@ -146,6 +157,13 @@ export default function ProductionBatchDetail() {
             {b.note && <span className="hidden sm:inline text-slate-500">{b.note}</span>}
           </div>
           {err && <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-1.5 text-xs text-red-700">{err}</div>}
+          {b.qa_status === 'REJECTED' && inTank > 0 && (
+            <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-1.5 text-xs text-red-700 flex items-center gap-1.5 flex-wrap">
+              <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+              <span>Lô bị QA loại còn <b className="tabular-nums">{nfQty(inTank)} {u}</b> trong bồn — bồn đó không rút cho đóng gói được cho tới khi xả bỏ.</span>
+              {canSeeTanks && <button type="button" className="underline font-semibold" onClick={() => navigate('/wms/production/tanks')}>Mở màn Bồn</button>}
+            </div>
+          )}
         </div>
         <SummaryBand tiles={[
           { label: 'Dòng NVL', value: live.length.toLocaleString('vi-VN'), tip: `${rmMats} mã nguyên liệu đã rút vào mẻ (không tính dòng đã huỷ)` },
@@ -238,8 +256,11 @@ export default function ProductionBatchDetail() {
         </div>
       </div>
       {open && <ConsumeSheet open={consumeOpen} onClose={() => setConsumeOpen(false)} batch={b} />}
-      <BatchFillSheet open={fillOpen} onClose={() => setFillOpen(false)} batchId={b.id} batchCode={b.batch_code} warehouseId={b.warehouse_id} unit={b.material?.base_unit ?? null} />
+      <BatchFillSheet open={fillOpen} onClose={() => setFillOpen(false)} batchId={b.id} batchCode={b.batch_code} warehouseId={b.warehouse_id} unit={b.material?.base_unit ?? null}
+        materialCode={b.material?.material_code ?? null} suggestQty={b.planned_qty != null ? Math.round((Number(b.planned_qty) - filled) * 1000) / 1000 : null} />
       <BatchFormSheet open={editOpen} onClose={() => setEditOpen(false)} batch={b} />
+      <BatchFormSheet open={cloneOpen} onClose={() => setCloneOpen(false)} template={b}
+        onSaved={nid => navigate(`/wms/production/${nid}`, { state: { consume: true } })} />
       {confirmNode}
     </div>
   )

@@ -40,6 +40,8 @@ async function scopeWithChildren(req: Request): Promise<string[] | null> {
 }
 const SCOPE_MSG = 'Ngoài phạm vi kho được giao'
 const jitter = (n: number) => new Promise(r => setTimeout(r, 20 + Math.floor(Math.random() * (60 + n * 40))))
+/** Lượng trong bồn giữ tối đa 3 số lẻ (hàm chia theo tỷ lệ làm tròn 3 số lẻ — số lẻ hơn sẽ không chia khớp). */
+export const round3 = (n: number) => Math.round(n * 1000) / 1000
 const actor = (req: Request) => ({ actor_id: resolveActorId(req), actor_name: resolveActorName(req) })
 
 /** Lỗi nghiệp vụ ném từ hàm DB ('MESERR:MÃ|câu') ⇒ đúng mã HTTP; còn lại để fail() dịch mã Postgres. */
@@ -499,7 +501,7 @@ export async function fillTank(req: Request, res: Response) {
     const t = await loadTank(req.params.id)
     if (!t) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy bồn')
     if (!(await inScope(req, t.warehouse_id))) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
-    const { data, error } = await db.rpc('mes_tank_fill', { p: { tank_id: t.id, batch_id: body.batch_id, qty: body.qty, ...actor(req) } })
+    const { data, error } = await db.rpc('mes_tank_fill', { p: { tank_id: t.id, batch_id: body.batch_id, qty: round3(body.qty), ...actor(req) } })
     if (error) return mesFail(res, error)
     return ok(res, data)
   } catch (e) { return failAny(res, e) }
@@ -513,7 +515,7 @@ export async function adjustTank(req: Request, res: Response) {
     const t = await loadTank(req.params.id)
     if (!t) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy bồn')
     if (!(await inScope(req, t.warehouse_id))) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
-    const { data, error } = await db.rpc('mes_tank_adjust', { p: { tank_id: t.id, level: body.level, reason: body.reason, ...actor(req) } })
+    const { data, error } = await db.rpc('mes_tank_adjust', { p: { tank_id: t.id, level: round3(body.level), reason: body.reason, ...actor(req) } })
     if (error) return mesFail(res, error)
     return ok(res, data)
   } catch (e) { return failAny(res, e) }
@@ -527,7 +529,7 @@ export async function transferTank(req: Request, res: Response) {
     const t = await loadTank(req.params.id)
     if (!t) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy bồn')
     if (!(await inScope(req, t.warehouse_id))) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
-    const { data, error } = await db.rpc('mes_tank_transfer', { p: { from_tank_id: t.id, to_tank_id: body.to_tank_id, qty: body.qty, reason: body.reason ?? null, ...actor(req) } })
+    const { data, error } = await db.rpc('mes_tank_transfer', { p: { from_tank_id: t.id, to_tank_id: body.to_tank_id, qty: round3(body.qty), reason: body.reason ?? null, ...actor(req) } })
     if (error) return mesFail(res, error)
     return ok(res, data)
   } catch (e) { return failAny(res, e) }
@@ -541,7 +543,7 @@ export async function discardTank(req: Request, res: Response) {
     const t = await loadTank(req.params.id)
     if (!t) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy bồn')
     if (!(await inScope(req, t.warehouse_id))) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
-    const { data, error } = await db.rpc('mes_tank_take', { p: { tank_id: t.id, qty: body.qty, kind: 'DISCARD', reason: body.reason, ...actor(req) } })
+    const { data, error } = await db.rpc('mes_tank_take', { p: { tank_id: t.id, qty: round3(body.qty), kind: 'DISCARD', reason: body.reason, ...actor(req) } })
     if (error) return mesFail(res, error)
     return ok(res, data)
   } catch (e) { return failAny(res, e) }

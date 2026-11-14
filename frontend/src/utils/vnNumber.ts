@@ -28,3 +28,13 @@ export function parseVnNumber(val: unknown): number | null {
   const n = Number(s)
   return Number.isFinite(n) ? n : null
 }
+
+/**
+ * SỐ → CHUỖI ĐIỀN SẴN VÀO Ô NHẬP mà `parseVnNumber` đọc lại ra ĐÚNG số đó (phẩy = thập phân, không dấu nghìn).
+ * Vì sao (14/11, MES): `String(933.333)` = "933.333" bị đọc lại thành 933333 (chấm + đúng 3 chữ số = nghìn) —
+ * mức bồn sau khi chia tỷ lệ hay ra đúng dạng này. Ô nhập nào điền sẵn một SỐ thì đi qua hàm này, đừng `String(n)`.
+ */
+export function vnNumberInput(n: number | null | undefined): string {
+  if (n == null || !Number.isFinite(n)) return ''
+  return String(n).replace('.', ',')
+}

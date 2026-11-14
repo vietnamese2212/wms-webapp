@@ -160,7 +160,7 @@ export default function ProductionBatches() {
         </div>
         <ListFooter page={page} pageSize={pageSize} total={total} unit="mẻ" onPageSize={n => setF({ pageSize: n, page: 1 })} />
       </div>
-      <BatchFormSheet open={formOpen} onClose={() => setFormOpen(false)} onSaved={id => navigate(`/wms/production/${id}`)} />
+      <BatchFormSheet open={formOpen} onClose={() => setFormOpen(false)} onSaved={id => navigate(`/wms/production/${id}`, { state: { consume: true } })} />
     </div>
   )
 }

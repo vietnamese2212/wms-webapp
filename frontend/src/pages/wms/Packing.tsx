@@ -1260,7 +1260,8 @@ function CloseRunSheet({ run, onDone, onError }: { run: PackingRun; onDone: () =
     if (endIso < run.start_at) {
       onError(`Giờ kết thúc đang TRƯỚC giờ bắt đầu (bắt đầu ${fmtDT(run.start_at)}) — sản xuất qua ngày mới thì chỉnh Ngày kết thúc`); return
     }
-    if (run.tank_id && tankQty.trim() && (tankQtyN == null || tankQtyN < 0)) { onError('Lượng rút từ bồn phải là số không âm'); return }
+    if (run.tank_id && !tankQty.trim()) { onError(`Nhập lượng đã rút từ bồn ${run.tank?.code ?? ''} — không rút thì nhập 0`); return }
+    if (run.tank_id && (tankQtyN == null || tankQtyN < 0)) { onError('Lượng rút từ bồn phải là số không âm'); return }
     closeMut.mutate({ id: run.id, end_at: endIso, tank_qty: run.tank_id ? tankQtyN : null }, {
       onSuccess: (r) => {
         // cảnh báo lúc rút (lô chưa QA thả · quá hạn lưu bồn) — đã ghi vào sổ bồn, báo lại cho người đóng trang
@@ -1301,9 +1302,9 @@ function CloseRunSheet({ run, onDone, onError }: { run: PackingRun; onDone: () =
         )}
         {run.tank_id && (
           <div>
-            <p className="text-xs font-medium text-slate-700 mb-1">Lượng bán thành phẩm đã rút từ bồn{run.tank ? ` ${run.tank.code} (${run.tank.unit})` : ''}</p>
+            <p className="text-xs font-medium text-slate-700 mb-1">Lượng bán thành phẩm đã rút từ bồn{run.tank ? ` ${run.tank.code} (${run.tank.unit})` : ''} <span className="text-red-500">*</span></p>
             <Input value={tankQty} onChange={e => setTankQty(e.target.value)} inputMode="decimal" placeholder="VD 4.500" className="h-9 text-sm tabular-nums" />
-            <p className="text-[10px] text-slate-400 mt-0.5">Bồn chứa nhiều mẻ thì lượng rút chia cho các mẻ theo tỷ lệ còn lại; để trống = chưa khai (truy xuất lô của trang sẽ thiếu mẻ)</p>
+            <p className="text-[10px] text-slate-400 mt-0.5">Bồn chứa nhiều mẻ thì lượng rút chia cho các mẻ theo tỷ lệ còn lại; không rút thì nhập 0 (khi đó truy xuất lô của trang không nối được về mẻ)</p>
           </div>
         )}
         <div className="grid grid-cols-2 gap-2">

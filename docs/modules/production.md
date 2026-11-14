@@ -25,10 +25,11 @@ Nhà máy sữa: NVL → **mẻ chế biến** → bán thành phẩm (BTP) tron
 - **Rút NVL vào mẻ** — hai đường, cùng sổ `batch_consumption`, cùng luật trừ tồn (kho của mẻ · không QA giữ qua `qa_is_hold` · còn > 0 sau giữ chỗ · mã có đơn vị nhập phải số nguyên base):
   - quét tem ⇒ `scan-check` (tem ở kho khác nói tên kho; mã tồn gộp nhiều lô ⇒ 409 `POOLED_CODE`) ⇒ `consume-scan` (hàm `mes_consume_scan`, khoá dòng);
   - "Không có tem" ⇒ chọn mã + lô (NSX / mã lô tem, hàm `mes_stock`) ⇒ `consume-lot` (hàm `mes_consume_lot`, FEFO trong lô, thiếu thì KHÔNG trừ dở).
+  - Hai đường CÙNG luật trạng thái (chỉ IN_STOCK / PARTIAL); đường lô khớp ĐÚNG (NSX, mã lô) đã chọn — lô không mã lô không ăn sang lô có mã lô cùng NSX (14/11, `20261114d`, C110).
   - Huỷ dòng rút = hoàn đúng dòng tồn + giữ vết (quyền `reverse` riêng — chưa tự cấp cho chức danh nào).
   - Dòng tồn đã vào mẻ không xoá được (FK RESTRICT — chuỗi truy xuất).
 - **Bồn** (`production_tank` + `tank_lot` + `tank_movement`): một bồn một mã BTP (chặn trộn mã), đơn vị bồn = base của mã BTP (L/KG), chặn vượt sức chứa (khoá dòng bồn). Nhiều mẻ chung một bồn được ⇒ mọi lần lấy ra (`mes_tank_take`: rút cho trang sổ · xả · điều chỉnh giảm · chuyển đi) **chia theo tỷ lệ lượng còn của từng mẻ**, làm tròn 3 số lẻ, phần dư vào lô lớn nhất. Chuyển bồn giữ lúc nạp + hạn lưu gốc (trộn thì hạn theo phần cũ nhất). Điều chỉnh mức bắt buộc lý do.
-- **Sổ đóng gói rút từ bồn:** trang sổ chọn bồn của chính kho hoặc kho phụ trực thuộc (`tanks-for-run`); đóng trang khai lượng rút ⇒ hàm `mes_close_run` đóng trang + rút bồn trong MỘT giao dịch. Rút gặp lô chưa QA thả ⇒ công tắc 2 tầng Kho + Loại kho `production_qa_gate` (OFF / WARN mặc định / BLOCK — `services/productionGate.ts`); quá hạn lưu ⇒ chỉ cảnh báo; cảnh báo lưu vào `tank_movement.warning`.
+- **Sổ đóng gói rút từ bồn:** trang sổ chọn bồn của chính kho hoặc kho phụ trực thuộc (`tanks-for-run`); đóng trang khai lượng rút ⇒ hàm `mes_close_run` đóng trang + rút bồn trong MỘT giao dịch. Rút gặp lô chưa QA thả ⇒ công tắc 2 tầng Kho + Loại kho `production_qa_gate` (OFF / WARN mặc định / BLOCK — `services/productionGate.ts`); quá hạn lưu ⇒ chỉ cảnh báo; cảnh báo lưu vào `tank_movement.warning`. **Lô QA LOẠI (REJECTED) khác lô CHỜ QA (14/11, C111):** không nạp vào bồn, bồn đang chứa nó không rút cho đóng gói được BẤT KỂ công tắc (409 `MES_QA_REJECTED`) — công tắc chỉ nói về lô HOLD; xả bỏ / chuyển / điều chỉnh vẫn làm được. Lượng bồn giữ tối đa 3 số lẻ (`round3` ở controller + lưới tổng phần chia trong `mes_tank_take`). Form Giờ kết thúc của trang GẮN BỒN bắt khai lượng rút (0 = không rút) — để trống từng đóng trang âm thầm, mất đường truy xuất.
 - **Truy xuất sản xuất:** `GET /wms/production/genealogy?kind=BATCH|FG_PALLET|RM_PALLET` (hàm `mes_genealogy`) — phạm vi = kho được giao + kho phụ trực thuộc (chỉ đọc). Đi tiếp từ pallet TP tới NPP / xe = `lot_trace` sẵn có.
 - **Danh sách mẻ:** hàm `mes_batch_page` trả dòng + tổng + ô band trong MỘT lời gọi.
 - Lỗi nghiệp vụ từ hàm DB: `MESERR:<MÃ>|<câu>` ⇒ controller dịch 404 / 422 / 409 `MES_<MÃ>`.
@@ -42,6 +43,7 @@ Nhà máy sữa: NVL → **mẻ chế biến** → bán thành phẩm (BTP) tron
 - **Truy xuất lô:** nút "Sản xuất" → `GenealogySheet` (tem thành phẩm / tem NVL / mã lô BTP); bấm tem thành phẩm ⇒ điền bộ lọc Xuôi để truy tiếp tới khách / xe.
 - **Mã hàng:** ô "Hạn lưu bồn (giờ)". **Cài đặt WMS:** nhóm "Sản xuất — rút bán thành phẩm khỏi bồn" (chỉ ở kho phụ, 2 tầng Kho + Loại kho). **Sổ pallet:** nhãn "Rút vào mẻ chế biến" / "Huỷ rút vào mẻ".
 - **Phạm vi module:** kho được giao HOẶC kho cha của nó được giao (kho chế biến là tổ nội bộ của nhà máy) — `inScope` async trong controller, FE `useProductionWarehouses` cùng luật.
+- **Thao tác nhanh (rà 14/11):** mở mẻ xong vào thẳng form Rút NVL · form Rút NVL nhớ cách rút lần trước (máy này) + nút "Rút hết" · Nạp bồn là nút có chữ, chọn sẵn bồn đang chứa mẻ / bồn duy nhất, điền sẵn lượng = kế hoạch − đã nạp, chỉ hiện bồn nhận được (cùng đơn vị, trống hoặc cùng mã) · thao tác bồn báo vượt chỗ / vượt lượng ngay tại ô nhập, nút "Hết bồn", Enter = xác nhận · "Mở mẻ giống" (cùng kho · mã · máy · ca · kế hoạch) · sửa mẻ xoá được máy / ca / ghi chú · ô nhập điền sẵn số qua `vnNumberInput` (C112).
 - Đã đo 1280 / 390 / 360: console 0 lỗi, `<main>` không tràn ngang (chi tiết mẻ từng tràn 4 px do ⓘ ở ô cuối dải tổng — vá ở `SummaryBand`, C4 LẶP 14/11).
 
 ## Actions
@@ -50,7 +52,7 @@ view · **open_batch** = mở / sửa / đóng / mở lại / huỷ mẻ · **co
 
 ## Gói QA
 
-`scripts/qa/63-production.mjs` (56 phép): mẻ ở kho phụ · mã lô gợi ý · tra tem · rút theo tem / theo lô · 5 người cùng rút một tem · bất biến nhập − còn = Σ rút sống · bồn (sức chứa, trộn, cặp id chéo kho, sửa bồn còn hàng) · trang sổ khai rút + công tắc QA · điều chỉnh / chuyển / xả · gia phả ba chiều · sổ pallet · vòng đời mẻ.
+`scripts/qa/63-production.mjs` (63 phép): mẻ ở kho phụ · mã lô gợi ý · tra tem · rút theo tem / theo lô · 5 người cùng rút một tem · bất biến nhập − còn = Σ rút sống · bồn (sức chứa, trộn, cặp id chéo kho, sửa bồn còn hàng) · trang sổ khai rút + công tắc QA · điều chỉnh / chuyển / xả · lô QA loại chặn rút + nạp · đúng mã lô · dòng tồn không còn trong kho · gia phả ba chiều · sổ pallet · vòng đời mẻ.
 
 ## Ngoài giai đoạn 1
 

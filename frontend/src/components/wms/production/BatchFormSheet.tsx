@@ -12,15 +12,17 @@ import { useGlobalScopeStore } from '@/stores/globalScopeStore'
 import { useMaterials, useMaterialsByIds, useMachines } from '@/api/hooks'
 import { useProductionWarehouses, useNextBatchCode, useCreateBatch, useUpdateBatch, type BatchDetail } from '@/api/productionHooks'
 import { unitLabel } from '@/utils/qtyUnits'
-import { parseVnNumber } from '@/utils/vnNumber'
+import { parseVnNumber, vnNumberInput } from '@/utils/vnNumber'
 
 const apiMsg = (e: unknown) => (e as AxiosError<{ error?: { message?: string } }>)?.response?.data?.error?.message ?? 'Lỗi không xác định'
 const todayVN = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
 
-export function BatchFormSheet({ open, onClose, batch, onSaved }: {
+export function BatchFormSheet({ open, onClose, batch, template, onSaved }: {
   open: boolean; onClose: () => void
   /** có = sửa mẻ này; không = mở mẻ mới */
   batch?: BatchDetail | null
+  /** mở mẻ MỚI điền sẵn theo một mẻ có trước (kho · mã BTP · máy · ca · kế hoạch) — ngày = hôm nay, mã lô gợi ý lại */
+  template?: { warehouse_id: string; material_id: string; machine_code: string | null; shift: string | null; planned_qty: number | null } | null
   onSaved?: (id: string) => void
 }) {
   const editing = !!batch
@@ -44,7 +46,10 @@ export function BatchFormSheet({ open, onClose, batch, onSaved }: {
     setErr(''); setCodeTouched(editing)
     if (batch) {
       setWh(batch.warehouse_id); setMat(batch.material_id); setDate(batch.prod_date); setMachine(batch.machine_code ?? '')
-      setShift(batch.shift ?? ''); setPlanned(batch.planned_qty != null ? String(batch.planned_qty) : ''); setCode(batch.batch_code); setNote(batch.note ?? '')
+      setShift(batch.shift ?? ''); setPlanned(vnNumberInput(batch.planned_qty)); setCode(batch.batch_code); setNote(batch.note ?? '')
+    } else if (template) {
+      setWh(template.warehouse_id); setMat(template.material_id); setDate(todayVN()); setMachine(template.machine_code ?? '')
+      setShift(template.shift ?? ''); setPlanned(vnNumberInput(template.planned_qty)); setCode(''); setNote('')
     } else {
       // bối cảnh Kho toàn cục: là kho chế biến thì lấy luôn; là kho nhà máy có đúng MỘT kho chế biến thì lấy kho đó
       const g = useGlobalScopeStore.getState().warehouseId
@@ -79,8 +84,8 @@ export function BatchFormSheet({ open, onClose, batch, onSaved }: {
     setErr('')
     try {
       if (batch) {
-        const r = await update.mutateAsync({ id: batch.id, prod_date: date, machine_code: machine || undefined, shift: shift || undefined,
-          planned_qty: plannedNum, note: note || undefined,
+        const r = await update.mutateAsync({ id: batch.id, prod_date: date, machine_code: machine || null, shift: shift || null,
+          planned_qty: plannedNum, note: note || null,
           ...(code.trim().toUpperCase() !== batch.batch_code ? { batch_code: code.trim() } : {}), ...(mat !== batch.material_id ? { material_id: mat } : {}) })
         onSaved?.(r.id); onClose()
       } else {

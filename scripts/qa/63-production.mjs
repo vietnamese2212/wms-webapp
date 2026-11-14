@@ -199,6 +199,34 @@ try {
   check('6h. Chi tiết trang sổ kèm bồn + 2 lần rút (theo 2 mẻ)', runGet.s === 200 && runGet.j?.data?.tank?.id === T1.id && (runGet.j?.data?.tank_draws ?? []).length === 2, `n=${runGet.j?.data?.tank_draws?.length}`)
   await restWrite('Warehouse', 'PATCH', `id=eq.${WC}`, { production_qa_gate: 'WARN', updated_at: ts() })
 
+  // ── [6+] đợt rà 14/11 (migration 20261114d): lô QA LOẠI · đúng mã lô · dòng tồn không còn trong kho ──
+  const rej = await api(`/wms/production/batches/${B2.id}/qa`, 'POST', { qa_status: 'REJECTED', note: 'QA63 thử loại lô' })
+  const R3 = (await api('/wms/packing-runs', 'POST', { warehouse_id: WP, material_codes: ['QA63FG3'], machine_code: 'QA63M', cycle: 'C63', tank_id: T1.id })).j?.data
+  const cl4 = await api(`/wms/packing-runs/${R3.id}/close`, 'POST', { tank_qty: 10 })
+  const r3now = (await restAll('packing_runs', `select=status&id=eq.${R3.id}`))[0]
+  check('6i. Bồn có lô QA LOẠI ⇒ rút đóng gói 409 MES_QA_REJECTED dù công tắc chỉ CẢNH BÁO, trang vẫn mở',
+    rej.s === 200 && cl4.s === 409 && cl4.j?.error?.code === 'MES_QA_REJECTED' && r3now?.status === 'OPEN', `qa=${rej.s} http=${cl4.s} ${cl4.j?.error?.code} status=${r3now?.status}`)
+  const fillRej = await api(`/wms/production/tanks/${T1.id}/fill`, 'POST', { batch_id: B2.id, qty: 1 })
+  check('6j. Nạp lô QA loại vào bồn ⇒ 409 MES_QA_REJECTED', fillRej.s === 409 && fillRej.j?.error?.code === 'MES_QA_REJECTED', `http=${fillRej.s} ${fillRej.j?.error?.code}`)
+  await api(`/wms/production/batches/${B2.id}/qa`, 'POST', { qa_status: 'RELEASED' })
+  const cl5 = await api(`/wms/packing-runs/${R3.id}/close`, 'POST', { tank_qty: 0 })   // 0 = không rút: mức bồn giữ nguyên cho các phép sau
+  check('6k. QA đổi kết luận về THẢ ⇒ đóng trang được', cl5.s === 200 && cl5.j?.data?.status === 'CLOSED', `http=${cl5.s} ${JSON.stringify(cl5.j?.error ?? null)}`)
+  await restWrite('InventoryEntry', 'POST', null, [
+    E('QA63_E7', 'QA63_P7', 30, WC, '2026-11-20', '2027-04-01'),                          // cùng NSX, KHÔNG mã lô
+    E('QA63_E8', 'QA63_P8', 50, WC, '2026-11-20', '2027-04-01', { batch: 'QA63LX' }),     // cùng NSX, CÓ mã lô
+    E('QA63_E9', 'QA63_P9', 5, WC, '2026-11-21', '2027-04-01', { status: 'EXPORTED' }),   // không còn là hàng trong kho
+  ].map(e => ({ batch: null, ...e })))
+  const lotNull = await api(`/wms/production/batches/${B1.id}/consume-lot`, 'POST', { material_id: M_RM, production_date: '2026-11-20', qty: 40, qty_semantics: 'base' })
+  const e8 = (await restAll('InventoryEntry', 'select=cartons_remaining&id=eq.QA63_E8'))[0]
+  check('6l. Rút lô KHÔNG mã lô quá lượng của nó ⇒ 409 MES_SHORT, không ăn sang lô có mã lô cùng NSX',
+    lotNull.s === 409 && lotNull.j?.error?.code === 'MES_SHORT' && num(e8?.cartons_remaining) === 50, `http=${lotNull.s} ${lotNull.j?.error?.code} e8=${e8?.cartons_remaining}`)
+  const lotX = await api(`/wms/production/batches/${B1.id}/consume-lot`, 'POST', { material_id: M_RM, production_date: '2026-11-20', batch_lot: 'QA63LX', qty: 40, qty_semantics: 'base' })
+  const e78 = await restAll('InventoryEntry', 'select=id,cartons_remaining&id=in.(QA63_E7,QA63_E8)')
+  check('6m. Rút đúng lô QA63LX ⇒ trừ 40 ở lô đó, lô không mã lô giữ nguyên',
+    lotX.s === 200 && num(e78.find(e => e.id === 'QA63_E8')?.cartons_remaining) === 10 && num(e78.find(e => e.id === 'QA63_E7')?.cartons_remaining) === 30, `http=${lotX.s} ${JSON.stringify(e78)}`)
+  const scanGone = await api(`/wms/production/batches/${B1.id}/consume-scan`, 'POST', { entry_id: 'QA63_E9', qty: 1, qty_semantics: 'base' })
+  check('6n. Quét dòng tồn không còn trong kho (EXPORTED) ⇒ 409 MES_NOT_IN_STOCK', scanGone.s === 409 && scanGone.j?.error?.code === 'MES_NOT_IN_STOCK', `http=${scanGone.s} ${scanGone.j?.error?.code}`)
+
   // ── [7] điều chỉnh / chuyển / xả ──
   const adj = await api(`/wms/production/tanks/${T1.id}/adjust`, 'POST', { level: 400, reason: 'QA63 khớp đồng hồ' })
   const sumT1 = async () => (await restAll('tank_lot', `select=qty_remaining&tank_id=eq.${T1.id}&status=eq.ACTIVE`)).reduce((s, l) => s + num(l.qty_remaining), 0)

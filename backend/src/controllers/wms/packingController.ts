@@ -7,7 +7,7 @@ import { fetchAllByIdChunks } from '../../utils/pagination'
 import { qtyEntryDecimal, type MatUnits } from '../../utils/qtyUnits'
 import { activeMachineCodes } from './machineController'
 import { getRetentionDays, getPackingMaxMaterials } from '../../utils/settings'
-import { tankForRunError } from './productionController'
+import { tankForRunError, round3 } from './productionController'
 import { qaGateOfTank } from '../../services/productionGate'
 import { resolveActorId, resolveActorName } from '../../utils/actor'
 
@@ -702,7 +702,7 @@ export async function closeRun(req: Request, res: Response) {
     const n = Number(tank_qty)
     if (typeof tank_qty === 'boolean' || !Number.isFinite(n) || n < 0 || n > 10_000_000) return fail(res, 'Lượng rút từ bồn phải là số không âm', 422)
     if (n > 0 && !run.tank_id) return fail(res, 422, 'NO_TANK', 'Trang sổ chưa gắn bồn — không khai lượng rút được')
-    tankQty = n > 0 ? n : null
+    tankQty = n > 0 ? round3(n) : null
   }
   let endIso = new Date().toISOString()
   if (end_at != null && end_at !== '') {

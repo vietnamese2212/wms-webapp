@@ -22,6 +22,9 @@ import { formatDate } from '@/utils/formatters'
 
 const apiMsg = (e: unknown) => (e as AxiosError<{ error?: { message?: string } }>)?.response?.data?.error?.message ?? 'Lỗi không xác định'
 const avail = (e: ScanEntry) => Number(e.cartons_remaining ?? e.cartons_imported ?? 0) - Number(e.cartons_reserved ?? 0)
+// Cách rút dùng lần trước trên máy này (kho tồn theo NSX luôn dùng "Không có tem" — khỏi bấm chuyển mỗi lần)
+const MODE_KEY = 'production_consume_mode'
+const lastMode = (): 'SCAN' | 'LOT' => { try { return localStorage.getItem(MODE_KEY) === 'LOT' ? 'LOT' : 'SCAN' } catch { return 'SCAN' } }
 const dayOf = (s: string | null | undefined) => (s ? String(s).slice(0, 10) : null)
 
 export function ConsumeSheet({ open, onClose, batch }: { open: boolean; onClose: () => void; batch: BatchDetail }) {
@@ -41,7 +44,7 @@ export function ConsumeSheet({ open, onClose, batch }: { open: boolean; onClose:
   const consumeScan = useConsumeScan()
   const consumeLot = useConsumeLot()
 
-  useEffect(() => { if (open) { setMode('SCAN'); reset(); setDone(null); setMatId(''); setLotKey(''); setMatTerm('') } }, [open])
+  useEffect(() => { if (open) { setMode(lastMode()); reset(); setDone(null); setMatId(''); setLotKey(''); setMatTerm('') } }, [open])
   function reset() { setCode(''); setEntry(null); setQty(0); setErr('') }
 
   async function lookup(raw: string) {
@@ -110,7 +113,7 @@ export function ConsumeSheet({ open, onClose, batch }: { open: boolean; onClose:
       <div className="space-y-3 text-xs">
         <div className="flex rounded-lg border overflow-hidden">
           {([['SCAN', 'Quét tem'], ['LOT', 'Không có tem']] as const).map(([k, label]) => (
-            <button key={k} type="button" onClick={() => { setMode(k); reset() }}
+            <button key={k} type="button" onClick={() => { setMode(k); reset(); try { localStorage.setItem(MODE_KEY, k) } catch { /* bộ nhớ trình duyệt bị chặn */ } }}
               className={['flex-1 py-1.5 text-xs font-medium transition-colors', mode === k ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'].join(' ')}>{label}</button>
           ))}
         </div>
@@ -186,7 +189,10 @@ export function ConsumeSheet({ open, onClose, batch }: { open: boolean; onClose:
 
         {(mode === 'SCAN' ? !!entry : !!lot) && (
           <div>
-            <Label className="text-xs">Lượng rút <span className="text-red-500">*</span></Label>
+            <div className="flex items-center justify-between gap-2">
+              <Label className="text-xs">Lượng rút <span className="text-red-500">*</span></Label>
+              {max > 0 && qty !== max && <button type="button" className="text-[11px] text-blue-600 hover:underline touch-target" onClick={() => setQty(max)}>Rút hết ({unitText(max)})</button>}
+            </div>
             <div className="mt-0.5"><QtyInput value={qty} mat={mat} onChange={setQty} autoFocus /></div>
             {over && <p className="text-red-600 mt-1">Vượt lượng rút được ({unitText(max)})</p>}
             {intErr && <p className="text-red-600 mt-1">{intErr}</p>}

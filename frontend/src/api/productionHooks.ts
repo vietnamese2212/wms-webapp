@@ -168,7 +168,7 @@ const patch = async <T,>(url: string, body: unknown) => (await apiClient.patch(u
 
 export interface BatchInput { warehouse_id: string; material_id: string; prod_date: string; batch_code?: string; machine_code?: string; shift?: string; planned_qty?: number | null; note?: string }
 export const useCreateBatch = () => useProdMutation((b: BatchInput) => post<BatchDetail>('/wms/production/batches', b))
-export const useUpdateBatch = () => useProdMutation(({ id, ...b }: { id: string } & Partial<Omit<BatchInput, 'warehouse_id'>>) => patch<BatchDetail>(`/wms/production/batches/${id}`, b))
+export const useUpdateBatch = () => useProdMutation(({ id, ...b }: { id: string } & Partial<Omit<BatchInput, 'warehouse_id' | 'machine_code' | 'shift' | 'note'>> & { machine_code?: string | null; shift?: string | null; note?: string | null }) => patch<BatchDetail>(`/wms/production/batches/${id}`, b))
 export const useBatchStatus = () => useProdMutation(({ id, action }: { id: string; action: 'close' | 'reopen' | 'cancel' }) => post(`/wms/production/batches/${id}/${action}`))
 export const useBatchQa = () => useProdMutation(({ id, qa_status, note }: { id: string; qa_status: BatchQa; note?: string }) => post(`/wms/production/batches/${id}/qa`, { qa_status, note }))
 export const useConsumeScan = () => useProdMutation(({ batchId, entry_id, qty }: { batchId: string; entry_id: string; qty: number }) =>

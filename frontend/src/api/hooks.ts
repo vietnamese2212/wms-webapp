@@ -8400,6 +8400,10 @@ export interface PackingRun {
   note: string | null
   // board/list đính kèm
   pallet_open?: number
+  // MES 14/11: bồn của trang + các lần rút (chi tiết trang)
+  tank_id?: string | null
+  tank?: { id: string; code: string; name: string | null; unit: string } | null
+  tank_draws?: { id: string; qty: number; warning: string | null; created_at: string; created_by_name: string | null; batch: { batch_code: string } | null }[]
   // đối chiếu SX↔Kho cấp TRANG (15/08): recv_total = pallet SỐNG (mẫu số symbol — trang CLOSED
   // giữ pallet_count đã CHỐT nên có thể lệch nếu sau đó hủy pallet)
   received_count?: number
@@ -8448,6 +8452,7 @@ export function useOpenPackingRun() {
     mutationFn: (body: {
       warehouse_id: string; run_date?: string; shift?: string | null; cycle?: string | null
       material_codes: string[]; material_id?: string | null; machine_code: string; start_at?: string | null; note?: string | null
+      tank_id?: string | null   // MES 14/11: rút bán thành phẩm từ bồn nào (tuỳ chọn)
     }) =>
       apiClient.post('/wms/packing-runs', body).then(r => r.data.data as PackingRun),
     onSettled: () => invalidatePacking(qc),
@@ -8456,8 +8461,9 @@ export function useOpenPackingRun() {
 export function useClosePackingRun() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, end_at }: { id: string; end_at?: string | null }) =>
-      apiClient.post(`/wms/packing-runs/${id}/close`, { end_at }).then(r => r.data.data as PackingRun),
+    // tank_qty (MES 14/11): lượng bán thành phẩm đã rút từ bồn của trang — BE đóng trang + rút bồn trong MỘT giao dịch
+    mutationFn: ({ id, end_at, tank_qty }: { id: string; end_at?: string | null; tank_qty?: number | null }) =>
+      apiClient.post(`/wms/packing-runs/${id}/close`, { end_at, tank_qty }).then(r => r.data.data as PackingRun & { tank_warnings?: string[] }),
     onSettled: () => invalidatePacking(qc),
   })
 }

@@ -1,0 +1,151 @@
+// Form MỞ / SỬA MẺ chế biến (MES 14/11). Mã lô app GỢI Ý theo khuôn tem V2 (tiền tố + yymmdd + máy + STT), người mở sửa được
+// (user chốt 14/11). Mẻ chỉ mở ở KHO CHẾ BIẾN (kho phụ nội bộ). Mã bán thành phẩm phải tính theo L hoặc KG (vào bồn).
+import { useEffect, useMemo, useState } from 'react'
+import type { AxiosError } from 'axios'
+import { FormSheet } from '@/components/shared/FormSheet'
+import { SingleSelect } from '@/components/shared/SingleSelect'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { useDebouncedValue } from '@/hooks/useDebouncedValue'
+import { useGlobalScopeStore } from '@/stores/globalScopeStore'
+import { useMaterials, useMaterialsByIds, useMachines } from '@/api/hooks'
+import { useProductionWarehouses, useNextBatchCode, useCreateBatch, useUpdateBatch, type BatchDetail } from '@/api/productionHooks'
+import { unitLabel } from '@/utils/qtyUnits'
+import { parseVnNumber } from '@/utils/vnNumber'
+
+const apiMsg = (e: unknown) => (e as AxiosError<{ error?: { message?: string } }>)?.response?.data?.error?.message ?? 'Lỗi không xác định'
+const todayVN = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
+
+export function BatchFormSheet({ open, onClose, batch, onSaved }: {
+  open: boolean; onClose: () => void
+  /** có = sửa mẻ này; không = mở mẻ mới */
+  batch?: BatchDetail | null
+  onSaved?: (id: string) => void
+}) {
+  const editing = !!batch
+  const { data: { kitchens } } = useProductionWarehouses()
+  const [wh, setWh] = useState('')
+  const [mat, setMat] = useState('')
+  const [matTerm, setMatTerm] = useState('')
+  const [date, setDate] = useState(todayVN())
+  const [machine, setMachine] = useState('')
+  const [shift, setShift] = useState('')
+  const [planned, setPlanned] = useState('')
+  const [code, setCode] = useState('')
+  const [codeTouched, setCodeTouched] = useState(false)
+  const [note, setNote] = useState('')
+  const [err, setErr] = useState('')
+  const create = useCreateBatch()
+  const update = useUpdateBatch()
+
+  useEffect(() => {
+    if (!open) return
+    setErr(''); setCodeTouched(editing)
+    if (batch) {
+      setWh(batch.warehouse_id); setMat(batch.material_id); setDate(batch.prod_date); setMachine(batch.machine_code ?? '')
+      setShift(batch.shift ?? ''); setPlanned(batch.planned_qty != null ? String(batch.planned_qty) : ''); setCode(batch.batch_code); setNote(batch.note ?? '')
+    } else {
+      // bối cảnh Kho toàn cục: là kho chế biến thì lấy luôn; là kho nhà máy có đúng MỘT kho chế biến thì lấy kho đó
+      const g = useGlobalScopeStore.getState().warehouseId
+      const direct = kitchens.find(k => k.id === g)
+      const under = kitchens.filter(k => k.parent_warehouse_id === g)
+      setWh(direct?.id ?? (under.length === 1 ? under[0].id : kitchens.length === 1 ? kitchens[0].id : ''))
+      setMat(''); setDate(todayVN()); setMachine(''); setShift(''); setPlanned(''); setCode(''); setNote('')
+    }
+  }, [open]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const term = useDebouncedValue(matTerm, 250)
+  const { data: found = [], isFetching } = useMaterials({ search: term || undefined, limit: 50 }, open)
+  const { data: picked = [] } = useMaterialsByIds(mat ? [mat] : [], open && !!mat)
+  const matOpts = useMemo(() => {
+    const seen = new Set<string>()
+    return [...picked, ...found].filter(m => { if (seen.has(m.id)) return false; seen.add(m.id); return true })
+      .filter(m => ['L', 'KG'].includes(String(m.base_unit ?? '').toUpperCase()))
+      .map(m => ({ value: m.id, label: m.material_code, sub: `${m.short_name ?? m.material_description ?? ''} · ${unitLabel(m.base_unit)}` }))
+  }, [picked, found])
+  const selMat = picked.find(m => m.id === mat) ?? found.find(m => m.id === mat)
+  const { data: machines = [] } = useMachines(wh || undefined)
+  const activeMachines = machines.filter(m => m.is_active !== false)
+  const next = useNextBatchCode({ warehouse_id: editing ? undefined : wh || undefined, material_id: mat || undefined, prod_date: date || undefined, machine_code: machine || undefined })
+  useEffect(() => { if (!editing && !codeTouched && next.data?.code) setCode(next.data.code) }, [next.data?.code, editing, codeTouched])
+
+  const saving = create.isPending || update.isPending
+  const plannedNum = planned.trim() ? parseVnNumber(planned) : null
+  const plannedBad = !!planned.trim() && (plannedNum == null || plannedNum <= 0)
+  const canSave = !!wh && !!mat && !!date && !plannedBad && !saving
+
+  async function save() {
+    setErr('')
+    try {
+      if (batch) {
+        const r = await update.mutateAsync({ id: batch.id, prod_date: date, machine_code: machine || undefined, shift: shift || undefined,
+          planned_qty: plannedNum, note: note || undefined,
+          ...(code.trim().toUpperCase() !== batch.batch_code ? { batch_code: code.trim() } : {}), ...(mat !== batch.material_id ? { material_id: mat } : {}) })
+        onSaved?.(r.id); onClose()
+      } else {
+        const r = await create.mutateAsync({ warehouse_id: wh, material_id: mat, prod_date: date, batch_code: code.trim() || undefined,
+          machine_code: machine || undefined, shift: shift || undefined, planned_qty: plannedNum, note: note || undefined })
+        onSaved?.(r.id); onClose()
+      }
+    } catch (e) { setErr(apiMsg(e)) }
+  }
+
+  return (
+    <FormSheet open={open} onClose={onClose} title={editing ? `Sửa mẻ ${batch?.batch_code}` : 'Mở mẻ chế biến'}
+      description="Mẻ chỉ mở ở kho chế biến (kho phụ nội bộ). Mã lô app gợi ý — sửa được nếu nhà máy dùng quy tắc khác."
+      footer={<>
+        <Button variant="outline" size="sm" className="h-8" onClick={onClose}>Huỷ</Button>
+        <Button size="sm" className="h-8" disabled={!canSave} onClick={() => void save()}>{saving ? 'Đang lưu…' : editing ? 'Lưu' : 'Mở mẻ'}</Button>
+      </>}>
+      <div className="space-y-3">
+        <div>
+          <Label className="text-xs">Kho chế biến <span className="text-red-500">*</span></Label>
+          <SingleSelect value={wh} onChange={v => { setWh(v); setMachine(''); setCodeTouched(false) }} disabled={editing}
+            placeholder={kitchens.length ? 'Chọn kho chế biến' : 'Chưa có kho chế biến trong phạm vi'}
+            options={kitchens.map(k => ({ value: k.id, label: k.name, sub: k.parent_name ? `thuộc ${k.parent_name}` : k.code }))} />
+          {!kitchens.length && <p className="text-[11px] text-amber-700 mt-1">Khai kho chế biến là kho phụ nội bộ: Cài đặt WMS → Kho → "Trực thuộc kho".</p>}
+        </div>
+        <div>
+          <Label className="text-xs">Mã bán thành phẩm <span className="text-red-500">*</span></Label>
+          <SingleSelect value={mat} onChange={v => { setMat(v); setCodeTouched(false) }} serverSearch onSearchChange={setMatTerm} loading={isFetching}
+            selectedLabel={selMat ? selMat.material_code : undefined} placeholder="Tìm mã hoặc tên (chỉ mã tính L / KG)" options={matOpts} />
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <Label className="text-xs">Ngày sản xuất <span className="text-red-500">*</span></Label>
+            <Input type="date" value={date} onChange={e => { setDate(e.target.value); setCodeTouched(false) }} className="h-8 text-xs mt-0.5" />
+          </div>
+          <div>
+            <Label className="text-xs">Ca</Label>
+            <Input value={shift} onChange={e => setShift(e.target.value)} maxLength={40} placeholder="Tuỳ chọn" className="h-8 text-xs mt-0.5" />
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <Label className="text-xs">Máy / thiết bị trộn</Label>
+            {activeMachines.length
+              ? <SingleSelect value={machine} onChange={v => { setMachine(v); setCodeTouched(false) }} placeholder="Chọn máy" options={activeMachines.map(m => ({ value: m.code, label: m.code, sub: m.note ?? undefined }))} />
+              : <Input value={machine} onChange={e => { setMachine(e.target.value.toUpperCase()); setCodeTouched(false) }} maxLength={20} placeholder="Tuỳ chọn" className="h-8 text-xs mt-0.5" />}
+          </div>
+          <div>
+            <Label className="text-xs">Lượng kế hoạch{selMat ? ` (${unitLabel(selMat.base_unit)})` : ''}</Label>
+            <Input value={planned} onChange={e => setPlanned(e.target.value)} inputMode="decimal" placeholder="Tuỳ chọn" className={`h-8 text-xs mt-0.5 ${plannedBad ? 'border-red-400' : ''}`} />
+          </div>
+        </div>
+        <div>
+          <Label className="text-xs">Mã lô bán thành phẩm</Label>
+          <Input value={code} onChange={e => { setCode(e.target.value.toUpperCase()); setCodeTouched(true) }} maxLength={40}
+            placeholder={next.isFetching ? 'Đang gợi ý…' : 'Để trống = app tự sinh'} className="h-8 text-xs mt-0.5 font-mono" />
+          {!editing && codeTouched && next.data?.code && code !== next.data.code &&
+            <button type="button" className="text-[11px] text-blue-600 mt-0.5" onClick={() => { setCode(next.data!.code); setCodeTouched(false) }}>Dùng mã gợi ý {next.data.code}</button>}
+        </div>
+        <div>
+          <Label className="text-xs">Ghi chú</Label>
+          <Input value={note} onChange={e => setNote(e.target.value)} maxLength={500} placeholder="Tuỳ chọn" className="h-8 text-xs mt-0.5" />
+        </div>
+        {err && <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700">{err}</div>}
+      </div>
+    </FormSheet>
+  )
+}

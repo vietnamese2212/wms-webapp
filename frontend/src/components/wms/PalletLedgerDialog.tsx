@@ -31,6 +31,8 @@ const KIND: Record<string, { label: string; cls: string }> = {
   UNDONE:    { label: 'Hoàn tác thao tác',     cls: 'bg-slate-200 text-slate-600' },
   FILLED:    { label: 'Hạ xuống kho lẻ',       cls: 'bg-teal-100 text-teal-700' },
   PICKED:    { label: 'Xuất hàng',             cls: 'bg-red-100 text-red-700' },
+  CONSUMED:  { label: 'Rút vào mẻ chế biến',   cls: 'bg-orange-100 text-orange-700' },   // MES 14/11 (ref = mã lô mẻ)
+  CONSUME_REVERSED: { label: 'Huỷ rút vào mẻ', cls: 'bg-slate-200 text-slate-600' },
   TASK_PLANNED:   { label: 'Máy giao việc',    cls: 'bg-slate-100 text-slate-500' },
   TASK_CLAIMED:   { label: 'Nhận việc',        cls: 'bg-sky-50 text-sky-700' },
   TASK_UNCLAIMED: { label: 'Trả việc',         cls: 'bg-slate-100 text-slate-500' },

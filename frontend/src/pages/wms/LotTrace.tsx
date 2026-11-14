@@ -10,7 +10,8 @@
 // trong cửa sổ ±3 ngày, user xem từng sổ (pallet + giờ) rồi BUỘC CHỌN 1 sổ → kết quả = HÀNH TRÌNH
 // toàn công ty (SX kho nào → nhập → xuất → kho nhận → xuất tiếp → còn ở đâu) → Lưu vào bảng.
 import { useMemo, useRef, useState } from 'react'
-import { PackageSearch, Download, ImagePlus, Sparkles, X, Plus, Eye } from 'lucide-react'
+import { PackageSearch, Download, ImagePlus, Sparkles, X, Plus, Eye, Factory } from 'lucide-react'
+import { GenealogySheet } from '@/components/wms/production/GenealogySheet'
 import type { AxiosError } from 'axios'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet'
@@ -192,10 +193,15 @@ function TraceTab({ canExport }: { canExport: boolean }) {
     await saveWorkbook(wb, `Truy-xuat-${tag}.xlsx`)
   }
 
-  const actions: ActionItem[] = canExport && (shipments.length || stock.length) ? [{
-    key: 'export', icon: Download, label: 'Xuất Excel', tip: 'Xuất hồ sơ truy xuất (2 sheet: đã giao · còn trong kho)',
-    onClick: onExport, mobileHidden: true,
-  }] : []
+  // MES 14/11: gia phả sản xuất — tem nguyên liệu ⇄ mẻ ⇄ bồn ⇄ trang sổ ⇄ tem thành phẩm (cửa đọc mở cho traceability.view)
+  const [genOpen, setGenOpen] = useState(false)
+  const actions: ActionItem[] = [
+    { key: 'gen', icon: Factory, label: 'Sản xuất', tip: 'Truy xuất sản xuất: tem thành phẩm ⇄ mẻ chế biến ⇄ tem nguyên liệu / nhà cung cấp', onClick: () => setGenOpen(true) },
+    ...(canExport && (shipments.length || stock.length) ? [{
+      key: 'export', icon: Download, label: 'Xuất Excel', tip: 'Xuất hồ sơ truy xuất (2 sheet: đã giao · còn trong kho)',
+      onClick: onExport, mobileHidden: true,
+    } satisfies ActionItem] : []),
+  ]
 
   // KHÔNG gì bắt buộc — có bất kỳ điều kiện nào của chiều đang chọn là tìm ("ra filter nào lấy cái đó")
   const searching = isRev
@@ -265,6 +271,8 @@ function TraceTab({ canExport }: { canExport: boolean }) {
           </>
         )}
       </div>
+      <GenealogySheet open={genOpen} onClose={() => setGenOpen(false)}
+        onTraceFg={code => { setF({ dir: 'fwd', pallet: code }); setGenOpen(false) }} />
     </>
   )
 }

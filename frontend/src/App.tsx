@@ -10,7 +10,7 @@ import { Pages } from '@/routes/lazyPages'
 import Login from '@/pages/Login'
 
 const {
-  Dashboard, Inventory, Inbound, InboundDetail, InboundReturns,
+  Dashboard, Inventory, Inbound, InboundDetail, InboundReturns, ProductionBatches, ProductionBatchDetail, ProductionTanks,
   Outbound, OutboundDetail, OutboundItemDetail, OutboundScanLog, OutboundPrepare, WeighTickets, ControlTower, Alerts,
   Slotting, SlottingPlanDetail, DirectedWork, DateRules, WarehouseCosts, WarehouseCostVoucher, LotTrace, Forklift, Packing, FillPicking, FillOrderDetail,
   LoosePicking, LoosePickingDetail, LoosePickingItemDetail,
@@ -167,6 +167,11 @@ export default function App() {
 
         {/* WMS — sổ đóng gói điện tử tại xưởng (quét tem + chụp date thùng) */}
         <Route path="/wms/packing" element={<PermissionRoute module="packing"><Packing /></PermissionRoute>} />
+
+        {/* WMS — Sản xuất (MES gđ1, 14/11): mẻ chế biến · bồn. '/tanks' khai TRƯỚC '/:id' */}
+        <Route path="/wms/production" element={<PermissionRoute module="production"><ProductionBatches /></PermissionRoute>} />
+        <Route path="/wms/production/tanks" element={<PermissionRoute module="production"><ProductionTanks /></PermissionRoute>} />
+        <Route path="/wms/production/:id" element={<PermissionRoute module="production"><ProductionBatchDetail /></PermissionRoute>} />
 
         {/* WMS — settings */}
         <Route path="/wms/settings" element={<PermissionRoute module="wms_settings"><WMSSettings /></PermissionRoute>} />

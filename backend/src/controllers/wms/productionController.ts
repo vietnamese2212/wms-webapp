@@ -16,7 +16,28 @@ import { normalizeBatchCode, BATCH_CODE_RE, batchCodeStem, nextBatchCode } from 
 
 const nowIso = () => new Date().toISOString()
 const scopeOf = (req: Request): string[] | null => (req.user?.warehouse_scope === 'NATIONAL' ? null : (req.user?.warehouse_ids ?? []))
-const inScope = (req: Request, wh: string | null | undefined) => { const s = scopeOf(req); return s === null || (!!wh && s.includes(wh)) }
+/** Phạm vi của module Sản xuất: kho được giao, HOẶC kho CHA của nó được giao — kho phụ (kho chế biến) là tổ nội bộ của
+ *  chính nhà máy đó, người coi nhà máy coi luôn kho chế biến (user chốt 14/11 qua bối cảnh Kho toàn cục = kho nhà máy). */
+async function inScope(req: Request, wh: string | null | undefined): Promise<boolean> {
+  const s = scopeOf(req)
+  if (s === null) return true
+  if (!wh) return false
+  if (s.includes(wh)) return true
+  const { data } = await db.from('Warehouse').select('parent_warehouse_id').eq('id', wh).maybeSingle()
+  return !!data?.parent_warehouse_id && s.includes(data.parent_warehouse_id)
+}
+/** Kho đang lọc + các kho phụ trực thuộc (lọc theo kho nhà máy ⇒ thấy kho chế biến của nó). */
+async function withChildren(wh: string): Promise<string[]> {
+  const { data } = await db.from('Warehouse').select('id').eq('parent_warehouse_id', wh).limit(300)
+  return [wh, ...(data ?? []).map(k => k.id)]
+}
+/** Mọi kho người gọi được thấy ở module này (được giao + kho phụ của chúng). null = toàn quốc. */
+async function scopeWithChildren(req: Request): Promise<string[] | null> {
+  const s = scopeOf(req)
+  if (s === null || !s.length) return s
+  const { data } = await db.from('Warehouse').select('id').in('parent_warehouse_id', s.slice(0, 300)).limit(1000)   // ≤300: phạm vi kho của MỘT người
+  return [...new Set([...s, ...(data ?? []).map(k => k.id)])]
+}
 const SCOPE_MSG = 'Ngoài phạm vi kho được giao'
 const jitter = (n: number) => new Promise(r => setTimeout(r, 20 + Math.floor(Math.random() * (60 + n * 40))))
 const actor = (req: Request) => ({ actor_id: resolveActorId(req), actor_name: resolveActorName(req) })
@@ -68,10 +89,10 @@ export async function listBatches(req: Request, res: Response) {
     const q = req.query as unknown as z.infer<typeof zBatchListQuery>
     let whIds: string[]
     if (q.warehouse_id) {
-      if (!inScope(req, q.warehouse_id)) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
-      whIds = [q.warehouse_id]
+      if (!(await inScope(req, q.warehouse_id))) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
+      whIds = await withChildren(q.warehouse_id)
     } else {
-      const s = scopeOf(req)
+      const s = await scopeWithChildren(req)
       if (s === null) {
         const { data } = await db.from('Warehouse').select('id').not('parent_warehouse_id', 'is', null).limit(1000)
         whIds = (data ?? []).map(w => w.id)
@@ -92,7 +113,7 @@ export const zNextCodeQuery = z.object({ warehouse_id: zText(1, 64), material_id
 export async function nextCode(req: Request, res: Response) {
   try {
     const q = req.query as unknown as z.infer<typeof zNextCodeQuery>
-    if (!inScope(req, q.warehouse_id)) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
+    if (!(await inScope(req, q.warehouse_id))) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
     const { data: m } = await db.from('Material').select('material_code, batch_prefix').eq('id', q.material_id).maybeSingle()
     if (!m) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy mã bán thành phẩm')
     const stem = batchCodeStem(m.batch_prefix || m.material_code, q.prod_date, q.machine_code)
@@ -109,7 +130,7 @@ export async function getBatch(req: Request, res: Response) {
       .eq('id', req.params.id).maybeSingle()
     if (error) return fail(res, error)
     if (!b) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy mẻ')
-    if (!inScope(req, b.warehouse_id)) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
+    if (!(await inScope(req, b.warehouse_id))) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
     const [{ data: cons }, { data: moves }, { data: lots }] = await Promise.all([
       db.from('batch_consumption')
         .select('*, material:Material!batch_consumption_material_id_fkey(material_code, short_name, base_unit, entry_unit, units_per_carton), entry:InventoryEntry!batch_consumption_entry_id_fkey(cartons_remaining, expiry_date, location:Location(location_code))')
@@ -132,7 +153,7 @@ export const zBatchCreate = z.object({
 export async function createBatch(req: Request, res: Response) {
   try {
     const body = req.body as z.infer<typeof zBatchCreate>
-    if (!inScope(req, body.warehouse_id)) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
+    if (!(await inScope(req, body.warehouse_id))) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
     const whErr = await productionWhError(body.warehouse_id)
     if (whErr) return fail(res, 422, 'NOT_PRODUCTION_WAREHOUSE', whErr)
     const { data: m } = await db.from('Material').select('id, material_code, batch_prefix, base_unit, is_active').eq('id', body.material_id).maybeSingle()
@@ -178,7 +199,7 @@ export async function updateBatch(req: Request, res: Response) {
     const body = req.body as z.infer<typeof zBatchUpdate>
     const b = await loadBatch(req.params.id)
     if (!b) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy mẻ')
-    if (!inScope(req, b.warehouse_id)) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
+    if (!(await inScope(req, b.warehouse_id))) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
     if (b.status === 'CANCELLED') return fail(res, 409, 'BATCH_CANCELLED', 'Mẻ đã huỷ — không sửa được')
     const patch: TablesUpdate<'production_batch'> = { updated_at: nowIso() }
     if (body.prod_date !== undefined) patch.prod_date = body.prod_date
@@ -219,7 +240,7 @@ export async function updateBatch(req: Request, res: Response) {
 async function setBatchStatus(req: Request, res: Response, from: string[], to: string, extra: Record<string, unknown> = {}) {
   const b = await loadBatch(req.params.id)
   if (!b) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy mẻ')
-  if (!inScope(req, b.warehouse_id)) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
+  if (!(await inScope(req, b.warehouse_id))) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
   if (!from.includes(b.status)) return fail(res, 409, 'BATCH_STATUS', `Mẻ đang ở trạng thái ${b.status}`)
   const { data, error } = await db.from('production_batch').update({ status: to, updated_at: nowIso(), ...extra })
     .eq('id', b.id).in('status', [...from]).select('*')   // CAS theo trạng thái (2–3 giá trị), không phải danh sách id
@@ -239,7 +260,7 @@ export async function cancelBatch(req: Request, res: Response) {
   try {
     const b = await loadBatch(req.params.id)
     if (!b) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy mẻ')
-    if (!inScope(req, b.warehouse_id)) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
+    if (!(await inScope(req, b.warehouse_id))) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
     const [{ count: nc }, { count: nm }] = await Promise.all([
       db.from('batch_consumption').select('id', { count: 'exact', head: true }).eq('batch_id', b.id).is('reversed_at', null),
       db.from('tank_movement').select('id', { count: 'exact', head: true }).eq('batch_id', b.id),
@@ -257,7 +278,7 @@ export async function setBatchQa(req: Request, res: Response) {
     const body = req.body as z.infer<typeof zBatchQa>
     const b = await loadBatch(req.params.id)
     if (!b) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy mẻ')
-    if (!inScope(req, b.warehouse_id)) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
+    if (!(await inScope(req, b.warehouse_id))) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
     if (b.status === 'CANCELLED') return fail(res, 409, 'BATCH_CANCELLED', 'Mẻ đã huỷ')
     if (body.qa_status === 'REJECTED' && !body.note?.trim()) return fail(res, 422, 'REASON', 'Loại lô phải ghi lý do')
     const a = actor(req)
@@ -277,7 +298,7 @@ export async function scanCheck(req: Request, res: Response) {
   try {
     const b = await loadBatch(req.params.id)
     if (!b) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy mẻ')
-    if (!inScope(req, b.warehouse_id)) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
+    if (!(await inScope(req, b.warehouse_id))) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
     const code = normalizeQR(String((req.query as { code: string }).code))
     const { data: rows, error } = await db.from('InventoryEntry')
       .select('id, pallet_code, material_id, cartons_remaining, cartons_imported, cartons_reserved, status, production_date, expiry_date, batch, qa_status_id, qa_status:QAStatus(code, name), location:Location(location_code), material:Material(material_code, short_name, base_unit, entry_unit, units_per_carton)')
@@ -303,7 +324,7 @@ export async function consumeScan(req: Request, res: Response) {
     const body = req.body as z.infer<typeof zConsumeScan>
     const b = await loadBatch(req.params.id)
     if (!b) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy mẻ')
-    if (!inScope(req, b.warehouse_id)) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
+    if (!(await inScope(req, b.warehouse_id))) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
     const { data: e } = await db.from('InventoryEntry').select('id, material:Material(base_unit, entry_unit, units_per_carton)').eq('id', body.entry_id).maybeSingle()
     if (!e) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy dòng tồn')
     const intErr = qtyIntegerError(body.qty, e.material as unknown as { base_unit: string | null; entry_unit: string | null; units_per_carton: number | null } | null)
@@ -324,7 +345,7 @@ export async function consumeLot(req: Request, res: Response) {
     const body = req.body as z.infer<typeof zConsumeLot>
     const b = await loadBatch(req.params.id)
     if (!b) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy mẻ')
-    if (!inScope(req, b.warehouse_id)) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
+    if (!(await inScope(req, b.warehouse_id))) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
     const { data: m } = await db.from('Material').select('base_unit, entry_unit, units_per_carton').eq('id', body.material_id).maybeSingle()
     if (!m) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy mã nguyên liệu')
     const intErr = qtyIntegerError(body.qty, m)
@@ -344,7 +365,7 @@ export async function reverseConsumption(req: Request, res: Response) {
   try {
     const { data: c } = await db.from('batch_consumption').select('id, batch:production_batch!batch_consumption_batch_id_fkey(warehouse_id)').eq('id', req.params.id).maybeSingle()
     if (!c) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy dòng rút')
-    if (!inScope(req, (c.batch as unknown as { warehouse_id: string } | null)?.warehouse_id)) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
+    if (!(await inScope(req, (c.batch as unknown as { warehouse_id: string } | null)?.warehouse_id))) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
     const { data, error } = await db.rpc('mes_consume_reverse', { p: { consumption_id: c.id, reason: (req.body as { reason: string }).reason, ...actor(req) } })
     if (error) return mesFail(res, error)
     return ok(res, data)
@@ -356,7 +377,7 @@ export const zStockQuery = z.object({ warehouse_id: zText(1, 64), material_id: z
 export async function stock(req: Request, res: Response) {
   try {
     const q = req.query as unknown as z.infer<typeof zStockQuery>
-    if (!inScope(req, q.warehouse_id)) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
+    if (!(await inScope(req, q.warehouse_id))) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
     const { data, error } = await db.rpc('mes_stock', { p_wh: q.warehouse_id, p_material: q.material_id ?? undefined, p_search: q.search ?? undefined, p_limit: 50 })
     if (error) return fail(res, error)
     return ok(res, data)
@@ -373,10 +394,10 @@ export const zTankListQuery = z.object({ warehouse_id: zText(1, 64).optional(), 
 export async function listTanks(req: Request, res: Response) {
   try {
     const q = req.query as unknown as z.infer<typeof zTankListQuery>
-    if (q.warehouse_id && !inScope(req, q.warehouse_id)) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
+    if (q.warehouse_id && !(await inScope(req, q.warehouse_id))) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
     let tq = db.from('production_tank').select('*, warehouse:Warehouse!production_tank_warehouse_id_fkey(code, name)').order('warehouse_id').order('code').limit(1000)
-    if (q.warehouse_id) tq = tq.eq('warehouse_id', q.warehouse_id)
-    else { const s = scopeOf(req); if (s !== null) { if (!s.length) return ok(res, []); tq = tq.in('warehouse_id', s.slice(0, 300)) } }   // ≤300: phạm vi kho của MỘT người
+    if (q.warehouse_id) tq = tq.in('warehouse_id', (await withChildren(q.warehouse_id)).slice(0, 301))   // kho + ≤300 kho phụ trực thuộc (withChildren đã limit 300)
+    else { const s = await scopeWithChildren(req); if (s !== null) { if (!s.length) return ok(res, []); tq = tq.in('warehouse_id', s.slice(0, 300)) } }   // ≤300: phạm vi kho của MỘT người
     if (q.include_inactive !== '1') tq = tq.eq('is_active', true)
     const { data: tanks, error } = await tq
     if (error) return fail(res, error)
@@ -409,7 +430,7 @@ export async function tankMovements(req: Request, res: Response) {
   try {
     const t = await loadTank(req.params.id)
     if (!t) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy bồn')
-    if (!inScope(req, t.warehouse_id)) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
+    if (!(await inScope(req, t.warehouse_id))) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
     const page = Number((req.query as { page?: number }).page ?? 1), size = 200
     const { data, error, count } = await db.from('tank_movement')
       .select('id, kind, qty, packing_run_id, ref_tank_id, reason, warning, created_by_name, created_at, batch:production_batch!tank_movement_batch_id_fkey(batch_code)', { count: 'exact' })
@@ -427,7 +448,7 @@ export const zTankCreate = z.object({
 export async function createTank(req: Request, res: Response) {
   try {
     const body = req.body as z.infer<typeof zTankCreate>
-    if (!inScope(req, body.warehouse_id)) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
+    if (!(await inScope(req, body.warehouse_id))) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
     const whErr = await productionWhError(body.warehouse_id)
     if (whErr) return fail(res, 422, 'NOT_PRODUCTION_WAREHOUSE', whErr)
     const code = normalizeBatchCode(body.code)
@@ -450,7 +471,7 @@ export async function updateTank(req: Request, res: Response) {
     const body = req.body as z.infer<typeof zTankUpdate>
     const t = await loadTank(req.params.id)
     if (!t) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy bồn')
-    if (!inScope(req, t.warehouse_id)) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
+    if (!(await inScope(req, t.warehouse_id))) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
     const { data: lots } = await db.from('tank_lot').select('qty_remaining').eq('tank_id', t.id).eq('status', 'ACTIVE').limit(500)
     const content = (lots ?? []).reduce((s, l) => s + Number(l.qty_remaining), 0)
     if (content > 0) {
@@ -477,7 +498,7 @@ export async function fillTank(req: Request, res: Response) {
     const body = req.body as z.infer<typeof zTankFill>
     const t = await loadTank(req.params.id)
     if (!t) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy bồn')
-    if (!inScope(req, t.warehouse_id)) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
+    if (!(await inScope(req, t.warehouse_id))) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
     const { data, error } = await db.rpc('mes_tank_fill', { p: { tank_id: t.id, batch_id: body.batch_id, qty: body.qty, ...actor(req) } })
     if (error) return mesFail(res, error)
     return ok(res, data)
@@ -491,7 +512,7 @@ export async function adjustTank(req: Request, res: Response) {
     const body = req.body as z.infer<typeof zTankAdjust>
     const t = await loadTank(req.params.id)
     if (!t) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy bồn')
-    if (!inScope(req, t.warehouse_id)) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
+    if (!(await inScope(req, t.warehouse_id))) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
     const { data, error } = await db.rpc('mes_tank_adjust', { p: { tank_id: t.id, level: body.level, reason: body.reason, ...actor(req) } })
     if (error) return mesFail(res, error)
     return ok(res, data)
@@ -505,7 +526,7 @@ export async function transferTank(req: Request, res: Response) {
     const body = req.body as z.infer<typeof zTankTransfer>
     const t = await loadTank(req.params.id)
     if (!t) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy bồn')
-    if (!inScope(req, t.warehouse_id)) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
+    if (!(await inScope(req, t.warehouse_id))) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
     const { data, error } = await db.rpc('mes_tank_transfer', { p: { from_tank_id: t.id, to_tank_id: body.to_tank_id, qty: body.qty, reason: body.reason ?? null, ...actor(req) } })
     if (error) return mesFail(res, error)
     return ok(res, data)
@@ -519,7 +540,7 @@ export async function discardTank(req: Request, res: Response) {
     const body = req.body as z.infer<typeof zTankDiscard>
     const t = await loadTank(req.params.id)
     if (!t) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy bồn')
-    if (!inScope(req, t.warehouse_id)) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
+    if (!(await inScope(req, t.warehouse_id))) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
     const { data, error } = await db.rpc('mes_tank_take', { p: { tank_id: t.id, qty: body.qty, kind: 'DISCARD', reason: body.reason, ...actor(req) } })
     if (error) return mesFail(res, error)
     return ok(res, data)
@@ -532,7 +553,7 @@ export const zTanksForRunQuery = z.object({ warehouse_id: zText(1, 64) })
 export async function tanksForRun(req: Request, res: Response) {
   try {
     const { warehouse_id } = req.query as unknown as z.infer<typeof zTanksForRunQuery>
-    if (!inScope(req, warehouse_id)) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
+    if (!(await inScope(req, warehouse_id))) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
     const { data: kids } = await db.from('Warehouse').select('id').eq('parent_warehouse_id', warehouse_id).limit(300)
     const whs = [warehouse_id, ...(kids ?? []).map(k => k.id)]
     const { data, error } = await db.from('production_tank').select('id, code, name, unit, capacity, warehouse_id, warehouse:Warehouse!production_tank_warehouse_id_fkey(name)')
@@ -560,11 +581,7 @@ export const zGenealogyQuery = z.object({ kind: z.enum(['BATCH', 'FG_PALLET', 'R
 export async function genealogy(req: Request, res: Response) {
   try {
     const q = req.query as unknown as z.infer<typeof zGenealogyQuery>
-    let whIds: string[] | null = scopeOf(req)
-    if (whIds !== null && whIds.length) {
-      const { data: kids } = await db.from('Warehouse').select('id').in('parent_warehouse_id', whIds.slice(0, 300)).limit(1000)   // ≤300: phạm vi kho của MỘT người
-      whIds = [...new Set([...whIds, ...(kids ?? []).map(k => k.id)])]
-    }
+    const whIds = await scopeWithChildren(req)
     const { data, error } = await db.rpc('mes_genealogy', { p_kind: q.kind, p_value: normalizeQR(q.value), p_wh_ids: whIds ?? undefined, p_limit: 50 })
     if (error) return mesFail(res, error)
     return ok(res, data)

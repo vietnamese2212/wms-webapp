@@ -84,6 +84,7 @@ const EMPTY_FORM = {
   carton_height_mm: '',
   max_stack_layers: '',
   loose_stack_layers: '',
+  tank_hold_hours: '',
   old_code: '',
   batch_prefix: '',
   notes: '',
@@ -320,6 +321,7 @@ export default function Materials() {
       carton_height_mm:     formatDecimalForInput(mat.carton_height_mm, decSep),
       max_stack_layers:     mat.max_stack_layers    != null ? String(mat.max_stack_layers)    : '',
       loose_stack_layers:   mat.loose_stack_layers  != null ? String(mat.loose_stack_layers)  : '',
+      tank_hold_hours:      mat.tank_hold_hours     != null ? String(mat.tank_hold_hours)     : '',
       old_code:             mat.old_code ?? '',
       batch_prefix:         mat.batch_prefix ?? '',
       notes:                mat.notes ?? '',
@@ -376,6 +378,7 @@ export default function Materials() {
         carton_height_mm:              parseDecimalInput(form.carton_height_mm, decSep),
         max_stack_layers:              form.max_stack_layers ? Number(form.max_stack_layers) : null,
         loose_stack_layers:            form.loose_stack_layers ? Number(form.loose_stack_layers) : null,
+        tank_hold_hours:               form.tank_hold_hours ? Number(form.tank_hold_hours) : null,
         stack_on_top:                  stackOnTop,
         old_code:                      form.old_code.trim() || undefined,
         batch_prefix:                  form.batch_prefix.trim().toUpperCase() || undefined,
@@ -874,6 +877,7 @@ export default function Materials() {
                     <DRow label="Chồng khi xếp xá"   value={detailMat.loose_stack_layers != null ? `${detailMat.loose_stack_layers} lớp`
                       : <span className="text-slate-400">Theo số lớp tối đa: {detailMat.max_stack_layers != null ? `${detailMat.max_stack_layers} lớp` : '∞'}</span>} />
                     <DRow label="Xếp trên hàng khác" value={detailMat.stack_on_top ? 'Có (hàng nhẹ được lên nóc)' : 'Không'} />
+                    {detailMat.tank_hold_hours != null && <DRow label="Hạn lưu bồn" value={`${detailMat.tank_hold_hours} giờ`} />}
                   </div>
                 </div>
 
@@ -1208,6 +1212,14 @@ export default function Materials() {
               <Input type="number" min={1} className="col-span-2 h-7 text-xs w-24" value={form.loose_stack_layers}
                 onChange={e => setField('loose_stack_layers', e.target.value)}
                 placeholder={`Theo số lớp tối đa: ${form.max_stack_layers || '∞'}`} />
+            </div>
+
+            {/* MES 14/11: hạn lưu bồn của mã BÁN THÀNH PHẨM — quá hạn chỉ cảnh báo khi rút cho đóng gói */}
+            <div className="grid grid-cols-3 items-center gap-2">
+              <Label className="text-xs text-right">Hạn lưu bồn (giờ)</Label>
+              <Input type="number" min={1} max={8760} className="col-span-2 h-7 text-xs w-24" value={form.tank_hold_hours}
+                onChange={e => setField('tank_hold_hours', e.target.value)} placeholder="Không giới hạn"
+                title="Chỉ cho mã bán thành phẩm vào bồn: quá số giờ này kể từ lúc nạp ⇒ cảnh báo khi rút cho đóng gói" />
             </div>
 
             {/* HSD */}

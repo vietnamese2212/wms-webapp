@@ -44,6 +44,8 @@ import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { useScanCodeTypes } from '@/hooks/useScanCodeTypes'
 import { TableEmptyRow } from '@/components/shared/TableEmptyRow'
+import { useTanksForRun } from '@/api/productionHooks'
+import { parseVnNumber } from '@/utils/vnNumber'
 
 const todayVN = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
 // ── Filter "Tháng sản xuất" (user 13/08 — dặn "chọn cẩn thận") ───────────────────
@@ -1091,6 +1093,10 @@ function OpenRunSheet({ whOpts, onDone, onError }: {
   const [machine, setMachine] = useState('')
   const [startTime, setStartTime] = useState(nowHHMM())
   const [note, setNote] = useState('')
+  // MES 14/11: bồn bán thành phẩm của kho này / kho chế biến trực thuộc — trống = trang không gắn bồn (như cũ)
+  const [tankId, setTankId] = useState('')
+  const runTanks = useTanksForRun(whId || undefined).data ?? []
+  useEffect(() => { if (tankId && !runTanks.some(t => t.id === tankId)) setTankId('') }, [runTanks, tankId])
   // DANH MỤC MÁY THEO KHO (user 13/08): kho có khai máy → PHẢI chọn trong danh mục (BE cũng chặn 422);
   // kho chưa khai → điền tự do như cũ. Đổi kho → máy đã chọn không thuộc danh mục kho mới thì xóa.
   const { data: whMachines } = useMachines(whId || undefined)
@@ -1119,7 +1125,7 @@ function OpenRunSheet({ whOpts, onDone, onError }: {
     openMut.mutate({
       warehouse_id: whId, run_date: date, shift: shift || null, cycle: cycle.trim(),
       material_codes: sel.map(s => s.code), material_id: sel[0]?.id ?? null, machine_code: machine.trim(),
-      start_at: startIso, note: note.trim() || null,
+      start_at: startIso, note: note.trim() || null, tank_id: tankId || null,
     }, {
       onSuccess: () => onDone(),
       onError: (e) => onError(apiMsg(e, 'Không mở được trang sổ — thử lại')),
@@ -1206,6 +1212,14 @@ function OpenRunSheet({ whOpts, onDone, onError }: {
             </>
           )}
         </div>
+        {runTanks.length > 0 && (
+          <div>
+            <p className="text-xs font-medium text-slate-700 mb-1">Rút bán thành phẩm từ bồn</p>
+            <SingleSelect options={[{ value: '', label: '— Không gắn bồn —' }, ...runTanks.map(t => ({ value: t.id, label: t.code, sub: `${t.warehouse?.name ?? ''} · ${t.unit}` }))]}
+              value={tankId} onChange={setTankId} placeholder="Không gắn bồn" triggerClassName="w-full h-9" />
+            <p className="text-[10px] text-slate-400 mt-0.5">Gắn bồn để nối pallet thành phẩm với mẻ chế biến (truy xuất lô); lượng rút khai lúc bấm Giờ kết thúc</p>
+          </div>
+        )}
         <div>
           <p className="text-xs font-medium text-slate-700 mb-1">Ghi chú</p>
           <Input value={note} onChange={e => setNote(e.target.value)} className="h-9 text-sm" />
@@ -1215,11 +1229,29 @@ function OpenRunSheet({ whOpts, onDone, onError }: {
   )
 }
 
+/** Bồn của trang sổ + lượng đã rút theo từng mẻ (MES 14/11). Bồn nhiều mẻ ⇒ một lần khai rút ra nhiều dòng (chia theo tỷ lệ). */
+function RunTankInfo({ run }: { run: PackingRun }) {
+  const draws = run.tank_draws ?? []
+  const unit = run.tank?.unit ?? ''
+  const total = draws.reduce((s, d) => s - Number(d.qty), 0)
+  const tip = draws.map(d => `${d.batch?.batch_code ?? ''}: ${Number(-d.qty).toLocaleString('vi-VN')} ${unit}${d.warning ? ` (${d.warning})` : ''}`).join(' · ')
+  return (
+    <span title={tip || 'Chưa khai lượng rút'}>
+      <span className="font-mono font-semibold">{run.tank?.code}</span>
+      {draws.length
+        ? <> · rút {total.toLocaleString('vi-VN', { maximumFractionDigits: 3 })} {unit} từ {[...new Set(draws.map(d => d.batch?.batch_code))].join(', ')}</>
+        : <span className="text-amber-700"> · chưa khai lượng rút</span>}
+    </span>
+  )
+}
+
 // ─── Sheet GIỜ KẾT THÚC — đóng trang sổ + TÍNH TỔNG SẢN LƯỢNG ────────────────
 function CloseRunSheet({ run, onDone, onError }: { run: PackingRun; onDone: () => void; onError: (m: string) => void }) {
   const closeMut = useClosePackingRun()
   const [date, setDate] = useState(todayVN())
   const [time, setTime] = useState(nowHHMM())
+  const [tankQty, setTankQty] = useState('')
+  const tankQtyN = tankQty.trim() ? parseVnNumber(tankQty) : null
 
   function save() {
     const endIso = hhmmToIso(date, time)
@@ -1228,8 +1260,13 @@ function CloseRunSheet({ run, onDone, onError }: { run: PackingRun; onDone: () =
     if (endIso < run.start_at) {
       onError(`Giờ kết thúc đang TRƯỚC giờ bắt đầu (bắt đầu ${fmtDT(run.start_at)}) — sản xuất qua ngày mới thì chỉnh Ngày kết thúc`); return
     }
-    closeMut.mutate({ id: run.id, end_at: endIso }, {
-      onSuccess: () => onDone(),
+    if (run.tank_id && tankQty.trim() && (tankQtyN == null || tankQtyN < 0)) { onError('Lượng rút từ bồn phải là số không âm'); return }
+    closeMut.mutate({ id: run.id, end_at: endIso, tank_qty: run.tank_id ? tankQtyN : null }, {
+      onSuccess: (r) => {
+        // cảnh báo lúc rút (lô chưa QA thả · quá hạn lưu bồn) — đã ghi vào sổ bồn, báo lại cho người đóng trang
+        if (r.tank_warnings?.length) toast({ title: 'Đã đóng trang — lưu ý về bồn', description: r.tank_warnings.join(' · ') })
+        onDone()
+      },
       onError: (e) => onError(apiMsg(e, 'Không đóng được trang sổ — thử lại')),
     })
   }
@@ -1261,6 +1298,13 @@ function CloseRunSheet({ run, onDone, onError }: { run: PackingRun; onDone: () =
             <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
             <span>Còn <b>{run.pallet_open}</b> pallet đang MỞ — vẫn tính vào tổng theo số chuẩn tem; nên đóng từng pallet trước cho chuẩn.</span>
           </p>
+        )}
+        {run.tank_id && (
+          <div>
+            <p className="text-xs font-medium text-slate-700 mb-1">Lượng bán thành phẩm đã rút từ bồn{run.tank ? ` ${run.tank.code} (${run.tank.unit})` : ''}</p>
+            <Input value={tankQty} onChange={e => setTankQty(e.target.value)} inputMode="decimal" placeholder="VD 4.500" className="h-9 text-sm tabular-nums" />
+            <p className="text-[10px] text-slate-400 mt-0.5">Bồn chứa nhiều mẻ thì lượng rút chia cho các mẻ theo tỷ lệ còn lại; để trống = chưa khai (truy xuất lô của trang sẽ thiếu mẻ)</p>
+          </div>
         )}
         <div className="grid grid-cols-2 gap-2">
           <div>
@@ -1638,6 +1682,8 @@ function RunDetailSheet({ id, h, onDone }: { id: string; h: RunTableHandlers; on
             <Info label="Máy" value={<span className="font-mono font-semibold">{run.machine_code ?? '—'}</span>} />
             <Info label="Giờ bắt đầu" value={<span className="tabular-nums">{fmtDT(run.start_at)}</span>} />
             <Info label="Giờ kết thúc" value={<span className="tabular-nums">{run.end_at ? fmtDT(run.end_at) : (run.status === 'OPEN' ? `chưa bấm · mở ${elapsedOf(run.start_at)}` : '—')}</span>} />
+            {/* MES 14/11: trang rút bán thành phẩm từ bồn — lượng rút theo từng mẻ (bồn nhiều mẻ chia theo tỷ lệ) */}
+            {run.tank && <Info label="Bồn" value={<RunTankInfo run={run} />} />}
             {/* 1 mã → hiện ĐÚNG "N thùng + M hộp"; nhiều mã → tổng quy đổi + tách theo từng mã trong tooltip */}
             <Info label="Tổng sản lượng" value={
               <b className="tabular-nums" title={codes.length > 1 ? codes.map(c => `${c}: ${qtyLabel(perMat.get(c) ?? 0, matUnit.get(c))}`).join(' · ') : QTY_CONVERTED_TIP}>

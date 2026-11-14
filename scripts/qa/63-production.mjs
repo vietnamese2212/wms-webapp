@@ -243,6 +243,10 @@ try {
   const rowB1 = (lst.j?.data?.rows ?? []).find(r => r.id === B1.id)
   check('9d. Danh sách mẻ: dòng + ô tổng một lời gọi; mẻ 1 có NVL + đã nạp', lst.s === 200 && num(lst.j?.data?.summary?.total) >= 3 && num(rowB1?.rm_lines) >= 2 && num(rowB1?.filled) === 700,
     JSON.stringify({ s: lst.s, sum: lst.j?.data?.summary, row: rowB1 && { rm: rowB1.rm_lines, f: rowB1.filled } }))
+  const lstP = await api(`/wms/production/batches?warehouse_id=${WP}&pageSize=50`)
+  const tP = await api(`/wms/production/tanks?warehouse_id=${WP}`)
+  check('9f. Lọc theo KHO NHÀ MÁY ⇒ thấy mẻ + bồn của các kho chế biến trực thuộc', lstP.s === 200 && (lstP.j?.data?.rows ?? []).some(r => r.id === B1.id)
+    && (tP.j?.data ?? []).some(t => t.id === T1.id) && (tP.j?.data ?? []).some(t => t.id === T3.id), `http=${lstP.s}/${tP.s} n=${lstP.j?.data?.rows?.length}/${tP.j?.data?.length}`)
   const cx3 = await api(`/wms/production/batches/${b3.id}/cancel`, 'POST', {})
   check('9e. Huỷ mẻ chưa rút / chưa nạp ⇒ 200', cx3.s === 200 && cx3.j?.data?.status === 'CANCELLED', `http=${cx3.s}`)
 } finally {

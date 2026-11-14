@@ -34,6 +34,16 @@ Nhà máy sữa: NVL → **mẻ chế biến** → bán thành phẩm (BTP) tron
 - Lỗi nghiệp vụ từ hàm DB: `MESERR:<MÃ>|<câu>` ⇒ controller dịch 404 / 422 / 409 `MES_<MÃ>`.
 - Chuỗi truy xuất lô ⇒ KHÔNG đăng ký lưu trữ / xoá theo hạn.
 
+## Màn hình (14/11)
+- **Mẻ chế biến** `/wms/production` (`ProductionBatches.tsx`): phân trang server, lọc ngày SX · kho · trạng thái · QA; lọc theo kho NHÀ MÁY gồm các kho chế biến trực thuộc. Nút chính "Mở mẻ" (`BatchFormSheet`: mã lô gợi ý tự điền, sửa được).
+- **Chi tiết mẻ** `/wms/production/:id`: nút chính "Rút NVL" (`ConsumeSheet`: Quét tem — súng PDA chỉ nghe khi đang chờ quét / camera / gõ; Không có tem — chọn mã đang có tồn → bảng lô HSD sớm lên đầu); Nạp bồn · QA thả / giữ / loại · Sửa · Đóng / Mở lại / Huỷ mẻ; bảng NVL đã rút (huỷ dòng có lý do), Ra bồn, Sổ nạp / rút.
+- **Bồn** `/wms/production/tanks`: mỗi dòng một bồn (% đầy là con số có màu, mẻ trong bồn bấm mở mẻ, hạn lưu, QA); thao tác gom một nút ⋮ (Nạp · Chuyển · Điều chỉnh · Xả · Sổ bồn · Sửa).
+- **Sổ đóng gói:** form Mở trang sổ có ô "Rút bán thành phẩm từ bồn" (chỉ hiện khi kho có bồn); Giờ kết thúc có ô "Lượng đã rút từ bồn"; chi tiết trang hiện bồn + lượng rút theo mẻ.
+- **Truy xuất lô:** nút "Sản xuất" → `GenealogySheet` (tem thành phẩm / tem NVL / mã lô BTP); bấm tem thành phẩm ⇒ điền bộ lọc Xuôi để truy tiếp tới khách / xe.
+- **Mã hàng:** ô "Hạn lưu bồn (giờ)". **Cài đặt WMS:** nhóm "Sản xuất — rút bán thành phẩm khỏi bồn" (chỉ ở kho phụ, 2 tầng Kho + Loại kho). **Sổ pallet:** nhãn "Rút vào mẻ chế biến" / "Huỷ rút vào mẻ".
+- **Phạm vi module:** kho được giao HOẶC kho cha của nó được giao (kho chế biến là tổ nội bộ của nhà máy) — `inScope` async trong controller, FE `useProductionWarehouses` cùng luật.
+- Đã đo 1280 / 390 / 360: console 0 lỗi, `<main>` không tràn ngang (chi tiết mẻ từng tràn 4 px do ⓘ ở ô cuối dải tổng — vá ở `SummaryBand`, C4 LẶP 14/11).
+
 ## Actions
 
 view · **open_batch** = mở / sửa / đóng / mở lại / huỷ mẻ · **consume** = rút NVL vào mẻ · **reverse** = huỷ dòng rút · **qa_release** = QA giữ / thả / loại lô BTP · **manage_tank** = danh mục bồn · **tank_ops** = nạp / chuyển / điều chỉnh / xả bồn · **export** = Xuất Excel danh sách mẻ (FE). Cấp quyền theo năng lực (migration `20261114`): `packing.open_run` ⇒ view/open_batch/consume/tank_ops · `packing.record` ⇒ view/consume · `inventory.qa_update` ⇒ view/qa_release · `wms_settings.manage_machine` ⇒ view/manage_tank.

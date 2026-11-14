@@ -55,7 +55,9 @@ export function SummaryBand({ tiles, className, compact, inline }: { tiles: Band
   // chỗ thở (Nhập kho 7 ô: dòng dữ liệu đầu tiên từ y=382 xuống còn ~343).
   const tight = tiles.length > cols * 2
   return (
-    <div className={`grid ${mCols} [&>div:last-child]:border-r-0 sm:flex sm:divide-x sm:divide-white/15 bg-sky-800 text-white sm:overflow-x-auto no-scrollbar shrink-0 ${className ?? ''}`}>
+    // overflow-hidden ở điện thoại (14/11, đo chi tiết mẻ 390 px): nút ⓘ có vùng chạm 44 px lề âm — ở ô SÁT MÉP PHẢI nó thò ra
+    // và đẩy CẢ TRANG trượt ngang 4 px (cùng lớp V10 bên app Vận tải). Cắt ở dải thì vùng chạm chỉ hụt phần ngoài màn; ⓘ mở tấm đáy qua portal nên không bị cắt.
+    <div className={`grid ${mCols} [&>div:last-child]:border-r-0 sm:flex sm:divide-x sm:divide-white/15 bg-sky-800 text-white overflow-hidden sm:overflow-x-auto no-scrollbar shrink-0 ${className ?? ''}`}>
       {tiles.map((t, i) => (
         // Màn nhỏ (PDA/phone) tự COMPACT để nhường chỗ cho bảng; desktop giữ cỡ đầy. compact=true ép nhỏ mọi cỡ.
         // flex-col + justify-between: nhãn dài XUỐNG DÒNG trên điện thoại (không cắt cụt) mà các CON SỐ

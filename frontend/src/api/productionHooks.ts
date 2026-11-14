@@ -167,7 +167,7 @@ function useProdMutation<TVars, TRes = unknown>(fn: (v: TVars) => Promise<TRes>)
   return useMutation({
     mutationFn: fn,
     onSettled: () => {
-      for (const k of [K.batches, K.batch, K.stock, K.tanks, K.moves, ['prod-recipes'], ['prod-recipe'], ['prod-next-code'], ['prod-genealogy'], ['inventory-entries'], ['inventory-summary'], ['pallet-ledger'], ['packing-run'], ['packing-runs'], ['packing-run-board']])
+      for (const k of [K.batches, K.batch, K.stock, K.tanks, K.moves, ['prod-recipes'], ['prod-recipe'], ['prod-shift-reports'], ['prod-shift-report'], ['prod-next-code'], ['prod-genealogy'], ['inventory-entries'], ['inventory-summary'], ['pallet-ledger'], ['packing-run'], ['packing-runs'], ['packing-run-board']])
         void qc.invalidateQueries({ queryKey: k })
     },
   })
@@ -222,6 +222,36 @@ export function useRecipe(materialId: string | undefined) {
 }
 export const useSaveRecipe = () => useProdMutation(({ materialId, ...b }: { materialId: string; base_qty: number; note: string | null; is_active: boolean; lines: { material_id: string; qty: number }[] }) =>
   (async () => (await apiClient.put(`/wms/production/recipes/${materialId}`, b)).data.data as { id: string; lines: number })())
+// ── Báo cáo sử dụng NVL theo ca ──
+export interface ShiftReportHead {
+  id: string; warehouse_id: string; report_date: string; shift: string; from_at: string; to_at: string | null; status: 'OPEN' | 'CLOSED'
+  note: string | null; opened_by_name: string | null; closed_by_name: string | null; created_at: string
+}
+export interface ShiftRow extends MatUnits {
+  material_id: string; material_code: string; material_name: string | null
+  opening: number; opening_src: 'COUNT' | 'BOOK'; received: number; used: number; book: number; actual: number | null
+  by_batch: Record<string, number>
+}
+export interface ShiftReport {
+  report: ShiftReportHead
+  batches: { id: string; batch_code: string; cycle: string | null; shift: string | null; machine_code: string | null; material_code: string; material_name: string | null }[]
+  rows: ShiftRow[]
+}
+export function useShiftReports(warehouseId: string | undefined) {
+  return useQuery({
+    queryKey: ['prod-shift-reports', warehouseId], enabled: !!warehouseId, staleTime: 15_000,
+    queryFn: async () => (await apiClient.get('/wms/production/shift-reports', { params: { warehouse_id: warehouseId } })).data.data as ShiftReportHead[],
+  })
+}
+export function useShiftReport(id: string | undefined) {
+  return useQuery({
+    queryKey: ['prod-shift-report', id], enabled: !!id, staleTime: 10_000, placeholderData: keepPreviousData,
+    queryFn: async () => (await apiClient.get(`/wms/production/shift-reports/${id}`)).data.data as ShiftReport,
+  })
+}
+export const useOpenShift = () => useProdMutation((b: { warehouse_id: string; report_date: string; shift: string }) => post<{ id: string }>('/wms/production/shift-reports', b))
+export const useSaveShift = () => useProdMutation(({ id, ...b }: { id: string; items: { material_id: string; qty_actual: number | null }[]; note?: string | null; close?: boolean }) =>
+  (async () => (await apiClient.put(`/wms/production/shift-reports/${id}`, b)).data.data as ShiftReport)())
 export const useBatchStatus = () => useProdMutation(({ id, action }: { id: string; action: 'close' | 'reopen' | 'cancel' }) => post(`/wms/production/batches/${id}/${action}`))
 export const useBatchQa = () => useProdMutation(({ id, qa_status, note }: { id: string; qa_status: BatchQa; note?: string }) => post(`/wms/production/batches/${id}/qa`, { qa_status, note }))
 export const useConsumeScan = () => useProdMutation(({ batchId, entry_id, qty }: { batchId: string; entry_id: string; qty: number }) =>

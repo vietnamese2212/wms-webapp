@@ -119,10 +119,12 @@ const TABLE_QUERY_MAP: Record<string, string[][]> = {
   packing_runs:             [['packing-run-board'], ['packing-runs'], ['packing-run']],
   // Sản xuất — MES gđ1 (14/11): mẻ · sổ tiêu hao (rút NVL trừ InventoryEntry — bảng đó tự bắn tín hiệu tồn) · bồn · tồn trong bồn · sổ bồn
   production_batch:         [['prod-batches'], ['prod-batch'], ['prod-tanks'], ['prod-genealogy']],
-  batch_consumption:        [['prod-batches'], ['prod-batch'], ['prod-stock'], ['prod-genealogy'], ['pallet-ledger']],
+  batch_consumption:        [['prod-batches'], ['prod-batch'], ['prod-stock'], ['prod-genealogy'], ['pallet-ledger'], ['prod-shift-report']],
   production_tank:          [['prod-tanks'], ['prod-tanks-for-run']],
   tank_lot:                 [['prod-tanks'], ['prod-batch'], ['prod-batches']],
   batch_requirement:        [['prod-batch']],
+  production_shift_report:  [['prod-shift-reports'], ['prod-shift-report']],
+  production_shift_count:   [['prod-shift-report']],
   production_recipe:        [['prod-recipes'], ['prod-recipe']],
   production_recipe_line:   [['prod-recipe']],
   tank_movement:            [['prod-tank-moves'], ['prod-batch'], ['prod-genealogy'], ['packing-run']],

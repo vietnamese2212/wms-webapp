@@ -67,6 +67,7 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [
       { to: '/wms/production',       icon: Factory,   label: 'Mẻ chế biến', module: 'production' },
       { to: '/wms/production/tanks', icon: Container, label: 'Bồn',         module: 'production' },
+      { to: '/wms/production/usage-report', icon: ClipboardList, label: 'Báo cáo NVL', module: 'production' },
       { to: '/wms/production/recipes', icon: ListChecks, label: 'Định mức',    module: 'production' },
       { to: '/wms/production/settings', icon: Settings2, label: 'Cài đặt MES', module: 'production' },
     ],

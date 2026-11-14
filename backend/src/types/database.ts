@@ -1,5 +1,5 @@
 // FILE SINH TỰ ĐỘNG — `node scripts/gen-db-types.mjs` (từ information_schema STAGING). KHÔNG sửa tay.
-// Sinh lúc 2026-11-14T10:21:27.115Z · 119 bảng/view · 231 hàm · 0 enum
+// Sinh lúc 2026-11-14T10:37:02.705Z · 121 bảng/view · 235 hàm · 0 enum
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[]
 
 export type Database = {
@@ -5435,6 +5435,99 @@ export type Database = {
         }
         Relationships: []
       }
+      production_shift_count: {
+        Row: {
+          id: string
+          report_id: string
+          material_id: string
+          qty_actual: number | null
+          qty_opening: number | null
+          opening_src: string | null
+          qty_received: number | null
+          qty_used: number | null
+          qty_book: number | null
+          note: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id: string
+          report_id: string
+          material_id: string
+          qty_actual?: number | null
+          qty_opening?: number | null
+          opening_src?: string | null
+          qty_received?: number | null
+          qty_used?: number | null
+          qty_book?: number | null
+          note?: string | null
+          created_at?: string
+          updated_at: string
+        }
+        Update: {
+          id?: string
+          report_id?: string
+          material_id?: string
+          qty_actual?: number | null
+          qty_opening?: number | null
+          opening_src?: string | null
+          qty_received?: number | null
+          qty_used?: number | null
+          qty_book?: number | null
+          note?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      production_shift_report: {
+        Row: {
+          id: string
+          warehouse_id: string
+          report_date: string
+          shift: string
+          from_at: string
+          to_at: string | null
+          status: string
+          note: string | null
+          opened_by_name: string | null
+          closed_by: string | null
+          closed_by_name: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id: string
+          warehouse_id: string
+          report_date: string
+          shift: string
+          from_at: string
+          to_at?: string | null
+          status?: string
+          note?: string | null
+          opened_by_name?: string | null
+          closed_by?: string | null
+          closed_by_name?: string | null
+          created_at?: string
+          updated_at: string
+        }
+        Update: {
+          id?: string
+          warehouse_id?: string
+          report_date?: string
+          shift?: string
+          from_at?: string
+          to_at?: string | null
+          status?: string
+          note?: string | null
+          opened_by_name?: string | null
+          closed_by?: string | null
+          closed_by_name?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       production_tank: {
         Row: {
           id: string
@@ -7027,6 +7120,22 @@ export type Database = {
         Returns: Json
       }
       mes_run_redraw: {
+        Args: { p: Json | null }
+        Returns: Json
+      }
+      mes_shift_calc: {
+        Args: { p_report_id: string | null }
+        Returns: Record<string, unknown>[]
+      }
+      mes_shift_open: {
+        Args: { p: Json | null }
+        Returns: Json
+      }
+      mes_shift_report: {
+        Args: { p_report_id: string | null }
+        Returns: Json
+      }
+      mes_shift_save: {
         Args: { p: Json | null }
         Returns: Json
       }

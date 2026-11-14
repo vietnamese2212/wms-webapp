@@ -738,6 +738,69 @@ export async function putSettings(req: Request, res: Response) {
   } catch (e) { return failAny(res, e) }
 }
 
+// ─── BÁO CÁO SỬ DỤNG NGUYÊN VẬT LIỆU THEO CA (thay biểu mẫu giấy NB-QA-BM-CB.01 — 14/11 đêm) ───────────────────────
+// Một báo cáo = một ca của một kho chế biến. Số tự tính từ các lần cấp nguyên liệu cho mẻ; người chỉ nhập TỒN CUỐI THỰC TẾ rồi chốt.
+export const zShiftListQuery = z.object({ warehouse_id: zText(1, 64) })
+export async function listShiftReports(req: Request, res: Response) {
+  try {
+    const { warehouse_id } = req.query as unknown as z.infer<typeof zShiftListQuery>
+    if (!(await inScope(req, warehouse_id))) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
+    const { data, error } = await db.from('production_shift_report')
+      .select('id, warehouse_id, report_date, shift, from_at, to_at, status, note, opened_by_name, closed_by_name, created_at')
+      .eq('warehouse_id', warehouse_id).order('from_at', { ascending: false }).limit(120)
+    if (error) return fail(res, error)
+    return ok(res, data ?? [])
+  } catch (e) { return failAny(res, e) }
+}
+export const zShiftOpen = z.object({ warehouse_id: zText(1, 64), report_date: zDay, shift: zText(1, 40) })
+export async function openShiftReport(req: Request, res: Response) {
+  try {
+    const body = req.body as z.infer<typeof zShiftOpen>
+    if (!(await inScope(req, body.warehouse_id))) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
+    const whErr = await productionWhError(body.warehouse_id)
+    if (whErr) return fail(res, 422, 'NOT_PRODUCTION_WAREHOUSE', whErr)
+    const { data, error } = await db.rpc('mes_shift_open', { p: { ...body, shift: body.shift.trim(), actor_name: actor(req).actor_name } })
+    if (error) return mesFail(res, error)
+    return ok(res, data, 201)
+  } catch (e) { return failAny(res, e) }
+}
+async function shiftWh(id: string): Promise<string | null> {
+  const { data } = await db.from('production_shift_report').select('warehouse_id').eq('id', id).maybeSingle()
+  return data?.warehouse_id ?? null
+}
+export async function getShiftReport(req: Request, res: Response) {
+  try {
+    const wh = await shiftWh(req.params.id)
+    if (!wh) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy báo cáo ca')
+    if (!(await inScope(req, wh))) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
+    const { data, error } = await db.rpc('mes_shift_report', { p_report_id: req.params.id })
+    if (error) return mesFail(res, error)
+    return ok(res, data)
+  } catch (e) { return failAny(res, e) }
+}
+// PUT /wms/production/shift-reports/:id — lưu số đếm tồn cuối thực tế (nháp) hoặc CHỐT ca (close = true ⇒ chụp mọi con số, không sửa lại được)
+export const zShiftSave = z.object({
+  items: z.array(z.object({ material_id: zText(1, 64), qty_actual: z.number().min(0).max(100_000_000).nullable() })).max(500),
+  note: zText(0, 1000).nullable().optional(), close: z.boolean().optional(),
+})
+export async function saveShiftReport(req: Request, res: Response) {
+  try {
+    const wh = await shiftWh(req.params.id)
+    if (!wh) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy báo cáo ca')
+    if (!(await inScope(req, wh))) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
+    const body = req.body as z.infer<typeof zShiftSave>
+    if (new Set(body.items.map(i => i.material_id)).size !== body.items.length) return fail(res, 422, 'DUPLICATE', 'Một nguyên liệu bị khai hai lần')
+    const a = actor(req)
+    const { error } = await db.rpc('mes_shift_save', { p: {
+      report_id: req.params.id, items: body.items.map(i => ({ material_id: i.material_id, qty_actual: i.qty_actual == null ? null : round3(i.qty_actual) })),
+      ...(body.note !== undefined ? { note: body.note } : {}), close: body.close === true, actor_id: a.actor_id, actor_name: a.actor_name,
+    } })
+    if (error) return mesFail(res, error)
+    const { data } = await db.rpc('mes_shift_report', { p_report_id: req.params.id })
+    return ok(res, data)
+  } catch (e) { return failAny(res, e) }
+}
+
 // GET /wms/production/tanks-for-run?warehouse_id= — bồn chọn được cho trang sổ đóng gói ở kho này:
 // bồn của chính kho + bồn của các KHO PHỤ trực thuộc (nhà máy đóng gói rút từ bồn ở kho chế biến của mình)
 export const zTanksForRunQuery = z.object({ warehouse_id: zText(1, 64) })

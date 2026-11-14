@@ -369,6 +369,7 @@ export const MODULES = {
       export:      'Xuất Excel danh sách mẻ',
       configure:   'Cài đặt MES (rút bồn còn lô chờ QA · hạn lưu bồn theo mã)',
       manage_recipe: 'Khai ĐỊNH MỨC nguyên liệu của mã bán thành phẩm (trang Định mức)',
+      shift_report: 'Mở / chốt BÁO CÁO SỬ DỤNG NVL theo ca (nhập tồn cuối thực tế)',
     },
   },
   materials: {

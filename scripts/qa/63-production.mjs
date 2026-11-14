@@ -13,6 +13,8 @@
 //   [6t] Cài đặt MES là cửa ghi DUY NHẤT của công tắc QA + hạn lưu bồn; cửa Loại kho của Cài đặt WMS không đè mất khai riêng
 //   [10] Bàn làm việc của mẻ (14/11 đêm): định mức ⇒ yêu cầu của mẻ × kế hoạch; hàng CÓ TEM không đi đường chọn lô (MUST_SCAN);
 //        bàn trả yêu cầu · đã cấp · tồn có tem / không tem; sửa yêu cầu không đụng phần đã cấp
+//   [11] Báo cáo sử dụng NVL theo ca: một kho một ca mở; số dùng theo mẻ / tồn sổ khớp dữ liệu gốc; chốt ca chụp số (không đổi khi tồn đổi);
+//        ca sau lấy số đếm ca trước làm tồn đầu và chỉ tính lượng dùng sau lúc chốt
 //   [9] Huỷ mẻ còn dòng rút ⇒ 409; đóng / mở lại mẻ; bất biến tồn: nhập − còn = Σ rút sống
 // Fixture QA63: kho cha QA63_PARENT + kho phụ QA63_CB (+ QA63_CB2 để thử chéo kho) · mã NVL/BTP QA63* · tem QA63_* — dọn bằng PostgREST.
 import { randomUUID } from 'crypto'
@@ -36,6 +38,7 @@ async function cleanup() {
   if (tanks.length) await restWrite('tank_lot', 'DELETE', `tank_id=in.(${tanks.map(t => t.id).join(',')})`)
   if (batches.length) await restWrite('batch_consumption', 'DELETE', `batch_id=in.(${batches.map(b => b.id).join(',')})`)
   if (batches.length) await restWrite('batch_requirement', 'DELETE', `batch_id=in.(${batches.map(b => b.id).join(',')})`)
+  await restWrite('production_shift_report', 'DELETE', `warehouse_id=in.(${whs.join(',')})`)
   await restWrite('production_recipe', 'DELETE', `material_id=in.(${[M_BTP, M_BTP2].join(',')})`)
   if (runs.length) {
     await restWrite('packing_logs', 'DELETE', `run_id=in.(${runs.map(r => r.id).join(',')})`)
@@ -372,6 +375,48 @@ try {
   await api(`/wms/production/batches/${BW.id}/close`, 'POST', {})
   const rqClosed = await api(`/wms/production/batches/${BW.id}/requirements`, 'PUT', { items: [] })
   check('10h. Mẻ đã đóng ⇒ sửa yêu cầu 409 MES_BATCH_NOT_OPEN', rqClosed.s === 409 && rqClosed.j?.error?.code === 'MES_BATCH_NOT_OPEN', `http=${rqClosed.s} ${rqClosed.j?.error?.code}`)
+
+  // ── [11] BÁO CÁO SỬ DỤNG NVL THEO CA ──
+  const shBad = await api('/wms/production/shift-reports', 'POST', { warehouse_id: WP, report_date: todayVN, shift: 'Ca 1' })
+  const sh1 = await api('/wms/production/shift-reports', 'POST', { warehouse_id: WC, report_date: todayVN, shift: 'Ca 1' })
+  const sh1b = await api('/wms/production/shift-reports', 'POST', { warehouse_id: WC, report_date: todayVN, shift: 'Ca 2' })
+  const S1 = sh1.j?.data?.id
+  check('11a. Mở ca ở kho không phải chế biến ⇒ 422; kho chế biến ⇒ 201; còn ca mở ⇒ 409 MES_SHIFT_OPEN',
+    shBad.s === 422 && sh1.s === 201 && !!S1 && sh1b.s === 409 && sh1b.j?.error?.code === 'MES_SHIFT_OPEN', `http=${shBad.s}/${sh1.s}/${sh1b.s} ${sh1b.j?.error?.code}`)
+  const rp1 = await api(`/wms/production/shift-reports/${S1}`)
+  const rmRow = (rp1.j?.data?.rows ?? []).find(r => r.material_id === M_RM)
+  const whBatches = await restAll('production_batch', `select=id&warehouse_id=eq.${WC}`)
+  const liveRm = await restAll('batch_consumption', `select=batch_id,qty&material_id=eq.${M_RM}&reversed_at=is.null&batch_id=in.(${whBatches.map(b => b.id).join(',')})`)
+  const stockRm = await restAll('InventoryEntry', `select=cartons_remaining&warehouse_id=eq.${WC}&material_id=eq.${M_RM}&status=in.(IN_STOCK,PARTIAL)`)
+  const sumLive = liveRm.reduce((x, c) => x + num(c.qty), 0), sumStock = stockRm.reduce((x, e) => x + num(e.cartons_remaining), 0)
+  const b1Used = liveRm.filter(c => c.batch_id === B1.id).reduce((x, c) => x + num(c.qty), 0)
+  check('11b. Báo cáo ca: tổng dùng = Σ dòng cấp sống · dùng của mẻ B1 đúng · tồn sổ = tồn kho chế biến · có cột cho từng mẻ',
+    rp1.s === 200 && rmRow && Math.abs(num(rmRow.used) - sumLive) < 0.001 && Math.abs(num(rmRow.by_batch?.[B1.id]) - b1Used) < 0.001 && Math.abs(num(rmRow.book) - sumStock) < 0.001
+      && (rp1.j?.data?.batches ?? []).some(b => b.id === B1.id) && rp1.j?.data?.report?.status === 'OPEN',
+    `http=${rp1.s} used=${rmRow?.used}/${sumLive} b1=${rmRow?.by_batch?.[B1.id]}/${b1Used} book=${rmRow?.book}/${sumStock}`)
+  const actual1 = sumStock - 2
+  const svNeg = await api(`/wms/production/shift-reports/${S1}`, 'PUT', { items: [{ material_id: M_RM, qty_actual: -1 }] })
+  const svDraft = await api(`/wms/production/shift-reports/${S1}`, 'PUT', { items: [{ material_id: M_RM, qty_actual: actual1 }] })
+  check('11c. Số đếm âm ⇒ 400; lưu nháp số đếm ⇒ 200, ca vẫn mở', svNeg.s === 400 && svDraft.s === 200 && svDraft.j?.data?.report?.status === 'OPEN'
+    && num((svDraft.j?.data?.rows ?? []).find(r => r.material_id === M_RM)?.actual) === actual1, `http=${svNeg.s}/${svDraft.s}`)
+  const svClose = await api(`/wms/production/shift-reports/${S1}`, 'PUT', { items: [], note: 'QA63 giao ca', close: true })
+  const afterScan = await api(`/wms/production/batches/${B1.id}/consume-scan`, 'POST', { entry_id: 'QA63_E2', qty: 1, qty_semantics: 'base' })
+  const rp1c = await api(`/wms/production/shift-reports/${S1}`)
+  const rmClosed = (rp1c.j?.data?.rows ?? []).find(r => r.material_id === M_RM)
+  check('11d. Chốt ca ⇒ CLOSED, chụp số; cấp thêm sau khi chốt KHÔNG làm đổi báo cáo đã chốt',
+    svClose.s === 200 && afterScan.s === 200 && rp1c.j?.data?.report?.status === 'CLOSED' && rp1c.j?.data?.report?.note === 'QA63 giao ca'
+      && Math.abs(num(rmClosed?.used) - sumLive) < 0.001 && Math.abs(num(rmClosed?.book) - sumStock) < 0.001 && num(rmClosed?.actual) === actual1,
+    `http=${svClose.s}/${afterScan.s} used=${rmClosed?.used} book=${rmClosed?.book} actual=${rmClosed?.actual}`)
+  const svAfter = await api(`/wms/production/shift-reports/${S1}`, 'PUT', { items: [{ material_id: M_RM, qty_actual: 1 }] })
+  const sh2 = await api('/wms/production/shift-reports', 'POST', { warehouse_id: WC, report_date: todayVN, shift: 'Ca 2' })
+  const rp2 = await api(`/wms/production/shift-reports/${sh2.j?.data?.id}`)
+  const rm2nd = (rp2.j?.data?.rows ?? []).find(r => r.material_id === M_RM)
+  check('11e. Ca đã chốt không sửa (409); ca sau: tồn đầu = số đếm ca trước, chỉ tính 1 dùng sau lúc chốt',
+    svAfter.s === 409 && svAfter.j?.error?.code === 'MES_SHIFT_CLOSED' && sh2.s === 201 && num(rm2nd?.opening) === actual1 && rm2nd?.opening_src === 'COUNT'
+      && num(rm2nd?.used) === 1 && num(rm2nd?.by_batch?.[B1.id]) === 1 && Math.abs(num(rm2nd?.book) - (sumStock - 1)) < 0.001,
+    `http=${svAfter.s}/${sh2.s} opening=${rm2nd?.opening}(${rm2nd?.opening_src}) used=${rm2nd?.used} book=${rm2nd?.book}`)
+  const shList = await api(`/wms/production/shift-reports?warehouse_id=${WC}`)
+  check('11f. Danh sách báo cáo ca của kho: 2 ca, ca mở đứng đầu', shList.s === 200 && (shList.j?.data ?? []).length === 2 && shList.j?.data?.[0]?.status === 'OPEN', `http=${shList.s} n=${shList.j?.data?.length}`)
 
   check('9a. Huỷ mẻ còn dòng rút ⇒ 409 BATCH_HAS_CONSUMPTION', cx.s === 409 && cx.j?.error?.code === 'BATCH_HAS_CONSUMPTION', `http=${cx.s}`)
   const clB = await api(`/wms/production/batches/${B1.id}/close`, 'POST', {})

@@ -119,6 +119,7 @@ export interface LoadOptions {
   keepLights?: boolean     // không đưa hàng gửi xuống sàn
   spreading?: boolean      // lần chạy lại của trải tới cửa (luật 21): các khối đang bị chính bước này hạ lớp
   variant?: { stepped: boolean }   // cách lượt đầu đã chọn (trải tới cửa chạy lại lõi — khỏi thử lại cả ba cách, luật 23)
+  reach?: boolean          // luật 25: khối sàn sát cửa dùng HẾT chiều dài còn lại (lần chạy cuối của trải tới cửa)
 }
 
 export interface LoadPlan {
@@ -463,7 +464,9 @@ const WALL_GAP_MAX = 100   // mm — luật 20: hở vách quá mức này mà t
 // Luật 18: chọn số hàng ngang mỗi hướng cho một mã, mức thân trong [Lmin, Lmax]. Chia khít hẳn (không thùng nổi) được dài hơn tới 12%, kể cả
 // dùng hàng hướng thưa hơn; không khít thì chỉ dùng hướng dày (hàng hướng thưa hở vách nhiều) — hướng dày không đặt được mới thôi.
 // exactOnly: chỉ nhận phương án không thùng nổi (nền dưới khối gửi phải phẳng — luật 23)
-function planRowsOf(g: LoadGroup, C: number, Lmax: number, Lmin: number, H: number, W: number, Len: number, exactOnly = false) {
+// stretch: lấy phương án DÀI nhất vừa `Len` (= chỗ còn tới cửa) thay vì ngắn nhất — luật 25
+// capSpill: thùng thừa (lớp Lr + 1) không được vượt số lớp của mã — lượt chạy lại của trải tới cửa (số lớp đang bị hạ)
+function planRowsOf(g: LoadGroup, C: number, Lmax: number, Lmin: number, H: number, W: number, Len: number, exactOnly = false, stretch = false, capSpill = stretch) {
   const kinds = (g.l === g.w ? [false] : [false, true])
     .map(swap => ({ swap, fl: swap ? g.w : g.l, n: Math.floor(W / (swap ? g.l : g.w)) }))
     .filter(k => k.n > 0 && k.fl <= Len)
@@ -485,6 +488,8 @@ function planRowsOf(g: LoadGroup, C: number, Lmax: number, Lmin: number, H: numb
       if (Lr < Lmin || Lr > capL) continue
       const spill = C - Lr * F
       if (spill > 0 && (Lr + 1) * g.h > H) continue
+      // tới cửa: thùng thừa nổi thành lớp Lr + 1 — nóc không nhận quá số lớp của mã (spillOnRoof), không còn chỗ mọc thêm hàng
+      if (capSpill && spill > 0 && Lr + 1 > (g.maxLayers ?? Infinity)) continue
       cands.push({ a, b, D: a * A.fl + b * (B?.fl ?? 0), F, Lr, spill })
     }
   }
@@ -492,8 +497,10 @@ function planRowsOf(g: LoadGroup, C: number, Lmax: number, Lmin: number, H: numb
   const minD = Math.min(...cands.map(c => c.D))
   const exact = cands.filter(c => c.spill === 0 && (exactOnly || c.D <= minD * 1.12 + 1e-9))
   const pure = cands.filter(c => !c.b)
-  const pick = (exact.length ? exact : pure.length ? pure : cands)
-    .sort((x, y) => x.D - y.D || x.spill - y.spill || Number(x.a > 0 && x.b > 0) - Number(y.a > 0 && y.b > 0))[0]
+  const pick = stretch
+    ? cands.sort((x, y) => y.D - x.D || x.spill - y.spill || Number(x.a > 0 && x.b > 0) - Number(y.a > 0 && y.b > 0))[0]
+    : (exact.length ? exact : pure.length ? pure : cands)
+      .sort((x, y) => x.D - y.D || x.spill - y.spill || Number(x.a > 0 && x.b > 0) - Number(y.a > 0 && y.b > 0))[0]
   const rows: { swap: boolean; n: number }[] = []
   for (let i = 0; i < pick.a; i++) rows.push({ swap: A.swap, n: A.n })
   for (let i = 0; i < pick.b; i++) rows.push({ swap: B!.swap, n: B!.n })
@@ -901,6 +908,11 @@ export function computeLoadPlan(truck: TruckDims, groupsArg: LoadGroup[], opts: 
       // đủ 1 lớp cho trọn hàng) / khối nhận cột thềm của hàng gửi ⇒ giữ cách cũ.
       let colTarget = Infinity
       const g0 = groupsIn[live[0]]
+      // LUẬT 25 — TỚI SÁT CỬA (user 14/11, container 40ft 2.860 thùng một mã: "chưa xếp tới cửa xe" — hạ cả lớp thì
+      // 12 lớp chừa 557 mm, 11 lớp không đủ chỗ): khối sàn CUỐI (sát cửa) dùng hết chiều dài còn lại, mức thân = tổng ÷ số
+      // chân, phần dư nổi một lớp trên nóc. Chỉ khi trải tới cửa yêu cầu (`opts.reach`).
+      const reachHere = !!opts.reach && limit === Infinity && floorRows.indexOf(rowKey) === floorRows.length - 1
+      const room = truck.length - Math.max(...sky.map(q => q.x))
       if (band && rows && live.length === 1 && tiny.has(live[0])) {
         // mã ít thùng: một hàng ngang trọn, thấp, thừa nổi; không đủ một hàng thì một lớp
         const room = truck.length - Math.max(...sky.map(q => q.x))   // chỗ còn ở cửa: hàng nhiều chân không vừa thì quay sang hướng kia
@@ -914,21 +926,27 @@ export function computeLoadPlan(truck: TruckDims, groupsArg: LoadGroup[], opts: 
           rowPlan = [{ swap: k.swap, n: k.n }]
         }
       } else if (band && rows && live.length === 1 && zoneMixFor(g0).length === 1 && !pendingStubs.some(s => s.ck === classKeyOf(g0) && s.doKey === g0.doKey)) {
-        const plan = planRowsOf(g0, C, L, Lfloor, truck.height, truck.width, truck.length, limit < Infinity)
+        const plan = planRowsOf(g0, C, L, Lfloor, truck.height, truck.width, reachHere ? room : truck.length, limit < Infinity, reachHere, reachHere || !!opts.spreading)
         if (plan) { L = plan.L; colTarget = plan.feet; rowPlan = plan.rows }
       } else if (rows && !pendingStubs.some(s => s.ck === classKeyOf(g0) && s.doKey === g0.doKey)) {
         const lanes = zoneMixFor(g0).map(z => { const d = zoneDims(g0, z); return { n: Math.floor((z.yB - z.yA) / d.fw + 1e-9), fl: d.fl } })
         const capAt = (D: number) => lanes.reduce((s, z) => s + z.n * Math.floor(D / z.fl + 1e-9), 0)
         const depths = [...new Set(lanes.flatMap(z => Array.from({ length: Math.floor(truck.length / z.fl) }, (_, k) => (k + 1) * z.fl)))].sort((a, b) => a - b)
+        let pickD: { L: number; n: number } | null = null
         for (const D of depths) {
+          if (reachHere && D > room + 1e-9) break
           const n = capAt(D)
           const Lr = n > 0 ? Math.floor(C / n) : 0
           if (Lr < Lfloor) break
           if (Lr > L || live.some(gi => (groupsIn[gi].maxLayers ?? Infinity) < Lr)) continue
           if (C - Lr * n > 0 && (Lr + 1) * maxH > truck.height) continue   // thừa không còn chỗ nổi
           if (limit < Infinity && n * L < C) continue                       // nền dưới khối gửi (luật 23): phẳng, không thùng nổi
-          L = Lr; colTarget = n; break
+          // luật 25: khối sát cửa lấy chiều sâu LỚN nhất còn vừa (thừa nổi một lớp, không quá số lớp của mã cuối)
+          if (reachHere && C - Lr * n > 0 && Lr + 1 > (groupsIn[live[live.length - 1]].maxLayers ?? Infinity)) continue
+          pickD = { L: Lr, n }
+          if (!reachHere) break
         }
+        if (pickD) { L = pickD.L; colTarget = pickD.n }
       }
       for (let mi = 0; mi < live.length; mi++) {
         const gi = live[mi]
@@ -2598,6 +2616,13 @@ export function spreadToDoor(T: TruckDims, groupsArg: LoadGroup[], base: LoadPla
     }
     cap = capBest; stale = 0; gained = false
     if (failed || runs >= SPREAD_RUNS || done(best)) break
+  }
+  // luật 25: hạ cả lớp chỉ tới được bậc gần nhất (12 lớp hở cửa, 11 lớp không đủ chỗ) ⇒ khối sát cửa dùng hết chỗ còn
+  // lại, mức thân thấp hơn một chút, phần dư nổi một lớp (không quá số lớp vừa thử được)
+  if (target >= 100 && !done(best)) {
+    const p = computeLoadPlan(T, groups.map((g, i) => (capBest[i] > 0 ? { ...g, maxLayers: Math.min(g.maxLayers ?? Infinity, capBest[i]) } : g)), { order: base.floorOrder, keepLights: true, spreading: true, variant: base.variant, reach: true })
+    const end = (q: LoadPlan) => Math.max(0, ...q.placed.map(b => b.x + b.l))
+    if (!leftOf(p) && towers(p, T) <= baseTowers && lightSpan(p) <= baseSpan * 1.25 + 300 && end(p) > end(best)) best = p
   }
   return best
 }

@@ -315,6 +315,21 @@ describe('loadPlan — luật 11-14 (trải tới cửa, thùng trên pallet, ư
     expect(overlaps(p.placed)).toBe(0)
   })
 
+  // User 14/11 (ảnh container 40ft, 2.860 thùng một mã, 100% tải): "chưa xếp tới cửa xe" — trải tới cửa chỉ hạ được cả lớp:
+  // 12 lớp dài 27 hàng (hở cửa 557 mm), 11 lớp thì 28 hàng không đủ chỗ. Luật 25: khối sát cửa dùng hết chỗ còn lại, thừa nổi một lớp
+  it('luật 25: tải đầy — khối sát cửa trải hết chỗ còn lại, thừa nổi một lớp (container 40ft, một mã)', () => {
+    const truck = { length: 12032, width: 2352, height: 2393 }
+    const gs = [grp('A180', 'D1', 2860, 425, 260, 145, { maxLayers: 15, weightKg: 10 })]
+    const p = spreadToDoor(truck, gs, computeLoadPlan(truck, gs), 100)
+    expect(p.placedCount).toBe(2860)
+    expect(Math.min(...p.placed.map(minus(truck.length)))).toBeLessThan(260 * 1.5)   // tới sát cửa (cũ: 557 mm)
+    const cols = new Map<string, number>()
+    for (const b of p.placed) cols.set(b.x + '|' + b.y, (cols.get(b.x + '|' + b.y) ?? 0) + 1)
+    const ns = [...cols.values()]
+    expect(Math.max(...ns) - Math.min(...ns)).toBeLessThanOrEqual(1)               // một mức thân, thừa chỉ một lớp
+    expect(overlaps(p.placed)).toBe(0)
+  })
+
   // Đơn mẫu xe pallet: 6 mã, phần lẻ dồn pallet gộp, thạch túi (nhẹ) trên cùng
   const items: PalletizeInput[] = ([
     ['ST110', 740, 420, 255, 100, 140, 14, false], ['C100', 479, 430, 250, 100, 143, 14, false],

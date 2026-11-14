@@ -326,7 +326,7 @@ Tiêu chí mơ hồ kiểu “làm cho nó chạy được” sẽ khiến phả
 | `fill` | Fill hàng (nhặt lẻ) | Fill hàng | view, plan, cancel, change_dest, assign, execute | [docs/modules/fill.md](docs/modules/fill.md) |
 | `forklift` | Xe nâng | Xe nâng (check list) | view, check, delete_check, manage_vehicle, manage_item | [docs/modules/forklift.md](docs/modules/forklift.md) |
 | `packing` | Sổ đóng gói | Sổ đóng gói | view, record, open_run, edit, cancel, export | [docs/modules/packing.md](docs/modules/packing.md) |
-| `production` | Sản xuất (Mẻ chế biến · Bồn) | Mẻ chế biến · Bồn (nhóm Sản xuất) — MES gđ1 | view, open_batch, consume, reverse, qa_release, manage_tank, tank_ops, export | [docs/modules/production.md](docs/modules/production.md) |
+| `production` | Sản xuất (Mẻ chế biến · Bồn) | Mẻ chế biến · Bồn (nhóm menu cấp 1 "Sản xuất (MES)") — MES gđ1 | view, open_batch, consume, reverse, qa_release, manage_tank, tank_ops, export | [docs/modules/production.md](docs/modules/production.md) |
 | `inbound_plan` | Kế hoạch nhập chuyển kho | trong TMS Bookings (tab Kế hoạch) | view, edit | [docs/modules/inbound_plan.md](docs/modules/inbound_plan.md) |
 | `external_khvc` | Dữ liệu bên ngoài → Kế hoạch xuất | Dữ liệu bên ngoài → Kế hoạch xuất | view, create, edit, delete | [docs/modules/external_khvc.md](docs/modules/external_khvc.md) |
 

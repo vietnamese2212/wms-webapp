@@ -7,6 +7,9 @@ import { fetchAllByIdChunks } from '../../utils/pagination'
 import { qtyEntryDecimal, type MatUnits } from '../../utils/qtyUnits'
 import { activeMachineCodes } from './machineController'
 import { getRetentionDays, getPackingMaxMaterials } from '../../utils/settings'
+import { tankForRunError } from './productionController'
+import { qaGateOfTank } from '../../services/productionGate'
+import { resolveActorId, resolveActorName } from '../../utils/actor'
 
 // ─── SỔ ĐÓNG GÓI ĐIỆN TỬ (11/08/2026) — số hóa sổ đóng gói viết tay tại xưởng ──
 // 1 pallet = 1 dòng packing_logs. Quét tem lúc BẮT ĐẦU xếp → mở sổ (OPEN);
@@ -534,8 +537,15 @@ export async function getRun(req: Request, res: Response) {
   await attachPhotoUrls(a?.pallets ?? [])
   await attachReceived(a?.pallets ?? [])   // đối chiếu: pallet nào kho ĐÃ quét nhập (xác nhận lần 2)
   const live = run.status === 'OPEN'
+  const [{ data: tank }, { data: draws }] = await Promise.all([
+    run.tank_id ? supabase.from('production_tank').select('id, code, name, unit').eq('id', run.tank_id).maybeSingle() : Promise.resolve({ data: null }),
+    supabase.from('tank_movement').select('id, qty, warning, created_at, created_by_name, batch:production_batch!tank_movement_batch_id_fkey(batch_code)')
+      .eq('packing_run_id', id).eq('kind', 'DRAW').order('created_at').limit(500),
+  ])
   return ok(res, {
     ...run,
+    tank: tank ?? null,
+    tank_draws: draws ?? [],
     pallet_count: live ? (a?.pallet_count ?? 0) : (run.pallet_count ?? a?.pallet_count ?? 0),
     qty_total: live ? (a?.qty_sum ?? 0) : (run.qty_total ?? a?.qty_sum ?? 0),
     qty_conv: a?.qty_conv ?? 0,
@@ -615,7 +625,7 @@ export async function listRuns(req: Request, res: Response) {
 // 13/08: 1 trang ghi NHIỀU mã (SX chung chu kỳ+máy) — insert qua RPC packing_open_run
 // (advisory lock per kho+máy chặn 2 trang MỞ có mã GIAO NHAU; unique index cũ chỉ bắt mã đầu).
 export async function openRun(req: Request, res: Response) {
-  const { warehouse_id, run_date, shift, cycle, material_code, material_codes, material_id, machine_code, start_at, note } = req.body as Record<string, unknown>
+  const { warehouse_id, run_date, shift, cycle, material_code, material_codes, material_id, machine_code, start_at, note, tank_id } = req.body as Record<string, unknown>
   const codes = Array.isArray(material_codes)
     ? material_codes.filter((c): c is string => typeof c === 'string' && !!c.trim()).map(c => c.trim())
     : (typeof material_code === 'string' && material_code.trim() ? [material_code.trim()] : [])
@@ -635,6 +645,14 @@ export async function openRun(req: Request, res: Response) {
   if (machineCatalog.length && !machineCatalog.includes(machine_code.trim().toUpperCase()))
     return fail(res, 422, 'MACHINE_INVALID',
       `Máy "${machine_code.trim()}" không có trong danh mục máy của kho — chọn 1 trong: ${machineCatalog.slice(0, 15).join(', ')}`)
+  // MES 14/11: trang sổ rút bán thành phẩm từ BỒN nào (tuỳ chọn) — bồn của kho này hoặc kho chế biến trực thuộc
+  let tankId: string | null = null
+  if (tank_id != null && tank_id !== '') {
+    if (typeof tank_id !== 'string') return fail(res, 'Bồn không hợp lệ', 422)
+    const tErr = await tankForRunError(tank_id, warehouse_id)
+    if (tErr) return fail(res, 422, 'TANK_INVALID', tErr)
+    tankId = tank_id
+  }
   const dateVN = typeof run_date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(run_date)
     ? run_date : new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
   let startIso = new Date().toISOString()
@@ -655,6 +673,7 @@ export async function openRun(req: Request, res: Response) {
       opened_by: req.user?.sub ?? null,
       opened_by_name: req.user?.name ?? null,
       note: typeof note === 'string' ? note : null,
+      tank_id: tankId,
     },
   })
   if (error) {
@@ -672,11 +691,19 @@ export async function openRun(req: Request, res: Response) {
 // body: { end_at? } — mặc định giờ bấm. CAS trên status: 2 người cùng bấm → 1 ăn.
 export async function closeRun(req: Request, res: Response) {
   const { id } = req.params
-  const { end_at } = req.body as Record<string, unknown>
+  const { end_at, tank_qty } = req.body as Record<string, unknown>
   const { data: run } = await supabase.from('packing_runs').select('*').eq('id', id).maybeSingle()
   if (!run) return fail(res, 'Không tìm thấy trang sổ', 404)
   if (whOutOfScope(req, run.warehouse_id)) return fail(res, 'Kho ngoài phạm vi được gán', 403)
   if (run.status !== 'OPEN') return fail(res, 409, 'RUN_NOT_OPEN', `Trang sổ đang ở trạng thái ${run.status}`)
+  // MES 14/11 (user chốt "khai khi đóng trang sổ"): lượng bán thành phẩm đã rút từ bồn của trang
+  let tankQty: number | null = null
+  if (tank_qty != null && tank_qty !== '') {
+    const n = Number(tank_qty)
+    if (typeof tank_qty === 'boolean' || !Number.isFinite(n) || n < 0 || n > 10_000_000) return fail(res, 'Lượng rút từ bồn phải là số không âm', 422)
+    if (n > 0 && !run.tank_id) return fail(res, 422, 'NO_TANK', 'Trang sổ chưa gắn bồn — không khai lượng rút được')
+    tankQty = n > 0 ? n : null
+  }
   let endIso = new Date().toISOString()
   if (end_at != null && end_at !== '') {
     if (typeof end_at !== 'string' || isNaN(new Date(end_at).getTime())) return fail(res, 'Giờ kết thúc không hợp lệ', 422)
@@ -687,6 +714,21 @@ export async function closeRun(req: Request, res: Response) {
 
   const agg = await aggRuns([id])
   const a = agg.get(id)
+  if (run.tank_id) {
+    const { data: r, error: rErr } = await supabase.rpc('mes_close_run', { p: {
+      run_id: id, end_at: endIso, qty_total: a?.qty_sum ?? 0, pallet_count: a?.pallet_count ?? 0,
+      closed_by: req.user?.sub ?? null, closed_by_name: req.user?.name ?? null, tank_qty: tankQty,
+      qa_gate: tankQty ? await qaGateOfTank(String(run.tank_id)) : 'WARN',
+      actor_id: resolveActorId(req), actor_name: resolveActorName(req),
+    } })
+    if (rErr) {
+      const m = /MESERR:([A-Z_]+)\|([\s\S]+)$/.exec(rErr.message ?? '')
+      if (m) return fail(res, m[1] === 'NOT_FOUND' ? 404 : 409, `MES_${m[1]}`, m[2].trim())
+      return fail(res, rErr)
+    }
+    const out = r as { run: Record<string, unknown>; tank: { warnings?: string[] } | null }
+    return ok(res, { ...out.run, pallet_open: a?.pallet_open ?? 0, tank_warnings: out.tank?.warnings ?? [] })
+  }
   const now = new Date().toISOString()
   const { data, error } = await supabase.from('packing_runs')
     .update({
@@ -707,7 +749,7 @@ export async function closeRun(req: Request, res: Response) {
 // PATCH /wms/packing-runs/:id — sửa trang (ca/chu kỳ/máy/giờ/tổng/ghi chú) — packing.open_run
 export async function updateRun(req: Request, res: Response) {
   const { id } = req.params
-  const { shift, cycle, machine_code, start_at, end_at, qty_total, note } = req.body as Record<string, unknown>
+  const { shift, cycle, machine_code, start_at, end_at, qty_total, note, tank_id } = req.body as Record<string, unknown>
   const { data: run } = await supabase.from('packing_runs').select('*').eq('id', id).maybeSingle()
   if (!run) return fail(res, 'Không tìm thấy trang sổ', 404)
   if (whOutOfScope(req, run.warehouse_id)) return fail(res, 'Kho ngoài phạm vi được gán', 403)
@@ -763,6 +805,18 @@ export async function updateRun(req: Request, res: Response) {
     if (k === 'qty_total') return Number(a ?? 0) !== Number(b ?? 0)
     return (a ?? null) !== (b ?? null)
   })
+  // MES 14/11: đổi bồn của trang — chỉ khi trang CHƯA khai lượng rút (vết rút đã gắn bồn cũ)
+  if (tank_id !== undefined && (tank_id || null) !== (run.tank_id ?? null)) {
+    if (tank_id !== null && tank_id !== '' && typeof tank_id !== 'string') return fail(res, 'Bồn không hợp lệ', 422)
+    const { count: draws } = await supabase.from('tank_movement').select('id', { count: 'exact', head: true }).eq('packing_run_id', id)
+    if ((draws ?? 0) > 0) return fail(res, 409, 'RUN_TANK_LOCKED', 'Trang sổ đã khai lượng rút từ bồn — không đổi bồn được')
+    if (tank_id) {
+      const tErr = await tankForRunError(String(tank_id), String(run.warehouse_id))
+      if (tErr) return fail(res, 422, 'TANK_INVALID', tErr)
+    }
+    patch.tank_id = tank_id || null
+  }
+
   if (changed.length) {
     const { count } = await supabase.from('packing_logs')
       .select('id', { count: 'exact', head: true }).eq('run_id', id).neq('status', 'CANCELLED')

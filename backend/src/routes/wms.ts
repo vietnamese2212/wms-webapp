@@ -19,6 +19,7 @@ import * as alerts from '../controllers/wms/alertController'
 import * as cycleCount from '../controllers/wms/cycleCountController'
 import * as forklift from '../controllers/wms/forkliftController'
 import * as packing from '../controllers/wms/packingController'
+import * as production from '../controllers/wms/productionController'
 import * as dashboard from '../controllers/wms/dashboardController'
 import * as kpi from '../controllers/wms/kpiController'
 import * as warehouseCost from '../controllers/wms/warehouseCostController'
@@ -393,6 +394,35 @@ router.post('/packing-runs',            requirePerm('packing', 'open_run'), pack
 router.post('/packing-runs/:id/close',  requirePerm('packing', 'open_run'), packing.closeRun)
 router.patch('/packing-runs/:id',       requirePerm('packing', 'open_run'), packing.updateRun)
 router.post('/packing-runs/:id/cancel', requirePerm('packing', 'open_run'), packing.cancelRun)
+
+// MES giai đoạn 1 (14/11) — mẻ chế biến · rút NVL · bồn · truy xuất sản xuất (docs/plans/MES_PHASE1_PLAN.md)
+const P = (a: string) => requirePerm('production', a)
+router.get('/production/batches',                  P('view'),       validate({ query: production.zBatchListQuery }), production.listBatches)
+router.get('/production/batches/next-code',        P('open_batch'), validate({ query: production.zNextCodeQuery }), production.nextCode)
+router.get('/production/batches/:id',              P('view'),       production.getBatch)
+router.post('/production/batches',                 P('open_batch'), validate({ body: production.zBatchCreate }), production.createBatch)
+router.patch('/production/batches/:id',            P('open_batch'), validate({ body: production.zBatchUpdate }), production.updateBatch)
+router.post('/production/batches/:id/close',       P('open_batch'), validate({ body: z.object({}) }), production.closeBatch)
+router.post('/production/batches/:id/reopen',      P('open_batch'), validate({ body: z.object({}) }), production.reopenBatch)
+router.post('/production/batches/:id/cancel',      P('open_batch'), validate({ body: z.object({}) }), production.cancelBatch)
+router.post('/production/batches/:id/qa',          P('qa_release'), validate({ body: production.zBatchQa }), production.setBatchQa)
+router.get('/production/batches/:id/scan-check',   P('consume'),    validate({ query: production.zScanCheckQuery }), production.scanCheck)
+router.post('/production/batches/:id/consume-scan', P('consume'),   validate({ body: production.zConsumeScan }), production.consumeScan)
+router.post('/production/batches/:id/consume-lot', P('consume'),    validate({ body: production.zConsumeLot }), production.consumeLot)
+router.post('/production/consumption/:id/reverse', P('reverse'),    validate({ body: production.zReverse }), production.reverseConsumption)
+router.get('/production/stock',                    P('consume'),    validate({ query: production.zStockQuery }), production.stock)
+router.get('/production/tanks',                    P('view'),       validate({ query: production.zTankListQuery }), production.listTanks)
+router.get('/production/tanks/:id/movements',      P('view'),       validate({ query: production.zTankMovesQuery }), production.tankMovements)
+router.post('/production/tanks',                   P('manage_tank'), validate({ body: production.zTankCreate }), production.createTank)
+router.patch('/production/tanks/:id',              P('manage_tank'), validate({ body: production.zTankUpdate }), production.updateTank)
+router.post('/production/tanks/:id/fill',          P('tank_ops'),   validate({ body: production.zTankFill }), production.fillTank)
+router.post('/production/tanks/:id/adjust',        P('tank_ops'),   validate({ body: production.zTankAdjust }), production.adjustTank)
+router.post('/production/tanks/:id/transfer',      P('tank_ops'),   validate({ body: production.zTankTransfer }), production.transferTank)
+router.post('/production/tanks/:id/discard',       P('tank_ops'),   validate({ body: production.zTankDiscard }), production.discardTank)
+// cửa đọc dùng chung với Sổ đóng gói (chọn bồn khi mở trang sổ) và Truy xuất lô
+router.get('/production/tanks-for-run', requireAnyPerm(['packing', 'open_run'], ['production', 'view']), validate({ query: production.zTanksForRunQuery }), production.tanksForRun)
+router.get('/production/genealogy',     requireAnyPerm(['traceability', 'view'], ['production', 'view']), validate({ query: production.zGenealogyQuery }), production.genealogy)
+
 // Phiếu cân trạm cân (ingest nằm ở /api/integration — đây là API cho UI)
 router.get('/weigh-tickets',                                  requirePerm('weigh_station', 'view'),  weigh.listWeighTickets)
 router.get('/weigh-tickets/warehouses',                       requirePerm('weigh_station', 'view'),  weigh.listWeighWarehouses)

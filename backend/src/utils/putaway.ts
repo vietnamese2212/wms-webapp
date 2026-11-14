@@ -178,7 +178,30 @@ export function applyPutawayBody(
   // Tự ra lệnh fill (15/09) — cùng validator cho cả 2 tầng; null ở tầng LOẠI = "theo kho"
   // đã được `applyWhTypeConfigBody` xử trước khi gọi vào đây.
   if (body.auto_fill !== undefined) target.auto_fill = Boolean(body.auto_fill)
+  // MES 14/11 — rút bán thành phẩm chưa QA thả: OFF (im) · WARN (cảnh báo, mặc định) · BLOCK (chặn)
+  if (body.production_qa_gate !== undefined) {
+    if (!(PRODUCTION_QA_GATES as readonly unknown[]).includes(body.production_qa_gate))
+      return 'Mức kiểm QA bán thành phẩm không hợp lệ (Không kiểm / Cảnh báo / Chặn)'
+    target.production_qa_gate = body.production_qa_gate
+  }
   return null
+}
+
+// ─── RÚT BÁN THÀNH PHẨM CHƯA QA THẢ — 2 tầng Kho + Loại kho (MES 14/11) ──────────────────────────
+// user chốt 14/11: mặc định CHO RÓT, CHỈ CẢNH BÁO. Loại kho = `Material.category` của mã BTP trong bồn.
+export const PRODUCTION_QA_GATES = ['OFF', 'WARN', 'BLOCK'] as const
+export type ProductionQaGate = typeof PRODUCTION_QA_GATES[number]
+export function resolveProductionQaGate(
+  wh: Record<string, unknown> | null | undefined,
+  typeRows: WhTypeConfigRow[] | null | undefined,
+  category: string | null | undefined,
+): { gate: ProductionQaGate; source: 'WAREHOUSE' | 'TYPE' } {
+  const row = typeRowOf(typeRows, category)
+  const v = mergedConfig(wh, row).production_qa_gate
+  return {
+    gate: (PRODUCTION_QA_GATES as readonly unknown[]).includes(v) ? v as ProductionQaGate : 'WARN',
+    source: !!row && row.production_qa_gate != null ? 'TYPE' : 'WAREHOUSE',
+  }
 }
 
 // ─── Trần số mã của MỘT VỊ TRÍ (26/08) ───────────────────────────────────────
@@ -592,6 +615,7 @@ export const WH_TYPE_CFG_COLS = [
   'loose_mode', 'loose_max_cartons',   // nhặt lẻ tự sinh 2 tầng (24/08) — validate ở applyPutawayBody
   'work_mode', 'lower_from_level',     // cách làm việc 2 tầng (10/09, Directed Work 1c) — xem resolveWorkMode
   'auto_fill',                         // tự ra lệnh fill hàng nhặt lẻ (15/09) — xem resolveAutoFill
+  'production_qa_gate',                // MES 14/11: rút BTP chưa QA thả — xem resolveProductionQaGate
 ] as const
 export type WhTypeCfgCol = typeof WH_TYPE_CFG_COLS[number]
 

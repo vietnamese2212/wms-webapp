@@ -9,7 +9,7 @@
 
 ## Giao thoa với
 <!-- giao-thoa:start -->
-_(chưa ghi nhận)_
+- [`production`](production.md) — Sản xuất (tank_hold_hours hạn lưu bồn; batch_prefix làm tiền tố mã lô — 14/11)
 <!-- giao-thoa:end -->
 
 ## Trang / nghiệp vụ

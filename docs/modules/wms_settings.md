@@ -19,6 +19,7 @@
 - [`packing`](packing.md) — Sổ đóng gói (file này nhắc tới)
 - [`tms_plan`](tms_plan.md) — Vận chuyển: Đặt lịch & Chuyển kho (file này nhắc tới)
 - [`tms_vehicle_types`](tms_vehicle_types.md) — TMS — Loại xe (hai chiều)
+- [`production`](production.md) — Sản xuất (kho chế biến = kho phụ; công tắc 2 tầng production_qa_gate — 14/11)
 <!-- giao-thoa:end -->
 
 ## Trang / nghiệp vụ

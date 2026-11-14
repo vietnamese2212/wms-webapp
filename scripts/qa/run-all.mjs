@@ -127,6 +127,7 @@ const FULL = [
   qa('60-freight.mjs'),             // Cước vận chuyển + dòng xe cha–con: khoá cước 409, upload 2 pha all-or-nothing, phụ phí theo danh mục, Σ tỷ trọng ≤ 100 (23/09)
   qa('61-dispatch.mjs'),            // Điều vận: máy ghép OD ZSD02 thành xe nháp (oracle cước × ceil pallet), sửa nháp, ĐVVT "cần phản hồi" ⇒ xe chờ → nhận/từ chối → chốt lẻ (24/09)
   qa('62-inbound-return.mjs'),      // Nhập hàng trả về: chuyến gốc · khai ≤ đã xuất · tem hết ⇒ dòng mới / tem còn ⇒ cộng dồn · lẻ ⇒ tem con · QA giữ · truy xuất lô trừ trả về (26/10)
+  qa('63-production.mjs'),          // MES gđ1: mẻ ở kho phụ · rút NVL theo tem / theo lô (FEFO, đua 5 người) · bồn (sức chứa, trộn, chia rút theo tỷ lệ) · trang sổ đóng gói khai rút + công tắc QA · truy xuất NVL → mẻ → pallet TP (14/11)
   qa('08-perm-coverage.mjs'),       // FE⇄BE config khớp + action không ai được cấp (WARN; --strict mới FAIL)
   qa('00-invariant.mjs'),           // sau race + qrformat phải vẫn sạch
   ...(withScale ? [qa('03-scale.mjs', ...(scaleN && !scaleN.startsWith('-') ? [scaleN] : [])), qa('00-invariant.mjs')] : []),

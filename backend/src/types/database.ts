@@ -1,5 +1,5 @@
 // FILE SINH TỰ ĐỘNG — `node scripts/gen-db-types.mjs` (từ information_schema STAGING). KHÔNG sửa tay.
-// Sinh lúc 2026-10-30T14:40:59.831Z · 111 bảng/view · 213 hàm · 0 enum
+// Sinh lúc 2026-11-14T02:50:07.079Z · 116 bảng/view · 226 hàm · 0 enum
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[]
 
 export type Database = {
@@ -1264,6 +1264,7 @@ export type Database = {
           search_norm: string | null
           pallet_color: string | null
           loose_stack_layers: number | null
+          tank_hold_hours: number | null
         }
         Insert: {
           id: string
@@ -1305,6 +1306,7 @@ export type Database = {
           search_norm?: string | null
           pallet_color?: string | null
           loose_stack_layers?: number | null
+          tank_hold_hours?: number | null
         }
         Update: {
           id?: string
@@ -1346,6 +1348,7 @@ export type Database = {
           search_norm?: string | null
           pallet_color?: string | null
           loose_stack_layers?: number | null
+          tank_hold_hours?: number | null
         }
         Relationships: []
       }
@@ -2507,6 +2510,7 @@ export type Database = {
           geo_accuracy_m: number | null
           geo_at: string | null
           geo_by: string | null
+          production_qa_gate: string
         }
         Insert: {
           id: string
@@ -2564,6 +2568,7 @@ export type Database = {
           geo_accuracy_m?: number | null
           geo_at?: string | null
           geo_by?: string | null
+          production_qa_gate?: string
         }
         Update: {
           id?: string
@@ -2621,6 +2626,7 @@ export type Database = {
           geo_accuracy_m?: number | null
           geo_at?: string | null
           geo_by?: string | null
+          production_qa_gate?: string
         }
         Relationships: []
       }
@@ -3185,6 +3191,69 @@ export type Database = {
           new_val?: number
           diff_base?: number
           flipped_at?: string
+        }
+        Relationships: []
+      }
+      batch_consumption: {
+        Row: {
+          id: string
+          batch_id: string
+          entry_id: string
+          pallet_code: string
+          material_id: string
+          production_date: string | null
+          batch_lot: string | null
+          ncc_id: string | null
+          qty: number
+          source: string
+          created_by: string | null
+          created_by_name: string | null
+          created_at: string
+          updated_at: string
+          reversed_at: string | null
+          reversed_by: string | null
+          reversed_by_name: string | null
+          reverse_reason: string | null
+        }
+        Insert: {
+          id: string
+          batch_id: string
+          entry_id: string
+          pallet_code: string
+          material_id: string
+          production_date?: string | null
+          batch_lot?: string | null
+          ncc_id?: string | null
+          qty: number
+          source: string
+          created_by?: string | null
+          created_by_name?: string | null
+          created_at?: string
+          updated_at: string
+          reversed_at?: string | null
+          reversed_by?: string | null
+          reversed_by_name?: string | null
+          reverse_reason?: string | null
+        }
+        Update: {
+          id?: string
+          batch_id?: string
+          entry_id?: string
+          pallet_code?: string
+          material_id?: string
+          production_date?: string | null
+          batch_lot?: string | null
+          ncc_id?: string | null
+          qty?: number
+          source?: string
+          created_by?: string | null
+          created_by_name?: string | null
+          created_at?: string
+          updated_at?: string
+          reversed_at?: string | null
+          reversed_by?: string | null
+          reversed_by_name?: string | null
+          reverse_reason?: string | null
         }
         Relationships: []
       }
@@ -5134,6 +5203,7 @@ export type Database = {
           created_at: string
           updated_at: string
           material_codes: string[] | null
+          tank_id: string | null
         }
         Insert: {
           id: string
@@ -5157,6 +5227,7 @@ export type Database = {
           created_at?: string
           updated_at: string
           material_codes?: string[] | null
+          tank_id?: string | null
         }
         Update: {
           id?: string
@@ -5180,6 +5251,127 @@ export type Database = {
           created_at?: string
           updated_at?: string
           material_codes?: string[] | null
+          tank_id?: string | null
+        }
+        Relationships: []
+      }
+      production_batch: {
+        Row: {
+          id: string
+          warehouse_id: string
+          batch_code: string
+          material_id: string
+          machine_code: string | null
+          shift: string | null
+          prod_date: string
+          planned_qty: number | null
+          status: string
+          qa_status: string
+          qa_by: string | null
+          qa_by_name: string | null
+          qa_at: string | null
+          qa_note: string | null
+          note: string | null
+          opened_by: string | null
+          opened_by_name: string | null
+          closed_by: string | null
+          closed_by_name: string | null
+          closed_at: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id: string
+          warehouse_id: string
+          batch_code: string
+          material_id: string
+          machine_code?: string | null
+          shift?: string | null
+          prod_date: string
+          planned_qty?: number | null
+          status?: string
+          qa_status?: string
+          qa_by?: string | null
+          qa_by_name?: string | null
+          qa_at?: string | null
+          qa_note?: string | null
+          note?: string | null
+          opened_by?: string | null
+          opened_by_name?: string | null
+          closed_by?: string | null
+          closed_by_name?: string | null
+          closed_at?: string | null
+          created_at?: string
+          updated_at: string
+        }
+        Update: {
+          id?: string
+          warehouse_id?: string
+          batch_code?: string
+          material_id?: string
+          machine_code?: string | null
+          shift?: string | null
+          prod_date?: string
+          planned_qty?: number | null
+          status?: string
+          qa_status?: string
+          qa_by?: string | null
+          qa_by_name?: string | null
+          qa_at?: string | null
+          qa_note?: string | null
+          note?: string | null
+          opened_by?: string | null
+          opened_by_name?: string | null
+          closed_by?: string | null
+          closed_by_name?: string | null
+          closed_at?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      production_tank: {
+        Row: {
+          id: string
+          warehouse_id: string
+          code: string
+          name: string | null
+          capacity: number
+          unit: string
+          is_active: boolean
+          note: string | null
+          created_by: string | null
+          updated_by: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id: string
+          warehouse_id: string
+          code: string
+          name?: string | null
+          capacity: number
+          unit: string
+          is_active?: boolean
+          note?: string | null
+          created_by?: string | null
+          updated_by?: string | null
+          created_at?: string
+          updated_at: string
+        }
+        Update: {
+          id?: string
+          warehouse_id?: string
+          code?: string
+          name?: string | null
+          capacity?: number
+          unit?: string
+          is_active?: boolean
+          note?: string | null
+          created_by?: string | null
+          updated_by?: string | null
+          created_at?: string
+          updated_at?: string
         }
         Relationships: []
       }
@@ -5430,6 +5622,99 @@ export type Database = {
           route_name?: string
           plant?: string | null
           ward_code?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      tank_lot: {
+        Row: {
+          id: string
+          tank_id: string
+          batch_id: string
+          qty_in: number
+          qty_remaining: number
+          filled_at: string
+          expires_at: string | null
+          status: string
+          emptied_at: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id: string
+          tank_id: string
+          batch_id: string
+          qty_in: number
+          qty_remaining: number
+          filled_at: string
+          expires_at?: string | null
+          status?: string
+          emptied_at?: string | null
+          created_at?: string
+          updated_at: string
+        }
+        Update: {
+          id?: string
+          tank_id?: string
+          batch_id?: string
+          qty_in?: number
+          qty_remaining?: number
+          filled_at?: string
+          expires_at?: string | null
+          status?: string
+          emptied_at?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      tank_movement: {
+        Row: {
+          id: string
+          tank_id: string
+          tank_lot_id: string | null
+          batch_id: string | null
+          kind: string
+          qty: number
+          packing_run_id: string | null
+          ref_tank_id: string | null
+          reason: string | null
+          warning: string | null
+          created_by: string | null
+          created_by_name: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id: string
+          tank_id: string
+          tank_lot_id?: string | null
+          batch_id?: string | null
+          kind: string
+          qty: number
+          packing_run_id?: string | null
+          ref_tank_id?: string | null
+          reason?: string | null
+          warning?: string | null
+          created_by?: string | null
+          created_by_name?: string | null
+          created_at?: string
+          updated_at: string
+        }
+        Update: {
+          id?: string
+          tank_id?: string
+          tank_lot_id?: string | null
+          batch_id?: string | null
+          kind?: string
+          qty?: number
+          packing_run_id?: string | null
+          ref_tank_id?: string | null
+          reason?: string | null
+          warning?: string | null
+          created_by?: string | null
+          created_by_name?: string | null
           created_at?: string
           updated_at?: string
         }
@@ -5764,6 +6049,7 @@ export type Database = {
           work_mode: string | null
           lower_from_level: number | null
           auto_fill: boolean | null
+          production_qa_gate: string | null
         }
         Insert: {
           id: string
@@ -5793,6 +6079,7 @@ export type Database = {
           work_mode?: string | null
           lower_from_level?: number | null
           auto_fill?: boolean | null
+          production_qa_gate?: string | null
         }
         Update: {
           id?: string
@@ -5822,6 +6109,7 @@ export type Database = {
           work_mode?: string | null
           lower_from_level?: number | null
           auto_fill?: boolean | null
+          production_qa_gate?: string | null
         }
         Relationships: []
       }
@@ -6583,6 +6871,58 @@ export type Database = {
       }
       materials_summary: {
         Args: { p_tokens?: unknown | null; p_categories?: unknown | null; p_scope_cats?: unknown | null; p_status?: unknown | null; p_qr?: unknown | null; p_dq?: unknown | null; p_cat_rules?: Json | null; p_legacy_no_sl?: unknown | null; p_legacy_pe?: unknown | null; p_dims?: unknown | null; p_flags?: unknown | null }
+        Returns: Json
+      }
+      mes_batch_page: {
+        Args: { p: Json | null }
+        Returns: Json
+      }
+      mes_close_run: {
+        Args: { p: Json | null }
+        Returns: Json
+      }
+      mes_consume_lot: {
+        Args: { p: Json | null }
+        Returns: Json
+      }
+      mes_consume_reverse: {
+        Args: { p: Json | null }
+        Returns: Json
+      }
+      mes_consume_scan: {
+        Args: { p: Json | null }
+        Returns: Json
+      }
+      mes_entry_status: {
+        Args: { p_remaining: number | null; p_imported: number | null }
+        Returns: string
+      }
+      mes_genealogy: {
+        Args: { p_kind: string | null; p_value: string | null; p_wh_ids?: unknown | null; p_limit?: number | null }
+        Returns: Json
+      }
+      mes_open_batch_wh: {
+        Args: { p_batch_id: string | null }
+        Returns: string
+      }
+      mes_stock: {
+        Args: { p_wh: string | null; p_material?: string | null; p_search?: string | null; p_limit?: number | null }
+        Returns: Json
+      }
+      mes_tank_adjust: {
+        Args: { p: Json | null }
+        Returns: Json
+      }
+      mes_tank_fill: {
+        Args: { p: Json | null }
+        Returns: Json
+      }
+      mes_tank_take: {
+        Args: { p: Json | null }
+        Returns: Json
+      }
+      mes_tank_transfer: {
+        Args: { p: Json | null }
         Returns: Json
       }
       move_pallets_to_location: {

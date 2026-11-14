@@ -24,6 +24,7 @@
 - [`weigh_station`](weigh_station.md) — Phiếu cân (trạm cân) (được nhắc tới từ đó)
 - [`wms_settings`](wms_settings.md) — Cài đặt WMS (hai chiều)
 - [`inbound`](inbound.md) — Nhập kho (nhập hàng trả về đọc chuyến đã hoàn thành + tem đã quét đi — 26/10)
+- [`production`](production.md) — Sản xuất (xuất tiêu hao ở kho phụ và rút vào mẻ cùng trừ tồn kho chế biến — 14/11)
 <!-- giao-thoa:end -->
 
 ## Trang / nghiệp vụ

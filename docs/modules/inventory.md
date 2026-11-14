@@ -19,6 +19,7 @@
 - [`slotting`](slotting.md) — Tối ưu vị trí (Slotting) (hai chiều)
 - [`stocktake`](stocktake.md) — Kiểm kho (hai chiều)
 - [`traceability`](traceability.md) — Truy xuất lô (được nhắc tới từ đó)
+- [`production`](production.md) — Sản xuất (rút NVL vào mẻ trừ tồn kho chế biến; sổ pallet nguồn 10 "Rút vào mẻ" — 14/11)
 <!-- giao-thoa:end -->
 
 ## Trang / nghiệp vụ

@@ -356,6 +356,19 @@ export const MODULES = {
       export:   'Xuất Excel sổ đóng gói',
     },
   },
+  production: {
+    page: 'Sản xuất (Mẻ chế biến · Bồn)',
+    actions: {
+      view:        'Xem mẻ chế biến, bồn và truy xuất sản xuất',
+      open_batch:  'Mở / sửa / đóng / mở lại / huỷ MẺ chế biến',
+      consume:     'Rút nguyên liệu vào mẻ (quét tem hoặc chọn lô)',
+      reverse:     'Huỷ dòng rút nguyên liệu ghi nhầm (hoàn tồn)',
+      qa_release:  'QA giữ / thả / loại lô bán thành phẩm',
+      manage_tank: 'Khai danh mục BỒN (mã, sức chứa, đơn vị, ngừng dùng)',
+      tank_ops:    'Nạp mẻ vào bồn · chuyển bồn · điều chỉnh mức · xả bỏ',
+      export:      'Xuất Excel danh sách mẻ',
+    },
+  },
   materials: {
     page: 'Mã hàng',
     actions: {

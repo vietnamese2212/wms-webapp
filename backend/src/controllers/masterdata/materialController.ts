@@ -224,6 +224,14 @@ function negativeNumberError(body: Record<string, unknown>): string | null {
   return null
 }
 
+// Hạn lưu bồn (giờ) của mã bán thành phẩm — MES 14/11. Trống = không giới hạn. Một validator cho create + update.
+function tankHoldHoursOf(v: unknown): { value: number | null } | { error: string } {
+  if (v === null || v === undefined || v === '') return { value: null }
+  const n = Number(v)
+  if (typeof v === 'boolean' || !Number.isInteger(n) || n < 1 || n > 8760) return { error: 'Hạn lưu bồn phải là số giờ nguyên từ 1 tới 8760 (để trống = không giới hạn)' }
+  return { value: n }
+}
+
 export async function createMaterial(req: Request, res: Response) {
   try {
     const {
@@ -233,10 +241,13 @@ export async function createMaterial(req: Request, res: Response) {
       units_per_carton, pallet_per_ea, shelf_life_days, storage_category, old_code, image_url,
       warehouse_pallet_overrides, supplier_shelf_life_overrides, batch_prefix,
       carton_length_mm, carton_width_mm, carton_height_mm, max_stack_layers, loose_stack_layers, stack_on_top,
-      base_unit, entry_unit, is_non_stock, is_pallet_carrier,
+      base_unit, entry_unit, is_non_stock, is_pallet_carrier, tank_hold_hours,
     } = req.body
     if (!material_code || !material_description)
       return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu material_code hoặc material_description')
+    const th = tankHoldHoursOf(tank_hold_hours)
+    if ('error' in th) return fail(res, 400, 'VALIDATION_ERROR', th.error)
+    const tankHold = th.value
     // Scope Loại hàng: không tạo mã thuộc loại ngoài phạm vi (mã chưa gán loại → cho qua)
     if (!categoryAllowed(req, category)) return fail(res, 403, 'FORBIDDEN', CATEGORY_FORBIDDEN_MSG)
     const catErr = await unknownCategoryError(category)
@@ -284,6 +295,7 @@ export async function createMaterial(req: Request, res: Response) {
         storage_category: storage_category ?? null,
         old_code: old_code ? String(old_code).trim() : null,
         batch_prefix: batch_prefix ? String(batch_prefix).trim().toUpperCase() : null,
+        tank_hold_hours: tankHold,
         image_url: image_url ?? null,
         manufacturer_id: manufacturer_id ?? null,
         notes: notes ?? null,
@@ -315,7 +327,7 @@ export async function updateMaterial(req: Request, res: Response) {
       units_per_carton, pallet_per_ea, shelf_life_days, storage_category, old_code, image_url,
       warehouse_pallet_overrides, supplier_shelf_life_overrides, batch_prefix,
       carton_length_mm, carton_width_mm, carton_height_mm, max_stack_layers, loose_stack_layers, stack_on_top,
-      base_unit, entry_unit, is_non_stock, is_pallet_carrier,
+      base_unit, entry_unit, is_non_stock, is_pallet_carrier, tank_hold_hours,
     } = req.body
 
     // Scope Loại hàng: chỉ sửa mã thuộc loại được phép + không đổi sang loại ngoài phạm vi (mã chưa gán loại → cho qua)
@@ -386,6 +398,11 @@ export async function updateMaterial(req: Request, res: Response) {
     if (storage_category !== undefined) patch.storage_category = storage_category
     if (old_code !== undefined) patch.old_code = old_code ? String(old_code).trim() : null
     if (batch_prefix !== undefined) patch.batch_prefix = batch_prefix ? String(batch_prefix).trim().toUpperCase() : null
+    if (tank_hold_hours !== undefined) {
+      const th = tankHoldHoursOf(tank_hold_hours)
+      if ('error' in th) return fail(res, 400, 'VALIDATION_ERROR', th.error)
+      patch.tank_hold_hours = th.value
+    }
     if (image_url !== undefined) patch.image_url = image_url
     if (manufacturer_id !== undefined) patch.manufacturer_id = manufacturer_id || null
     if (notes !== undefined) patch.notes = notes

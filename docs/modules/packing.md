@@ -15,7 +15,7 @@
 - [`inventory`](inventory.md) — Tồn kho (file này nhắc tới)
 - [`traceability`](traceability.md) — Truy xuất lô (được nhắc tới từ đó)
 - [`wms_settings`](wms_settings.md) — Cài đặt WMS (được nhắc tới từ đó)
-- [`production`](production.md) — Sản xuất (trang sổ gắn bồn; đóng trang khai lượng rút bồn trong cùng giao dịch — 14/11)
+- [`production`](production.md) — Sản xuất (trang sổ gắn bồn; đóng trang khai lượng rút bồn trong cùng giao dịch — 14/11; trang ĐÃ ĐÓNG sửa / khai bù lượng rút bằng nút "Sửa lượng rút bồn" ở chi tiết trang, quyền packing.edit — 14/11 tối)
 <!-- giao-thoa:end -->
 
 ## Trang / nghiệp vụ

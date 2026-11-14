@@ -539,7 +539,7 @@ export async function getRun(req: Request, res: Response) {
   const live = run.status === 'OPEN'
   const [{ data: tank }, { data: draws }] = await Promise.all([
     run.tank_id ? supabase.from('production_tank').select('id, code, name, unit').eq('id', run.tank_id).maybeSingle() : Promise.resolve({ data: null }),
-    supabase.from('tank_movement').select('id, qty, warning, created_at, created_by_name, batch:production_batch!tank_movement_batch_id_fkey(batch_code)')
+    supabase.from('tank_movement').select('id, qty, warning, reason, created_at, created_by_name, batch:production_batch!tank_movement_batch_id_fkey(batch_code)')
       .eq('packing_run_id', id).eq('kind', 'DRAW').order('created_at').limit(500),
   ])
   return ok(res, {
@@ -744,6 +744,29 @@ export async function closeRun(req: Request, res: Response) {
   if (error) return fail(res, error.message, 500)
   if (!data?.length) return fail(res, 409, 'RUN_NOT_OPEN', 'Trang sổ vừa được người khác đóng')
   return ok(res, { ...data[0], pallet_open: a?.pallet_open ?? 0 })
+}
+
+// POST /wms/packing-runs/:id/tank-draw — SỬA / KHAI BÙ tổng lượng trang ĐÃ ĐÓNG rút từ bồn (14/11 tối, user: "Sửa được").
+// body { tank_qty (tổng mới, 0 = không rút), reason }. Hàm mes_run_redraw ghi THÊM vào sổ bồn (không sửa dòng cũ):
+// tăng = rút thêm phần chênh (cùng luật QA), giảm = trả phần chênh về bồn theo tỷ lệ từng mẻ. Quyền packing.edit.
+export async function redrawRun(req: Request, res: Response) {
+  const { id } = req.params
+  const { tank_qty, reason } = req.body as { tank_qty: number; reason: string }
+  const { data: run } = await supabase.from('packing_runs').select('id, warehouse_id, status, tank_id').eq('id', id).maybeSingle()
+  if (!run) return fail(res, 'Không tìm thấy trang sổ', 404)
+  if (whOutOfScope(req, run.warehouse_id)) return fail(res, 'Kho ngoài phạm vi được gán', 403)
+  if (run.status !== 'CLOSED') return fail(res, 409, 'MES_RUN_NOT_CLOSED', 'Chỉ sửa lượng rút của trang sổ ĐÃ ĐÓNG — trang đang mở thì khai khi bấm Giờ kết thúc')
+  if (!run.tank_id) return fail(res, 409, 'MES_NO_TANK', 'Trang sổ chưa gắn bồn — gắn bồn (Sửa trang sổ) rồi mới khai lượng rút')
+  const { data: r, error } = await supabase.rpc('mes_run_redraw', { p: {
+    run_id: id, tank_qty: round3(tank_qty), reason, qa_gate: await qaGateOfTank(String(run.tank_id)),
+    actor_id: resolveActorId(req), actor_name: resolveActorName(req),
+  } })
+  if (error) {
+    const m = /MESERR:([A-Z_]+)\|([\s\S]+)$/.exec(error.message ?? '')
+    if (m) return fail(res, m[1] === 'NOT_FOUND' ? 404 : ['QTY', 'REASON'].includes(m[1]) ? 422 : 409, `MES_${m[1]}`, m[2].trim())
+    return fail(res, error)
+  }
+  return ok(res, r)
 }
 
 // PATCH /wms/packing-runs/:id — sửa trang (ca/chu kỳ/máy/giờ/tổng/ghi chú) — packing.open_run

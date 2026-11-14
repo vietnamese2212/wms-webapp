@@ -576,7 +576,9 @@ export async function putWarehouseTypeConfigs(req: Request, res: Response) {
       // lỗi, không cảnh báo (gói QA 29 mục [4] bắt được đúng ca này). Nên khởi tạo NULL đủ mọi cột.
       const patch: Record<string, unknown> = Object.fromEntries(
         [...WH_TYPE_CFG_COLS, ...WH_TYPE_META_COLS].map(k => [k, null]))
-      const err = applyWhTypeConfigBody(raw, patch)
+      // Công tắc MES thuộc trang Cài đặt MES (cửa ghi riêng) — cửa này không được đụng, kể cả ghi NULL đè
+      delete patch.production_qa_gate
+      const err = applyWhTypeConfigBody({ ...raw, production_qa_gate: undefined }, patch)
       if (err) return fail(res, 422, 'INVALID_INPUT', `${code}: ${err}`)
       // 3 cờ VẬN HÀNH khai riêng theo kho (21/08) — null/'' = theo danh mục chung
       for (const k of ['is_ncc_goods', 'requires_ncc'] as const) {

@@ -8403,7 +8403,7 @@ export interface PackingRun {
   // MES 14/11: bồn của trang + các lần rút (chi tiết trang)
   tank_id?: string | null
   tank?: { id: string; code: string; name: string | null; unit: string } | null
-  tank_draws?: { id: string; qty: number; warning: string | null; created_at: string; created_by_name: string | null; batch: { batch_code: string } | null }[]
+  tank_draws?: { id: string; qty: number; warning: string | null; reason?: string | null; created_at: string; created_by_name: string | null; batch: { batch_code: string } | null }[]
   // đối chiếu SX↔Kho cấp TRANG (15/08): recv_total = pallet SỐNG (mẫu số symbol — trang CLOSED
   // giữ pallet_count đã CHỐT nên có thể lệch nếu sau đó hủy pallet)
   received_count?: number
@@ -8465,6 +8465,18 @@ export function useClosePackingRun() {
     mutationFn: ({ id, end_at, tank_qty }: { id: string; end_at?: string | null; tank_qty?: number | null }) =>
       apiClient.post(`/wms/packing-runs/${id}/close`, { end_at, tank_qty }).then(r => r.data.data as PackingRun & { tank_warnings?: string[] }),
     onSettled: () => invalidatePacking(qc),
+  })
+}
+/** Sửa / khai bù TỔNG lượng một trang ĐÃ ĐÓNG rút từ bồn (14/11 tối) — BE ghi thêm vào sổ bồn, không sửa dòng cũ. */
+export function useRedrawPackingRun() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, tank_qty, reason }: { id: string; tank_qty: number; reason: string }) =>
+      apiClient.post(`/wms/packing-runs/${id}/tank-draw`, { tank_qty, reason }).then(r => r.data.data as { drawn: number; delta: number; warnings: string[] }),
+    onSettled: () => {
+      invalidatePacking(qc)
+      for (const k of [['prod-tanks'], ['prod-tank-moves'], ['prod-batch'], ['prod-batches'], ['prod-genealogy']]) void qc.invalidateQueries({ queryKey: k })
+    },
   })
 }
 export function useUpdatePackingRun() {

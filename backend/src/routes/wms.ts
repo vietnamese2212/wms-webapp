@@ -394,6 +394,9 @@ router.post('/packing-runs',            requirePerm('packing', 'open_run'), pack
 router.post('/packing-runs/:id/close',  requirePerm('packing', 'open_run'), packing.closeRun)
 router.patch('/packing-runs/:id',       requirePerm('packing', 'open_run'), packing.updateRun)
 router.post('/packing-runs/:id/cancel', requirePerm('packing', 'open_run'), packing.cancelRun)
+// Sửa / khai bù lượng rút bồn của trang ĐÃ ĐÓNG — packing.edit ("sửa sau khi đóng"), không phải open_run
+router.post('/packing-runs/:id/tank-draw', requirePerm('packing', 'edit'),
+  validate({ body: z.object({ tank_qty: z.number().min(0).max(10_000_000), reason: zText(1, 500) }) }), packing.redrawRun)
 
 // MES giai đoạn 1 (14/11) — mẻ chế biến · rút NVL · bồn · truy xuất sản xuất (docs/plans/MES_PHASE1_PLAN.md)
 const P = (a: string) => requirePerm('production', a)
@@ -420,6 +423,8 @@ router.post('/production/tanks/:id/adjust',        P('tank_ops'),   validate({ b
 router.post('/production/tanks/:id/transfer',      P('tank_ops'),   validate({ body: production.zTankTransfer }), production.transferTank)
 router.post('/production/tanks/:id/discard',       P('tank_ops'),   validate({ body: production.zTankDiscard }), production.discardTank)
 // cửa đọc dùng chung với Sổ đóng gói (chọn bồn khi mở trang sổ) và Truy xuất lô
+router.get('/production/settings',                 P('view'),       validate({ query: production.zSettingsQuery }), production.getSettings)
+router.put('/production/settings',                 P('configure'),  validate({ body: production.zSettingsPut }), production.putSettings)
 router.get('/production/tanks-for-run', requireAnyPerm(['packing', 'open_run'], ['production', 'view']), validate({ query: production.zTanksForRunQuery }), production.tanksForRun)
 router.get('/production/genealogy',     requireAnyPerm(['traceability', 'view'], ['production', 'view']), validate({ query: production.zGenealogyQuery }), production.genealogy)
 

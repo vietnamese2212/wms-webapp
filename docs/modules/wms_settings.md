@@ -19,7 +19,7 @@
 - [`packing`](packing.md) — Sổ đóng gói (file này nhắc tới)
 - [`tms_plan`](tms_plan.md) — Vận chuyển: Đặt lịch & Chuyển kho (file này nhắc tới)
 - [`tms_vehicle_types`](tms_vehicle_types.md) — TMS — Loại xe (hai chiều)
-- [`production`](production.md) — Sản xuất (kho chế biến = kho phụ; công tắc 2 tầng production_qa_gate — 14/11)
+- [`production`](production.md) — Sản xuất (kho chế biến = kho phụ; công tắc production_qa_gate từ 14/11 tối do trang Cài đặt MES ghi — form Kho / Loại kho ở đây KHÔNG còn ô này và cửa type-configs không được đè cột đó)
 <!-- giao-thoa:end -->
 
 ## Trang / nghiệp vụ

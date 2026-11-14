@@ -166,6 +166,31 @@ function useProdMutation<TVars, TRes = unknown>(fn: (v: TVars) => Promise<TRes>)
 const post = async <T,>(url: string, body: unknown = {}) => (await apiClient.post(url, body)).data.data as T
 const patch = async <T,>(url: string, body: unknown) => (await apiClient.patch(url, body)).data.data as T
 
+// ── Cài đặt MES (14/11 tối): công tắc rút bồn còn lô chờ QA (Kho + Loại kho) · hạn lưu bồn theo mã ──
+export interface ProductionSettings {
+  warehouse_id: string
+  production_qa_gate: string
+  types: { type_code: string; production_qa_gate: string | null }[]
+  hold_hours: { id: string; material_code: string; short_name: string | null; category: string | null; base_unit: string | null; tank_hold_hours: number | null }[]
+}
+export function useProductionSettings(warehouseId: string | undefined) {
+  return useQuery({
+    queryKey: ['prod-settings', warehouseId], enabled: !!warehouseId, staleTime: 10_000,
+    queryFn: async () => (await apiClient.get('/wms/production/settings', { params: { warehouse_id: warehouseId } })).data.data as ProductionSettings,
+  })
+}
+export function useSaveProductionSettings() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (b: { warehouse_id: string; production_qa_gate?: string; types?: { type_code: string; production_qa_gate: string | null }[]; hold_hours?: { material_id: string; tank_hold_hours: number | null }[] }) =>
+      (await apiClient.put('/wms/production/settings', b)).data.data as ProductionSettings,
+    onSuccess: (data, v) => { qc.setQueryData(['prod-settings', v.warehouse_id], data) },
+    onSettled: () => {
+      for (const k of [['prod-settings'], ['materials'], ['materials-paged'], K.batch, K.tanks, ['warehouses'], ['wh-type-configs']]) void qc.invalidateQueries({ queryKey: k })
+    },
+  })
+}
+
 export interface BatchInput { warehouse_id: string; material_id: string; prod_date: string; batch_code?: string; machine_code?: string; shift?: string; planned_qty?: number | null; note?: string }
 export const useCreateBatch = () => useProdMutation((b: BatchInput) => post<BatchDetail>('/wms/production/batches', b))
 export const useUpdateBatch = () => useProdMutation(({ id, ...b }: { id: string } & Partial<Omit<BatchInput, 'warehouse_id' | 'machine_code' | 'shift' | 'note'>> & { machine_code?: string | null; shift?: string | null; note?: string | null }) => patch<BatchDetail>(`/wms/production/batches/${id}`, b))

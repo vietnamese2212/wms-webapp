@@ -695,7 +695,6 @@ const STRAT_FIELDS = [
   // Chỉ dẫn công việc (Directed Work 1c, 10/09) — 2 tầng như mọi cờ trên. Thiếu ở đây thì cả tính
   // năng "Việc cần làm" không có đường nào bật từ trong app.
   'work_mode', 'lower_from_level',
-  'production_qa_gate',   // MES 14/11: rút bán thành phẩm chưa QA thả — 2 tầng, chỉ hiện ở kho chế biến
 ] as const
 
 const stratOf = (r: Partial<Record<typeof STRAT_FIELDS[number], unknown>>): StrategyValue =>
@@ -837,7 +836,6 @@ function WarehouseDialog({ wh, open, onClose, onGotoTypes }: {
     auto_fill:                  wh?.auto_fill === true,
     work_mode:                  wh?.work_mode ?? 'MANUAL',
     lower_from_level:           wh?.lower_from_level ?? 2,
-    production_qa_gate:         wh?.production_qa_gate ?? 'WARN',
   })
   const scanCodes = scanValueOf(scanCodeList)
   const patchStrat = (p: Partial<StrategyValue>) => setStrat(s => ({ ...s, ...p }))
@@ -901,7 +899,6 @@ function WarehouseDialog({ wh, open, onClose, onGotoTypes }: {
       auto_fill: strat.auto_fill === true,   // tự ra lệnh fill hàng nhặt lẻ (15/09)
       // Chỉ dẫn công việc (Directed Work 1c) — BE gác điều kiện bật Hướng dẫn (kho QR + đã vẽ Sơ đồ kho)
       work_mode: strat.work_mode ?? 'MANUAL', lower_from_level: lowerLvl ?? 2,
-      production_qa_gate: strat.production_qa_gate ?? 'WARN',   // MES 14/11
     }
     if (isEdit) {
       update(
@@ -1203,7 +1200,7 @@ function WarehouseDialog({ wh, open, onClose, onGotoTypes }: {
           </div>
           {/* KHU VỰC NHẬP — sau khi hết mọi nhóm XUẤT */}
           <div className="grid gap-3 xl:grid-cols-2 items-start [&>*]:min-w-0">
-            <InboundStrategyFields mode="warehouse" idPrefix="wh" value={strat} inherited={strat} onPatch={patchStrat} showProduction={parentId !== '__none__'} />
+            <InboundStrategyFields mode="warehouse" idPrefix="wh" value={strat} inherited={strat} onPatch={patchStrat} />
           </div>
           {isEdit ? (
             <button type="button" onClick={() => onGotoTypes?.(wh.id)}
@@ -1372,8 +1369,7 @@ const RENAMED_LABELS: Record<string, string> = {
 //   • Cột TRÁI  — dùng chung mọi kho: tên · màu · bắt buộc HSD · bắt buộc Pallet/EA
 //     (2 cờ sau ràng buộc HỒ SƠ MÃ HÀNG, mà mã hàng dùng chung toàn hệ thống nên không tách được)
 //   • Cột PHẢI  — riêng kho đang chọn: 3 cờ vận hành + chiến thuật xuất/nhập, để trống = kế thừa
-function TypeDialog({ type, open, onClose, whName, whStrat, cfgRow, canManageWh, savingCfg, onSaveCfg, isKitchen }: {
-  isKitchen?: boolean                        // kho đang xem là kho chế biến (kho phụ) ⇒ hiện nhóm Sản xuất (MES 14/11)
+function TypeDialog({ type, open, onClose, whName, whStrat, cfgRow, canManageWh, savingCfg, onSaveCfg }: {
   type: { id: string; value: string; meta?: WhTypeMeta | null } | null; open: boolean; onClose: () => void
   whName: string
   whStrat: StrategyValue                    // mặc định của kho — in "— Theo kho (FEFO) —"
@@ -1584,7 +1580,7 @@ function TypeDialog({ type, open, onClose, whName, whStrat, cfgRow, canManageWh,
                     onChange={e => setBatchOv(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ''))} />
                 </div>
               </SettingsGroup>
-                <InboundStrategyFields mode="type" idPrefix="wt-strat" value={strat} inherited={whStrat} showProduction={isKitchen}
+                <InboundStrategyFields mode="type" idPrefix="wt-strat" value={strat} inherited={whStrat}
                   onPatch={v => setStrat(s => ({ ...s, ...v }))} />
               </div>
             </>
@@ -2338,7 +2334,6 @@ export default function WMSSettings() {
     loose_mode:                 stratWh?.loose_mode ?? 'REMAINDER',
     loose_max_cartons:          stratWh?.loose_max_cartons ?? null,
     auto_fill:                  stratWh?.auto_fill === true,
-    production_qa_gate:         stratWh?.production_qa_gate ?? 'WARN',
   }
   // Lưu setting RIÊNG của (kho, loại) — gọi từ dialog sau khi phần danh mục chung đã lưu.
   // renamedFrom: vừa đổi tên loại ⇒ cascade đã đổi type_code, phải dựng payload theo tên MỚI.
@@ -2840,7 +2835,7 @@ export default function WMSSettings() {
       )}
       {showTypeDlg && stratWh && (
         <TypeDialog type={editingType} open={showTypeDlg} onClose={() => setShowTypeDlg(false)}
-          whName={stratWh.name} whStrat={stratWhValue} isKitchen={!!stratWh.parent_warehouse_id}
+          whName={stratWh.name} whStrat={stratWhValue}
           cfgRow={editingType ? (cfgRowMap.get(editingType.value) ?? null) : null}
           canManageWh={canManageWarehouse} savingCfg={savingWhTypeCfgs}
           onSaveCfg={saveTypeStrategy} />

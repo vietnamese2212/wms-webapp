@@ -44,8 +44,6 @@ export interface StrategyValue {
   // thứ tự cho 3 vai. Không có ô này trong app thì cả tính năng không bật được — đúng lỗi 10/09.
   work_mode:                  string | null
   lower_from_level:           number | null
-  // MES 14/11: rút bán thành phẩm CHƯA QA thả khỏi bồn — OFF (im) · WARN (cảnh báo, mặc định user chốt) · BLOCK (chặn)
-  production_qa_gate:         string | null
 }
 
 export const STRATEGY_EMPTY: StrategyValue = {
@@ -55,7 +53,7 @@ export const STRATEGY_EMPTY: StrategyValue = {
   putaway_enforced: null, putaway_enforced_off: null,
   putaway_same_mat_date_pref: null, putaway_fallback: null,
   loose_mode: null, loose_max_cartons: null, auto_fill: null,
-  work_mode: null, lower_from_level: null, production_qa_gate: null,
+  work_mode: null, lower_from_level: null,
 }
 
 export const STRATEGY_WAREHOUSE_DEFAULT: StrategyValue = {
@@ -65,7 +63,7 @@ export const STRATEGY_WAREHOUSE_DEFAULT: StrategyValue = {
   putaway_enforced: [], putaway_enforced_off: null,
   putaway_same_mat_date_pref: 'NONE', putaway_fallback: 'BY_CODE',
   loose_mode: 'REMAINDER', loose_max_cartons: null, auto_fill: false,
-  work_mode: 'MANUAL', lower_from_level: 2, production_qa_gate: 'WARN',
+  work_mode: 'MANUAL', lower_from_level: 2,
 }
 
 export const LOOSE_MODE_OPTS = [
@@ -139,8 +137,6 @@ export interface StrategyProps {
   inherited: StrategyValue
   onPatch: (patch: Partial<StrategyValue>) => void
   idPrefix: string
-  /** Kho đang sửa là KHO CHẾ BIẾN (kho phụ nội bộ) ⇒ hiện nhóm SẢN XUẤT (MES 14/11) */
-  showProduction?: boolean
 }
 
 // Mọi helper của hai khu (XUẤT · NHẬP) dựng từ MỘT chỗ — thuần closure, không hook, nên hai component
@@ -397,23 +393,6 @@ export function InboundStrategyFields(props: StrategyProps) {
             : <><b className="text-red-600">{enforced.length} luật</b> đang chặn thật khi cất hàng.</>}
         </div>
       </SettingsGroup>
-      {props.showProduction && (
-        <SettingsGroup title={<>Sản xuất — rút bán thành phẩm khỏi bồn{own(value.production_qa_gate)}</>}
-          tip={<>Áp khi đóng trang Sổ đóng gói có khai lượng rút từ bồn của kho chế biến này. Loại kho = loại của mã bán thành phẩm trong bồn.
-            Quá hạn lưu bồn (giờ khai ở Mã hàng) luôn chỉ cảnh báo. Cảnh báo được ghi vào sổ bồn.</>}>
-          <SettingRow label={<>Lô chưa được QA thả{own(value.production_qa_gate)}</>}
-            desc={<>Bồn còn lô bán thành phẩm <b>chờ QA</b> hoặc <b>QA loại</b> mà trang sổ vẫn rút: <b>Cảnh báo</b> = cho rót, báo cho người đóng trang · <b>Chặn</b> = không đóng trang được tới khi QA thả.</>}>
-            <SingleSelect value={sel(value.production_qa_gate)} onChange={put('production_qa_gate')} triggerClassName="h-8"
-              options={withInherit(PRODUCTION_QA_GATE_OPTS, inherited.production_qa_gate)} />
-          </SettingRow>
-        </SettingsGroup>
-      )}
     </>
   )
 }
-
-export const PRODUCTION_QA_GATE_OPTS = [
-  { value: 'WARN',  label: 'Cảnh báo', sub: 'mặc định — cho rót, báo người đóng trang' },
-  { value: 'BLOCK', label: 'Chặn',     sub: 'không rút được tới khi QA thả' },
-  { value: 'OFF',   label: 'Không kiểm', sub: 'xưởng không giữ QA bán thành phẩm' },
-] as const

@@ -6,7 +6,7 @@
 // Giờ bấm nút chỉ là giờ THAO TÁC (đối chiếu chéo, không phải giờ SX).
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { AxiosError } from 'axios'
-import { NotebookPen, Camera, Check, X, Pencil, Clock, AlertTriangle, Download, Plus, StopCircle, ZoomIn } from 'lucide-react'
+import { NotebookPen, Camera, Check, X, Pencil, Clock, AlertTriangle, Download, Plus, StopCircle, ZoomIn, Droplets } from 'lucide-react'
 import { ScanIcon } from '@/components/shared/ScanIcon'
 import { Button } from '@/components/ui/button'
 import { toast } from '@/components/ui/use-toast'
@@ -24,7 +24,7 @@ import {
   usePackingLogs, useOpenPackingLog, useClosePackingLog,
   useUpdatePackingLog, useCancelPackingLog, type PackingLog,
   usePackingRunBoard, usePackingRun, usePackingRuns, useOpenPackingRun, useClosePackingRun,
-  useUpdatePackingRun, useCancelPackingRun, type PackingRun,
+  useUpdatePackingRun, useCancelPackingRun, useRedrawPackingRun, type PackingRun,
   useImportShifts, useMaterials, useMaterialsByCodes, useMachines, useSettingNumber,
 } from '@/api/hooks'
 import { readCartonPrint, warmOcr } from '@/utils/cartonOcr'
@@ -45,7 +45,7 @@ import { can, type ModulePermissions } from '@/config/permissions'
 import { useScanCodeTypes } from '@/hooks/useScanCodeTypes'
 import { TableEmptyRow } from '@/components/shared/TableEmptyRow'
 import { useTanksForRun } from '@/api/productionHooks'
-import { parseVnNumber } from '@/utils/vnNumber'
+import { parseVnNumber, vnNumberInput } from '@/utils/vnNumber'
 
 const todayVN = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
 // ── Filter "Tháng sản xuất" (user 13/08 — dặn "chọn cẩn thận") ───────────────────
@@ -345,6 +345,7 @@ export default function Packing() {
   const [closeRunTarget, setCloseRunTarget] = useState<PackingRun | null>(null)
   const [editRunTarget, setEditRunTarget] = useState<PackingRun | null>(null)
   const [cancelRunTarget, setCancelRunTarget] = useState<PackingRun | null>(null)
+  const [redrawTarget, setRedrawTarget] = useState<PackingRun | null>(null)
   const [detailRunId, setDetailRunId] = useState<string | null>(null)
   const [banner, setBanner] = useState('')
   // Lỗi từ 7 FormSheet (validate + API) từng chỉ đổ vào banner CỦA TRANG — trên điện thoại FormSheet phủ
@@ -377,7 +378,7 @@ export default function Packing() {
   // → vào thẳng RecordSheet như quét camera. Đang mở form khai/sửa thì nuốt (tránh đè dở dang);
   // đang xem detail trang sổ thì đóng detail rồi vào form ghi (giống nút "Quét tem — thêm pallet").
   const formSheetOpen = !!(pendingQR || closeTarget || editTarget || cancelTarget
-    || openRunForm || closeRunTarget || editRunTarget || cancelRunTarget)
+    || openRunForm || closeRunTarget || editRunTarget || cancelRunTarget || redrawTarget)
   // Form đang mở → TẮT HẲN máy đọc (enabled=false), không chỉ nuốt mã: máy đọc bắt chuỗi phím
   // nhanh/IME ở mọi ô nhập (giờ SX, số thùng…) rồi trả lại giá trị cũ (bug xe vãng lai 25/08).
   useWedgeScanner(code => {
@@ -389,7 +390,7 @@ export default function Packing() {
     canRecord, canOpenRun, canEdit, canCancel, whName,
     onScan: () => { unlockAudio(); setHasOpenedScan(true); setShowScan(true) },
     onDetail: r => setDetailRunId(r.id),
-    onCloseRun: setCloseRunTarget, onEditRun: setEditRunTarget, onCancelRun: setCancelRunTarget,
+    onCloseRun: setCloseRunTarget, onEditRun: setEditRunTarget, onCancelRun: setCancelRunTarget, onRedraw: setRedrawTarget,
     onClosePallet: setCloseTarget, onEditPallet: setEditTarget, onCancelPallet: setCancelTarget,
   }
 
@@ -485,6 +486,9 @@ export default function Packing() {
       {editRunTarget && (
         <RunEditSheet run={editRunTarget} onDone={() => setEditRunTarget(null)} onError={sheetErr} />
       )}
+      {redrawTarget && (
+        <RunRedrawSheet run={redrawTarget} onDone={() => setRedrawTarget(null)} />
+      )}
       {cancelRunTarget && (
         <RunCancelConfirm run={cancelRunTarget} onDone={() => setCancelRunTarget(null)} onError={sheetErr} />
       )}
@@ -570,6 +574,7 @@ interface RunTableHandlers {
   onScan: () => void
   onDetail: (r: PackingRun) => void
   onCloseRun: (r: PackingRun) => void; onEditRun: (r: PackingRun) => void; onCancelRun: (r: PackingRun) => void
+  onRedraw: (r: PackingRun) => void
   onClosePallet: (l: PackingLog) => void; onEditPallet: (l: PackingLog) => void; onCancelPallet: (l: PackingLog) => void
 }
 
@@ -1233,15 +1238,86 @@ function OpenRunSheet({ whOpts, onDone, onError }: {
 function RunTankInfo({ run }: { run: PackingRun }) {
   const draws = run.tank_draws ?? []
   const unit = run.tank?.unit ?? ''
-  const total = draws.reduce((s, d) => s - Number(d.qty), 0)
-  const tip = draws.map(d => `${d.batch?.batch_code ?? ''}: ${Number(-d.qty).toLocaleString('vi-VN')} ${unit}${d.warning ? ` (${d.warning})` : ''}`).join(' · ')
+  const { total, byBatch } = runDrawn(run)
+  const fixed = draws.some(d => d.reason)   // đã có lần sửa lượng rút sau khi đóng
+  const tip = [...byBatch].map(([code, q]) => `${code}: ${q.toLocaleString('vi-VN', { maximumFractionDigits: 3 })} ${unit}`).join(' · ')
+    + draws.filter(d => d.warning || d.reason).map(d => `\n${d.reason ? `Sửa: ${d.reason}` : d.warning}${d.created_by_name ? ` — ${d.created_by_name}` : ''}`).filter((x, i, a) => a.indexOf(x) === i).join('')
   return (
     <span title={tip || 'Chưa khai lượng rút'}>
       <span className="font-mono font-semibold">{run.tank?.code}</span>
-      {draws.length
-        ? <> · rút {total.toLocaleString('vi-VN', { maximumFractionDigits: 3 })} {unit} từ {[...new Set(draws.map(d => d.batch?.batch_code))].join(', ')}</>
-        : <span className="text-amber-700"> · chưa khai lượng rút</span>}
+      {total > 0
+        ? <> · rút {total.toLocaleString('vi-VN', { maximumFractionDigits: 3 })} {unit} từ {[...byBatch.keys()].join(', ')}{fixed && <span className="text-slate-400"> (đã sửa)</span>}</>
+        : <span className="text-amber-700"> · {run.status === 'CLOSED' ? 'không khai lượng rút' : 'chưa khai lượng rút'}</span>}
     </span>
+  )
+}
+/** Lượng THUẦN trang đã rút từ bồn, theo từng mẻ (dòng sửa giảm mang dấu + trong sổ bồn ⇒ cộng đại số). */
+function runDrawn(run: PackingRun): { total: number; byBatch: Map<string, number> } {
+  const m = new Map<string, number>()
+  for (const d of run.tank_draws ?? []) { const k = d.batch?.batch_code ?? ''; m.set(k, (m.get(k) ?? 0) - Number(d.qty)) }
+  for (const [k, q] of m) { const r = Math.round(q * 1000) / 1000; if (r > 0) m.set(k, r); else m.delete(k) }
+  return { total: Math.round([...m.values()].reduce((s, q) => s + q, 0) * 1000) / 1000, byBatch: m }
+}
+
+// ─── Sheet SỬA LƯỢNG RÚT BỒN của trang ĐÃ ĐÓNG (14/11 tối — user: "Sửa được") ─────────
+function RunRedrawSheet({ run: listRun, onDone }: { run: PackingRun; onDone: () => void }) {
+  const { data: fresh } = usePackingRun(listRun.id)   // dòng danh sách không mang tank_draws
+  const run = fresh ?? listRun
+  const mut = useRedrawPackingRun()
+  const cur = runDrawn(run).total
+  const unit = run.tank?.unit ?? ''
+  const [qty, setQty] = useState<string | null>(null)   // null = chưa gõ ⇒ hiện số đang ghi
+  const [reason, setReason] = useState('')
+  const [err, setErr] = useState('')
+  const shown = qty ?? (fresh ? vnNumberInput(cur) : '')
+  const n = shown.trim() ? parseVnNumber(shown) : null
+  const qtyErr = shown.trim() && (n == null || n < 0) ? 'Lượng rút phải là số không âm' : ''
+  const delta = n != null && !qtyErr ? Math.round((n - cur) * 1000) / 1000 : 0
+  const fmt = (x: number) => Math.abs(x).toLocaleString('vi-VN', { maximumFractionDigits: 3 })
+  function save() {
+    if (n == null || qtyErr) { setErr('Nhập tổng lượng đã rút (không rút thì nhập 0)'); return }
+    if (!reason.trim()) { setErr('Nhập lý do sửa'); return }
+    setErr('')
+    mut.mutate({ id: run.id, tank_qty: n, reason: reason.trim() }, {
+      onSuccess: r => {
+        if (r.warnings?.length) toast({ title: 'Đã sửa lượng rút — lưu ý về bồn', description: r.warnings.join(' · ') })
+        onDone()
+      },
+      onError: e => setErr(apiMsg(e, 'Không sửa được lượng rút — thử lại')),
+    })
+  }
+  return (
+    <FormSheet open onClose={onDone} title="Sửa lượng rút từ bồn"
+      footer={
+        <div className="flex gap-2 w-full">
+          <Button variant="outline" className="flex-1" onClick={onDone}>Hủy</Button>
+          <Button className="flex-1" disabled={mut.isPending || !fresh || delta === 0} onClick={save}>{mut.isPending ? 'Đang lưu…' : 'Lưu'}</Button>
+        </div>
+      }>
+      <div className="space-y-3">
+        {err && <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">{err}</div>}
+        <div className="rounded-lg bg-slate-50 border border-slate-200 p-2.5 text-xs space-y-0.5">
+          <p className="font-mono font-semibold text-slate-800">{run.material_code} · Máy {run.machine_code}</p>
+          <p className="text-slate-500">{formatDate(run.run_date)}{run.shift && <> · {run.shift}</>} · Bồn <span className="font-mono">{run.tank?.code ?? '—'}</span></p>
+          <p className="text-slate-600 pt-1">Đang ghi: <b className="tabular-nums">{fresh ? fmt(cur) : '…'}</b> {unit}</p>
+        </div>
+        <div>
+          <p className="text-xs font-medium text-slate-700 mb-1">Tổng lượng đã rút đúng ({unit}) <span className="text-red-500">*</span></p>
+          <Input value={shown} onChange={e => setQty(e.target.value)} inputMode="decimal" autoFocus className="h-9 text-sm tabular-nums"
+            onKeyDown={e => { if (e.key === 'Enter') save() }} />
+          {qtyErr ? <p className="text-[11px] text-red-600 mt-0.5">{qtyErr}</p>
+            : delta > 0 ? <p className="text-[11px] text-slate-600 mt-0.5">Sẽ <b>rút thêm {fmt(delta)} {unit}</b> khỏi bồn — chia cho các mẻ đang nằm trong bồn lúc này.</p>
+            : delta < 0 ? <p className="text-[11px] text-slate-600 mt-0.5">Sẽ <b>trả {fmt(delta)} {unit}</b> về bồn — chia cho các mẻ trang này đã rút, theo tỷ lệ.</p>
+            : <p className="text-[10px] text-slate-400 mt-0.5">Nhập TỔNG đúng của cả trang, không phải phần chênh. Không rút thì nhập 0.</p>}
+        </div>
+        <div>
+          <p className="text-xs font-medium text-slate-700 mb-1">Lý do sửa <span className="text-red-500">*</span></p>
+          <Input value={reason} onChange={e => setReason(e.target.value)} maxLength={500} placeholder="VD gõ nhầm 500 thay vì 5.000" className="h-9 text-sm"
+            onKeyDown={e => { if (e.key === 'Enter') save() }} />
+          <p className="text-[10px] text-slate-400 mt-0.5">Sổ bồn giữ nguyên dòng cũ và ghi thêm dòng sửa kèm lý do + người sửa.</p>
+        </div>
+      </div>
+    </FormSheet>
   )
 }
 
@@ -1650,6 +1726,12 @@ function RunDetailSheet({ id, h, onDone }: { id: string; h: RunTableHandlers; on
           {run && run.status === 'OPEN' && canOpenRun && (
             <Button className="flex-1 bg-green-600 hover:bg-green-700" onClick={() => { onDone(); h.onCloseRun(run) }}>
               <StopCircle className="h-3.5 w-3.5 mr-1" /> Giờ kết thúc
+            </Button>
+          )}
+          {/* Sửa / khai bù lượng rút bồn của trang ĐÃ ĐÓNG — nút riêng ở thanh dưới (đặt trong ô "Bồn" thì bị cắt chữ, không bấm được) */}
+          {run && run.status === 'CLOSED' && run.tank_id && h.canEdit && (
+            <Button variant="outline" className="flex-1 sm:flex-none" onClick={() => { onDone(); h.onRedraw(run) }}>
+              <Droplets className="h-3.5 w-3.5 mr-1" /> Sửa lượng rút<span className="hidden sm:inline">&nbsp;bồn</span>
             </Button>
           )}
           {run && run.status !== 'CANCELLED' && canOpenRun && (

@@ -351,7 +351,7 @@ export const MODULES = {
       view:     'Xem board đóng gói + sổ điện tử',
       record:   'Quét tem mở / đóng pallet (ghi sổ tại xưởng)',
       open_run: 'Mở / đóng TRANG SỔ (lệnh đóng gói: Kho + Ca + Mã + Máy + nút Giờ kết thúc)',
-      edit:     'Sửa giờ SX / số thùng / ghi chú sau khi đóng',
+      edit:     'Sửa giờ SX / số thùng / ghi chú sau khi đóng · sửa lượng rút bồn của trang đã đóng',
       cancel:   'Hủy dòng sổ ghi nhầm',
       export:   'Xuất Excel sổ đóng gói',
     },
@@ -367,6 +367,7 @@ export const MODULES = {
       manage_tank: 'Khai danh mục BỒN (mã, sức chứa, đơn vị, ngừng dùng)',
       tank_ops:    'Nạp mẻ vào bồn · chuyển bồn · điều chỉnh mức · xả bỏ',
       export:      'Xuất Excel danh sách mẻ',
+      configure:   'Cài đặt MES (rút bồn còn lô chờ QA · hạn lưu bồn theo mã)',
     },
   },
   materials: {

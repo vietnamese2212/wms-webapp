@@ -29,12 +29,12 @@ const TABLE_QUERY_MAP: Record<string, string[][]> = {
   // đổi cờ QR của mã hàng phải refetch list Xuất, không thì số liệu đứng im tới khi reload.
   // materials-paged/summary: trang danh mục phân trang SERVER — key RIÊNG, không nằm dưới tiền tố
   // ['materials'] (TanStack khớp theo từng phần tử) nên thiếu 2 key này là trang đứng im sau khi sửa.
-  Material:            [['materials'], ['materials-paged'], ['materials-summary'], ['materials-pallet-carriers'], ['gdos'], ['gdo']],
+  Material:            [['prod-settings'], ['materials'], ['materials-paged'], ['materials-summary'], ['materials-pallet-carriers'], ['gdos'], ['gdo']],
   Manufacturer:        [['manufacturers']],
   PalletLabelPrint:    [['pallet-prints'], ['pallet-prints-paged'], ['pallet-print-facets']],
   PalletOperation:     [['pallet-ops-log'], ['pallet-ops-paged']],
   InventoryAdjustmentLog: [['adjustment-log']],   // prefix khớp ['adjustment-log', entryId]
-  Warehouse:           [['warehouses'], ['dispatch-plan-geo']],
+  Warehouse:           [['prod-settings'], ['warehouses'], ['dispatch-plan-geo']],
   // Danh mục Khách hàng nuôi quy định date tự động ⇒ đổi khách là màn Quy định date phải đổi theo (11/09)
   Customer:            [['customers'], ['customer-channels'], ['customer-seed-candidates'], ['date-rule-lines'], ['customer-geo-status'], ['dispatch-plan-geo']],
   // Mức theo (khách|kênh) × loại hàng — cùng bộ màn với Customer vì nó là phần "mức" của chính khách

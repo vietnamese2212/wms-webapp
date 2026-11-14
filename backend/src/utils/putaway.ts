@@ -178,12 +178,8 @@ export function applyPutawayBody(
   // Tự ra lệnh fill (15/09) — cùng validator cho cả 2 tầng; null ở tầng LOẠI = "theo kho"
   // đã được `applyWhTypeConfigBody` xử trước khi gọi vào đây.
   if (body.auto_fill !== undefined) target.auto_fill = Boolean(body.auto_fill)
-  // MES 14/11 — rút bán thành phẩm chưa QA thả: OFF (im) · WARN (cảnh báo, mặc định) · BLOCK (chặn)
-  if (body.production_qa_gate !== undefined) {
-    if (!(PRODUCTION_QA_GATES as readonly unknown[]).includes(body.production_qa_gate))
-      return 'Mức kiểm QA bán thành phẩm không hợp lệ (Không kiểm / Cảnh báo / Chặn)'
-    target.production_qa_gate = body.production_qa_gate
-  }
+  // `production_qa_gate` KHÔNG nhận ở đây nữa (14/11 tối, user: "setting MES chuyển sang Cài đặt MES") —
+  // cửa ghi DUY NHẤT là PUT /wms/production/settings (quyền production.configure).
   return null
 }
 

@@ -13,6 +13,9 @@ import { normalizeQR } from '../../utils/qrParser'
 import { qtyIntegerError } from '../../utils/qtyUnits'
 import type { TablesUpdate } from '../../types/database'
 import { normalizeBatchCode, BATCH_CODE_RE, batchCodeStem, nextBatchCode } from '../../utils/batchCode'
+import { PRODUCTION_QA_GATES } from '../../utils/putaway'
+import { invalidatePutawayConfig } from '../../services/putawayContext'
+import { categoryAllowed, scopeCategoriesOf, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
 
 const nowIso = () => new Date().toISOString()
 const scopeOf = (req: Request): string[] | null => (req.user?.warehouse_scope === 'NATIONAL' ? null : (req.user?.warehouse_ids ?? []))
@@ -546,6 +549,103 @@ export async function discardTank(req: Request, res: Response) {
     const { data, error } = await db.rpc('mes_tank_take', { p: { tank_id: t.id, qty: round3(body.qty), kind: 'DISCARD', reason: body.reason, ...actor(req) } })
     if (error) return mesFail(res, error)
     return ok(res, data)
+  } catch (e) { return failAny(res, e) }
+}
+
+// ─── CÀI ĐẶT MES (14/11 tối — user: "setting nào liên quan thì chuyển sang Cài đặt MES") ─────────────────────────
+// Hai thứ, MỘT cửa đọc + MỘT cửa ghi:
+//   • công tắc "rút bồn còn lô CHỜ QA" — 2 tầng Kho chế biến + Loại kho (cột production_qa_gate ở Warehouse /
+//     warehouse_type_configs; trước nằm ở Cài đặt WMS). Lô QA LOẠI luôn chặn, không có công tắc.
+//   • hạn lưu bồn (giờ) của mã bán thành phẩm (Material.tank_hold_hours; trước nằm ở form Mã hàng).
+const zGate = z.enum(PRODUCTION_QA_GATES)
+export const zSettingsQuery = z.object({ warehouse_id: zText(1, 64) })
+export const zSettingsPut = z.object({
+  warehouse_id: zText(1, 64),
+  production_qa_gate: zGate.optional(),
+  types: z.array(z.object({ type_code: zText(1, 64), production_qa_gate: zGate.nullable() })).max(200).optional(),
+  hold_hours: z.array(z.object({ material_id: zText(1, 64), tank_hold_hours: z.number().int().min(1).max(8760).nullable() })).max(300).optional(),
+})
+
+async function settingsOf(req: Request, whId: string) {
+  const scope = scopeCategoriesOf(req)
+  let mq = db.from('Material').select('id, material_code, short_name, category, base_unit, tank_hold_hours')
+    .not('tank_hold_hours', 'is', null).order('material_code').limit(500)
+  if (scope) mq = mq.or(`category.is.null,category.in.(${scope.map(c => `"${c.replace(/"/g, '')}"`).join(',')})`)
+  const [{ data: wh }, { data: types }, { data: mats }] = await Promise.all([
+    db.from('Warehouse').select('id, code, name, production_qa_gate').eq('id', whId).maybeSingle(),
+    db.from('warehouse_type_configs').select('type_code, production_qa_gate, sort_order').eq('warehouse_id', whId)
+      .order('sort_order', { ascending: true, nullsFirst: false }).order('type_code').limit(200),
+    mq,
+  ])
+  return {
+    warehouse_id: whId,
+    production_qa_gate: wh?.production_qa_gate ?? 'WARN',
+    types: (types ?? []).filter(t => categoryAllowed(req, t.type_code)).map(t => ({ type_code: t.type_code, production_qa_gate: t.production_qa_gate })),
+    hold_hours: mats ?? [],
+  }
+}
+
+export async function getSettings(req: Request, res: Response) {
+  try {
+    const { warehouse_id } = req.query as unknown as z.infer<typeof zSettingsQuery>
+    if (!(await inScope(req, warehouse_id))) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
+    const whErr = await productionWhError(warehouse_id)
+    if (whErr) return fail(res, 422, 'NOT_PRODUCTION_WAREHOUSE', whErr)
+    return ok(res, await settingsOf(req, warehouse_id))
+  } catch (e) { return failAny(res, e) }
+}
+
+export async function putSettings(req: Request, res: Response) {
+  try {
+    const body = req.body as z.infer<typeof zSettingsPut>
+    if (!(await inScope(req, body.warehouse_id))) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
+    const whErr = await productionWhError(body.warehouse_id)
+    if (whErr) return fail(res, 422, 'NOT_PRODUCTION_WAREHOUSE', whErr)
+    const now = new Date().toISOString()
+    const who = req.user?.name || null
+    // kiểm hết rồi mới ghi — không ghi dở một nửa
+    const types = body.types ?? []
+    if (types.some(t => !categoryAllowed(req, t.type_code))) return fail(res, 403, 'FORBIDDEN', CATEGORY_FORBIDDEN_MSG)
+    if (new Set(types.map(t => t.type_code)).size !== types.length) return fail(res, 422, 'DUPLICATE', 'Loại kho bị khai trùng')
+    const holds = body.hold_hours ?? []
+    if (new Set(holds.map(h => h.material_id)).size !== holds.length) return fail(res, 422, 'DUPLICATE', 'Mã hàng bị khai trùng')
+    if (holds.length) {
+      const { data: mats } = await db.from('Material').select('id, category').in('id', holds.map(h => h.material_id)).limit(300)   // ≤300: zod chặn
+      if ((mats ?? []).length !== holds.length) return fail(res, 404, 'NOT_FOUND', 'Có mã hàng không còn trong danh mục')
+      if ((mats ?? []).some(m => !categoryAllowed(req, m.category))) return fail(res, 403, 'FORBIDDEN', CATEGORY_FORBIDDEN_MSG)
+    }
+    if (types.length) {
+      const { data: cur } = await db.from('warehouse_type_configs').select('type_code').eq('warehouse_id', body.warehouse_id).limit(500)
+      const known = new Set((cur ?? []).map(r => r.type_code))
+      const miss = types.find(t => !known.has(t.type_code))
+      if (miss) return fail(res, 422, 'UNKNOWN_TYPE', `Kho này chưa có Loại kho "${miss.type_code.slice(0, 30)}"`)
+    }
+
+    if (body.production_qa_gate !== undefined) {
+      const { data, error } = await db.from('Warehouse').update({ production_qa_gate: body.production_qa_gate, updated_at: now, updated_by: who })
+        .eq('id', body.warehouse_id).select('id')
+      if (error) return fail(res, error)
+      if (!data?.length) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy kho')
+    }
+    // số dòng = số Loại kho của MỘT kho / số mã đổi trong MỘT lần lưu (cấu hình, ≤ vài chục) — gom theo GIÁ TRỊ để ghi theo lô
+    const byGate = new Map<string, string[]>()
+    for (const t of types) { const k = t.production_qa_gate ?? ''; byGate.set(k, [...(byGate.get(k) ?? []), t.type_code]) }
+    for (const [k, codes] of byGate) for (let i = 0; i < codes.length; i += 300) {
+      const chunk = codes.slice(i, i + 300)
+      const { error } = await db.from('warehouse_type_configs').update({ production_qa_gate: k || null, updated_at: now, updated_by: who })
+        .eq('warehouse_id', body.warehouse_id).in('type_code', chunk)
+      if (error) return fail(res, error)
+    }
+    const byHours = new Map<string, string[]>()
+    for (const h of holds) { const k = h.tank_hold_hours == null ? '' : String(h.tank_hold_hours); byHours.set(k, [...(byHours.get(k) ?? []), h.material_id]) }
+    for (const [k, ids] of byHours) for (let i = 0; i < ids.length; i += 300) {
+      const chunk = ids.slice(i, i + 300)
+      const { error } = await db.from('Material').update({ tank_hold_hours: k ? Number(k) : null, updated_at: now })
+        .in('id', chunk)
+      if (error) return fail(res, error)
+    }
+    invalidatePutawayConfig(body.warehouse_id)
+    return ok(res, await settingsOf(req, body.warehouse_id))
   } catch (e) { return failAny(res, e) }
 }
 

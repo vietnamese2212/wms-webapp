@@ -9,7 +9,7 @@
 
 ## Giao thoa với
 <!-- giao-thoa:start -->
-- [`production`](production.md) — Sản xuất (tank_hold_hours hạn lưu bồn; batch_prefix làm tiền tố mã lô — 14/11)
+- [`production`](production.md) — Sản xuất (tank_hold_hours hạn lưu bồn — từ 14/11 tối SỬA ở Cài đặt MES, form Mã hàng chỉ hiển thị; batch_prefix làm tiền tố mã lô — 14/11)
 <!-- giao-thoa:end -->
 
 ## Trang / nghiệp vụ

@@ -9,6 +9,8 @@
 //   [6] Trang sổ: gắn bồn của kho phụ trực thuộc; đóng trang khai lượng rút trong cùng giao dịch; công tắc QA mặc định CẢNH BÁO,
 //       đặt CHẶN ⇒ 409 và trang vẫn MỞ (không rút dở); thả QA xong đóng được
 //   [7] Điều chỉnh / chuyển / xả bồn; [8] truy xuất: pallet TP → mẻ → NVL, pallet NVL → mẻ → trang sổ → pallet TP; sổ pallet có "Rút vào mẻ"
+//   [6s] Sửa / khai bù lượng rút của trang ĐÃ ĐÓNG: tăng = rút thêm, giảm = trả về đúng mẻ, bắt lý do, trang mở ⇒ 409 (14/11 tối)
+//   [6t] Cài đặt MES là cửa ghi DUY NHẤT của công tắc QA + hạn lưu bồn; cửa Loại kho của Cài đặt WMS không đè mất khai riêng
 //   [9] Huỷ mẻ còn dòng rút ⇒ 409; đóng / mở lại mẻ; bất biến tồn: nhập − còn = Σ rút sống
 // Fixture QA63: kho cha QA63_PARENT + kho phụ QA63_CB (+ QA63_CB2 để thử chéo kho) · mã NVL/BTP QA63* · tem QA63_* — dọn bằng PostgREST.
 import { randomUUID } from 'crypto'
@@ -38,6 +40,7 @@ async function cleanup() {
   if (batches.length) await restWrite('production_batch', 'DELETE', `id=in.(${batches.map(b => b.id).join(',')})`)
   if (tanks.length) await restWrite('production_tank', 'DELETE', `id=in.(${tanks.map(t => t.id).join(',')})`)
   await restWrite('InventoryEntry', 'DELETE', `warehouse_id=in.(${whs.join(',')})`)
+  await restWrite('warehouse_type_configs', 'DELETE', `warehouse_id=in.(${whs.join(',')})`)
   await restWrite('Material', 'DELETE', `id=in.(${[M_RM, M_BTP, M_BTP2, M_EA].join(',')})`)
   await restWrite('Warehouse', 'DELETE', `id=in.(${WC},${WC2})`)
   await restWrite('Warehouse', 'DELETE', `id=eq.${WP}`)
@@ -226,6 +229,61 @@ try {
     lotX.s === 200 && num(e78.find(e => e.id === 'QA63_E8')?.cartons_remaining) === 10 && num(e78.find(e => e.id === 'QA63_E7')?.cartons_remaining) === 30, `http=${lotX.s} ${JSON.stringify(e78)}`)
   const scanGone = await api(`/wms/production/batches/${B1.id}/consume-scan`, 'POST', { entry_id: 'QA63_E9', qty: 1, qty_semantics: 'base' })
   check('6n. Quét dòng tồn không còn trong kho (EXPORTED) ⇒ 409 MES_NOT_IN_STOCK', scanGone.s === 409 && scanGone.j?.error?.code === 'MES_NOT_IN_STOCK', `http=${scanGone.s} ${scanGone.j?.error?.code}`)
+
+  // ── [6s] sửa / khai bù lượng rút của trang ĐÃ ĐÓNG (migration 20261114e) ──
+  const lotsNow = async () => { const l = await restAll('tank_lot', `select=batch_id,qty_remaining&tank_id=eq.${T1.id}&status=eq.ACTIVE`); return (b) => num(l.find(x => x.batch_id === b)?.qty_remaining) }
+  const before = await lotsNow()
+  const b1Before = before(B1.id), b2Before = before(B2.id)
+  const rdNoReason = await api(`/wms/packing-runs/${R3.id}/tank-draw`, 'POST', { tank_qty: 45 })
+  check('6o. Sửa lượng rút thiếu lý do ⇒ 400', rdNoReason.s === 400, `http=${rdNoReason.s}`)
+  const rdUp = await api(`/wms/packing-runs/${R3.id}/tank-draw`, 'POST', { tank_qty: 45, reason: 'QA63 khai bù' })
+  const mid = await lotsNow()
+  check('6p. Trang đã đóng (rút 0) khai bù 45 ⇒ rút thêm chia theo tỷ lệ 2 mẻ, tổng bồn giảm đúng 45',
+    rdUp.s === 200 && num(rdUp.j?.data?.drawn) === 45 && Math.abs((b1Before + b2Before) - (mid(B1.id) + mid(B2.id)) - 45) < 0.001 && mid(B1.id) < b1Before && mid(B2.id) < b2Before,
+    `http=${rdUp.s} ${JSON.stringify(rdUp.j?.error ?? null)} ${b1Before}/${b2Before} → ${mid(B1.id)}/${mid(B2.id)}`)
+  const rdDown = await api(`/wms/packing-runs/${R3.id}/tank-draw`, 'POST', { tank_qty: 0, reason: 'QA63 gõ nhầm' })
+  const after = await lotsNow()
+  const r3draws = (await api(`/wms/packing-runs/${R3.id}`)).j?.data?.tank_draws ?? []
+  check('6q. Sửa về 0 ⇒ từng mẻ về ĐÚNG mức cũ, sổ bồn giữ dòng cũ + dòng sửa có lý do (Σ = 0)',
+    rdDown.s === 200 && Math.abs(after(B1.id) - b1Before) < 0.001 && Math.abs(after(B2.id) - b2Before) < 0.001
+      && r3draws.length === 4 && Math.abs(r3draws.reduce((x, d) => x + num(d.qty), 0)) < 0.001 && r3draws.filter(d => d.reason === 'QA63 gõ nhầm').length === 2,
+    `http=${rdDown.s} ${after(B1.id)}/${after(B2.id)} n=${r3draws.length}`)
+  const genZero = await api(`/wms/production/genealogy?kind=BATCH&value=${encodeURIComponent(B1.batch_code)}`)
+  check('6r. Gia phả: trang rút thuần 0 KHÔNG còn nối vào mẻ', genZero.s === 200 && !((genZero.j?.data?.batches ?? [])[0]?.runs ?? []).some(r => r.run_id === R3.id), `http=${genZero.s}`)
+  const R4 = (await api('/wms/packing-runs', 'POST', { warehouse_id: WP, material_codes: ['QA63FG4'], machine_code: 'QA63M', cycle: 'C63', tank_id: T1.id })).j?.data
+  const rdOpen = await api(`/wms/packing-runs/${R4.id}/tank-draw`, 'POST', { tank_qty: 5, reason: 'QA63' })
+  const rdOver = await api(`/wms/packing-runs/${R3.id}/tank-draw`, 'POST', { tank_qty: 9_000_000, reason: 'QA63 quá bồn' })
+  check('6s. Trang ĐANG MỞ ⇒ 409 MES_RUN_NOT_CLOSED; khai quá lượng bồn có ⇒ 409 MES_TANK_SHORT (không rút dở)',
+    rdOpen.s === 409 && rdOpen.j?.error?.code === 'MES_RUN_NOT_CLOSED' && rdOver.s === 409 && rdOver.j?.error?.code === 'MES_TANK_SHORT',
+    `http=${rdOpen.s} ${rdOpen.j?.error?.code} / ${rdOver.s} ${rdOver.j?.error?.code}`)
+  await api(`/wms/packing-runs/${R4.id}/cancel`, 'POST', { note: 'QA63' })
+
+  // ── [6t] Cài đặt MES — cửa ghi DUY NHẤT của công tắc QA + hạn lưu bồn ──
+  const st0 = await api(`/wms/production/settings?warehouse_id=${WC}`)
+  check('6t. Cài đặt MES đọc: công tắc của kho + bảng hạn lưu bồn có mã BTP đã khai 48 giờ',
+    st0.s === 200 && st0.j?.data?.production_qa_gate === 'WARN' && (st0.j?.data?.hold_hours ?? []).some(m => m.id === M_BTP && num(m.tank_hold_hours) === 48), `http=${st0.s}`)
+  const stParent = await api('/wms/production/settings', 'PUT', { warehouse_id: WP, production_qa_gate: 'BLOCK' })
+  const stBad = await api('/wms/production/settings', 'PUT', { warehouse_id: WC, production_qa_gate: 'XYZ' })
+  check('6u. Kho không phải kho chế biến ⇒ 422; giá trị công tắc lạ ⇒ 400', stParent.s === 422 && stBad.s === 400, `http=${stParent.s}/${stBad.s}`)
+  const typeCode = (await restAll('LookupValue', 'select=value&type=eq.warehouse_type&order=value&limit=1'))[0]?.value
+  const tc1 = await api(`/masterdata/warehouses/${WC}/type-configs`, 'PUT', { items: [{ type_code: typeCode }] })
+  const st1 = await api('/wms/production/settings', 'PUT', { warehouse_id: WC, production_qa_gate: 'BLOCK',
+    types: [{ type_code: typeCode, production_qa_gate: 'OFF' }], hold_hours: [{ material_id: M_BTP2, tank_hold_hours: 24 }, { material_id: M_BTP, tank_hold_hours: null }] })
+  const whRow = (await restAll('Warehouse', `select=production_qa_gate&id=eq.${WC}`))[0]
+  const mats = await restAll('Material', `select=id,tank_hold_hours&id=in.(${M_BTP},${M_BTP2})`)
+  check('6v. Cài đặt MES ghi: công tắc kho · khai riêng Loại kho · đặt / gỡ hạn lưu bồn — MỘT lần lưu',
+    tc1.s === 200 && st1.s === 200 && whRow?.production_qa_gate === 'BLOCK' && (st1.j?.data?.types ?? []).find(t => t.type_code === typeCode)?.production_qa_gate === 'OFF'
+      && num(mats.find(m => m.id === M_BTP2)?.tank_hold_hours) === 24 && mats.find(m => m.id === M_BTP)?.tank_hold_hours === null,
+    `http=${tc1.s}/${st1.s} ${JSON.stringify(st1.j?.error ?? null)} wh=${whRow?.production_qa_gate}`)
+  // cửa Loại kho của Cài đặt WMS lưu lại (không gửi / gửi giá trị khác) ⇒ khai riêng MES phải SỐNG — trước bản này nó ghi NULL đè
+  const tc2 = await api(`/masterdata/warehouses/${WC}/type-configs`, 'PUT', { items: [{ type_code: typeCode, production_qa_gate: 'WARN' }] })
+  const tcRow = (await restAll('warehouse_type_configs', `select=production_qa_gate&warehouse_id=eq.${WC}&type_code=eq.${encodeURIComponent(typeCode)}`))[0]
+  check('6w. Cửa Loại kho của Cài đặt WMS không đè / không ghi được công tắc MES', tc2.s === 200 && tcRow?.production_qa_gate === 'OFF', `http=${tc2.s} gate=${tcRow?.production_qa_gate}`)
+  const stUnknown = await api('/wms/production/settings', 'PUT', { warehouse_id: WC, types: [{ type_code: 'QA63_KHONG_CO', production_qa_gate: 'OFF' }] })
+  check('6x. Loại kho không thuộc kho ⇒ 422, không ghi gì', stUnknown.s === 422, `http=${stUnknown.s}`)
+  // trả về trạng thái các phép sau cần
+  await api('/wms/production/settings', 'PUT', { warehouse_id: WC, production_qa_gate: 'WARN', types: [{ type_code: typeCode, production_qa_gate: null }],
+    hold_hours: [{ material_id: M_BTP, tank_hold_hours: 48 }, { material_id: M_BTP2, tank_hold_hours: null }] })
 
   // ── [7] điều chỉnh / chuyển / xả ──
   const adj = await api(`/wms/production/tanks/${T1.id}/adjust`, 'POST', { level: 400, reason: 'QA63 khớp đồng hồ' })

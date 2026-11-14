@@ -57,6 +57,19 @@ export const NAV_GROUPS: NavGroup[] = [
       { to: '/wms/alerts',        icon: BellRing, label: 'Thông báo' },
     ],
   },
+  // MES (14/11, user chốt "tách MES riêng"): nhóm cấp 1 ngang Kho / TMS, trang để PHẲNG (hai mục không gom
+  // nhóm con). Vẫn chung app + chung DB với WMS — rút NVL trừ thẳng tồn kho chế biến, truy xuất lô nối liền.
+  // Sổ đóng gói GIỮ ở Kho (WMS) → Nhập hàng (user chốt). Đường dẫn trang không đổi (/wms/production…).
+  // Đứng TRÊN Kho (WMS) — user chốt 14/11 tối "cho MES lên phía trên của WMS".
+  {
+    label: 'Sản xuất (MES)',
+    operational: true,
+    items: [
+      { to: '/wms/production',       icon: Factory,   label: 'Mẻ chế biến', module: 'production' },
+      { to: '/wms/production/tanks', icon: Container, label: 'Bồn',         module: 'production' },
+      { to: '/wms/production/settings', icon: Settings2, label: 'Cài đặt MES', module: 'production' },
+    ],
+  },
   {
     label: 'Kho (WMS)',
     operational: true,
@@ -94,18 +107,6 @@ export const NAV_GROUPS: NavGroup[] = [
       { to: '/wms/slotting',   icon: Boxes,    label: 'Tối ưu vị trí',    module: 'slotting' },
       { to: '/wms/forklift',   icon: Forklift, label: 'Xe nâng',          module: 'forklift' },
       { to: '/wms/multi-scan', icon: ScanIcon, label: 'Quét loạt (test)', adminOnly: true },
-    ],
-  },
-  // MES (14/11, user chốt "tách MES riêng"): nhóm cấp 1 ngang Kho / TMS, trang để PHẲNG (hai mục không gom
-  // nhóm con). Vẫn chung app + chung DB với WMS — rút NVL trừ thẳng tồn kho chế biến, truy xuất lô nối liền.
-  // Sổ đóng gói GIỮ ở Kho (WMS) → Nhập hàng (user chốt). Đường dẫn trang không đổi (/wms/production…).
-  {
-    label: 'Sản xuất (MES)',
-    operational: true,
-    items: [
-      { to: '/wms/production',       icon: Factory,   label: 'Mẻ chế biến', module: 'production' },
-      { to: '/wms/production/tanks', icon: Container, label: 'Bồn',         module: 'production' },
-      { to: '/wms/production/settings', icon: Settings2, label: 'Cài đặt MES', module: 'production' },
     ],
   },
   {

@@ -16,6 +16,8 @@ import { useConfirmDialog } from '@/components/shared/ConfirmDialog'
 import { BatchFormSheet } from '@/components/wms/production/BatchFormSheet'
 import { ConsumeSheet } from '@/components/wms/production/ConsumeSheet'
 import { RequirementSheet } from '@/components/wms/production/RequirementSheet'
+import { ProcessLogSheet } from '@/components/wms/production/ProcessLogSheet'
+import { PROCESS_FORMS, processFieldCount, type ProcessForm } from '@/config/processForms'
 import { ScanIcon } from '@/components/shared/ScanIcon'
 import { BatchFillSheet, nfQty } from '@/components/wms/production/TankSheets'
 import { useAuthStore } from '@/stores/authStore'
@@ -70,6 +72,7 @@ export default function ProductionBatchDetail() {
   useEffect(() => { if (fromCreate) navigate(loc.pathname, { replace: true, state: null }) }, []) // eslint-disable-line react-hooks/exhaustive-deps -- gỡ cờ một lần: tải lại trang không bật lại form
   const [focusId, setFocusId] = useState<string | null>(null)
   const [reqOpen, setReqOpen] = useState(false)
+  const [logForm, setLogForm] = useState<ProcessForm | null>(null)
   const [fillOpen, setFillOpen] = useState(false)
   const [editOpen, setEditOpen] = useState(false)
   const [cloneOpen, setCloneOpen] = useState(false)
@@ -268,7 +271,32 @@ export default function ProductionBatchDetail() {
           </ResizableTable>
           </div>
 
+          {/* PHIẾU THEO DÕI — thay hai phiếu giấy (phối trộn · dịch thạch); bấm vào là mở form ghi */}
           <div className="px-3 py-1.5 sm:px-4 sm:py-2 bg-slate-100 border-y border-slate-200 flex items-center gap-1.5 mt-3">
+            <span className="h-3.5 w-1 rounded-full bg-sky-500" />
+            <h2 className="text-xs font-semibold uppercase tracking-wide text-slate-600">Phiếu theo dõi</h2>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 p-3">
+            {(Object.keys(PROCESS_FORMS) as ProcessForm[]).map(k => {
+              const d = PROCESS_FORMS[k]
+              const lg = (b.process_logs ?? []).find(l => l.form === k)
+              const n = lg ? Object.keys(lg.data ?? {}).length : 0
+              return (
+                <button key={k} type="button" onClick={() => setLogForm(k)}
+                  className="touch-target text-left rounded-lg border border-slate-200 px-3 py-2 hover:border-sky-300 hover:bg-sky-50/40 transition-colors">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-semibold text-slate-800 flex-1 min-w-0 truncate">{d.title}</span>
+                    {lg?.confirmed_at ? <StatusBadge tone="green">QA đã xác nhận</StatusBadge> : lg ? <StatusBadge tone="amber">Đang ghi</StatusBadge> : <StatusBadge tone="slate">Chưa ghi</StatusBadge>}
+                  </div>
+                  <p className="text-[11px] text-slate-500 mt-0.5 truncate">
+                    {lg ? <>Đã ghi <b className="text-slate-700 tabular-nums">{n}/{processFieldCount(d)}</b> ô · {lg.updated_by_name ?? '—'} · {formatDateTime(lg.updated_at)}</> : 'Bấm để ghi phiếu cho mẻ này'}
+                  </p>
+                </button>
+              )
+            })}
+          </div>
+
+          <div className="px-3 py-1.5 sm:px-4 sm:py-2 bg-slate-100 border-y border-slate-200 flex items-center gap-1.5">
             <span className="h-3.5 w-1 rounded-full bg-sky-500" />
             <h2 className="text-xs font-semibold uppercase tracking-wide text-slate-600">Nhật ký cấp nguyên liệu</h2>
             <span className="text-[11px] text-slate-400">{live.length} dòng{b.consumption.length > live.length ? ` · ${b.consumption.length - live.length} dòng đã huỷ` : ''}</span>
@@ -351,6 +379,8 @@ export default function ProductionBatchDetail() {
       </div>
       {open && <ConsumeSheet open={consumeOpen} onClose={() => setConsumeOpen(false)} batch={b} focusId={focusId} />}
       {open && <RequirementSheet open={reqOpen} onClose={() => setReqOpen(false)} batch={b} />}
+      {logForm && <ProcessLogSheet open onClose={() => setLogForm(null)} batch={b} form={logForm}
+        canWrite={can(perms, 'production', 'process_log')} canConfirm={can(perms, 'production', 'qa_release')} canExport={can(perms, 'production', 'export')} />}
       <BatchFillSheet open={fillOpen} onClose={() => setFillOpen(false)} batchId={b.id} batchCode={b.batch_code} warehouseId={b.warehouse_id} unit={b.material?.base_unit ?? null}
         materialCode={b.material?.material_code ?? null} suggestQty={b.planned_qty != null ? Math.round((Number(b.planned_qty) - filled) * 1000) / 1000 : null} />
       <BatchFormSheet open={editOpen} onClose={() => setEditOpen(false)} batch={b} />

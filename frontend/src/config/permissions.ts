@@ -370,6 +370,7 @@ export const MODULES = {
       configure:   'Cài đặt MES (rút bồn còn lô chờ QA · hạn lưu bồn theo mã)',
       manage_recipe: 'Khai ĐỊNH MỨC nguyên liệu của mã bán thành phẩm (trang Định mức)',
       shift_report: 'Mở / chốt BÁO CÁO SỬ DỤNG NVL theo ca (nhập tồn cuối thực tế)',
+      process_log: 'Ghi PHIẾU THEO DÕI của mẻ (phối trộn · dịch thạch) — QA xác nhận phiếu dùng quyền "QA giữ / thả / loại"',
     },
   },
   materials: {

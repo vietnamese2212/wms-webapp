@@ -136,7 +136,7 @@ export async function getBatch(req: Request, res: Response) {
     if (error) return fail(res, error)
     if (!b) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy mẻ')
     if (!(await inScope(req, b.warehouse_id))) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
-    const [{ data: cons }, { data: moves }, { data: lots }, { data: board }] = await Promise.all([
+    const [{ data: cons }, { data: moves }, { data: lots }, { data: board }, { data: plogs }] = await Promise.all([
       db.from('batch_consumption')
         .select('*, material:Material!batch_consumption_material_id_fkey(material_code, short_name, base_unit, entry_unit, units_per_carton), entry:InventoryEntry!batch_consumption_entry_id_fkey(cartons_remaining, expiry_date, location:Location(location_code))')
         .eq('batch_id', b.id).order('created_at').limit(2000),
@@ -145,8 +145,9 @@ export async function getBatch(req: Request, res: Response) {
       db.from('tank_lot').select('id, tank_id, qty_in, qty_remaining, filled_at, expires_at, status, tank:production_tank!tank_lot_tank_id_fkey(code, unit)')
         .eq('batch_id', b.id).order('filled_at').limit(500),
       db.rpc('mes_batch_board', { p_batch_id: b.id }),
+      db.from('batch_process_log').select('id, form, data, created_by_name, updated_by_name, confirmed_at, confirmed_by_name, updated_at').eq('batch_id', b.id).limit(10),
     ])
-    return ok(res, { ...b, consumption: cons ?? [], movements: moves ?? [], lots: lots ?? [], board: board ?? [] })
+    return ok(res, { ...b, consumption: cons ?? [], movements: moves ?? [], lots: lots ?? [], board: board ?? [], process_logs: plogs ?? [] })
   } catch (e) { return failAny(res, e) }
 }
 
@@ -276,6 +277,62 @@ export async function applyRecipe(req: Request, res: Response) {
     if (error) return mesFail(res, error)
     if ((data as { no_recipe?: boolean } | null)?.no_recipe) return fail(res, 409, 'MES_NO_RECIPE', 'Mã bán thành phẩm này chưa khai định mức — khai ở Sản xuất (MES) → Định mức, hoặc tự thêm nguyên liệu cho mẻ')
     return ok(res, data)
+  } catch (e) { return failAny(res, e) }
+}
+
+// ─── PHIẾU THEO DÕI của mẻ (phối trộn · dịch thạch) — thay phiếu giấy; các ô khai ở FE config/processForms.ts ────────────
+// PUT /wms/production/batches/:id/process-log/:form — lưu TRỌN nội dung phiếu ({ mã_ô: giá_trị }); phiếu QA đã xác nhận ⇒ khoá
+const zForm = z.enum(['MIX', 'JELLY'])
+export const zProcessLogParams = z.object({ id: zText(1, 64), form: zForm })
+export const zProcessLogPut = z.object({
+  data: z.record(z.string().regex(/^[a-z0-9_]{1,40}$/), z.string().max(300)).refine(o => Object.keys(o).length <= 300, 'Phiếu quá nhiều ô'),
+})
+export async function putProcessLog(req: Request, res: Response) {
+  try {
+    const { form } = req.params as unknown as z.infer<typeof zProcessLogParams>
+    const b = await loadBatch(req.params.id)
+    if (!b) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy mẻ')
+    if (!(await inScope(req, b.warehouse_id))) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
+    if (b.status === 'CANCELLED') return fail(res, 409, 'BATCH_CANCELLED', 'Mẻ đã huỷ — không ghi phiếu được')
+    const { data: raw } = req.body as z.infer<typeof zProcessLogPut>
+    // bỏ ô trống ⇒ phiếu chỉ giữ ô đã ghi
+    const data = Object.fromEntries(Object.entries(raw).map(([k, v]) => [k, v.trim()] as const).filter(([, v]) => v !== ''))
+    const who = actor(req).actor_name
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const { data: cur } = await db.from('batch_process_log').select('id, confirmed_at').eq('batch_id', b.id).eq('form', form).maybeSingle()
+      if (cur?.confirmed_at) return fail(res, 409, 'PROCESS_LOG_CONFIRMED', 'Phiếu đã được QA xác nhận — bỏ xác nhận rồi mới sửa được')
+      if (cur) {
+        const { data: up, error } = await db.from('batch_process_log').update({ data, updated_by_name: who, updated_at: nowIso() })
+          .eq('id', cur.id).is('confirmed_at', null).select('*')
+        if (error) return fail(res, error)
+        if (!up?.length) return fail(res, 409, 'PROCESS_LOG_CONFIRMED', 'Phiếu vừa được QA xác nhận — tải lại')
+        return ok(res, up[0])
+      }
+      const { data: ins, error } = await db.from('batch_process_log')
+        .insert({ id: randomUUID(), batch_id: b.id, form, data, created_by_name: who, updated_by_name: who, updated_at: nowIso() }).select('*').single()
+      if (!error) return ok(res, ins, 201)
+      if (error.code !== '23505') return fail(res, error)   // hai người cùng ghi lần đầu ⇒ vòng lại thành cập nhật
+    }
+    return fail(res, 409, 'BUSY', 'Phiếu đang được người khác ghi — thử lại')
+  } catch (e) { return failAny(res, e) }
+}
+// POST /wms/production/batches/:id/process-log/:form/confirm — QA xác nhận / bỏ xác nhận phiếu (quyền qa_release)
+export const zProcessLogConfirm = z.object({ confirm: z.boolean() })
+export async function confirmProcessLog(req: Request, res: Response) {
+  try {
+    const { form } = req.params as unknown as z.infer<typeof zProcessLogParams>
+    const b = await loadBatch(req.params.id)
+    if (!b) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy mẻ')
+    if (!(await inScope(req, b.warehouse_id))) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
+    const { confirm } = req.body as z.infer<typeof zProcessLogConfirm>
+    const a = actor(req)
+    const { data, error } = await db.from('batch_process_log')
+      .update(confirm ? { confirmed_at: nowIso(), confirmed_by: a.actor_id, confirmed_by_name: a.actor_name, updated_at: nowIso() }
+        : { confirmed_at: null, confirmed_by: null, confirmed_by_name: null, updated_at: nowIso() })
+      .eq('batch_id', b.id).eq('form', form).select('*')
+    if (error) return fail(res, error)
+    if (!data?.length) return fail(res, 404, 'NOT_FOUND', 'Phiếu chưa có nội dung — ghi phiếu trước rồi mới xác nhận')
+    return ok(res, data[0])
   } catch (e) { return failAny(res, e) }
 }
 

@@ -66,8 +66,13 @@ export interface BoardRow extends MatUnits {
   /** tồn cấp được ở kho chế biến (không QA giữ, sau giữ chỗ) · phần KHÔNG có tem · số pallet / bao CÓ tem */
   available: number; available_no_tem: number; tem_pallets: number
 }
+/** Phiếu theo dõi của mẻ (phối trộn · dịch thạch): data = { mã_ô: giá_trị } — danh sách ô ở config/processForms.ts */
+export interface ProcessLog {
+  id: string; form: 'MIX' | 'JELLY'; data: Record<string, string>
+  created_by_name: string | null; updated_by_name: string | null; confirmed_at: string | null; confirmed_by_name: string | null; updated_at: string
+}
 export interface BatchDetail {
-  cycle: string | null; board: BoardRow[]
+  cycle: string | null; board: BoardRow[]; process_logs: ProcessLog[]
   id: string; warehouse_id: string; batch_code: string; material_id: string; machine_code: string | null; shift: string | null
   prod_date: string; planned_qty: number | null; status: BatchStatus; qa_status: BatchQa; qa_by_name: string | null; qa_at: string | null; qa_note: string | null
   note: string | null; opened_by_name: string | null; created_at: string; closed_at: string | null; closed_by_name: string | null
@@ -222,6 +227,10 @@ export function useRecipe(materialId: string | undefined) {
 }
 export const useSaveRecipe = () => useProdMutation(({ materialId, ...b }: { materialId: string; base_qty: number; note: string | null; is_active: boolean; lines: { material_id: string; qty: number }[] }) =>
   (async () => (await apiClient.put(`/wms/production/recipes/${materialId}`, b)).data.data as { id: string; lines: number })())
+export const useSaveProcessLog = () => useProdMutation(({ batchId, form, data }: { batchId: string; form: 'MIX' | 'JELLY'; data: Record<string, string> }) =>
+  (async () => (await apiClient.put(`/wms/production/batches/${batchId}/process-log/${form}`, { data })).data.data as ProcessLog)())
+export const useConfirmProcessLog = () => useProdMutation(({ batchId, form, confirm }: { batchId: string; form: 'MIX' | 'JELLY'; confirm: boolean }) =>
+  post<ProcessLog>(`/wms/production/batches/${batchId}/process-log/${form}/confirm`, { confirm }))
 // ── Báo cáo sử dụng NVL theo ca ──
 export interface ShiftReportHead {
   id: string; warehouse_id: string; report_date: string; shift: string; from_at: string; to_at: string | null; status: 'OPEN' | 'CLOSED'

@@ -1,5 +1,5 @@
 // FILE SINH TỰ ĐỘNG — `node scripts/gen-db-types.mjs` (từ information_schema STAGING). KHÔNG sửa tay.
-// Sinh lúc 2026-11-14T10:37:02.705Z · 121 bảng/view · 235 hàm · 0 enum
+// Sinh lúc 2026-11-14T10:43:28.494Z · 122 bảng/view · 235 hàm · 0 enum
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[]
 
 export type Database = {
@@ -3254,6 +3254,48 @@ export type Database = {
           reversed_by?: string | null
           reversed_by_name?: string | null
           reverse_reason?: string | null
+        }
+        Relationships: []
+      }
+      batch_process_log: {
+        Row: {
+          id: string
+          batch_id: string
+          form: string
+          data: Json
+          created_by_name: string | null
+          updated_by_name: string | null
+          confirmed_at: string | null
+          confirmed_by: string | null
+          confirmed_by_name: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id: string
+          batch_id: string
+          form: string
+          data?: Json
+          created_by_name?: string | null
+          updated_by_name?: string | null
+          confirmed_at?: string | null
+          confirmed_by?: string | null
+          confirmed_by_name?: string | null
+          created_at?: string
+          updated_at: string
+        }
+        Update: {
+          id?: string
+          batch_id?: string
+          form?: string
+          data?: Json
+          created_by_name?: string | null
+          updated_by_name?: string | null
+          confirmed_at?: string | null
+          confirmed_by?: string | null
+          confirmed_by_name?: string | null
+          created_at?: string
+          updated_at?: string
         }
         Relationships: []
       }

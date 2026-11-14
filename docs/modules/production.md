@@ -3,9 +3,9 @@
 > Tạo 14/11/2026 cùng giai đoạn 1 MES (kế hoạch `docs/plans/MES_PHASE1_PLAN.md`, memory `mes-phase1-design-2026-11-14`).
 > **Trước khi sửa module này: đọc file này + mọi file ở mục "Giao thoa với".**
 
-**Trang:** Mẻ chế biến · Bồn · Cài đặt MES — nhóm menu CẤP 1 "Sản xuất (MES)" đứng TRÊN Kho (WMS) (user chốt 14/11 tối: "cho MES lên phía trên của WMS") (user chốt 14/11 "tách MES riêng": chỉ tách menu, vẫn chung app + chung DB; Sổ đóng gói giữ ở Kho (WMS) → Nhập hàng; đường dẫn `/wms/production…` không đổi)
+**Trang:** Mẻ chế biến (bàn làm việc của mẻ) · Bồn · Báo cáo NVL · Định mức · Cài đặt MES — nhóm menu CẤP 1 "Sản xuất (MES)" đứng TRÊN Kho (WMS) (user chốt 14/11 tối: "cho MES lên phía trên của WMS") (user chốt 14/11 "tách MES riêng": chỉ tách menu, vẫn chung app + chung DB; Sổ đóng gói giữ ở Kho (WMS) → Nhập hàng; đường dẫn `/wms/production…` không đổi)
 
-**Quyền (BE `ALL_PERMISSIONS`):** view · open_batch · consume · reverse · qa_release · manage_tank · tank_ops · export · configure · manage_recipe · shift_report
+**Quyền (BE `ALL_PERMISSIONS`):** view · open_batch · consume · reverse · qa_release · manage_tank · tank_ops · export · configure · manage_recipe · shift_report · process_log
 
 ## Giao thoa với
 <!-- giao-thoa:start -->
@@ -37,6 +37,24 @@ Nhà máy sữa: NVL → **mẻ chế biến** → bán thành phẩm (BTP) tron
 - Lỗi nghiệp vụ từ hàm DB: `MESERR:<MÃ>|<câu>` ⇒ controller dịch 404 / 422 / 409 `MES_<MÃ>`.
 - Chuỗi truy xuất lô ⇒ KHÔNG đăng ký lưu trữ / xoá theo hạn.
 
+## Bỏ giấy ở xưởng (14/11 đêm — user: "khi cho NVL vào mẻ, user viết tay vào giấy rồi lại nhập vào Excel. Mục tiêu của tôi là bỏ các tờ giấy này đi")
+
+Ba biểu mẫu giấy trong `Du lieu mau/NB-QA-BM-CB.01 BÁO CÁO SỬ DỤNG NGUYÊN VẬT LIỆU.xlsx` được thay bằng ba thứ dưới đây. User chốt: ghi trên CẢ điện thoại lẫn máy tính; làm cả ba một lượt.
+
+- **BÀN LÀM VIỆC CỦA MẺ** (user: "hình dung có 1 bàn làm việc của mẻ đó — mẻ yêu cầu NVL như thế nào, số lượng bao nhiêu thì user thao tác với bàn làm việc đó phải input thông tin vào đầy đủ"). Trang chi tiết mẻ mở đầu bằng khối "Nguyên liệu của mẻ": mỗi nguyên liệu một dòng — yêu cầu · đã cấp · còn thiếu · tồn kho chế biến · cách cấp · tình trạng · nút **Cấp** (điện thoại: danh sách gọn, không cuộn ngang). Một lời gọi `mes_batch_board`.
+  - **Định mức** (`production_recipe` + `_line`, trang Định mức, quyền `manage_recipe`): mỗi mã BTP MỘT định mức cho một cỡ mẻ chuẩn. Mở mẻ ⇒ `mes_batch_apply_recipe` chép định mức × (kế hoạch / cỡ chuẩn) thành `batch_requirement`; mã chưa khai định mức ⇒ bàn trống, người mở tự thêm.
+  - **Yêu cầu sửa được theo mẻ** ("Sửa yêu cầu", quyền `open_batch`, mẻ đang mở): `PUT …/requirements` thay trọn danh sách; bỏ một dòng KHÔNG đụng phần đã cấp (dòng đó hiện "Ngoài yêu cầu"); "Chép lại theo định mức" = `POST …/apply-recipe`.
+  - **CÓ TEM QR THÌ PHẢI QUÉT** (user: "nếu có QR code thì phải quét QR code và điền số lượng"): "có tem" = mã tem khác mã hàng (tồn gộp của kho theo NSX lưu `pallet_code` = mã hàng, mỗi NSX một dòng). `mes_consume_lot` chỉ trừ dòng KHÔNG tem; lô còn hàng trên tem ⇒ 409 `MES_MUST_SCAN`. `mes_stock` trả thêm `available_no_tem` / `tem_pallets` để màn hình biết dòng nào phải quét. Kho chế biến chế độ QR ⇒ mọi nguyên liệu đều phải quét.
+  - **Form Cấp** (`ConsumeSheet`, mở từ một dòng của bàn với `focusId`): tem khác mã đang cấp bị từ chối; lượng điền sẵn = phần còn thiếu (không vượt lượng trên tem / lô); nút "Quét cấp NVL" ở đầu trang = quét tự do, app tự khớp tem vào dòng của bàn; mã không có trong yêu cầu vẫn cấp được (báo trước, hiện "Ngoài yêu cầu").
+  - Thêm `production_batch.cycle` (Chu kỳ — biểu mẫu ghi BTP / chu kỳ / mẻ).
+- **BÁO CÁO SỬ DỤNG NVL THEO CA** (trang Báo cáo NVL, thay tờ "Báo cáo sử dụng nguyên vật liệu"). Một báo cáo = một ca của một kho chế biến (`production_shift_report` + `production_shift_count`), mỗi kho MỘT ca đang mở. Khoảng thời gian của ca = từ lúc chốt ca trước tới lúc chốt ca này (các ca nối nhau, không hở không trùng; kho chưa từng chốt ⇒ từ đầu ngày giờ VN).
+  - Cột đúng thứ tự tờ giấy: **Tồn đầu thực tế** (số đếm lúc chốt ca trước; ca đầu chưa có số đếm ⇒ dựng từ sổ, in kèm "(sổ)") · **Nhập** (dòng tồn tạo mới ở kho chế biến trong ca) · **dùng theo TỪNG MẺ** (`batch_consumption` sống ghi trong ca) · **Tổng sử dụng** · **Tồn cuối thực tế** (người nhập) · **Tồn cuối sổ sách** (tồn kho chế biến trên app) · **Chênh lệch** = thực tế − sổ.
+  - Lưu nháp số đếm lúc nào cũng được; **Chốt ca** (`mes_shift_save` close) chụp mọi con số vào `production_shift_count` ⇒ báo cáo đã chốt không đổi khi tồn về sau đổi, không sửa lại được. Quyền `shift_report`.
+  - **Báo cáo KHÔNG tự sửa tồn** — chênh lệch chỉ để thấy; muốn khớp sổ thì kiểm kê / điều chỉnh tồn như mọi kho.
+  - Xuất Excel theo bố cục biểu mẫu (BTP / Chu kỳ / Mẻ ba dòng tiêu đề) — quyền `export`.
+- **PHIẾU THEO DÕI của mẻ** (khối "Phiếu theo dõi" trên bàn làm việc; thay "Phiếu theo dõi quá trình phối trộn" và "Phiếu theo dõi bán thành phẩm dịch thạch"). `batch_process_log` (mỗi mẻ tối đa một phiếu mỗi loại MIX / JELLY), nội dung `data` jsonb `{ mã_ô: giá_trị }`. **Danh sách ô khai ở FE `config/processForms.ts`** — thêm / bớt / đổi nhãn ô chỉ sửa file đó, không đổi bảng (đừng đổi `key` của ô đã dùng). Ô giờ có nút "Bây giờ"; ô số vượt tiêu chuẩn (pH nước trộn ≤ 7,20) tô đỏ nhưng vẫn lưu được — phiếu ghi đúng thực tế. Ghi = quyền `process_log`; **QA xác nhận** (quyền `qa_release`) ⇒ phiếu khoá, bỏ xác nhận mới sửa được. Xuất Excel từng phiếu.
+- **CHƯA làm trong đợt này:** mix VTM theo chu kỳ (bảng nhỏ cuối sheet VTM) · cột "Lô – HSD" in sẵn trên báo cáo ca (lô đã nằm ở Nhật ký cấp nguyên liệu và Truy xuất lô) · mở lại ca đã chốt · các ô "CBNL đến / đã có phiếu đến" của phần giao ca (hiện gộp vào một ô Ghi chú giao ca).
+
 ## Màn hình (14/11)
 - **Mẻ chế biến** `/wms/production` (`ProductionBatches.tsx`): phân trang server, lọc ngày SX · kho · trạng thái · QA; lọc theo kho NHÀ MÁY gồm các kho chế biến trực thuộc. Nút chính "Mở mẻ" (`BatchFormSheet`: mã lô gợi ý tự điền, sửa được).
 - **Chi tiết mẻ** `/wms/production/:id`: nút chính "Rút NVL" (`ConsumeSheet`: Quét tem — súng PDA chỉ nghe khi đang chờ quét / camera / gõ; Không có tem — chọn mã đang có tồn → bảng lô HSD sớm lên đầu); Nạp bồn · QA thả / giữ / loại · Sửa · Đóng / Mở lại / Huỷ mẻ; bảng NVL đã rút (huỷ dòng có lý do), Ra bồn, Sổ nạp / rút.
@@ -54,8 +72,8 @@ view · **configure** = sửa Cài đặt MES (cấp theo năng lực: `wms_sett
 
 ## Gói QA
 
-`scripts/qa/63-production.mjs` (73 phép): mẻ ở kho phụ · mã lô gợi ý · tra tem · rút theo tem / theo lô · 5 người cùng rút một tem · bất biến nhập − còn = Σ rút sống · bồn (sức chứa, trộn, cặp id chéo kho, sửa bồn còn hàng) · trang sổ khai rút + công tắc QA · điều chỉnh / chuyển / xả · sửa / khai bù lượng rút của trang đã đóng (tăng · về 0 · trang mở · quá bồn · gia phả) · Cài đặt MES (đọc · ghi một lần · kho không phải chế biến · cửa Loại kho của Cài đặt WMS không đè) · lô QA loại chặn rút + nạp · đúng mã lô · dòng tồn không còn trong kho · gia phả ba chiều · sổ pallet · vòng đời mẻ.
+`scripts/qa/63-production.mjs` (91 phép — thêm [10] bàn làm việc của mẻ / định mức / có tem phải quét · [11] báo cáo ca · [12] phiếu theo dõi): mẻ ở kho phụ · mã lô gợi ý · tra tem · rút theo tem / theo lô · 5 người cùng rút một tem · bất biến nhập − còn = Σ rút sống · bồn (sức chứa, trộn, cặp id chéo kho, sửa bồn còn hàng) · trang sổ khai rút + công tắc QA · điều chỉnh / chuyển / xả · sửa / khai bù lượng rút của trang đã đóng (tăng · về 0 · trang mở · quá bồn · gia phả) · Cài đặt MES (đọc · ghi một lần · kho không phải chế biến · cửa Loại kho của Cài đặt WMS không đè) · lô QA loại chặn rút + nạp · đúng mã lô · dòng tồn không còn trong kho · gia phả ba chiều · sổ pallet · vòng đời mẻ.
 
 ## Ngoài giai đoạn 1
 
-Định mức / BOM · lệnh sản xuất từ SAP · yield & hao hụt · tự trừ bao bì · hạn sau khi mở bao · OEE · check list CCP / CIP.
+Định mức nhiều phiên bản / theo kho · lệnh sản xuất từ SAP · yield & hao hụt · tự trừ bao bì · hạn sau khi mở bao · OEE · check list CCP / CIP.

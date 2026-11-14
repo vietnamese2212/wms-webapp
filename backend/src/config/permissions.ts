@@ -33,7 +33,7 @@ export const ALL_PERMISSIONS: Record<string, string[]> = {
   fill:              ['view', 'plan', 'cancel', 'change_dest', 'assign', 'execute'],   // Fill hàng: mỗi nút 1 quyền (tách 05/08 — ra lệnh / hủy dòng·lệnh / đổi vị trí đến / gán người / quét)
   forklift:          ['view', 'check', 'delete_check', 'manage_vehicle', 'manage_item'],   // Xe nâng: ghi-sửa check ≠ xóa bản ghi (tách 05/08) / danh mục xe / danh mục hạng mục
   packing:           ['view', 'record', 'open_run', 'edit', 'cancel', 'export'],   // Sổ đóng gói (11/08): open_run = mở/đóng TRANG SỔ (lệnh) ≠ record = quét pallet; export riêng theo luật 26/07
-  production:        ['view', 'open_batch', 'consume', 'reverse', 'qa_release', 'manage_tank', 'tank_ops', 'export', 'configure', 'manage_recipe', 'shift_report'],   // MES gđ1 (14/11): mẻ chế biến · rút NVL vào mẻ · huỷ dòng rút · QA lô BTP · danh mục bồn · nạp/chuyển/điều chỉnh/xả bồn
+  production:        ['view', 'open_batch', 'consume', 'reverse', 'qa_release', 'manage_tank', 'tank_ops', 'export', 'configure', 'manage_recipe', 'shift_report', 'process_log'],   // MES gđ1 (14/11): mẻ chế biến · rút NVL vào mẻ · huỷ dòng rút · QA lô BTP · danh mục bồn · nạp/chuyển/điều chỉnh/xả bồn
   inbound_plan:      ['view', 'edit'],   // create/delete/cancel ĐÃ BỎ (mồ côi — đi theo tms_plan.upload_inbound/edit)
   materials:         ['view', 'create', 'edit', 'import', 'delete'],
   customers:         ['view', 'edit', 'import', 'manage_channel', 'create_channel', 'locate', 'geocode'],   // Khách hàng / Nơi nhận + Kênh (20260911) · toạ độ (01/10: locate = chấm tay/GPS, geocode = máy định vị)

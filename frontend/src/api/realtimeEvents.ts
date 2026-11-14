@@ -123,6 +123,7 @@ const TABLE_QUERY_MAP: Record<string, string[][]> = {
   production_tank:          [['prod-tanks'], ['prod-tanks-for-run']],
   tank_lot:                 [['prod-tanks'], ['prod-batch'], ['prod-batches']],
   batch_requirement:        [['prod-batch']],
+  batch_process_log:        [['prod-batch']],
   production_shift_report:  [['prod-shift-reports'], ['prod-shift-report']],
   production_shift_count:   [['prod-shift-report']],
   production_recipe:        [['prod-recipes'], ['prod-recipe']],

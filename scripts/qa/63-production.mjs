@@ -15,6 +15,7 @@
 //        bàn trả yêu cầu · đã cấp · tồn có tem / không tem; sửa yêu cầu không đụng phần đã cấp
 //   [11] Báo cáo sử dụng NVL theo ca: một kho một ca mở; số dùng theo mẻ / tồn sổ khớp dữ liệu gốc; chốt ca chụp số (không đổi khi tồn đổi);
 //        ca sau lấy số đếm ca trước làm tồn đầu và chỉ tính lượng dùng sau lúc chốt
+//   [12] Phiếu theo dõi của mẻ (phối trộn · dịch thạch): lưu trọn nội dung, bỏ ô trống; QA xác nhận ⇒ khoá sửa, bỏ xác nhận ⇒ sửa lại được
 //   [9] Huỷ mẻ còn dòng rút ⇒ 409; đóng / mở lại mẻ; bất biến tồn: nhập − còn = Σ rút sống
 // Fixture QA63: kho cha QA63_PARENT + kho phụ QA63_CB (+ QA63_CB2 để thử chéo kho) · mã NVL/BTP QA63* · tem QA63_* — dọn bằng PostgREST.
 import { randomUUID } from 'crypto'
@@ -37,6 +38,7 @@ async function cleanup() {
   if (tanks.length) await restWrite('tank_movement', 'DELETE', `tank_id=in.(${tanks.map(t => t.id).join(',')})`)
   if (tanks.length) await restWrite('tank_lot', 'DELETE', `tank_id=in.(${tanks.map(t => t.id).join(',')})`)
   if (batches.length) await restWrite('batch_consumption', 'DELETE', `batch_id=in.(${batches.map(b => b.id).join(',')})`)
+  if (batches.length) await restWrite('batch_process_log', 'DELETE', `batch_id=in.(${batches.map(b => b.id).join(',')})`)
   if (batches.length) await restWrite('batch_requirement', 'DELETE', `batch_id=in.(${batches.map(b => b.id).join(',')})`)
   await restWrite('production_shift_report', 'DELETE', `warehouse_id=in.(${whs.join(',')})`)
   await restWrite('production_recipe', 'DELETE', `material_id=in.(${[M_BTP, M_BTP2].join(',')})`)
@@ -417,6 +419,25 @@ try {
     `http=${svAfter.s}/${sh2.s} opening=${rm2nd?.opening}(${rm2nd?.opening_src}) used=${rm2nd?.used} book=${rm2nd?.book}`)
   const shList = await api(`/wms/production/shift-reports?warehouse_id=${WC}`)
   check('11f. Danh sách báo cáo ca của kho: 2 ca, ca mở đứng đầu', shList.s === 200 && (shList.j?.data ?? []).length === 2 && shList.j?.data?.[0]?.status === 'OPEN', `http=${shList.s} n=${shList.j?.data?.length}`)
+
+  // ── [12] PHIẾU THEO DÕI của mẻ ──
+  const plBadForm = await api(`/wms/production/batches/${B1.id}/process-log/XYZ`, 'PUT', { data: { water_l: '1' } })
+  const plBadKey = await api(`/wms/production/batches/${B1.id}/process-log/MIX`, 'PUT', { data: { 'Bad Key': '1' } })
+  check('12a. Loại phiếu lạ ⇒ 400; mã ô sai dạng ⇒ 400', plBadForm.s === 400 && plBadKey.s === 400, `http=${plBadForm.s}/${plBadKey.s}`)
+  const pl1 = await api(`/wms/production/batches/${B1.id}/process-log/MIX`, 'PUT', { data: { water_l: '1.200', ph_water: '7,1', note: '  ' } })
+  const pl2 = await api(`/wms/production/batches/${B1.id}/process-log/MIX`, 'PUT', { data: { water_l: '1.250', brix: '12,5' } })
+  const plGet = ((await api(`/wms/production/batches/${B1.id}`)).j?.data?.process_logs ?? []).find(l => l.form === 'MIX')
+  check('12b. Ghi phiếu lần đầu ⇒ 201 (bỏ ô trống); ghi lại ⇒ 200 thay trọn nội dung; chi tiết mẻ trả kèm phiếu',
+    pl1.s === 201 && Object.keys(pl1.j?.data?.data ?? {}).length === 2 && pl2.s === 200 && plGet?.data?.water_l === '1.250' && plGet?.data?.brix === '12,5' && plGet?.data?.ph_water === undefined,
+    `http=${pl1.s}/${pl2.s} ${JSON.stringify(plGet?.data ?? null)}`)
+  const plNone = await api(`/wms/production/batches/${B1.id}/process-log/JELLY/confirm`, 'POST', { confirm: true })
+  const plCf = await api(`/wms/production/batches/${B1.id}/process-log/MIX/confirm`, 'POST', { confirm: true })
+  const plLocked = await api(`/wms/production/batches/${B1.id}/process-log/MIX`, 'PUT', { data: { water_l: '9' } })
+  const plUn = await api(`/wms/production/batches/${B1.id}/process-log/MIX/confirm`, 'POST', { confirm: false })
+  const plAgain = await api(`/wms/production/batches/${B1.id}/process-log/MIX`, 'PUT', { data: { water_l: '1.300' } })
+  check('12c. Xác nhận phiếu chưa ghi ⇒ 404; QA xác nhận ⇒ khoá sửa (409); bỏ xác nhận ⇒ sửa lại được',
+    plNone.s === 404 && plCf.s === 200 && !!plCf.j?.data?.confirmed_at && plLocked.s === 409 && plLocked.j?.error?.code === 'PROCESS_LOG_CONFIRMED' && plUn.s === 200 && plAgain.s === 200,
+    `http=${plNone.s}/${plCf.s}/${plLocked.s}/${plUn.s}/${plAgain.s}`)
 
   check('9a. Huỷ mẻ còn dòng rút ⇒ 409 BATCH_HAS_CONSUMPTION', cx.s === 409 && cx.j?.error?.code === 'BATCH_HAS_CONSUMPTION', `http=${cx.s}`)
   const clB = await api(`/wms/production/batches/${B1.id}/close`, 'POST', {})

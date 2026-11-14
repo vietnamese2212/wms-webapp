@@ -1,5 +1,5 @@
 // FILE SINH TỰ ĐỘNG — `node scripts/gen-db-types.mjs` (từ information_schema STAGING). KHÔNG sửa tay.
-// Sinh lúc 2026-11-14T10:43:28.494Z · 122 bảng/view · 235 hàm · 0 enum
+// Sinh lúc 2026-11-14T13:16:04.879Z · 123 bảng/view · 235 hàm · 0 enum
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[]
 
 export type Database = {
@@ -3270,6 +3270,7 @@ export type Database = {
           confirmed_by_name: string | null
           created_at: string
           updated_at: string
+          blocks: Json | null
         }
         Insert: {
           id: string
@@ -3283,6 +3284,7 @@ export type Database = {
           confirmed_by_name?: string | null
           created_at?: string
           updated_at: string
+          blocks?: Json | null
         }
         Update: {
           id?: string
@@ -3296,6 +3298,7 @@ export type Database = {
           confirmed_by_name?: string | null
           created_at?: string
           updated_at?: string
+          blocks?: Json | null
         }
         Relationships: []
       }
@@ -5408,6 +5411,42 @@ export type Database = {
           created_at?: string
           updated_at?: string
           cycle?: string | null
+        }
+        Relationships: []
+      }
+      production_process_form: {
+        Row: {
+          code: string
+          title: string
+          short: string
+          blocks: Json
+          sort_order: number
+          is_active: boolean
+          updated_by_name: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          code: string
+          title: string
+          short: string
+          blocks: Json
+          sort_order?: number
+          is_active?: boolean
+          updated_by_name?: string | null
+          created_at?: string
+          updated_at: string
+        }
+        Update: {
+          code?: string
+          title?: string
+          short?: string
+          blocks?: Json
+          sort_order?: number
+          is_active?: boolean
+          updated_by_name?: string | null
+          created_at?: string
+          updated_at?: string
         }
         Relationships: []
       }

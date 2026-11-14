@@ -3,6 +3,7 @@
 //   • Đóng gói rút bán thành phẩm khỏi bồn còn lô CHỜ QA — 2 tầng Kho chế biến + Loại kho (trước ở Cài đặt WMS).
 //     Lô QA LOẠI luôn chặn — không có công tắc.
 //   • Hạn lưu bồn (giờ) theo mã bán thành phẩm (trước ở form Mã hàng) — áp cho mọi kho.
+//   • Tab "Mẫu phiếu theo dõi" (14/11 khuya): ô · đơn vị · ngưỡng · bảng theo dõi của các phiếu theo dõi mẻ — một nút Lưu riêng của tab.
 // Danh mục bồn vẫn ở trang Bồn (đó là danh mục, không phải cấu hình).
 import { useEffect, useMemo, useState } from 'react'
 import type { AxiosError } from 'axios'
@@ -16,6 +17,8 @@ import { useGlobalScopeStore } from '@/stores/globalScopeStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { useMaterials } from '@/api/hooks'
 import { useProductionWarehouses, useProductionSettings, useSaveProductionSettings, type ProductionSettings as Settings } from '@/api/productionHooks'
+import { useMobileTabs } from '@/hooks/useMobileSurface'
+import { ProcessFormSettings } from '@/components/wms/production/ProcessFormSettings'
 import { unitLabel } from '@/utils/qtyUnits'
 
 const GATE_OPTS = [
@@ -27,6 +30,7 @@ const gateLabel = (v: string | null | undefined) => GATE_OPTS.find(o => o.value 
 const INHERIT = '__inherit__'
 const apiMsg = (e: unknown) => (e as AxiosError<{ error?: { message?: string } }>)?.response?.data?.error?.message ?? 'Không lưu được — thử lại'
 type HoldRow = Settings['hold_hours'][number]
+const TABS = [{ key: 'general' as const, label: 'Chung' }, { key: 'forms' as const, label: 'Mẫu phiếu theo dõi' }]
 
 export default function ProductionSettings() {
   const perms = useAuthStore(s => s.user)?.module_permissions as ModulePermissions | null ?? null
@@ -37,6 +41,8 @@ export default function ProductionSettings() {
   const q = useProductionSettings(wh || undefined)
   const save = useSaveProductionSettings()
   const [err, setErr] = useState('')
+  const [tab, setTab] = useState<'general' | 'forms'>('general')
+  const tabs = useMobileTabs('/wms/production/settings', TABS, tab, setTab)
 
   // BẢN NHÁP — một nút Lưu cho cả trang
   const [gate, setGate] = useState('WARN')
@@ -93,16 +99,22 @@ export default function ProductionSettings() {
     <div className="flex flex-col h-full sm:p-3">
       <div className="flex flex-col flex-1 min-h-0 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm">
         <div className="border-b bg-white px-3 py-1.5 sm:py-2 shrink-0 sm:rounded-t-xl">
-          <div className="flex items-center gap-1.5">
+          <div className="flex flex-wrap items-center gap-1.5">
             <span className="text-sm font-semibold text-slate-700 shrink-0">Cài đặt MES</span>
-            {kitchens.length > 1 && (
+            <div className="flex rounded-lg border border-slate-200 overflow-hidden text-xs font-medium shrink-0">
+              {tabs.map((t, i) => (
+                <button key={t.key} type="button" onClick={() => setTab(t.key)}
+                  className={`h-9 sm:h-7 px-3 whitespace-nowrap ${i > 0 ? 'border-l border-slate-200 ' : ''}${tab === t.key ? 'bg-sky-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}>{t.label}</button>
+              ))}
+            </div>
+            {tab === 'general' && kitchens.length > 1 && (
               <div className="flex-1 min-w-0 max-w-56">
                 <SingleSelect value={wh} onChange={setWhPick} triggerClassName="h-9 sm:h-7" placeholder="Chọn kho chế biến"
                   options={kitchens.map(k => ({ value: k.id, label: k.name, sub: k.parent_name ? `thuộc ${k.parent_name}` : undefined }))} />
               </div>
             )}
-            {kitchens.length === 1 && <span className="text-xs text-slate-500 truncate min-w-0" title={kitchens[0].name}>{kitchens[0].name}</span>}
-            {canConfigure && (
+            {tab === 'general' && kitchens.length === 1 && <span className="text-xs text-slate-500 truncate min-w-0" title={kitchens[0].name}>{kitchens[0].name}</span>}
+            {tab === 'general' && canConfigure && (
               <Button className="ml-auto h-9 sm:h-7 text-xs shrink-0" disabled={!dirty || invalid || save.isPending} onClick={onSave}>
                 <Save className="h-3.5 w-3.5 mr-1" />{save.isPending ? 'Đang lưu…' : 'Lưu'}
               </Button>
@@ -110,7 +122,7 @@ export default function ProductionSettings() {
           </div>
         </div>
         <div className="flex-1 min-h-0 overflow-auto bg-slate-50 p-3 pb-20 lg:pb-4">
-          <div className="max-w-3xl space-y-3">
+          {tab === 'forms' ? <div className="max-w-6xl"><ProcessFormSettings canConfigure={canConfigure} /></div> : <div className="max-w-3xl space-y-3">
             {err && <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">{err}</div>}
             {q.isError && <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">{apiMsg(q.error)}</div>}
             {!kitchens.length && <p className="text-xs text-amber-700">Chưa có kho chế biến trong phạm vi — khai kho phụ nội bộ ở Cài đặt WMS → Kho → "Trực thuộc kho".</p>}
@@ -173,7 +185,7 @@ export default function ProductionSettings() {
                 )}
               </SettingsGroup>
             )}
-          </div>
+          </div>}
         </div>
       </div>
     </div>

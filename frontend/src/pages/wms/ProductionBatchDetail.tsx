@@ -17,7 +17,7 @@ import { BatchFormSheet } from '@/components/wms/production/BatchFormSheet'
 import { ConsumeSheet } from '@/components/wms/production/ConsumeSheet'
 import { RequirementSheet } from '@/components/wms/production/RequirementSheet'
 import { ProcessLogSheet } from '@/components/wms/production/ProcessLogSheet'
-import { PROCESS_FORMS, processFieldCount, type ProcessForm } from '@/config/processForms'
+import { blockCellCount } from '@/config/processForms'
 import { ScanIcon } from '@/components/shared/ScanIcon'
 import { BatchFillSheet, nfQty } from '@/components/wms/production/TankSheets'
 import { useAuthStore } from '@/stores/authStore'
@@ -26,6 +26,7 @@ import { can, type ModulePermissions } from '@/config/permissions'
 import { rowText, statusText } from '@/lib/rowStatus'
 import {
   useProductionBatch, useBatchStatus, useBatchQa, useReverseConsumption, BATCH_STATUS_VI, BATCH_QA_VI, TANK_MOVE_VI, type BatchQa,
+  useProcessForms,
 } from '@/api/productionHooks'
 import { BATCH_STATUS_TONE, BATCH_QA_TONE, batchRowKey } from './ProductionBatches'
 import { qtyLabel, unitLabel } from '@/utils/qtyUnits'
@@ -72,7 +73,8 @@ export default function ProductionBatchDetail() {
   useEffect(() => { if (fromCreate) navigate(loc.pathname, { replace: true, state: null }) }, []) // eslint-disable-line react-hooks/exhaustive-deps -- gỡ cờ một lần: tải lại trang không bật lại form
   const [focusId, setFocusId] = useState<string | null>(null)
   const [reqOpen, setReqOpen] = useState(false)
-  const [logForm, setLogForm] = useState<ProcessForm | null>(null)
+  const [logForm, setLogForm] = useState<string | null>(null)
+  const { data: processForms = [] } = useProcessForms()
   const [fillOpen, setFillOpen] = useState(false)
   const [editOpen, setEditOpen] = useState(false)
   const [cloneOpen, setCloneOpen] = useState(false)
@@ -271,14 +273,15 @@ export default function ProductionBatchDetail() {
           </ResizableTable>
           </div>
 
-          {/* PHIẾU THEO DÕI — thay hai phiếu giấy (phối trộn · dịch thạch); bấm vào là mở form ghi */}
+          {/* PHIẾU THEO DÕI — thay phiếu giấy; danh sách = mẫu đang dùng (Cài đặt MES) + mẫu đã ngưng mà mẻ này đã có phiếu */}
           <div className="px-3 py-1.5 sm:px-4 sm:py-2 bg-slate-100 border-y border-slate-200 flex items-center gap-1.5 mt-3">
             <span className="h-3.5 w-1 rounded-full bg-sky-500" />
             <h2 className="text-xs font-semibold uppercase tracking-wide text-slate-600">Phiếu theo dõi</h2>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 p-3">
-            {(Object.keys(PROCESS_FORMS) as ProcessForm[]).map(k => {
-              const d = PROCESS_FORMS[k]
+            {!processForms.length && <p className="text-[11px] text-slate-400">Chưa có mẫu phiếu — khai ở Cài đặt MES → Mẫu phiếu theo dõi.</p>}
+            {processForms.filter(d => d.is_active || (b.process_logs ?? []).some(l => l.form === d.code)).map(d => {
+              const k = d.code
               const lg = (b.process_logs ?? []).find(l => l.form === k)
               const n = lg ? Object.keys(lg.data ?? {}).length : 0
               return (
@@ -289,7 +292,7 @@ export default function ProductionBatchDetail() {
                     {lg?.confirmed_at ? <StatusBadge tone="green">QA đã xác nhận</StatusBadge> : lg ? <StatusBadge tone="amber">Đang ghi</StatusBadge> : <StatusBadge tone="slate">Chưa ghi</StatusBadge>}
                   </div>
                   <p className="text-[11px] text-slate-500 mt-0.5 truncate">
-                    {lg ? <>Đã ghi <b className="text-slate-700 tabular-nums">{n}/{processFieldCount(d)}</b> ô · {lg.updated_by_name ?? '—'} · {formatDateTime(lg.updated_at)}</> : 'Bấm để ghi phiếu cho mẻ này'}
+                    {lg ? <>Đã ghi <b className="text-slate-700 tabular-nums">{n}/{blockCellCount(lg.blocks ?? d.blocks)}</b> ô{lg.blocks ? ' · sửa riêng' : ''} · {lg.updated_by_name ?? '—'} · {formatDateTime(lg.updated_at)}</> : 'Bấm để ghi phiếu cho mẻ này'}
                   </p>
                 </button>
               )
@@ -379,7 +382,7 @@ export default function ProductionBatchDetail() {
       </div>
       {open && <ConsumeSheet open={consumeOpen} onClose={() => setConsumeOpen(false)} batch={b} focusId={focusId} />}
       {open && <RequirementSheet open={reqOpen} onClose={() => setReqOpen(false)} batch={b} />}
-      {logForm && <ProcessLogSheet open onClose={() => setLogForm(null)} batch={b} form={logForm}
+      {logForm && processForms.some(d => d.code === logForm) && <ProcessLogSheet open onClose={() => setLogForm(null)} batch={b} def={processForms.find(d => d.code === logForm)!}
         canWrite={can(perms, 'production', 'process_log')} canConfirm={can(perms, 'production', 'qa_release')} canExport={can(perms, 'production', 'export')} />}
       <BatchFillSheet open={fillOpen} onClose={() => setFillOpen(false)} batchId={b.id} batchCode={b.batch_code} warehouseId={b.warehouse_id} unit={b.material?.base_unit ?? null}
         materialCode={b.material?.material_code ?? null} suggestQty={b.planned_qty != null ? Math.round((Number(b.planned_qty) - filled) * 1000) / 1000 : null} />

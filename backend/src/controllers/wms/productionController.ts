@@ -145,7 +145,7 @@ export async function getBatch(req: Request, res: Response) {
       db.from('tank_lot').select('id, tank_id, qty_in, qty_remaining, filled_at, expires_at, status, tank:production_tank!tank_lot_tank_id_fkey(code, unit)')
         .eq('batch_id', b.id).order('filled_at').limit(500),
       db.rpc('mes_batch_board', { p_batch_id: b.id }),
-      db.from('batch_process_log').select('id, form, data, created_by_name, updated_by_name, confirmed_at, confirmed_by_name, updated_at').eq('batch_id', b.id).limit(10),
+      db.from('batch_process_log').select('id, form, data, blocks, created_by_name, updated_by_name, confirmed_at, confirmed_by_name, updated_at').eq('batch_id', b.id).limit(10),
     ])
     return ok(res, { ...b, consumption: cons ?? [], movements: moves ?? [], lots: lots ?? [], board: board ?? [], process_logs: plogs ?? [] })
   } catch (e) { return failAny(res, e) }
@@ -280,12 +280,95 @@ export async function applyRecipe(req: Request, res: Response) {
   } catch (e) { return failAny(res, e) }
 }
 
-// ─── PHIẾU THEO DÕI của mẻ (phối trộn · dịch thạch) — thay phiếu giấy; các ô khai ở FE config/processForms.ts ────────────
+// ─── MẪU PHIẾU THEO DÕI (14/11 khuya — user: "những cái khác bạn cho nó là số liệu config được" + "cài đặt và cho phép sửa theo
+// từng lần nếu muốn tại bàn"). Mỗi mẫu = một dòng production_process_form; blocks = các khối ô theo thứ tự hiện trên form.
+// Một phiếu của mẻ có thể mang BẢN SỬA RIÊNG (batch_process_log.blocks) — thêm lần đổ / thêm ô cho riêng lần đó, mẫu chung không đổi.
+// Mã ô (key) là thứ phiếu đã ghi bám vào ⇒ FE sinh một lần lúc thêm ô và không cho sửa; BE chỉ kiểm hình dạng + trùng.
+const zFormCode = z.string().trim().regex(/^[A-Z][A-Z0-9_]{1,19}$/, 'Mã mẫu phiếu: chữ IN HOA / số / _, 2–20 ký tự')
+const zFieldKind = z.enum(['num', 'time', 'text'])
+const zFormField = z.object({
+  key: z.string().regex(/^[a-z][a-z0-9_]{0,29}$/), label: zText(1, 120), kind: zFieldKind,
+  unit: z.string().trim().max(20).optional(), min: z.number().finite().optional(), max: z.number().finite().optional(),
+  wide: z.boolean().optional(), prefill: z.enum(['machine_code', 'planned_qty']).optional(),
+}).strict()
+const zFieldsBlock = z.object({ type: z.literal('fields'), title: zText(1, 80), hint: z.string().trim().max(160).optional(), fields: z.array(zFormField).min(1).max(60) }).strict()
+const zGridBlock = z.object({
+  type: z.literal('grid'), key: z.string().regex(/^[a-z][a-z0-9]{0,11}$/), title: zText(1, 80), hint: z.string().trim().max(160).optional(),
+  rows: z.number().int().min(1).max(30),
+  cols: z.array(z.object({ key: z.string().regex(/^[a-z0-9]{1,8}$/), label: zText(1, 40) }).strict()).min(1).max(8),
+  cells: z.array(z.object({ key: z.string().regex(/^[a-z0-9]{1,8}$/), label: zText(1, 20), kind: zFieldKind }).strict()).min(1).max(5),
+}).strict()
+const zBlocks = z.array(z.discriminatedUnion('type', [zFieldsBlock, zGridBlock])).min(1).max(30)
+type FormBlocks = z.infer<typeof zBlocks>
+export const zProcessFormParams = z.object({ code: zFormCode })
+export const zProcessFormPut = z.object({
+  title: zText(1, 120), short: zText(1, 30), is_active: z.boolean(), sort_order: z.number().int().min(0).max(9999).optional(), blocks: zBlocks,
+})
+/** lỗi nghiệp vụ của một bộ khối ô (trùng mã ô, ngưỡng ngược, quá số ô một phiếu chứa được) — null = hợp lệ */
+export function processBlocksError(blocks: FormBlocks): string | null {
+  const keys = new Set<string>()
+  const gridKeys: string[] = []
+  let total = 0
+  for (const bl of blocks) {
+    if (bl.type === 'grid') {
+      if (gridKeys.includes(bl.key)) return `Hai bảng cùng mã "${bl.key}"`
+      gridKeys.push(bl.key)
+      if (new Set(bl.cols.map(c => c.key)).size !== bl.cols.length) return `Bảng "${bl.title}" có cột trùng mã`
+      if (new Set(bl.cells.map(c => c.key)).size !== bl.cells.length) return `Bảng "${bl.title}" có ô trùng mã`
+      total += bl.rows * bl.cols.length * bl.cells.length
+      continue
+    }
+    for (const f of bl.fields) {
+      if (keys.has(f.key)) return `Mã ô "${f.key}" bị trùng`
+      keys.add(f.key)
+      if (f.kind !== 'num' && (f.min != null || f.max != null)) return `Ô "${f.label}" không phải ô số — không đặt ngưỡng được`
+      if (f.min != null && f.max != null && f.min > f.max) return `Ô "${f.label}": ngưỡng dưới lớn hơn ngưỡng trên`
+      total++
+    }
+  }
+  for (const k of keys) if (gridKeys.some(g => k.startsWith(`${g}_`))) return `Mã ô "${k}" trùng tiền tố với bảng — đổi tên ô`
+  if (total > 300) return `Phiếu có ${total} ô — tối đa 300 ô (bảng tính số lần × cột × ô)`
+  return null
+}
+// GET /wms/production/process-forms — mọi mẫu phiếu (kể cả đã ngưng dùng — trang mẻ tự lọc)
+export async function listProcessForms(_req: Request, res: Response) {
+  try {
+    const { data, error } = await db.from('production_process_form').select('code, title, short, blocks, sort_order, is_active, updated_by_name, updated_at')
+      .order('sort_order').order('code').limit(100)
+    if (error) return fail(res, error)
+    return ok(res, data ?? [])
+  } catch (e) { return failAny(res, e) }
+}
+// PUT /wms/production/process-forms/:code — tạo / sửa một mẫu (quyền configure). Phiếu đã ghi giữ nguyên dữ liệu.
+export async function putProcessForm(req: Request, res: Response) {
+  try {
+    const { code } = req.params as unknown as z.infer<typeof zProcessFormParams>
+    const b = req.body as z.infer<typeof zProcessFormPut>
+    const bad = processBlocksError(b.blocks)
+    if (bad) return fail(res, 422, 'PROCESS_FORM_INVALID', bad)
+    const row = { title: b.title, short: b.short, blocks: b.blocks, is_active: b.is_active, updated_by_name: actor(req).actor_name, updated_at: nowIso(),
+      ...(b.sort_order != null ? { sort_order: b.sort_order } : {}) }
+    const { data: cur } = await db.from('production_process_form').select('code').eq('code', code).maybeSingle()
+    if (cur) {
+      const { data, error } = await db.from('production_process_form').update(row).eq('code', code).select('*')
+      if (error) return fail(res, error)
+      if (!data?.length) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy mẫu phiếu')
+      return ok(res, data[0])
+    }
+    const { data, error } = await db.from('production_process_form').insert({ code, sort_order: 0, ...row }).select('*').single()
+    if (error) return fail(res, error)
+    return ok(res, data, 201)
+  } catch (e) { return failAny(res, e) }
+}
+
+// ─── PHIẾU THEO DÕI của mẻ — thay phiếu giấy; ô theo MẪU PHIẾU, hoặc theo bản sửa riêng của phiếu (blocks) ────────────
 // PUT /wms/production/batches/:id/process-log/:form — lưu TRỌN nội dung phiếu ({ mã_ô: giá_trị }); phiếu QA đã xác nhận ⇒ khoá
-const zForm = z.enum(['MIX', 'JELLY'])
+// blocks: mảng = bản sửa riêng cho lần này · null = về theo mẫu chung · bỏ trống = giữ nguyên
+const zForm = zFormCode
 export const zProcessLogParams = z.object({ id: zText(1, 64), form: zForm })
 export const zProcessLogPut = z.object({
   data: z.record(z.string().regex(/^[a-z0-9_]{1,40}$/), z.string().max(300)).refine(o => Object.keys(o).length <= 300, 'Phiếu quá nhiều ô'),
+  blocks: zBlocks.nullable().optional(),
 })
 export async function putProcessLog(req: Request, res: Response) {
   try {
@@ -294,22 +377,29 @@ export async function putProcessLog(req: Request, res: Response) {
     if (!b) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy mẻ')
     if (!(await inScope(req, b.warehouse_id))) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
     if (b.status === 'CANCELLED') return fail(res, 409, 'BATCH_CANCELLED', 'Mẻ đã huỷ — không ghi phiếu được')
-    const { data: raw } = req.body as z.infer<typeof zProcessLogPut>
+    const { data: raw, blocks } = req.body as z.infer<typeof zProcessLogPut>
+    if (blocks) { const bad = processBlocksError(blocks); if (bad) return fail(res, 422, 'PROCESS_FORM_INVALID', bad) }
+    const custom = blocks === undefined ? {} : { blocks }
     // bỏ ô trống ⇒ phiếu chỉ giữ ô đã ghi
     const data = Object.fromEntries(Object.entries(raw).map(([k, v]) => [k, v.trim()] as const).filter(([, v]) => v !== ''))
     const who = actor(req).actor_name
     for (let attempt = 0; attempt < 2; attempt++) {
       const { data: cur } = await db.from('batch_process_log').select('id, confirmed_at').eq('batch_id', b.id).eq('form', form).maybeSingle()
       if (cur?.confirmed_at) return fail(res, 409, 'PROCESS_LOG_CONFIRMED', 'Phiếu đã được QA xác nhận — bỏ xác nhận rồi mới sửa được')
+      if (!cur) {   // phiếu MỚI chỉ mở theo mẫu đang dùng; phiếu đã có vẫn sửa được dù mẫu đã ngưng
+        const { data: pf } = await db.from('production_process_form').select('is_active').eq('code', form).maybeSingle()
+        if (!pf) return fail(res, 404, 'NOT_FOUND', 'Không có mẫu phiếu này')
+        if (!pf.is_active) return fail(res, 409, 'PROCESS_FORM_INACTIVE', 'Mẫu phiếu này đã ngưng dùng — bật lại ở Cài đặt MES')
+      }
       if (cur) {
-        const { data: up, error } = await db.from('batch_process_log').update({ data, updated_by_name: who, updated_at: nowIso() })
+        const { data: up, error } = await db.from('batch_process_log').update({ data, ...custom, updated_by_name: who, updated_at: nowIso() })
           .eq('id', cur.id).is('confirmed_at', null).select('*')
         if (error) return fail(res, error)
         if (!up?.length) return fail(res, 409, 'PROCESS_LOG_CONFIRMED', 'Phiếu vừa được QA xác nhận — tải lại')
         return ok(res, up[0])
       }
       const { data: ins, error } = await db.from('batch_process_log')
-        .insert({ id: randomUUID(), batch_id: b.id, form, data, created_by_name: who, updated_by_name: who, updated_at: nowIso() }).select('*').single()
+        .insert({ id: randomUUID(), batch_id: b.id, form, data, ...custom, created_by_name: who, updated_by_name: who, updated_at: nowIso() }).select('*').single()
       if (!error) return ok(res, ins, 201)
       if (error.code !== '23505') return fail(res, error)   // hai người cùng ghi lần đầu ⇒ vòng lại thành cập nhật
     }
@@ -326,9 +416,18 @@ export async function confirmProcessLog(req: Request, res: Response) {
     if (!(await inScope(req, b.warehouse_id))) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
     const { confirm } = req.body as z.infer<typeof zProcessLogConfirm>
     const a = actor(req)
+    // xác nhận ⇒ chụp mẫu đang áp vào phiếu (nếu phiếu chưa có bản sửa riêng) — hồ sơ lô không đổi khi mẫu chung sửa về sau
+    // bỏ xác nhận ⇒ bản chụp còn y hệt mẫu chung thì gỡ, để phiếu lại "theo mẫu chung" (không hiện thành "sửa riêng")
+    let snap: { blocks?: TablesUpdate<'batch_process_log'>['blocks'] } = {}
+    const { data: cur } = await db.from('batch_process_log').select('blocks').eq('batch_id', b.id).eq('form', form).maybeSingle()
+    if (cur && (confirm ? cur.blocks == null : cur.blocks != null)) {
+      const { data: pf } = await db.from('production_process_form').select('blocks').eq('code', form).maybeSingle()
+      if (pf && confirm) snap = { blocks: pf.blocks }
+      if (pf && !confirm && JSON.stringify(pf.blocks) === JSON.stringify(cur.blocks)) snap = { blocks: null }
+    }
     const { data, error } = await db.from('batch_process_log')
-      .update(confirm ? { confirmed_at: nowIso(), confirmed_by: a.actor_id, confirmed_by_name: a.actor_name, updated_at: nowIso() }
-        : { confirmed_at: null, confirmed_by: null, confirmed_by_name: null, updated_at: nowIso() })
+      .update(confirm ? { ...snap, confirmed_at: nowIso(), confirmed_by: a.actor_id, confirmed_by_name: a.actor_name, updated_at: nowIso() }
+        : { ...snap, confirmed_at: null, confirmed_by: null, confirmed_by_name: null, updated_at: nowIso() })
       .eq('batch_id', b.id).eq('form', form).select('*')
     if (error) return fail(res, error)
     if (!data?.length) return fail(res, 404, 'NOT_FOUND', 'Phiếu chưa có nội dung — ghi phiếu trước rồi mới xác nhận')

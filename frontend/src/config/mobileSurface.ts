@@ -23,6 +23,7 @@ export interface MobilePageDef {
 
 /** Tab TĨNH của từng trang — key = đúng giá trị tab mà trang dùng (store / useState / route con). */
 export const PAGE_TABS: Record<string, MobileTabDef[]> = {
+  '/wms/production/settings': [{ key: 'general', label: 'Chung' }, { key: 'forms', label: 'Mẫu phiếu theo dõi' }],
   '/': [
     { key: 'all', label: 'Tổng quan' }, { key: 'in', label: 'Nhập' }, { key: 'out', label: 'Xuất' },
     { key: 'stock', label: 'Tồn kho' }, { key: 'prod', label: 'Năng suất' }, { key: 'svc', label: 'Dịch vụ' }, { key: 'kpi', label: 'KPI' },

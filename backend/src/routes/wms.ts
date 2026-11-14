@@ -410,6 +410,8 @@ router.post('/production/batches/:id/reopen',      P('open_batch'), validate({ b
 router.post('/production/batches/:id/cancel',      P('open_batch'), validate({ body: z.object({}) }), production.cancelBatch)
 router.put('/production/batches/:id/requirements', P('open_batch'), validate({ body: production.zRequirements }), production.setRequirements)
 router.post('/production/batches/:id/apply-recipe', P('open_batch'), validate({ body: production.zApplyRecipe }), production.applyRecipe)
+router.get('/production/process-forms',            P('view'),       production.listProcessForms)
+router.put('/production/process-forms/:code',      P('configure'),  validate({ params: production.zProcessFormParams, body: production.zProcessFormPut }), production.putProcessForm)
 router.put('/production/batches/:id/process-log/:form', P('process_log'), validate({ params: production.zProcessLogParams, body: production.zProcessLogPut }), production.putProcessLog)
 router.post('/production/batches/:id/process-log/:form/confirm', P('qa_release'), validate({ params: production.zProcessLogParams, body: production.zProcessLogConfirm }), production.confirmProcessLog)
 router.get('/production/shift-reports',            P('view'),         validate({ query: production.zShiftListQuery }), production.listShiftReports)

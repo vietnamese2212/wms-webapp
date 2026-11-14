@@ -15,7 +15,8 @@
 //        bàn trả yêu cầu · đã cấp · tồn có tem / không tem; sửa yêu cầu không đụng phần đã cấp
 //   [11] Báo cáo sử dụng NVL theo ca: một kho một ca mở; số dùng theo mẻ / tồn sổ khớp dữ liệu gốc; chốt ca chụp số (không đổi khi tồn đổi);
 //        ca sau lấy số đếm ca trước làm tồn đầu và chỉ tính lượng dùng sau lúc chốt
-//   [12] Phiếu theo dõi của mẻ (phối trộn · dịch thạch): lưu trọn nội dung, bỏ ô trống; QA xác nhận ⇒ khoá sửa, bỏ xác nhận ⇒ sửa lại được
+//   [12] Phiếu theo dõi của mẻ (phối trộn · dịch thạch): lưu trọn nội dung, bỏ ô trống; QA xác nhận ⇒ khoá sửa + chụp mẫu, bỏ xác nhận ⇒ sửa lại được
+//   [13] Mẫu phiếu là CẤU HÌNH (Cài đặt MES): tạo / sửa / ngưng mẫu; phiếu của mẻ sửa riêng cấu trúc cho lần đó (thêm lần, thêm ô) và về theo mẫu chung
 //   [9] Huỷ mẻ còn dòng rút ⇒ 409; đóng / mở lại mẻ; bất biến tồn: nhập − còn = Σ rút sống
 // Fixture QA63: kho cha QA63_PARENT + kho phụ QA63_CB (+ QA63_CB2 để thử chéo kho) · mã NVL/BTP QA63* · tem QA63_* — dọn bằng PostgREST.
 import { randomUUID } from 'crypto'
@@ -39,6 +40,7 @@ async function cleanup() {
   if (tanks.length) await restWrite('tank_lot', 'DELETE', `tank_id=in.(${tanks.map(t => t.id).join(',')})`)
   if (batches.length) await restWrite('batch_consumption', 'DELETE', `batch_id=in.(${batches.map(b => b.id).join(',')})`)
   if (batches.length) await restWrite('batch_process_log', 'DELETE', `batch_id=in.(${batches.map(b => b.id).join(',')})`)
+  await restWrite('production_process_form', 'DELETE', 'code=like.QA63*')
   if (batches.length) await restWrite('batch_requirement', 'DELETE', `batch_id=in.(${batches.map(b => b.id).join(',')})`)
   await restWrite('production_shift_report', 'DELETE', `warehouse_id=in.(${whs.join(',')})`)
   await restWrite('production_recipe', 'DELETE', `material_id=in.(${[M_BTP, M_BTP2].join(',')})`)
@@ -421,9 +423,10 @@ try {
   check('11f. Danh sách báo cáo ca của kho: 2 ca, ca mở đứng đầu', shList.s === 200 && (shList.j?.data ?? []).length === 2 && shList.j?.data?.[0]?.status === 'OPEN', `http=${shList.s} n=${shList.j?.data?.length}`)
 
   // ── [12] PHIẾU THEO DÕI của mẻ ──
-  const plBadForm = await api(`/wms/production/batches/${B1.id}/process-log/XYZ`, 'PUT', { data: { water_l: '1' } })
+  const plBadForm = await api(`/wms/production/batches/${B1.id}/process-log/xyz`, 'PUT', { data: { water_l: '1' } })
+  const plNoForm = await api(`/wms/production/batches/${B1.id}/process-log/XYZ`, 'PUT', { data: { water_l: '1' } })
   const plBadKey = await api(`/wms/production/batches/${B1.id}/process-log/MIX`, 'PUT', { data: { 'Bad Key': '1' } })
-  check('12a. Loại phiếu lạ ⇒ 400; mã ô sai dạng ⇒ 400', plBadForm.s === 400 && plBadKey.s === 400, `http=${plBadForm.s}/${plBadKey.s}`)
+  check('12a. Mã phiếu sai dạng ⇒ 400; mẫu phiếu không có ⇒ 404; mã ô sai dạng ⇒ 400', plBadForm.s === 400 && plNoForm.s === 404 && plBadKey.s === 400, `http=${plBadForm.s}/${plNoForm.s}/${plBadKey.s}`)
   const pl1 = await api(`/wms/production/batches/${B1.id}/process-log/MIX`, 'PUT', { data: { water_l: '1.200', ph_water: '7,1', note: '  ' } })
   const pl2 = await api(`/wms/production/batches/${B1.id}/process-log/MIX`, 'PUT', { data: { water_l: '1.250', brix: '12,5' } })
   const plGet = ((await api(`/wms/production/batches/${B1.id}`)).j?.data?.process_logs ?? []).find(l => l.form === 'MIX')
@@ -435,9 +438,50 @@ try {
   const plLocked = await api(`/wms/production/batches/${B1.id}/process-log/MIX`, 'PUT', { data: { water_l: '9' } })
   const plUn = await api(`/wms/production/batches/${B1.id}/process-log/MIX/confirm`, 'POST', { confirm: false })
   const plAgain = await api(`/wms/production/batches/${B1.id}/process-log/MIX`, 'PUT', { data: { water_l: '1.300' } })
-  check('12c. Xác nhận phiếu chưa ghi ⇒ 404; QA xác nhận ⇒ khoá sửa (409); bỏ xác nhận ⇒ sửa lại được',
-    plNone.s === 404 && plCf.s === 200 && !!plCf.j?.data?.confirmed_at && plLocked.s === 409 && plLocked.j?.error?.code === 'PROCESS_LOG_CONFIRMED' && plUn.s === 200 && plAgain.s === 200,
-    `http=${plNone.s}/${plCf.s}/${plLocked.s}/${plUn.s}/${plAgain.s}`)
+  check('12c. Xác nhận phiếu chưa ghi ⇒ 404; QA xác nhận ⇒ khoá sửa (409) + chụp mẫu vào phiếu; bỏ xác nhận ⇒ gỡ bản chụp, sửa lại được',
+    plNone.s === 404 && plCf.s === 200 && !!plCf.j?.data?.confirmed_at && Array.isArray(plCf.j?.data?.blocks) && plLocked.s === 409 && plLocked.j?.error?.code === 'PROCESS_LOG_CONFIRMED'
+      && plUn.s === 200 && plUn.j?.data?.blocks === null && plAgain.s === 200,
+    `http=${plNone.s}/${plCf.s}/${plLocked.s}/${plUn.s}/${plAgain.s} snap=${Array.isArray(plCf.j?.data?.blocks)} unsnap=${JSON.stringify(plUn.j?.data?.blocks)}`)
+
+  // ── [13] MẪU PHIẾU = CẤU HÌNH · sửa riêng tại bàn ──
+  const pfList = await api('/wms/production/process-forms')
+  const pfMix = (pfList.j?.data ?? []).find(x => x.code === 'MIX'), pfJelly = (pfList.j?.data ?? []).find(x => x.code === 'JELLY')
+  check('13a. Danh sách mẫu phiếu có MIX + JELLY kèm khối ô (bảng rửa thạch 8 lần)',
+    pfList.s === 200 && Array.isArray(pfMix?.blocks) && (pfJelly?.blocks ?? []).some(b => b.type === 'grid' && b.key === 'wash' && b.rows === 8),
+    `http=${pfList.s} n=${pfList.j?.data?.length}`)
+  const pfBody = (blocks, is_active = true) => ({ title: 'QA63 phiếu thử', short: 'QA63', is_active, blocks })
+  const okBlocks = [{ type: 'fields', title: 'Thông số', fields: [{ key: 'nhiet_do', label: 'Nhiệt độ', kind: 'num', unit: '°C', max: 90 }] },
+    { type: 'grid', key: 'tt', title: 'Theo dõi', rows: 2, cols: [{ key: 'b1', label: 'Bồn 1' }], cells: [{ key: 't', label: 'Giờ', kind: 'time' }] }]
+  const pfDup = await api('/wms/production/process-forms/QA63F', 'PUT', pfBody([{ type: 'fields', title: 'A', fields: [{ key: 'x', label: 'X', kind: 'num' }, { key: 'x', label: 'Y', kind: 'num' }] }]))
+  const pfRange = await api('/wms/production/process-forms/QA63F', 'PUT', pfBody([{ type: 'fields', title: 'A', fields: [{ key: 'x', label: 'X', kind: 'text', max: 1 }] }]))
+  const pfBadCode = await api('/wms/production/process-forms/qa63f', 'PUT', pfBody(okBlocks))
+  const pfNew = await api('/wms/production/process-forms/QA63F', 'PUT', pfBody(okBlocks))
+  check('13b. Mẫu trùng mã ô / ngưỡng trên ô chữ ⇒ 422; mã mẫu sai dạng ⇒ 400; mẫu hợp lệ ⇒ 201',
+    pfDup.s === 422 && pfRange.s === 422 && pfBadCode.s === 400 && pfNew.s === 201,
+    `http=${pfDup.s}/${pfRange.s}/${pfBadCode.s}/${pfNew.s}`)
+  const plF1 = await api(`/wms/production/batches/${B1.id}/process-log/QA63F`, 'PUT', { data: { nhiet_do: '95', tt_1_b1_t: '08:00' } })
+  const pfOff = await api('/wms/production/process-forms/QA63F', 'PUT', pfBody(okBlocks, false))
+  const plF2 = await api(`/wms/production/batches/${B2.id}/process-log/QA63F`, 'PUT', { data: { nhiet_do: '80' } })
+  const plF3 = await api(`/wms/production/batches/${B1.id}/process-log/QA63F`, 'PUT', { data: { nhiet_do: '85' } })
+  check('13c. Phiếu theo mẫu mới ghi được; mẫu NGƯNG ⇒ mẻ khác không mở phiếu mới (409), phiếu đã có vẫn sửa được',
+    plF1.s === 201 && pfOff.s === 200 && plF2.s === 409 && plF2.j?.error?.code === 'PROCESS_FORM_INACTIVE' && plF3.s === 200,
+    `http=${plF1.s}/${pfOff.s}/${plF2.s}/${plF3.s}`)
+  // sửa riêng cho lần này: bảng rửa thạch thêm lần 9 + một ô mới — mẫu chung không đổi
+  const custom = structuredClone(pfJelly?.blocks ?? [])
+  for (const b of custom) if (b.type === 'grid' && b.key === 'wash') b.rows = 9
+  if (custom[0]?.type === 'fields') custom[0].fields.push({ key: 'nuoc_bu', label: 'Nước bù', kind: 'num', unit: 'L' })
+  const plC1 = await api(`/wms/production/batches/${B1.id}/process-log/JELLY`, 'PUT', { data: { wash_9_s1_t: '10:30', nuoc_bu: '12' }, blocks: custom })
+  const badCustom = structuredClone(custom); if (badCustom[0]?.type === 'fields') badCustom[0].fields.push({ key: 'nuoc_bu', label: 'Trùng', kind: 'num' })
+  const plC2 = await api(`/wms/production/batches/${B1.id}/process-log/JELLY`, 'PUT', { data: { nuoc_bu: '12' }, blocks: badCustom })
+  const plC3 = await api(`/wms/production/batches/${B1.id}/process-log/JELLY`, 'PUT', { data: { wash_9_s1_t: '10:30', nuoc_bu: '13' } })
+  const pfJ2 = ((await api('/wms/production/process-forms')).j?.data ?? []).find(x => x.code === 'JELLY')
+  const plC4 = await api(`/wms/production/batches/${B1.id}/process-log/JELLY`, 'PUT', { data: { wash_9_s1_t: '10:30' }, blocks: null })
+  check('13d. Sửa riêng tại bàn (thêm lần 9, thêm ô) lưu cùng phiếu; trùng mã ô ⇒ 422; ghi tiếp không gửi cấu trúc ⇒ giữ bản riêng; mẫu chung không đổi; blocks:null ⇒ về theo mẫu chung',
+    plC1.s === 201 && (plC1.j?.data?.blocks ?? []).some(b => b.key === 'wash' && b.rows === 9) && plC1.j?.data?.data?.wash_9_s1_t === '10:30'
+      && plC2.s === 422 && plC3.s === 200 && Array.isArray(plC3.j?.data?.blocks) && plC3.j?.data?.data?.nuoc_bu === '13'
+      && (pfJ2?.blocks ?? []).some(b => b.key === 'wash' && b.rows === 8)
+      && plC4.s === 200 && plC4.j?.data?.blocks === null && plC4.j?.data?.data?.wash_9_s1_t === '10:30',
+    `http=${plC1.s}/${plC2.s}/${plC3.s}/${plC4.s} c4blocks=${JSON.stringify(plC4.j?.data?.blocks)}`)
 
   check('9a. Huỷ mẻ còn dòng rút ⇒ 409 BATCH_HAS_CONSUMPTION', cx.s === 409 && cx.j?.error?.code === 'BATCH_HAS_CONSUMPTION', `http=${cx.s}`)
   const clB = await api(`/wms/production/batches/${B1.id}/close`, 'POST', {})

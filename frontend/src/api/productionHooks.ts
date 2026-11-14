@@ -7,6 +7,7 @@ import { apiClient } from './client'
 import { useWarehouses } from './hooks'
 import { useAuthStore } from '@/stores/authStore'
 import type { MatUnits } from '@/utils/qtyUnits'
+import type { FormBlock } from '@/config/processForms'
 
 export interface ProdWarehouse { id: string; code: string; name: string; parent_warehouse_id: string | null; parent_name: string | null }
 /** KHO CHẾ BIẾN người dùng thao tác được = kho phụ nội bộ đang hoạt động mà kho đó HOẶC kho cha của nó nằm trong phạm vi
@@ -66,9 +67,9 @@ export interface BoardRow extends MatUnits {
   /** tồn cấp được ở kho chế biến (không QA giữ, sau giữ chỗ) · phần KHÔNG có tem · số pallet / bao CÓ tem */
   available: number; available_no_tem: number; tem_pallets: number
 }
-/** Phiếu theo dõi của mẻ (phối trộn · dịch thạch): data = { mã_ô: giá_trị } — danh sách ô ở config/processForms.ts */
+/** Phiếu theo dõi của mẻ: data = { mã_ô: giá_trị }; blocks = bản sửa riêng cho lần này (null = theo mẫu chung) */
 export interface ProcessLog {
-  id: string; form: 'MIX' | 'JELLY'; data: Record<string, string>
+  id: string; form: string; data: Record<string, string>; blocks: FormBlock[] | null
   created_by_name: string | null; updated_by_name: string | null; confirmed_at: string | null; confirmed_by_name: string | null; updated_at: string
 }
 export interface BatchDetail {
@@ -227,10 +228,25 @@ export function useRecipe(materialId: string | undefined) {
 }
 export const useSaveRecipe = () => useProdMutation(({ materialId, ...b }: { materialId: string; base_qty: number; note: string | null; is_active: boolean; lines: { material_id: string; qty: number }[] }) =>
   (async () => (await apiClient.put(`/wms/production/recipes/${materialId}`, b)).data.data as { id: string; lines: number })())
-export const useSaveProcessLog = () => useProdMutation(({ batchId, form, data }: { batchId: string; form: 'MIX' | 'JELLY'; data: Record<string, string> }) =>
-  (async () => (await apiClient.put(`/wms/production/batches/${batchId}/process-log/${form}`, { data })).data.data as ProcessLog)())
-export const useConfirmProcessLog = () => useProdMutation(({ batchId, form, confirm }: { batchId: string; form: 'MIX' | 'JELLY'; confirm: boolean }) =>
+/** blocks: mảng = lưu bản sửa riêng · null = về theo mẫu chung · bỏ trống = giữ nguyên */
+export const useSaveProcessLog = () => useProdMutation(({ batchId, form, data, blocks }: { batchId: string; form: string; data: Record<string, string>; blocks?: FormBlock[] | null }) =>
+  (async () => (await apiClient.put(`/wms/production/batches/${batchId}/process-log/${form}`, { data, ...(blocks !== undefined ? { blocks } : {}) })).data.data as ProcessLog)())
+export const useConfirmProcessLog = () => useProdMutation(({ batchId, form, confirm }: { batchId: string; form: string; confirm: boolean }) =>
   post<ProcessLog>(`/wms/production/batches/${batchId}/process-log/${form}/confirm`, { confirm }))
+// ── Mẫu phiếu theo dõi (cấu hình ở Cài đặt MES) ──
+export interface ProcessFormDef { code: string; title: string; short: string; blocks: FormBlock[]; sort_order: number; is_active: boolean; updated_by_name: string | null; updated_at: string }
+export function useProcessForms() {
+  return useQuery({ queryKey: ['prod-process-forms'], staleTime: 60_000,
+    queryFn: async () => (await apiClient.get('/wms/production/process-forms')).data.data as ProcessFormDef[] })
+}
+export function useSaveProcessForm() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async ({ code, ...b }: { code: string; title: string; short: string; is_active: boolean; sort_order?: number; blocks: FormBlock[] }) =>
+      (await apiClient.put(`/wms/production/process-forms/${code}`, b)).data.data as ProcessFormDef,
+    onSettled: () => { void qc.invalidateQueries({ queryKey: ['prod-process-forms'] }) },
+  })
+}
 // ── Báo cáo sử dụng NVL theo ca ──
 export interface ShiftReportHead {
   id: string; warehouse_id: string; report_date: string; shift: string; from_at: string; to_at: string | null; status: 'OPEN' | 'CLOSED'

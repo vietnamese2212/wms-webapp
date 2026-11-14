@@ -367,10 +367,10 @@ export const MODULES = {
       manage_tank: 'Khai danh mục BỒN (mã, sức chứa, đơn vị, ngừng dùng)',
       tank_ops:    'Nạp mẻ vào bồn · chuyển bồn · điều chỉnh mức · xả bỏ',
       export:      'Xuất Excel danh sách mẻ',
-      configure:   'Cài đặt MES (rút bồn còn lô chờ QA · hạn lưu bồn theo mã)',
+      configure:   'Cài đặt MES (rút bồn còn lô chờ QA · hạn lưu bồn theo mã · mẫu phiếu theo dõi)',
       manage_recipe: 'Khai ĐỊNH MỨC nguyên liệu của mã bán thành phẩm (trang Định mức)',
       shift_report: 'Mở / chốt BÁO CÁO SỬ DỤNG NVL theo ca (nhập tồn cuối thực tế)',
-      process_log: 'Ghi PHIẾU THEO DÕI của mẻ (phối trộn · dịch thạch) — QA xác nhận phiếu dùng quyền "QA giữ / thả / loại"',
+      process_log: 'Ghi PHIẾU THEO DÕI của mẻ (và sửa riêng cấu trúc phiếu cho lần đó tại bàn) — QA xác nhận phiếu dùng quyền "QA giữ / thả / loại"',
     },
   },
   materials: {

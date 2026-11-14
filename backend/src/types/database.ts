@@ -1,5 +1,5 @@
 // FILE SINH TỰ ĐỘNG — `node scripts/gen-db-types.mjs` (từ information_schema STAGING). KHÔNG sửa tay.
-// Sinh lúc 2026-11-14T02:50:07.079Z · 116 bảng/view · 226 hàm · 0 enum
+// Sinh lúc 2026-11-14T10:21:27.115Z · 119 bảng/view · 231 hàm · 0 enum
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[]
 
 export type Database = {
@@ -3257,6 +3257,42 @@ export type Database = {
         }
         Relationships: []
       }
+      batch_requirement: {
+        Row: {
+          id: string
+          batch_id: string
+          material_id: string
+          qty_required: number
+          sort_order: number
+          note: string | null
+          created_at: string
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          id: string
+          batch_id: string
+          material_id: string
+          qty_required: number
+          sort_order?: number
+          note?: string | null
+          created_at?: string
+          updated_at: string
+          updated_by?: string | null
+        }
+        Update: {
+          id?: string
+          batch_id?: string
+          material_id?: string
+          qty_required?: number
+          sort_order?: number
+          note?: string | null
+          created_at?: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: []
+      }
       carrier_allocation: {
         Row: {
           id: string
@@ -5279,6 +5315,7 @@ export type Database = {
           closed_at: string | null
           created_at: string
           updated_at: string
+          cycle: string | null
         }
         Insert: {
           id: string
@@ -5303,6 +5340,7 @@ export type Database = {
           closed_at?: string | null
           created_at?: string
           updated_at: string
+          cycle?: string | null
         }
         Update: {
           id?: string
@@ -5325,6 +5363,73 @@ export type Database = {
           closed_by?: string | null
           closed_by_name?: string | null
           closed_at?: string | null
+          created_at?: string
+          updated_at?: string
+          cycle?: string | null
+        }
+        Relationships: []
+      }
+      production_recipe: {
+        Row: {
+          id: string
+          material_id: string
+          base_qty: number
+          note: string | null
+          is_active: boolean
+          created_at: string
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          id: string
+          material_id: string
+          base_qty: number
+          note?: string | null
+          is_active?: boolean
+          created_at?: string
+          updated_at: string
+          updated_by?: string | null
+        }
+        Update: {
+          id?: string
+          material_id?: string
+          base_qty?: number
+          note?: string | null
+          is_active?: boolean
+          created_at?: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: []
+      }
+      production_recipe_line: {
+        Row: {
+          id: string
+          recipe_id: string
+          material_id: string
+          qty: number
+          sort_order: number
+          note: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id: string
+          recipe_id: string
+          material_id: string
+          qty: number
+          sort_order?: number
+          note?: string | null
+          created_at?: string
+          updated_at: string
+        }
+        Update: {
+          id?: string
+          recipe_id?: string
+          material_id?: string
+          qty?: number
+          sort_order?: number
+          note?: string | null
           created_at?: string
           updated_at?: string
         }
@@ -6873,7 +6978,19 @@ export type Database = {
         Args: { p_tokens?: unknown | null; p_categories?: unknown | null; p_scope_cats?: unknown | null; p_status?: unknown | null; p_qr?: unknown | null; p_dq?: unknown | null; p_cat_rules?: Json | null; p_legacy_no_sl?: unknown | null; p_legacy_pe?: unknown | null; p_dims?: unknown | null; p_flags?: unknown | null }
         Returns: Json
       }
+      mes_batch_apply_recipe: {
+        Args: { p: Json | null }
+        Returns: Json
+      }
+      mes_batch_board: {
+        Args: { p_batch_id: string | null }
+        Returns: Json
+      }
       mes_batch_page: {
+        Args: { p: Json | null }
+        Returns: Json
+      }
+      mes_batch_set_requirements: {
         Args: { p: Json | null }
         Returns: Json
       }
@@ -6904,6 +7021,14 @@ export type Database = {
       mes_open_batch_wh: {
         Args: { p_batch_id: string | null }
         Returns: string
+      }
+      mes_recipe_save: {
+        Args: { p: Json | null }
+        Returns: Json
+      }
+      mes_run_redraw: {
+        Args: { p: Json | null }
+        Returns: Json
       }
       mes_stock: {
         Args: { p_wh: string | null; p_material?: string | null; p_search?: string | null; p_limit?: number | null }

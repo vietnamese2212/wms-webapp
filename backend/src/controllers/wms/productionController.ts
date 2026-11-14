@@ -54,7 +54,7 @@ function mesFail(res: Response, e: unknown): Response {
   const m = MES_RE.exec(msg)
   if (!m) return failAny(res, e)
   const [, code, text] = m
-  const status = code === 'NOT_FOUND' ? 404 : ['QTY', 'REASON', 'UNIT', 'KIND', 'SAME_TANK'].includes(code) ? 422 : 409
+  const status = code === 'NOT_FOUND' ? 404 : ['QTY', 'REASON', 'UNIT', 'KIND', 'SAME_TANK', 'DUPLICATE', 'SELF'].includes(code) ? 422 : 409
   return fail(res, status, `MES_${code}`, text.trim())
 }
 
@@ -136,7 +136,7 @@ export async function getBatch(req: Request, res: Response) {
     if (error) return fail(res, error)
     if (!b) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy mẻ')
     if (!(await inScope(req, b.warehouse_id))) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
-    const [{ data: cons }, { data: moves }, { data: lots }] = await Promise.all([
+    const [{ data: cons }, { data: moves }, { data: lots }, { data: board }] = await Promise.all([
       db.from('batch_consumption')
         .select('*, material:Material!batch_consumption_material_id_fkey(material_code, short_name, base_unit, entry_unit, units_per_carton), entry:InventoryEntry!batch_consumption_entry_id_fkey(cartons_remaining, expiry_date, location:Location(location_code))')
         .eq('batch_id', b.id).order('created_at').limit(2000),
@@ -144,15 +144,16 @@ export async function getBatch(req: Request, res: Response) {
         .eq('batch_id', b.id).order('created_at').limit(2000),
       db.from('tank_lot').select('id, tank_id, qty_in, qty_remaining, filled_at, expires_at, status, tank:production_tank!tank_lot_tank_id_fkey(code, unit)')
         .eq('batch_id', b.id).order('filled_at').limit(500),
+      db.rpc('mes_batch_board', { p_batch_id: b.id }),
     ])
-    return ok(res, { ...b, consumption: cons ?? [], movements: moves ?? [], lots: lots ?? [] })
+    return ok(res, { ...b, consumption: cons ?? [], movements: moves ?? [], lots: lots ?? [], board: board ?? [] })
   } catch (e) { return failAny(res, e) }
 }
 
 // POST /wms/production/batches — MỞ MẺ (mã lô trống ⇒ app tự sinh; trùng ⇒ 409, gợi ý tự sinh thì thử lại số kế)
 export const zBatchCreate = z.object({
   warehouse_id: zText(1, 64), material_id: zText(1, 64), prod_date: zDay,
-  batch_code: zText(0, 40).optional(), machine_code: zText(0, 20).optional(), shift: zText(0, 40).optional(),
+  batch_code: zText(0, 40).optional(), machine_code: zText(0, 20).optional(), shift: zText(0, 40).optional(), cycle: zText(0, 20).optional(),
   planned_qty: z.number().positive().max(10_000_000).nullable().optional(), note: zText(0, 500).optional(),
 })
 export async function createBatch(req: Request, res: Response) {
@@ -180,11 +181,16 @@ export async function createBatch(req: Request, res: Response) {
       }
       const row = {
         id: randomUUID(), warehouse_id: body.warehouse_id, batch_code: code, material_id: m.id, prod_date: body.prod_date,
-        machine_code: machine, shift: body.shift || null, planned_qty: body.planned_qty ?? null, note: body.note || null,
+        machine_code: machine, shift: body.shift || null, cycle: body.cycle || null, planned_qty: body.planned_qty ?? null, note: body.note || null,
         status: 'OPEN', qa_status: 'HOLD', opened_by: a.actor_id, opened_by_name: a.actor_name, updated_at: nowIso(),
       }
       const { data, error } = await db.from('production_batch').insert(row).select('*').single()
-      if (!error) return ok(res, data, 201)
+      if (!error) {
+        // bàn làm việc: chép ĐỊNH MỨC của mã BTP thành yêu cầu nguyên liệu của mẻ (không có định mức ⇒ bàn trống, người mở tự khai)
+        const { data: ap, error: apErr } = await db.rpc('mes_batch_apply_recipe', { p: { batch_id: data.id, actor_name: a.actor_name } })
+        if (apErr) console.error('[production] apply recipe', apErr.message)
+        return ok(res, { ...data, requirement_count: (ap as { count?: number } | null)?.count ?? 0 }, 201)
+      }
       if (error.code !== '23505') return fail(res, error)
       if (typed) return fail(res, 409, 'BATCH_CODE_DUP', `Mã lô ${typed} đã có ở kho này — đổi mã khác hoặc để trống cho app tự sinh`)
       await jitter(attempt)   // hai người cùng mở mẻ một lúc ⇒ người sau lấy số kế
@@ -196,7 +202,7 @@ export async function createBatch(req: Request, res: Response) {
 // PATCH /wms/production/batches/:id — sửa mẻ. Đổi MÃ BTP / mã lô chỉ khi mẻ chưa rút NVL và chưa nạp bồn.
 export const zBatchUpdate = z.object({
   batch_code: zText(1, 40).optional(), material_id: zText(1, 64).optional(), prod_date: zDay.optional(),
-  machine_code: zText(0, 20).nullable().optional(), shift: zText(0, 40).nullable().optional(),
+  machine_code: zText(0, 20).nullable().optional(), shift: zText(0, 40).nullable().optional(), cycle: zText(0, 20).nullable().optional(),
   planned_qty: z.number().positive().max(10_000_000).nullable().optional(), note: zText(0, 500).nullable().optional(),
 })
 export async function updateBatch(req: Request, res: Response) {
@@ -210,6 +216,7 @@ export async function updateBatch(req: Request, res: Response) {
     if (body.prod_date !== undefined) patch.prod_date = body.prod_date
     if (body.machine_code !== undefined) patch.machine_code = body.machine_code ? body.machine_code.toUpperCase() : null
     if (body.shift !== undefined) patch.shift = body.shift || null
+    if (body.cycle !== undefined) patch.cycle = body.cycle || null
     if (body.planned_qty !== undefined) patch.planned_qty = body.planned_qty
     if (body.note !== undefined) patch.note = body.note || null
     const identity = (body.batch_code !== undefined && normalizeBatchCode(body.batch_code) !== b.batch_code)
@@ -238,6 +245,88 @@ export async function updateBatch(req: Request, res: Response) {
     if (error) return fail(res, error)
     if (!data?.length) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy mẻ')
     return ok(res, data[0])
+  } catch (e) { return failAny(res, e) }
+}
+
+// ─── BÀN LÀM VIỆC CỦA MẺ: yêu cầu nguyên liệu (14/11 đêm) ──────────────────────────────────────────────────────────
+// PUT /wms/production/batches/:id/requirements — thay TRỌN danh sách yêu cầu của mẻ (mẻ đang mở). Dòng vắng mặt = bỏ yêu cầu;
+// phần ĐÃ CẤP không bị đụng (vẫn hiện trên bàn là "ngoài yêu cầu").
+export const zRequirements = z.object({
+  items: z.array(z.object({ material_id: zText(1, 64), qty: z.number().positive().max(10_000_000), note: zText(0, 200).optional() })).max(300),
+})
+export async function setRequirements(req: Request, res: Response) {
+  try {
+    const b = await loadBatch(req.params.id)
+    if (!b) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy mẻ')
+    if (!(await inScope(req, b.warehouse_id))) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
+    const { items } = req.body as z.infer<typeof zRequirements>
+    const { data, error } = await db.rpc('mes_batch_set_requirements', { p: { batch_id: b.id, items: items.map(i => ({ ...i, qty: round3(i.qty) })), actor_name: actor(req).actor_name } })
+    if (error) return mesFail(res, error)
+    return ok(res, data)
+  } catch (e) { return failAny(res, e) }
+}
+// POST /wms/production/batches/:id/apply-recipe — chép lại ĐỊNH MỨC của mã BTP vào mẻ (replace = bỏ hết yêu cầu cũ trước)
+export const zApplyRecipe = z.object({ replace: z.boolean().optional() })
+export async function applyRecipe(req: Request, res: Response) {
+  try {
+    const b = await loadBatch(req.params.id)
+    if (!b) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy mẻ')
+    if (!(await inScope(req, b.warehouse_id))) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
+    const { data, error } = await db.rpc('mes_batch_apply_recipe', { p: { batch_id: b.id, replace: (req.body as z.infer<typeof zApplyRecipe>).replace === true, actor_name: actor(req).actor_name } })
+    if (error) return mesFail(res, error)
+    if ((data as { no_recipe?: boolean } | null)?.no_recipe) return fail(res, 409, 'MES_NO_RECIPE', 'Mã bán thành phẩm này chưa khai định mức — khai ở Sản xuất (MES) → Định mức, hoặc tự thêm nguyên liệu cho mẻ')
+    return ok(res, data)
+  } catch (e) { return failAny(res, e) }
+}
+
+// ─── ĐỊNH MỨC nguyên liệu của mã bán thành phẩm (một định mức / mã, cho một cỡ mẻ chuẩn) ──────────────────────────
+const MAT_COLS = 'id, material_code, short_name, base_unit, entry_unit, units_per_carton, category'
+// GET /wms/production/recipes — danh sách định mức (cấu hình: vài chục – vài trăm mã BTP)
+export async function listRecipes(req: Request, res: Response) {
+  try {
+    const { data, error } = await db.from('production_recipe')
+      .select(`id, material_id, base_qty, note, is_active, updated_at, updated_by, material:Material!production_recipe_material_id_fkey(${MAT_COLS})`)
+      .order('updated_at', { ascending: false }).limit(1000)
+    if (error) return fail(res, error)
+    const rows = (data ?? []).filter(r => categoryAllowed(req, (r.material as unknown as { category: string | null } | null)?.category))
+    return ok(res, rows)
+  } catch (e) { return failAny(res, e) }
+}
+// GET /wms/production/recipes/:materialId — định mức của một mã BTP (chưa khai ⇒ null)
+export async function getRecipe(req: Request, res: Response) {
+  try {
+    const { data: r, error } = await db.from('production_recipe')
+      .select(`id, material_id, base_qty, note, is_active, updated_at, updated_by, material:Material!production_recipe_material_id_fkey(${MAT_COLS})`)
+      .eq('material_id', req.params.materialId).maybeSingle()
+    if (error) return fail(res, error)
+    if (!r) return ok(res, null)
+    if (!categoryAllowed(req, (r.material as unknown as { category: string | null } | null)?.category)) return fail(res, 403, 'FORBIDDEN', CATEGORY_FORBIDDEN_MSG)
+    const { data: lines, error: lErr } = await db.from('production_recipe_line')
+      .select(`id, material_id, qty, sort_order, note, material:Material!production_recipe_line_material_id_fkey(${MAT_COLS})`)
+      .eq('recipe_id', r.id).order('sort_order').limit(500)
+    if (lErr) return fail(res, lErr)
+    return ok(res, { ...r, lines: lines ?? [] })
+  } catch (e) { return failAny(res, e) }
+}
+// PUT /wms/production/recipes/:materialId — lưu định mức (thay trọn danh sách dòng) — quyền manage_recipe
+export const zRecipePut = z.object({
+  base_qty: z.number().positive().max(10_000_000), note: zText(0, 500).nullable().optional(), is_active: z.boolean().optional(),
+  lines: z.array(z.object({ material_id: zText(1, 64), qty: z.number().positive().max(10_000_000), note: zText(0, 200).optional() })).max(300),
+})
+export async function putRecipe(req: Request, res: Response) {
+  try {
+    const body = req.body as z.infer<typeof zRecipePut>
+    const { data: m } = await db.from('Material').select('id, material_code, base_unit, category').eq('id', req.params.materialId).maybeSingle()
+    if (!m) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy mã bán thành phẩm')
+    if (!categoryAllowed(req, m.category)) return fail(res, 403, 'FORBIDDEN', CATEGORY_FORBIDDEN_MSG)
+    const unit = String(m.base_unit ?? '').toUpperCase()
+    if (unit !== 'L' && unit !== 'KG') return fail(res, 422, 'BTP_UNIT', `Mã ${m.material_code} tính theo "${m.base_unit ?? '—'}" — bán thành phẩm phải có đơn vị gốc L hoặc KG`)
+    const { data, error } = await db.rpc('mes_recipe_save', { p: {
+      material_id: m.id, base_qty: round3(body.base_qty), note: body.note ?? null, is_active: body.is_active ?? true,
+      lines: body.lines.map(l => ({ ...l, qty: round3(l.qty) })), actor_name: actor(req).actor_name,
+    } })
+    if (error) return mesFail(res, error)
+    return ok(res, data)
   } catch (e) { return failAny(res, e) }
 }
 

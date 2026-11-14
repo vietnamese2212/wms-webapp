@@ -4,7 +4,7 @@
 import { useEffect, useState } from 'react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import type { AxiosError } from 'axios'
-import { ArrowLeft, Plus, Pencil, Lock, Unlock, XCircle, ShieldCheck, ShieldAlert, ShieldX, Container, Undo2, Copy, AlertTriangle } from 'lucide-react'
+import { ArrowLeft, Plus, Pencil, Lock, Unlock, XCircle, ShieldCheck, ShieldAlert, ShieldX, Container, Undo2, Copy, AlertTriangle, ListChecks } from 'lucide-react'
 import { TableBody, TableCell, TableRow } from '@/components/ui/table'
 import { ResizableTable, type RtColDef } from '@/components/shared/ResizableTable'
 import { TableEmptyRow } from '@/components/shared/TableEmptyRow'
@@ -15,6 +15,8 @@ import { CollapseSection } from '@/components/shared/CollapseSection'
 import { useConfirmDialog } from '@/components/shared/ConfirmDialog'
 import { BatchFormSheet } from '@/components/wms/production/BatchFormSheet'
 import { ConsumeSheet } from '@/components/wms/production/ConsumeSheet'
+import { RequirementSheet } from '@/components/wms/production/RequirementSheet'
+import { ScanIcon } from '@/components/shared/ScanIcon'
 import { BatchFillSheet, nfQty } from '@/components/wms/production/TankSheets'
 import { useAuthStore } from '@/stores/authStore'
 import { useCanSeePath } from '@/hooks/useCanSeePath'
@@ -30,6 +32,12 @@ import { formatDate, formatDateTime } from '@/utils/formatters'
 const TD = 'px-2 py-1 text-[10px] whitespace-nowrap'
 const NUM = `${TD} text-right font-semibold tabular-nums`
 const apiMsg = (e: unknown) => (e as AxiosError<{ error?: { message?: string } }>)?.response?.data?.error?.message ?? 'Lỗi không xác định'
+// BÀN LÀM VIỆC: mỗi nguyên liệu của mẻ một dòng — yêu cầu · đã cấp · còn thiếu · tồn ở kho chế biến · cách cấp
+const BOARD_COLS: RtColDef[] = [
+  { id: 'mat', label: 'Nguyên liệu', w: 220 }, { id: 'req', label: 'Yêu cầu', w: 110, align: 'right' }, { id: 'done', label: 'Đã cấp', w: 110, align: 'right' },
+  { id: 'need', label: 'Còn thiếu', w: 110, align: 'right' }, { id: 'stock', label: 'Tồn kho chế biến', w: 130, align: 'right' },
+  { id: 'how', label: 'Cách cấp', w: 110 }, { id: 'st', label: 'Tình trạng', w: 100 }, { id: 'act', label: '', w: 76, stickyRight: true },
+]
 const RM_COLS: RtColDef[] = [
   { id: 'mat', label: 'Nguyên liệu', w: 170 }, { id: 'qty', label: 'Lượng rút', w: 110, align: 'right' }, { id: 'pallet', label: 'Tem', w: 210 },
   { id: 'nsx', label: 'NSX', w: 78 }, { id: 'lot', label: 'Mã lô', w: 110 }, { id: 'src', label: 'Cách ghi', w: 86 },
@@ -60,6 +68,8 @@ export default function ProductionBatchDetail() {
   const fromCreate = !!(loc.state as { consume?: boolean } | null)?.consume
   const [consumeOpen, setConsumeOpen] = useState(fromCreate && can(perms, 'production', 'consume'))
   useEffect(() => { if (fromCreate) navigate(loc.pathname, { replace: true, state: null }) }, []) // eslint-disable-line react-hooks/exhaustive-deps -- gỡ cờ một lần: tải lại trang không bật lại form
+  const [focusId, setFocusId] = useState<string | null>(null)
+  const [reqOpen, setReqOpen] = useState(false)
   const [fillOpen, setFillOpen] = useState(false)
   const [editOpen, setEditOpen] = useState(false)
   const [cloneOpen, setCloneOpen] = useState(false)
@@ -82,6 +92,10 @@ export default function ProductionBatchDetail() {
   const inTank = b.lots.filter(l => l.status === 'ACTIVE').reduce((s, l) => s + Number(l.qty_remaining), 0)
   const drawn = -b.movements.filter(m => m.kind === 'DRAW').reduce((s, m) => s + Number(m.qty), 0)
   const rmMats = new Set(live.map(c => c.material_id)).size
+  const board = b.board ?? []
+  const reqRows = board.filter(r => r.required != null)
+  const needOf = (r: (typeof board)[number]) => (r.required != null ? Math.max(Math.round((Number(r.required) - Number(r.consumed)) * 1000) / 1000, 0) : 0)
+  const reqDone = reqRows.filter(r => needOf(r) <= 0).length
 
   async function run(fn: () => Promise<unknown>) { setErr(''); try { await fn() } catch (e) { setErr(apiMsg(e)) } }
   async function doQa(next: BatchQa) {
@@ -111,7 +125,7 @@ export default function ProductionBatchDetail() {
   const busy = setStatus.isPending || setQa.isPending
   const actions: ActionItem[] = []
   if (open && can(perms, 'production', 'consume'))
-    actions.push({ key: 'consume', icon: Plus, label: 'Rút NVL', tip: 'Rút nguyên liệu vào mẻ — quét tem hoặc chọn lô khi không có tem', primary: true, variant: 'default', onClick: () => setConsumeOpen(true) })
+    actions.push({ key: 'consume', icon: ScanIcon, label: 'Quét cấp NVL', tip: 'Quét tem nguyên liệu để cấp cho mẻ — app tự khớp vào đúng dòng của bàn và điền sẵn lượng còn thiếu', primary: true, variant: 'default', onClick: () => { setFocusId(null); setConsumeOpen(true) } })
   const canConsume = open && can(perms, 'production', 'consume')
   const canFill = b.status !== 'CANCELLED' && b.qa_status !== 'REJECTED' && can(perms, 'production', 'tank_ops')
   // Nạp bồn là bước kế của Rút NVL ⇒ nút có CHỮ (không chỉ icon); người chỉ làm QA thì "QA thả" là nút có chữ
@@ -123,6 +137,7 @@ export default function ProductionBatchDetail() {
     if (b.qa_status !== 'REJECTED') actions.push({ key: 'qa-no', icon: ShieldX, label: 'QA loại', tip: 'Loại lô (bắt buộc lý do)', danger: true, onClick: () => void doQa('REJECTED'), disabled: busy })
   }
   if (can(perms, 'production', 'open_batch')) {
+    if (open) actions.push({ key: 'req', icon: ListChecks, label: 'Sửa yêu cầu', tip: 'Sửa yêu cầu nguyên liệu của riêng mẻ này (đổi số, thêm / bỏ nguyên liệu, chép lại định mức)', onClick: () => setReqOpen(true) })
     if (b.status !== 'CANCELLED') actions.push({ key: 'edit', icon: Pencil, label: 'Sửa', tip: 'Sửa ngày / máy / ca / kế hoạch / ghi chú (mã lô và mã BTP chỉ đổi khi chưa rút, chưa nạp)', onClick: () => setEditOpen(true) })
     if (open) actions.push({ key: 'close', icon: Lock, label: 'Đóng mẻ', tip: 'Đóng mẻ — không rút thêm nguyên liệu', onClick: () => void doStatus('close'), disabled: busy })
     if (b.status === 'CLOSED') actions.push({ key: 'reopen', icon: Unlock, label: 'Mở lại', tip: 'Mở lại mẻ để rút thêm / huỷ dòng rút', onClick: () => void doStatus('reopen'), disabled: busy })
@@ -150,7 +165,7 @@ export default function ProductionBatchDetail() {
             <span><span className="text-slate-400 text-[10px]">Bán thành phẩm:</span> <span className="font-mono font-semibold">{b.material?.material_code}</span> {b.material?.short_name ?? ''}</span>
             <span><span className="text-slate-400 text-[10px]">Ngày SX:</span> {formatDate(b.prod_date)}</span>
             <span><span className="text-slate-400 text-[10px]">Kho:</span> {b.warehouse?.name ?? '—'}</span>
-            {(b.machine_code || b.shift) && <span><span className="text-slate-400 text-[10px]">Máy · Ca:</span> {[b.machine_code, b.shift].filter(Boolean).join(' · ')}</span>}
+            {(b.machine_code || b.shift || b.cycle) && <span><span className="text-slate-400 text-[10px]">Máy · Ca · Chu kỳ:</span> {[b.machine_code, b.shift, b.cycle ? `CK ${b.cycle}` : null].filter(Boolean).join(' · ')}</span>}
             {b.material?.tank_hold_hours && <span><span className="text-slate-400 text-[10px]">Hạn lưu bồn:</span> {b.material.tank_hold_hours} giờ</span>}
             <span className="hidden sm:inline"><span className="text-slate-400 text-[10px]">Mở:</span> {b.opened_by_name ?? '—'} · {formatDateTime(b.created_at)}</span>
             {b.qa_at && <span className="hidden sm:inline"><span className="text-slate-400 text-[10px]">QA:</span> {b.qa_by_name ?? '—'} · {formatDateTime(b.qa_at)}{b.qa_note ? ` · ${b.qa_note}` : ''}</span>}
@@ -166,8 +181,9 @@ export default function ProductionBatchDetail() {
           )}
         </div>
         <SummaryBand tiles={[
-          { label: 'Dòng NVL', value: live.length.toLocaleString('vi-VN'), tip: `${rmMats} mã nguyên liệu đã rút vào mẻ (không tính dòng đã huỷ)` },
-          { label: 'Mã NVL', value: rmMats.toLocaleString('vi-VN') },
+          { label: 'NVL đã đủ', value: reqRows.length ? `${reqDone}/${reqRows.length}` : '—', accent: reqRows.length > 0 && reqDone < reqRows.length,
+            tip: reqRows.length ? 'Số nguyên liệu đã cấp đủ theo yêu cầu của mẻ / tổng số nguyên liệu mẻ yêu cầu' : 'Mẻ chưa có yêu cầu nguyên liệu (mã bán thành phẩm chưa khai định mức)' },
+          { label: 'Lần cấp', value: live.length.toLocaleString('vi-VN'), tip: `${rmMats} mã nguyên liệu đã cấp vào mẻ (không tính dòng đã huỷ)` },
           { label: `Kế hoạch (${u})`, value: b.planned_qty != null ? nfQty(b.planned_qty) : '—' },
           { label: `Đã nạp (${u})`, value: nfQty(filled) },
           { label: `Còn bồn (${u})`, value: nfQty(inTank) },
@@ -176,12 +192,90 @@ export default function ProductionBatchDetail() {
         <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
           <div className="px-3 py-1.5 sm:px-4 sm:py-2 bg-slate-100 border-b border-slate-200 flex items-center gap-1.5">
             <span className="h-3.5 w-1 rounded-full bg-sky-500" />
-            <h2 className="text-xs font-semibold uppercase tracking-wide text-slate-600">Nguyên liệu đã rút</h2>
+            <h2 className="text-xs font-semibold uppercase tracking-wide text-slate-600">Nguyên liệu của mẻ</h2>
+            <span className="text-[11px] text-slate-400 truncate">{reqRows.length ? `${reqDone}/${reqRows.length} đã đủ` : 'chưa có yêu cầu'}</span>
+          </div>
+          {/* ĐIỆN THOẠI: mỗi nguyên liệu một dòng gọn — số yêu cầu / đã cấp / còn thiếu và nút Cấp thấy ngay, không phải cuộn ngang bảng */}
+          <div className="sm:hidden divide-y divide-slate-100">
+            {!board.length && <p className="px-3 py-3 text-xs text-slate-400">{open ? <>Mẻ chưa có yêu cầu nguyên liệu — mã {b.material?.material_code} chưa khai định mức. Bấm ⋮ → "Sửa yêu cầu" để thêm, hoặc "Quét cấp NVL" để cấp luôn.</> : 'Mẻ không có nguyên liệu nào.'}</p>}
+            {board.map(r => {
+              const need = needOf(r)
+              const extra = r.required == null
+              const done = !extra && need <= 0
+              const noStock = Number(r.available) <= 0
+              const byScan = Number(r.tem_pallets) > 0
+              return (
+                <div key={r.material_id} className="flex items-center gap-2 px-3 py-2">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs truncate"><span className="font-mono font-semibold">{r.material_code}</span> <span className="text-slate-600">{r.material_name ?? ''}</span></p>
+                    <p className="text-[11px] text-slate-500 tabular-nums">
+                      {extra ? <>Ngoài yêu cầu · đã cấp <b className="text-slate-700">{qtyLabel(Number(r.consumed), r)}</b></>
+                        : <>Cần <b className="text-slate-700">{qtyLabel(Number(r.required), r)}</b> · đã cấp <b className="text-slate-700">{qtyLabel(Number(r.consumed), r)}</b></>}
+                    </p>
+                    <p className="text-[11px] tabular-nums">
+                      {done ? <span className="text-green-700 font-semibold">Đủ</span> : need > 0 ? <span className="text-amber-700 font-semibold">Thiếu {qtyLabel(need, r)}</span> : null}
+                      <span className={`${done || need > 0 ? 'ml-1.5 ' : ''}${!done && need > Number(r.available) ? 'text-red-600' : 'text-slate-400'}`}>{noStock ? 'kho hết' : `kho còn ${qtyLabel(Number(r.available), r)}`}</span>
+                    </p>
+                  </div>
+                  {canConsume && (
+                    <button type="button" disabled={noStock} onClick={() => { setFocusId(r.material_id); setConsumeOpen(true) }}
+                      className="touch-target shrink-0 inline-flex items-center gap-1 rounded border border-blue-200 bg-blue-50 px-2.5 py-1.5 text-xs text-blue-700 disabled:opacity-40">
+                      {byScan ? <ScanIcon className="h-4 w-4" /> : <Plus className="h-4 w-4" />}Cấp
+                    </button>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+          <div className="hidden sm:block">
+          <ResizableTable storageKey="production_batch_board_cols_v1" cols={BOARD_COLS}>
+            <TableBody>
+              {!board.length && (
+                <TableEmptyRow colSpan={BOARD_COLS.length}>
+                  {open ? <>Mẻ chưa có yêu cầu nguyên liệu — mã {b.material?.material_code} chưa khai định mức. Bấm "Sửa yêu cầu" để thêm nguyên liệu, hoặc "Quét cấp NVL" để cấp luôn.</> : 'Mẻ không có nguyên liệu nào.'}
+                </TableEmptyRow>
+              )}
+              {board.map(r => {
+                const need = needOf(r)
+                const extra = r.required == null
+                const over = !extra && Number(r.consumed) > Number(r.required) + 0.0005
+                const done = !extra && need <= 0
+                const started = Number(r.consumed) > 0
+                const noStock = Number(r.available) <= 0
+                const byScan = Number(r.tem_pallets) > 0
+                return (
+                  <TableRow key={r.material_id} className={done ? rowText('full') : started ? rowText('inProgress') : ''}>
+                    <TableCell className={`${TD} sticky left-0 z-10 bg-white truncate`} title={[r.material_name, r.note].filter(Boolean).join(' · ')}><span className="font-mono font-semibold">{r.material_code}</span> {r.material_name ?? ''}</TableCell>
+                    <TableCell className={NUM}>{extra ? <span className="text-slate-300 font-normal">—</span> : qtyLabel(Number(r.required), r)}</TableCell>
+                    <TableCell className={NUM}>{started ? qtyLabel(Number(r.consumed), r) : <span className="text-slate-300 font-normal">—</span>}</TableCell>
+                    <TableCell className={`${NUM} ${need > 0 ? 'text-amber-700' : ''}`}>{need > 0 ? qtyLabel(need, r) : <span className="text-slate-300 font-normal">—</span>}</TableCell>
+                    <TableCell className={`${NUM} ${!done && need > Number(r.available) ? 'text-red-600' : ''}`} title={!done && need > Number(r.available) ? 'Tồn ở kho chế biến không đủ phần còn thiếu — chuyển thêm hàng sang kho chế biến' : undefined}>{noStock ? <span className="font-normal">hết</span> : qtyLabel(Number(r.available), r)}</TableCell>
+                    <TableCell className={TD}>{noStock ? <span className="text-slate-300">—</span> : byScan ? <StatusBadge tone="sky">Quét tem</StatusBadge> : <StatusBadge tone="purple">Chọn lô</StatusBadge>}</TableCell>
+                    <TableCell className={TD}>{extra ? <StatusBadge tone="slate">Ngoài yêu cầu</StatusBadge> : over ? <StatusBadge tone="red">Vượt yêu cầu</StatusBadge> : done ? <StatusBadge tone="green">Đủ</StatusBadge> : started ? <StatusBadge tone="amber">Đang cấp</StatusBadge> : <StatusBadge tone="slate">Chưa cấp</StatusBadge>}</TableCell>
+                    <TableCell className={`${TD} sticky right-0 z-10 bg-white text-right`}>
+                      {canConsume && (
+                        <button type="button" disabled={noStock} onClick={() => { setFocusId(r.material_id); setConsumeOpen(true) }}
+                          className="touch-target inline-flex items-center gap-1 rounded border border-blue-200 bg-blue-50 px-2 py-1 text-blue-700 hover:bg-blue-100 disabled:opacity-40 disabled:cursor-not-allowed"
+                          title={noStock ? 'Kho chế biến hết mã này' : byScan ? 'Quét tem để cấp nguyên liệu này' : 'Chọn lô để cấp nguyên liệu này (hàng không có tem)'}>
+                          {byScan ? <ScanIcon className="h-3.5 w-3.5" /> : <Plus className="h-3.5 w-3.5" />}Cấp
+                        </button>
+                      )}
+                    </TableCell>
+                  </TableRow>
+                )
+              })}
+            </TableBody>
+          </ResizableTable>
+          </div>
+
+          <div className="px-3 py-1.5 sm:px-4 sm:py-2 bg-slate-100 border-y border-slate-200 flex items-center gap-1.5 mt-3">
+            <span className="h-3.5 w-1 rounded-full bg-sky-500" />
+            <h2 className="text-xs font-semibold uppercase tracking-wide text-slate-600">Nhật ký cấp nguyên liệu</h2>
             <span className="text-[11px] text-slate-400">{live.length} dòng{b.consumption.length > live.length ? ` · ${b.consumption.length - live.length} dòng đã huỷ` : ''}</span>
           </div>
           <ResizableTable storageKey="production_batch_rm_cols_v2" cols={RM_COLS}>
             <TableBody>
-              {!b.consumption.length && <TableEmptyRow colSpan={RM_COLS.length}>{open ? 'Chưa rút nguyên liệu nào — bấm "Rút NVL".' : 'Mẻ không có dòng rút nguyên liệu.'}</TableEmptyRow>}
+              {!b.consumption.length && <TableEmptyRow colSpan={RM_COLS.length}>{open ? 'Chưa cấp nguyên liệu nào.' : 'Mẻ không có lần cấp nguyên liệu nào.'}</TableEmptyRow>}
               {b.consumption.map(c => {
                 const gone = !!c.reversed_at
                 return (
@@ -255,7 +349,8 @@ export default function ProductionBatchDetail() {
           </div>
         </div>
       </div>
-      {open && <ConsumeSheet open={consumeOpen} onClose={() => setConsumeOpen(false)} batch={b} />}
+      {open && <ConsumeSheet open={consumeOpen} onClose={() => setConsumeOpen(false)} batch={b} focusId={focusId} />}
+      {open && <RequirementSheet open={reqOpen} onClose={() => setReqOpen(false)} batch={b} />}
       <BatchFillSheet open={fillOpen} onClose={() => setFillOpen(false)} batchId={b.id} batchCode={b.batch_code} warehouseId={b.warehouse_id} unit={b.material?.base_unit ?? null}
         materialCode={b.material?.material_code ?? null} suggestQty={b.planned_qty != null ? Math.round((Number(b.planned_qty) - filled) * 1000) / 1000 : null} />
       <BatchFormSheet open={editOpen} onClose={() => setEditOpen(false)} batch={b} />

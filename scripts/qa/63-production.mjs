@@ -11,6 +11,8 @@
 //   [7] Điều chỉnh / chuyển / xả bồn; [8] truy xuất: pallet TP → mẻ → NVL, pallet NVL → mẻ → trang sổ → pallet TP; sổ pallet có "Rút vào mẻ"
 //   [6s] Sửa / khai bù lượng rút của trang ĐÃ ĐÓNG: tăng = rút thêm, giảm = trả về đúng mẻ, bắt lý do, trang mở ⇒ 409 (14/11 tối)
 //   [6t] Cài đặt MES là cửa ghi DUY NHẤT của công tắc QA + hạn lưu bồn; cửa Loại kho của Cài đặt WMS không đè mất khai riêng
+//   [10] Bàn làm việc của mẻ (14/11 đêm): định mức ⇒ yêu cầu của mẻ × kế hoạch; hàng CÓ TEM không đi đường chọn lô (MUST_SCAN);
+//        bàn trả yêu cầu · đã cấp · tồn có tem / không tem; sửa yêu cầu không đụng phần đã cấp
 //   [9] Huỷ mẻ còn dòng rút ⇒ 409; đóng / mở lại mẻ; bất biến tồn: nhập − còn = Σ rút sống
 // Fixture QA63: kho cha QA63_PARENT + kho phụ QA63_CB (+ QA63_CB2 để thử chéo kho) · mã NVL/BTP QA63* · tem QA63_* — dọn bằng PostgREST.
 import { randomUUID } from 'crypto'
@@ -33,6 +35,8 @@ async function cleanup() {
   if (tanks.length) await restWrite('tank_movement', 'DELETE', `tank_id=in.(${tanks.map(t => t.id).join(',')})`)
   if (tanks.length) await restWrite('tank_lot', 'DELETE', `tank_id=in.(${tanks.map(t => t.id).join(',')})`)
   if (batches.length) await restWrite('batch_consumption', 'DELETE', `batch_id=in.(${batches.map(b => b.id).join(',')})`)
+  if (batches.length) await restWrite('batch_requirement', 'DELETE', `batch_id=in.(${batches.map(b => b.id).join(',')})`)
+  await restWrite('production_recipe', 'DELETE', `material_id=in.(${[M_BTP, M_BTP2].join(',')})`)
   if (runs.length) {
     await restWrite('packing_logs', 'DELETE', `run_id=in.(${runs.map(r => r.id).join(',')})`)
     await restWrite('packing_runs', 'DELETE', `id=in.(${runs.map(r => r.id).join(',')})`)
@@ -123,12 +127,23 @@ try {
   const lots = stL.j?.data?.lots ?? []
   check('4b. Các lô của mã: 3 NSX, HSD sớm nhất lên đầu', stL.s === 200 && lots.length === 3 && String(lots[0]?.production_date).startsWith('2026-11-01'), `n=${lots.length} first=${lots[0]?.production_date}`)
   const c4a = await api(`/wms/production/batches/${B1.id}/consume-lot`, 'POST', { material_id: M_RM, production_date: '2026-11-01', qty: 70, qty_semantics: 'base' })
-  check('4c. Thiếu lô NSX 01/11 (có 60, cần 70) ⇒ 409 MES_SHORT', c4a.s === 409 && c4a.j?.error?.code === 'MES_SHORT', `http=${c4a.s}`)
+  check('4c. Lô NSX 01/11 nằm trên pallet CÓ TEM ⇒ chọn lô bị từ chối 409 MES_MUST_SCAN', c4a.s === 409 && c4a.j?.error?.code === 'MES_MUST_SCAN', `http=${c4a.s} ${c4a.j?.error?.code}`)
   const after4c = await restAll('InventoryEntry', 'select=id,cartons_remaining&id=in.(QA63_E1,QA63_E2)')
   check('4d. …và KHÔNG trừ dở dòng nào', after4c.every(e => (e.id === 'QA63_E1' ? num(e.cartons_remaining) === 10 : num(e.cartons_remaining) === 50)), JSON.stringify(after4c))
-  const c4b = await api(`/wms/production/batches/${B1.id}/consume-lot`, 'POST', { material_id: M_RM, production_date: '2026-11-01', qty: 25, qty_semantics: 'base' })
+  // hàng có tem ⇒ quét từng tem (P1 lấy nốt 10, P2 lấy 15)
+  const c4s1 = await api(`/wms/production/batches/${B1.id}/consume-scan`, 'POST', { entry_id: 'QA63_E1', qty: 10, qty_semantics: 'base' })
+  const c4s2 = await api(`/wms/production/batches/${B1.id}/consume-scan`, 'POST', { entry_id: 'QA63_E2', qty: 15, qty_semantics: 'base' })
+  // tồn gộp KHÔNG tem (mỗi NSX một dòng) ⇒ chọn lô được
+  await restWrite('InventoryEntry', 'POST', null, [E('QA63_E10', 'QA63RM1', 50, WC, '2026-11-07', '2027-05-01')])
+  const c4b = await api(`/wms/production/batches/${B1.id}/consume-lot`, 'POST', { material_id: M_RM, production_date: '2026-11-07', qty: 15, qty_semantics: 'base' })
   const rows4 = c4b.j?.data?.rows ?? []
-  check('4e. Rút 25 theo lô ⇒ FEFO: P1 (HSD 01/01) 10 + P2 15', c4b.s === 200 && rows4.length === 2 && rows4[0]?.pallet_code === 'QA63_P1' && num(rows4[0]?.qty) === 10 && num(rows4[1]?.qty) === 15, JSON.stringify(rows4))
+  check('4e. Có tem ⇒ quét từng tem; tồn gộp không tem ⇒ chọn lô trừ đúng dòng đó',
+    c4s1.s === 200 && c4s2.s === 200 && c4b.s === 200 && rows4.length === 1 && rows4[0]?.entry_id === 'QA63_E10' && num(rows4[0]?.qty) === 15, `http=${c4s1.s}/${c4s2.s}/${c4b.s} ${JSON.stringify(rows4)}`)
+  const stL2 = await api(`/wms/production/stock?warehouse_id=${WC}&material_id=${M_RM}`)
+  const lot0111 = (stL2.j?.data?.lots ?? []).find(l => String(l.production_date).startsWith('2026-11-01'))
+  const lot0711 = (stL2.j?.data?.lots ?? []).find(l => String(l.production_date).startsWith('2026-11-07'))
+  check('4e2. Tra tồn theo lô tách phần có tem / không tem', num(lot0111?.available_no_tem) === 0 && num(lot0111?.tem_pallets) >= 1 && num(lot0711?.available_no_tem) === 35 && num(lot0711?.tem_pallets) === 0,
+    `0111=${lot0111?.available_no_tem}/${lot0111?.tem_pallets} 0711=${lot0711?.available_no_tem}/${lot0711?.tem_pallets}`)
   const c4c = await api(`/wms/production/batches/${B1.id}/consume-lot`, 'POST', { material_id: M_RM, production_date: '2026-11-05', qty: 5, qty_semantics: 'base' })
   check('4f. Rút theo lô NSX 05/11 từ tồn gộp ⇒ đúng dòng QA63_E5', c4c.s === 200 && c4c.j?.data?.rows?.[0]?.entry_id === 'QA63_E5', `http=${c4c.s}`)
   const firstCons = (await restAll('batch_consumption', `select=id,qty&batch_id=eq.${B1.id}&source=eq.SCAN&order=created_at&limit=1`))[0]
@@ -221,11 +236,11 @@ try {
   ].map(e => ({ batch: null, ...e })))
   const lotNull = await api(`/wms/production/batches/${B1.id}/consume-lot`, 'POST', { material_id: M_RM, production_date: '2026-11-20', qty: 40, qty_semantics: 'base' })
   const e8 = (await restAll('InventoryEntry', 'select=cartons_remaining&id=eq.QA63_E8'))[0]
-  check('6l. Rút lô KHÔNG mã lô quá lượng của nó ⇒ 409 MES_SHORT, không ăn sang lô có mã lô cùng NSX',
-    lotNull.s === 409 && lotNull.j?.error?.code === 'MES_SHORT' && num(e8?.cartons_remaining) === 50, `http=${lotNull.s} ${lotNull.j?.error?.code} e8=${e8?.cartons_remaining}`)
-  const lotX = await api(`/wms/production/batches/${B1.id}/consume-lot`, 'POST', { material_id: M_RM, production_date: '2026-11-20', batch_lot: 'QA63LX', qty: 40, qty_semantics: 'base' })
+  check('6l. Chọn lô KHÔNG mã lô (hàng trên tem) ⇒ 409 MES_MUST_SCAN, không ăn sang lô có mã lô cùng NSX',
+    lotNull.s === 409 && lotNull.j?.error?.code === 'MES_MUST_SCAN' && num(e8?.cartons_remaining) === 50, `http=${lotNull.s} ${lotNull.j?.error?.code} e8=${e8?.cartons_remaining}`)
+  const lotX = await api(`/wms/production/batches/${B1.id}/consume-scan`, 'POST', { entry_id: 'QA63_E8', qty: 40, qty_semantics: 'base' })
   const e78 = await restAll('InventoryEntry', 'select=id,cartons_remaining&id=in.(QA63_E7,QA63_E8)')
-  check('6m. Rút đúng lô QA63LX ⇒ trừ 40 ở lô đó, lô không mã lô giữ nguyên',
+  check('6m. Quét tem lô QA63LX ⇒ trừ 40 ở tem đó, lô không mã lô giữ nguyên',
     lotX.s === 200 && num(e78.find(e => e.id === 'QA63_E8')?.cartons_remaining) === 10 && num(e78.find(e => e.id === 'QA63_E7')?.cartons_remaining) === 30, `http=${lotX.s} ${JSON.stringify(e78)}`)
   const scanGone = await api(`/wms/production/batches/${B1.id}/consume-scan`, 'POST', { entry_id: 'QA63_E9', qty: 1, qty_semantics: 'base' })
   check('6n. Quét dòng tồn không còn trong kho (EXPORTED) ⇒ 409 MES_NOT_IN_STOCK', scanGone.s === 409 && scanGone.j?.error?.code === 'MES_NOT_IN_STOCK', `http=${scanGone.s} ${scanGone.j?.error?.code}`)
@@ -318,6 +333,46 @@ try {
 
   // ── [9] vòng đời mẻ ──
   const cx = await api(`/wms/production/batches/${B1.id}/cancel`, 'POST', {})
+  // ── [10] BÀN LÀM VIỆC CỦA MẺ: định mức → yêu cầu → cấp ──
+  const rcBad = await api(`/wms/production/recipes/${M_BTP2}`, 'PUT', { base_qty: 100, lines: [{ material_id: M_BTP2, qty: 1 }] })
+  const rcEa = await api(`/wms/production/recipes/${M_EA}`, 'PUT', { base_qty: 100, lines: [{ material_id: M_RM, qty: 1 }] })
+  check('10a. Định mức chứa chính mã BTP ⇒ 422; mã không tính L / KG ⇒ 422', rcBad.s === 422 && rcEa.s === 422, `http=${rcBad.s}/${rcEa.s}`)
+  const rcOk = await api(`/wms/production/recipes/${M_BTP2}`, 'PUT', { base_qty: 100, note: 'QA63', lines: [{ material_id: M_RM, qty: 5 }, { material_id: M_EA, qty: 2 }] })
+  const rcGet = await api(`/wms/production/recipes/${M_BTP2}`)
+  const rcList = await api('/wms/production/recipes')
+  check('10b. Lưu định mức 2 dòng; đọc lại đủ dòng; có trong danh sách',
+    rcOk.s === 200 && rcGet.s === 200 && (rcGet.j?.data?.lines ?? []).length === 2 && num(rcGet.j?.data?.base_qty) === 100 && (rcList.j?.data ?? []).some(r => r.material_id === M_BTP2),
+    `http=${rcOk.s}/${rcGet.s}/${rcList.s} ${JSON.stringify(rcOk.j?.error ?? null)}`)
+  const bw = await api('/wms/production/batches', 'POST', { warehouse_id: WC, material_id: M_BTP2, prod_date: todayVN, planned_qty: 300, cycle: 'C63' })
+  const BW = bw.j?.data
+  const bwGet = await api(`/wms/production/batches/${BW?.id}`)
+  const board0 = bwGet.j?.data?.board ?? []
+  const rowRm = board0.find(r => r.material_id === M_RM)
+  check('10c. Mở mẻ kế hoạch 300 (cỡ chuẩn 100) ⇒ yêu cầu = định mức × 3, chu kỳ lưu, bàn có tồn tách tem / không tem',
+    bw.s === 201 && num(BW?.requirement_count) === 2 && bwGet.j?.data?.cycle === 'C63' && board0.length === 2 && num(rowRm?.required) === 15 && num(rowRm?.consumed) === 0
+      && num(rowRm?.available) > 0 && num(rowRm?.tem_pallets) >= 1 && num(rowRm?.available_no_tem) > 0,
+    `http=${bw.s} n=${BW?.requirement_count} board=${JSON.stringify(rowRm ?? null)}`)
+  const wScan = await api(`/wms/production/batches/${BW.id}/consume-scan`, 'POST', { entry_id: 'QA63_E2', qty: 6, qty_semantics: 'base' })
+  const board1 = (await api(`/wms/production/batches/${BW.id}`)).j?.data?.board ?? []
+  check('10d. Cấp 6 bằng quét tem ⇒ bàn: đã cấp 6 / yêu cầu 15', wScan.s === 200 && num(board1.find(r => r.material_id === M_RM)?.consumed) === 6, `http=${wScan.s}`)
+  const rq1 = await api(`/wms/production/batches/${BW.id}/requirements`, 'PUT', { items: [{ material_id: M_EA, qty: 4 }] })
+  const board2 = (await api(`/wms/production/batches/${BW.id}`)).j?.data?.board ?? []
+  const rm2 = board2.find(r => r.material_id === M_RM), ea2 = board2.find(r => r.material_id === M_EA)
+  check('10e. Sửa yêu cầu (bỏ NVL đã cấp dở) ⇒ dòng đó còn trên bàn là NGOÀI yêu cầu, phần đã cấp giữ nguyên',
+    rq1.s === 200 && rm2 && rm2.required == null && num(rm2.consumed) === 6 && num(ea2?.required) === 4, `http=${rq1.s} ${JSON.stringify(rm2 ?? null)}`)
+  const rqSelf = await api(`/wms/production/batches/${BW.id}/requirements`, 'PUT', { items: [{ material_id: M_BTP2, qty: 1 }] })
+  const rqDup = await api(`/wms/production/batches/${BW.id}/requirements`, 'PUT', { items: [{ material_id: M_RM, qty: 1 }, { material_id: M_RM, qty: 2 }] })
+  check('10f. Yêu cầu chứa chính mã BTP ⇒ 422; trùng mã ⇒ 422', rqSelf.s === 422 && rqDup.s === 422, `http=${rqSelf.s}/${rqDup.s}`)
+  const apOk = await api(`/wms/production/batches/${BW.id}/apply-recipe`, 'POST', { replace: true })
+  const board3 = (await api(`/wms/production/batches/${BW.id}`)).j?.data?.board ?? []
+  const apNone = await api(`/wms/production/batches/${B1.id}/apply-recipe`, 'POST', {})
+  check('10g. Chép lại định mức ⇒ yêu cầu về 15 / 6; mã chưa khai định mức ⇒ 409 MES_NO_RECIPE',
+    apOk.s === 200 && num(board3.find(r => r.material_id === M_RM)?.required) === 15 && num(board3.find(r => r.material_id === M_EA)?.required) === 6 && apNone.s === 409 && apNone.j?.error?.code === 'MES_NO_RECIPE',
+    `http=${apOk.s}/${apNone.s} ${apNone.j?.error?.code}`)
+  await api(`/wms/production/batches/${BW.id}/close`, 'POST', {})
+  const rqClosed = await api(`/wms/production/batches/${BW.id}/requirements`, 'PUT', { items: [] })
+  check('10h. Mẻ đã đóng ⇒ sửa yêu cầu 409 MES_BATCH_NOT_OPEN', rqClosed.s === 409 && rqClosed.j?.error?.code === 'MES_BATCH_NOT_OPEN', `http=${rqClosed.s} ${rqClosed.j?.error?.code}`)
+
   check('9a. Huỷ mẻ còn dòng rút ⇒ 409 BATCH_HAS_CONSUMPTION', cx.s === 409 && cx.j?.error?.code === 'BATCH_HAS_CONSUMPTION', `http=${cx.s}`)
   const clB = await api(`/wms/production/batches/${B1.id}/close`, 'POST', {})
   const consClosed = await api(`/wms/production/batches/${B1.id}/consume-scan`, 'POST', { entry_id: 'QA63_E2', qty: 1, qty_semantics: 'base' })

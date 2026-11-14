@@ -22,7 +22,7 @@ export function BatchFormSheet({ open, onClose, batch, template, onSaved }: {
   /** có = sửa mẻ này; không = mở mẻ mới */
   batch?: BatchDetail | null
   /** mở mẻ MỚI điền sẵn theo một mẻ có trước (kho · mã BTP · máy · ca · kế hoạch) — ngày = hôm nay, mã lô gợi ý lại */
-  template?: { warehouse_id: string; material_id: string; machine_code: string | null; shift: string | null; planned_qty: number | null } | null
+  template?: { warehouse_id: string; material_id: string; machine_code: string | null; shift: string | null; cycle?: string | null; planned_qty: number | null } | null
   onSaved?: (id: string) => void
 }) {
   const editing = !!batch
@@ -33,6 +33,7 @@ export function BatchFormSheet({ open, onClose, batch, template, onSaved }: {
   const [date, setDate] = useState(todayVN())
   const [machine, setMachine] = useState('')
   const [shift, setShift] = useState('')
+  const [cycle, setCycle] = useState('')
   const [planned, setPlanned] = useState('')
   const [code, setCode] = useState('')
   const [codeTouched, setCodeTouched] = useState(false)
@@ -46,17 +47,17 @@ export function BatchFormSheet({ open, onClose, batch, template, onSaved }: {
     setErr(''); setCodeTouched(editing)
     if (batch) {
       setWh(batch.warehouse_id); setMat(batch.material_id); setDate(batch.prod_date); setMachine(batch.machine_code ?? '')
-      setShift(batch.shift ?? ''); setPlanned(vnNumberInput(batch.planned_qty)); setCode(batch.batch_code); setNote(batch.note ?? '')
+      setShift(batch.shift ?? ''); setCycle(batch.cycle ?? ''); setPlanned(vnNumberInput(batch.planned_qty)); setCode(batch.batch_code); setNote(batch.note ?? '')
     } else if (template) {
       setWh(template.warehouse_id); setMat(template.material_id); setDate(todayVN()); setMachine(template.machine_code ?? '')
-      setShift(template.shift ?? ''); setPlanned(vnNumberInput(template.planned_qty)); setCode(''); setNote('')
+      setShift(template.shift ?? ''); setCycle(template.cycle ?? ''); setPlanned(vnNumberInput(template.planned_qty)); setCode(''); setNote('')
     } else {
       // bối cảnh Kho toàn cục: là kho chế biến thì lấy luôn; là kho nhà máy có đúng MỘT kho chế biến thì lấy kho đó
       const g = useGlobalScopeStore.getState().warehouseId
       const direct = kitchens.find(k => k.id === g)
       const under = kitchens.filter(k => k.parent_warehouse_id === g)
       setWh(direct?.id ?? (under.length === 1 ? under[0].id : kitchens.length === 1 ? kitchens[0].id : ''))
-      setMat(''); setDate(todayVN()); setMachine(''); setShift(''); setPlanned(''); setCode(''); setNote('')
+      setMat(''); setDate(todayVN()); setMachine(''); setShift(''); setCycle(''); setPlanned(''); setCode(''); setNote('')
     }
   }, [open]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -84,13 +85,13 @@ export function BatchFormSheet({ open, onClose, batch, template, onSaved }: {
     setErr('')
     try {
       if (batch) {
-        const r = await update.mutateAsync({ id: batch.id, prod_date: date, machine_code: machine || null, shift: shift || null,
+        const r = await update.mutateAsync({ id: batch.id, prod_date: date, machine_code: machine || null, shift: shift || null, cycle: cycle.trim() || null,
           planned_qty: plannedNum, note: note || null,
           ...(code.trim().toUpperCase() !== batch.batch_code ? { batch_code: code.trim() } : {}), ...(mat !== batch.material_id ? { material_id: mat } : {}) })
         onSaved?.(r.id); onClose()
       } else {
         const r = await create.mutateAsync({ warehouse_id: wh, material_id: mat, prod_date: date, batch_code: code.trim() || undefined,
-          machine_code: machine || undefined, shift: shift || undefined, planned_qty: plannedNum, note: note || undefined })
+          machine_code: machine || undefined, shift: shift || undefined, cycle: cycle.trim() || undefined, planned_qty: plannedNum, note: note || undefined })
         onSaved?.(r.id); onClose()
       }
     } catch (e) { setErr(apiMsg(e)) }
@@ -116,14 +117,18 @@ export function BatchFormSheet({ open, onClose, batch, template, onSaved }: {
           <SingleSelect value={mat} onChange={v => { setMat(v); setCodeTouched(false) }} serverSearch onSearchChange={setMatTerm} loading={isFetching}
             selectedLabel={selMat ? selMat.material_code : undefined} placeholder="Tìm mã hoặc tên (chỉ mã tính L / KG)" options={matOpts} />
         </div>
-        <div className="grid grid-cols-2 gap-2">
-          <div>
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+          <div className="col-span-2 sm:col-span-1">
             <Label className="text-xs">Ngày sản xuất <span className="text-red-500">*</span></Label>
             <Input type="date" value={date} onChange={e => { setDate(e.target.value); setCodeTouched(false) }} className="h-8 text-xs mt-0.5" />
           </div>
           <div>
             <Label className="text-xs">Ca</Label>
             <Input value={shift} onChange={e => setShift(e.target.value)} maxLength={40} placeholder="Tuỳ chọn" className="h-8 text-xs mt-0.5" />
+          </div>
+          <div>
+            <Label className="text-xs">Chu kỳ</Label>
+            <Input value={cycle} onChange={e => setCycle(e.target.value)} maxLength={20} placeholder="Tuỳ chọn" className="h-8 text-xs mt-0.5" />
           </div>
         </div>
         <div className="grid grid-cols-2 gap-2">

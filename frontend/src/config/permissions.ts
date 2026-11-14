@@ -368,6 +368,7 @@ export const MODULES = {
       tank_ops:    'Nạp mẻ vào bồn · chuyển bồn · điều chỉnh mức · xả bỏ',
       export:      'Xuất Excel danh sách mẻ',
       configure:   'Cài đặt MES (rút bồn còn lô chờ QA · hạn lưu bồn theo mã)',
+      manage_recipe: 'Khai ĐỊNH MỨC nguyên liệu của mã bán thành phẩm (trang Định mức)',
     },
   },
   materials: {

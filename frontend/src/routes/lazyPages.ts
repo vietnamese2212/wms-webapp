@@ -53,6 +53,7 @@ const productionBatches  = () => import('@/pages/wms/ProductionBatches')
 const productionBatchDetail = () => import('@/pages/wms/ProductionBatchDetail')
 const productionTanks    = () => import('@/pages/wms/ProductionTanks')
 const productionSettings = () => import('@/pages/wms/ProductionSettings')
+const productionRecipes  = () => import('@/pages/wms/ProductionRecipes')
 const fillPicking        = () => import('@/pages/wms/FillPicking')
 const fillOrderDetail    = () => import('@/pages/wms/FillOrderDetail')
 const loosePicking           = () => import('@/pages/wms/LoosePicking')
@@ -112,6 +113,7 @@ export const Pages = {
   ProductionBatchDetail: lazyRetry(productionBatchDetail),
   ProductionTanks: lazyRetry(productionTanks),
   ProductionSettings: lazyRetry(productionSettings),
+  ProductionRecipes: lazyRetry(productionRecipes),
   FillPicking: lazyRetry(fillPicking),
   FillOrderDetail: lazyRetry(fillOrderDetail),
   LoosePicking: lazyRetry(loosePicking),

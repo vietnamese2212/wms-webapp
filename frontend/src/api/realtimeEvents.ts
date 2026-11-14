@@ -122,6 +122,9 @@ const TABLE_QUERY_MAP: Record<string, string[][]> = {
   batch_consumption:        [['prod-batches'], ['prod-batch'], ['prod-stock'], ['prod-genealogy'], ['pallet-ledger']],
   production_tank:          [['prod-tanks'], ['prod-tanks-for-run']],
   tank_lot:                 [['prod-tanks'], ['prod-batch'], ['prod-batches']],
+  batch_requirement:        [['prod-batch']],
+  production_recipe:        [['prod-recipes'], ['prod-recipe']],
+  production_recipe_line:   [['prod-recipe']],
   tank_movement:            [['prod-tank-moves'], ['prod-batch'], ['prod-genealogy'], ['packing-run']],
   warehouse_machines:       [['machines']],
   // `Employee` ĐÃ GỠ KHỎI BẢN ĐỒ (04/08): bảng nhân sự CỐ Ý không nằm trong publication realtime và

@@ -35,7 +35,7 @@ export type BatchQa = 'HOLD' | 'RELEASED' | 'REJECTED'
 export interface BatchRow {
   id: string; warehouse_id: string; warehouse_name: string; batch_code: string
   material_id: string; material_code: string; material_name: string | null; base_unit: string | null
-  machine_code: string | null; shift: string | null; prod_date: string; planned_qty: number | null
+  machine_code: string | null; shift: string | null; cycle?: string | null; prod_date: string; planned_qty: number | null
   status: BatchStatus; qa_status: BatchQa; qa_at: string | null; qa_by_name: string | null
   note: string | null; opened_by_name: string | null; created_at: string; closed_at: string | null
   rm_lines: number; rm_materials: number; filled: number; in_tank: number
@@ -58,7 +58,16 @@ export interface TankMoveRow {
   tank?: { code: string } | null; batch?: { batch_code: string } | null
 }
 export interface BatchLot { id: string; tank_id: string; qty_in: number; qty_remaining: number; filled_at: string; expires_at: string | null; status: 'ACTIVE' | 'EMPTY'; tank: { code: string; unit: string } | null }
+/** Một dòng của BÀN LÀM VIỆC CỦA MẺ: nguyên liệu có yêu cầu (required ≠ null) hoặc đã cấp ngoài yêu cầu (required = null). */
+export interface BoardRow extends MatUnits {
+  material_id: string; material_code: string; material_name: string | null
+  required: number | null; note: string | null; sort_order: number
+  consumed: number; lines: number
+  /** tồn cấp được ở kho chế biến (không QA giữ, sau giữ chỗ) · phần KHÔNG có tem · số pallet / bao CÓ tem */
+  available: number; available_no_tem: number; tem_pallets: number
+}
 export interface BatchDetail {
+  cycle: string | null; board: BoardRow[]
   id: string; warehouse_id: string; batch_code: string; material_id: string; machine_code: string | null; shift: string | null
   prod_date: string; planned_qty: number | null; status: BatchStatus; qa_status: BatchQa; qa_by_name: string | null; qa_at: string | null; qa_note: string | null
   note: string | null; opened_by_name: string | null; created_at: string; closed_at: string | null; closed_by_name: string | null
@@ -72,8 +81,8 @@ export interface ScanEntry {
   qa_status: { code: string; name: string } | null; location: { location_code: string } | null
   material: ({ material_code: string; short_name: string | null } & MatUnits) | null
 }
-export interface StockMaterial extends MatUnits { material_id: string; material_code: string; material_name: string | null; available: number; lots: number }
-export interface StockLot { production_date: string | null; batch_lot: string | null; expiry_date: string | null; available: number; pallets: number }
+export interface StockMaterial extends MatUnits { material_id: string; material_code: string; material_name: string | null; available: number; available_no_tem?: number; lots: number }
+export interface StockLot { production_date: string | null; batch_lot: string | null; expiry_date: string | null; available: number; available_no_tem?: number; tem_pallets?: number; pallets: number }
 export interface TankLotView {
   id: string; tank_id: string; batch_id: string; qty_in: number; qty_remaining: number; filled_at: string; expires_at: string | null
   batch: { batch_code: string; qa_status: BatchQa; material: { material_code: string; short_name: string | null } | null } | null
@@ -158,7 +167,7 @@ function useProdMutation<TVars, TRes = unknown>(fn: (v: TVars) => Promise<TRes>)
   return useMutation({
     mutationFn: fn,
     onSettled: () => {
-      for (const k of [K.batches, K.batch, K.stock, K.tanks, K.moves, ['prod-next-code'], ['prod-genealogy'], ['inventory-entries'], ['inventory-summary'], ['pallet-ledger'], ['packing-run'], ['packing-runs'], ['packing-run-board']])
+      for (const k of [K.batches, K.batch, K.stock, K.tanks, K.moves, ['prod-recipes'], ['prod-recipe'], ['prod-next-code'], ['prod-genealogy'], ['inventory-entries'], ['inventory-summary'], ['pallet-ledger'], ['packing-run'], ['packing-runs'], ['packing-run-board']])
         void qc.invalidateQueries({ queryKey: k })
     },
   })
@@ -191,9 +200,28 @@ export function useSaveProductionSettings() {
   })
 }
 
-export interface BatchInput { warehouse_id: string; material_id: string; prod_date: string; batch_code?: string; machine_code?: string; shift?: string; planned_qty?: number | null; note?: string }
+export interface BatchInput { warehouse_id: string; material_id: string; prod_date: string; batch_code?: string; machine_code?: string; shift?: string; cycle?: string; planned_qty?: number | null; note?: string }
 export const useCreateBatch = () => useProdMutation((b: BatchInput) => post<BatchDetail>('/wms/production/batches', b))
-export const useUpdateBatch = () => useProdMutation(({ id, ...b }: { id: string } & Partial<Omit<BatchInput, 'warehouse_id' | 'machine_code' | 'shift' | 'note'>> & { machine_code?: string | null; shift?: string | null; note?: string | null }) => patch<BatchDetail>(`/wms/production/batches/${id}`, b))
+export const useUpdateBatch = () => useProdMutation(({ id, ...b }: { id: string } & Partial<Omit<BatchInput, 'warehouse_id' | 'machine_code' | 'shift' | 'cycle' | 'note'>> & { machine_code?: string | null; shift?: string | null; cycle?: string | null; note?: string | null }) => patch<BatchDetail>(`/wms/production/batches/${id}`, b))
+// ── Bàn làm việc của mẻ: yêu cầu nguyên liệu + định mức ──
+export const useSetRequirements = () => useProdMutation(({ batchId, items }: { batchId: string; items: { material_id: string; qty: number }[] }) =>
+  (async () => (await apiClient.put(`/wms/production/batches/${batchId}/requirements`, { items })).data.data as { count: number })())
+export const useApplyRecipe = () => useProdMutation(({ batchId, replace }: { batchId: string; replace?: boolean }) =>
+  post<{ count: number }>(`/wms/production/batches/${batchId}/apply-recipe`, { replace }))
+type RecipeMat = ({ id: string; material_code: string; short_name: string | null; category: string | null } & MatUnits) | null
+export interface RecipeRow { id: string; material_id: string; base_qty: number; note: string | null; is_active: boolean; updated_at: string; updated_by: string | null; material: RecipeMat }
+export interface RecipeDetail extends RecipeRow { lines: { id: string; material_id: string; qty: number; sort_order: number; note: string | null; material: RecipeMat }[] }
+export function useRecipes() {
+  return useQuery({ queryKey: ['prod-recipes'], staleTime: 30_000, queryFn: async () => (await apiClient.get('/wms/production/recipes')).data.data as RecipeRow[] })
+}
+export function useRecipe(materialId: string | undefined) {
+  return useQuery({
+    queryKey: ['prod-recipe', materialId], enabled: !!materialId, staleTime: 10_000,
+    queryFn: async () => (await apiClient.get(`/wms/production/recipes/${materialId}`)).data.data as RecipeDetail | null,
+  })
+}
+export const useSaveRecipe = () => useProdMutation(({ materialId, ...b }: { materialId: string; base_qty: number; note: string | null; is_active: boolean; lines: { material_id: string; qty: number }[] }) =>
+  (async () => (await apiClient.put(`/wms/production/recipes/${materialId}`, b)).data.data as { id: string; lines: number })())
 export const useBatchStatus = () => useProdMutation(({ id, action }: { id: string; action: 'close' | 'reopen' | 'cancel' }) => post(`/wms/production/batches/${id}/${action}`))
 export const useBatchQa = () => useProdMutation(({ id, qa_status, note }: { id: string; qa_status: BatchQa; note?: string }) => post(`/wms/production/batches/${id}/qa`, { qa_status, note }))
 export const useConsumeScan = () => useProdMutation(({ batchId, entry_id, qty }: { batchId: string; entry_id: string; qty: number }) =>

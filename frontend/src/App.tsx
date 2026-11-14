@@ -10,7 +10,7 @@ import { Pages } from '@/routes/lazyPages'
 import Login from '@/pages/Login'
 
 const {
-  Dashboard, Inventory, Inbound, InboundDetail, InboundReturns, ProductionBatches, ProductionBatchDetail, ProductionTanks, ProductionSettings,
+  Dashboard, Inventory, Inbound, InboundDetail, InboundReturns, ProductionBatches, ProductionBatchDetail, ProductionTanks, ProductionSettings, ProductionRecipes,
   Outbound, OutboundDetail, OutboundItemDetail, OutboundScanLog, OutboundPrepare, WeighTickets, ControlTower, Alerts,
   Slotting, SlottingPlanDetail, DirectedWork, DateRules, WarehouseCosts, WarehouseCostVoucher, LotTrace, Forklift, Packing, FillPicking, FillOrderDetail,
   LoosePicking, LoosePickingDetail, LoosePickingItemDetail,
@@ -172,6 +172,7 @@ export default function App() {
         <Route path="/wms/production" element={<PermissionRoute module="production"><ProductionBatches /></PermissionRoute>} />
         <Route path="/wms/production/tanks" element={<PermissionRoute module="production"><ProductionTanks /></PermissionRoute>} />
         <Route path="/wms/production/settings" element={<PermissionRoute module="production"><ProductionSettings /></PermissionRoute>} />
+        <Route path="/wms/production/recipes" element={<PermissionRoute module="production"><ProductionRecipes /></PermissionRoute>} />
         <Route path="/wms/production/:id" element={<PermissionRoute module="production"><ProductionBatchDetail /></PermissionRoute>} />
 
         {/* WMS — settings */}

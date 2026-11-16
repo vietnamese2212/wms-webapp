@@ -12,9 +12,10 @@
 //   [6s] Sửa / khai bù lượng rút của trang ĐÃ ĐÓNG: tăng = rút thêm, giảm = trả về đúng mẻ, bắt lý do, trang mở ⇒ 409 (14/11 tối)
 //   [6t] Cài đặt MES là cửa ghi DUY NHẤT của công tắc QA + hạn lưu bồn; cửa Loại kho của Cài đặt WMS không đè mất khai riêng
 //   [10] Bàn làm việc của mẻ (14/11 đêm): định mức ⇒ yêu cầu của mẻ × kế hoạch; hàng CÓ TEM không đi đường chọn lô (MUST_SCAN);
-//        bàn trả yêu cầu · đã cấp · tồn có tem / không tem; sửa yêu cầu không đụng phần đã cấp
+//        bàn trả yêu cầu · đã cấp · tồn có tem / không tem; sửa yêu cầu không đụng phần đã cấp;
+//        sửa kế hoạch ⇒ yêu cầu nhân theo tỷ lệ, đổi mã BTP ⇒ chép định mức mã mới (C114)
 //   [11] Báo cáo sử dụng NVL theo ca: một kho một ca mở; số dùng theo mẻ / tồn sổ khớp dữ liệu gốc; chốt ca chụp số (không đổi khi tồn đổi);
-//        ca sau lấy số đếm ca trước làm tồn đầu và chỉ tính lượng dùng sau lúc chốt
+//        ca sau lấy số đếm ca trước làm tồn đầu và chỉ tính lượng dùng sau lúc chốt; hàng nhận GỘP vào dòng tồn cũ vẫn lên cột Nhập (C113)
 //   [12] Phiếu theo dõi của mẻ (phối trộn · dịch thạch): lưu trọn nội dung, bỏ ô trống; QA xác nhận ⇒ khoá sửa + chụp mẫu, bỏ xác nhận ⇒ sửa lại được
 //   [13] Mẫu phiếu là CẤU HÌNH (Cài đặt MES): tạo / sửa / ngưng mẫu; phiếu của mẻ sửa riêng cấu trúc cho lần đó (thêm lần, thêm ô) và về theo mẫu chung
 //   [9] Huỷ mẻ còn dòng rút ⇒ 409; đóng / mở lại mẻ; bất biến tồn: nhập − còn = Σ rút sống
@@ -376,6 +377,23 @@ try {
   check('10g. Chép lại định mức ⇒ yêu cầu về 15 / 6; mã chưa khai định mức ⇒ 409 MES_NO_RECIPE',
     apOk.s === 200 && num(board3.find(r => r.material_id === M_RM)?.required) === 15 && num(board3.find(r => r.material_id === M_EA)?.required) === 6 && apNone.s === 409 && apNone.j?.error?.code === 'MES_NO_RECIPE',
     `http=${apOk.s}/${apNone.s} ${apNone.j?.error?.code}`)
+  // sửa mẻ ⇒ bàn tính lại yêu cầu (C114, 16/11)
+  const upPlan = await api(`/wms/production/batches/${BW.id}`, 'PATCH', { planned_qty: 600 })
+  const board4 = (await api(`/wms/production/batches/${BW.id}`)).j?.data?.board ?? []
+  check('10i. Sửa kế hoạch 300 → 600 ⇒ yêu cầu nhân đôi (15 → 30, 6 → 12), phần đã cấp giữ nguyên',
+    upPlan.s === 200 && num(board4.find(r => r.material_id === M_RM)?.required) === 30 && num(board4.find(r => r.material_id === M_EA)?.required) === 12
+      && num(board4.find(r => r.material_id === M_RM)?.consumed) === 6, `http=${upPlan.s} ${JSON.stringify(board4.map(r => [r.material_id, r.required, r.consumed]))}`)
+  const bx = await api('/wms/production/batches', 'POST', { warehouse_id: WC, material_id: M_BTP2, prod_date: todayVN, planned_qty: 100 })
+  const BX = bx.j?.data
+  const upMat = await api(`/wms/production/batches/${BX?.id}`, 'PATCH', { material_id: M_BTP })
+  const boardX = (await api(`/wms/production/batches/${BX?.id}`)).j?.data?.board ?? []
+  const upBack = await api(`/wms/production/batches/${BX?.id}`, 'PATCH', { material_id: M_BTP2, planned_qty: 200 })
+  const boardX2 = (await api(`/wms/production/batches/${BX?.id}`)).j?.data?.board ?? []
+  check('10j. Đổi mã BTP sang mã chưa có định mức ⇒ bàn bỏ nguyên liệu của mã cũ; đổi về ⇒ chép định mức × kế hoạch mới',
+    bx.s === 201 && num(BX?.requirement_count) === 2 && upMat.s === 200 && boardX.length === 0 && upBack.s === 200
+      && num(boardX2.find(r => r.material_id === M_RM)?.required) === 10 && num(boardX2.find(r => r.material_id === M_EA)?.required) === 4,
+    `http=${bx.s}/${upMat.s}/${upBack.s} board=${boardX.length} → ${JSON.stringify(boardX2.map(r => [r.material_id, r.required]))}`)
+  if (BX?.id) await api(`/wms/production/batches/${BX.id}/cancel`, 'POST', {})
   await api(`/wms/production/batches/${BW.id}/close`, 'POST', {})
   const rqClosed = await api(`/wms/production/batches/${BW.id}/requirements`, 'PUT', { items: [] })
   check('10h. Mẻ đã đóng ⇒ sửa yêu cầu 409 MES_BATCH_NOT_OPEN', rqClosed.s === 409 && rqClosed.j?.error?.code === 'MES_BATCH_NOT_OPEN', `http=${rqClosed.s} ${rqClosed.j?.error?.code}`)
@@ -421,6 +439,14 @@ try {
     `http=${svAfter.s}/${sh2.s} opening=${rm2nd?.opening}(${rm2nd?.opening_src}) used=${rm2nd?.used} book=${rm2nd?.book}`)
   const shList = await api(`/wms/production/shift-reports?warehouse_id=${WC}`)
   check('11f. Danh sách báo cáo ca của kho: 2 ca, ca mở đứng đầu', shList.s === 200 && (shList.j?.data ?? []).length === 2 && shList.j?.data?.[0]?.status === 'OPEN', `http=${shList.s} n=${shList.j?.data?.length}`)
+  // nhận GỘP vào dòng tồn gộp đã có (kho QTY_DATE cộng cartons_imported vào dòng cũ, không tạo dòng mới) + xuất tiêu hao 2 (C113, 16/11)
+  const e5 = (await restAll('InventoryEntry', 'select=cartons_imported,cartons_remaining&id=eq.QA63_E5'))[0]
+  await restWrite('InventoryEntry', 'PATCH', 'id=eq.QA63_E5', { cartons_imported: num(e5?.cartons_imported) + 5, cartons_remaining: num(e5?.cartons_remaining) + 3, updated_at: ts() })
+  const rp2b = await api(`/wms/production/shift-reports/${sh2.j?.data?.id}`)
+  const rm2b = (rp2b.j?.data?.rows ?? []).find(r => r.material_id === M_RM)
+  check('11g. Hàng nhận gộp vào dòng tồn cũ lên cột Nhập của ca (5); tồn sổ theo kịp',
+    rp2b.s === 200 && num(rm2b?.received) === 5 && Math.abs(num(rm2b?.book) - (sumStock - 1 + 3)) < 0.001 && !('cum_in' in (rp2b.j?.data?.report ?? {})),
+    `http=${rp2b.s} received=${rm2b?.received} book=${rm2b?.book}/${sumStock + 2}`)
 
   // ── [12] PHIẾU THEO DÕI của mẻ ──
   const plBadForm = await api(`/wms/production/batches/${B1.id}/process-log/xyz`, 'PUT', { data: { water_l: '1' } })

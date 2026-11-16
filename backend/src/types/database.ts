@@ -1,5 +1,5 @@
 // FILE SINH TỰ ĐỘNG — `node scripts/gen-db-types.mjs` (từ information_schema STAGING). KHÔNG sửa tay.
-// Sinh lúc 2026-11-14T13:16:04.879Z · 123 bảng/view · 235 hàm · 0 enum
+// Sinh lúc 2026-11-16T08:00:30.637Z · 123 bảng/view · 237 hàm · 0 enum
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[]
 
 export type Database = {
@@ -5576,6 +5576,7 @@ export type Database = {
           closed_by_name: string | null
           created_at: string
           updated_at: string
+          cum_in: Json | null
         }
         Insert: {
           id: string
@@ -5591,6 +5592,7 @@ export type Database = {
           closed_by_name?: string | null
           created_at?: string
           updated_at: string
+          cum_in?: Json | null
         }
         Update: {
           id?: string
@@ -5606,6 +5608,7 @@ export type Database = {
           closed_by_name?: string | null
           created_at?: string
           updated_at?: string
+          cum_in?: Json | null
         }
         Relationships: []
       }
@@ -7164,6 +7167,10 @@ export type Database = {
         Args: { p: Json | null }
         Returns: Json
       }
+      mes_batch_requirements_refresh: {
+        Args: { p: Json | null }
+        Returns: Json
+      }
       mes_batch_set_requirements: {
         Args: { p: Json | null }
         Returns: Json
@@ -7239,6 +7246,10 @@ export type Database = {
       mes_tank_transfer: {
         Args: { p: Json | null }
         Returns: Json
+      }
+      mes_wh_cum_in: {
+        Args: { p_wh: string | null }
+        Returns: Record<string, unknown>[]
       }
       move_pallets_to_location: {
         Args: { p_ids: unknown | null; p_location_id: string | null; p_updated_by: string | null; p_update_date: string | null; p_now: string | null; p_max_materials?: number | null; p_putaway_checked?: boolean | null; p_putaway_violation?: string | null; p_putaway_override_reason?: string | null }
@@ -7497,7 +7508,7 @@ export type Database = {
         Returns: boolean
       }
       unaccent: {
-        Args: { arg1: string | null } | { arg1: unknown | null; arg2: string | null }
+        Args: { arg1: unknown | null; arg2: string | null } | { arg1: string | null }
         Returns: string
       }
       unaccent_init: {

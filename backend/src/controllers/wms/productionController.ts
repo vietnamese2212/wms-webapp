@@ -58,9 +58,9 @@ function mesFail(res: Response, e: unknown): Response {
   return fail(res, status, `MES_${code}`, text.trim())
 }
 
-type BatchRow = { id: string; warehouse_id: string; status: string; material_id: string; batch_code: string }
+type BatchRow = { id: string; warehouse_id: string; status: string; material_id: string; batch_code: string; planned_qty: number | null }
 async function loadBatch(id: string): Promise<BatchRow | null> {
-  const { data } = await db.from('production_batch').select('id, warehouse_id, status, material_id, batch_code').eq('id', id).maybeSingle()
+  const { data } = await db.from('production_batch').select('id, warehouse_id, status, material_id, batch_code, planned_qty').eq('id', id).maybeSingle()
   return (data as BatchRow | null) ?? null
 }
 type TankRow = { id: string; warehouse_id: string; code: string; unit: string; capacity: number; is_active: boolean }
@@ -245,6 +245,13 @@ export async function updateBatch(req: Request, res: Response) {
     const { data, error } = await db.from('production_batch').update(patch).eq('id', b.id).select('*')
     if (error) return fail(res, error)
     if (!data?.length) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy mẻ')
+    // bàn làm việc theo kịp mẻ (C114): đổi mã BTP ⇒ chép định mức mã mới; đổi kế hoạch ⇒ yêu cầu nhân theo tỷ lệ kế hoạch mới / cũ
+    const matChanged = patch.material_id !== undefined
+    const planChanged = body.planned_qty !== undefined && (body.planned_qty ?? null) !== (b.planned_qty == null ? null : Number(b.planned_qty))
+    if (matChanged || planChanged) {
+      const { error: rErr } = await db.rpc('mes_batch_requirements_refresh', { p: { batch_id: b.id, reset: matChanged, old_planned: b.planned_qty, actor_name: actor(req).actor_name } })
+      if (rErr) return fail(res, 409, 'MES_REQUIREMENTS_STALE', 'Đã lưu mẻ nhưng chưa tính lại được nguyên liệu yêu cầu — bấm "Chép lại theo định mức" trên bàn của mẻ')
+    }
     return ok(res, data[0])
   } catch (e) { return failAny(res, e) }
 }

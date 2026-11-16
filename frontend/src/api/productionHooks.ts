@@ -4,7 +4,7 @@
 import { useMemo } from 'react'
 import { useMutation, useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import { apiClient } from './client'
-import { useWarehouses } from './hooks'
+import { useWarehouses, useImportShifts } from './hooks'
 import { useAuthStore } from '@/stores/authStore'
 import type { MatUnits } from '@/utils/qtyUnits'
 import type { FormBlock } from '@/config/processForms'
@@ -24,10 +24,22 @@ export function useProductionWarehouses() {
       .map(w => ({ id: w.id, code: w.code, name: w.name, parent_warehouse_id: w.parent_warehouse_id, parent_name: nameOf.get(w.parent_warehouse_id!) ?? null }))
       .sort((a, b) => a.name.localeCompare(b.name, 'vi'))
     const parentIds = new Set(kids.map(k => k.parent_warehouse_id))
-    const factories = all.filter(w => parentIds.has(w.id)).map(w => ({ id: w.id, code: w.code, name: w.name }))
+    // chỉ kho nhà máy người dùng được giao (BE inScope kho cha = kho cha phải nằm trong phạm vi) — không thì lọc theo nó ra 403
+    const factories = all.filter(w => parentIds.has(w.id) && (national || ids.size === 0 || ids.has(w.id))).map(w => ({ id: w.id, code: w.code, name: w.name }))
     return { kitchens: kids as ProdWarehouse[], factories }
   }, [q.data, user?.warehouse_scope, user?.warehouse_ids, user?.warehouse_id])
   return { ...q, data }
+}
+
+/** Kho chế biến mặc định theo bối cảnh Kho toàn cục ở Header: là kho chế biến thì lấy luôn; là kho NHÀ MÁY thì lấy kho chế biến
+ *  trực thuộc nó; không thì kho đầu danh sách. `strict` = chỉ trả khi xác định được một kho (form Mở mẻ: không đoán bừa). */
+export function defaultKitchen(kitchens: ProdWarehouse[], globalWh: string | null | undefined, strict = false): string {
+  const direct = kitchens.find(k => k.id === globalWh)
+  if (direct) return direct.id
+  const under = kitchens.filter(k => !!globalWh && k.parent_warehouse_id === globalWh)
+  if (under.length === 1 || (!strict && under.length)) return under[0].id
+  if (kitchens.length === 1 || !strict) return kitchens[0]?.id ?? ''
+  return ''
 }
 
 export type BatchStatus = 'OPEN' | 'CLOSED' | 'CANCELLED'
@@ -84,7 +96,7 @@ export interface BatchDetail {
 export interface ScanEntry {
   id: string; pallet_code: string; material_id: string; cartons_remaining: number | null; cartons_imported: number | null; cartons_reserved: number | null
   production_date: string | null; expiry_date: string | null; batch: string | null
-  qa_status: { code: string; name: string } | null; location: { location_code: string } | null
+  qa_status_id?: string | null; qa_status: { code: string; name: string } | null; location: { location_code: string } | null
   material: ({ material_code: string; short_name: string | null } & MatUnits) | null
 }
 export interface StockMaterial extends MatUnits { material_id: string; material_code: string; material_name: string | null; available: number; available_no_tem?: number; lots: number }
@@ -112,9 +124,10 @@ const K = {
   tanks: ['prod-tanks'] as const, moves: ['prod-tank-moves'] as const,
 }
 
-export function useProductionBatches(p: BatchListParams) {
+/** `enabled` = false khi form chứa nó đang đóng — tham số rỗng nghĩa là "mọi kho", không phải "đừng tải" */
+export function useProductionBatches(p: BatchListParams, enabled = true) {
   return useQuery({
-    queryKey: [...K.batches, p], staleTime: 15_000, placeholderData: keepPreviousData,
+    queryKey: [...K.batches, p], enabled, staleTime: 15_000, placeholderData: keepPreviousData,
     queryFn: async () => (await apiClient.get('/wms/production/batches', { params: p })).data.data as { rows: BatchRow[]; summary: BatchSummary; page: number; page_size: number },
   })
 }
@@ -138,9 +151,9 @@ export function useProductionStock(warehouseId: string | undefined, materialId?:
     queryFn: async () => (await apiClient.get('/wms/production/stock', { params: { warehouse_id: warehouseId, material_id: materialId || undefined, search: search || undefined } })).data.data as { materials?: StockMaterial[]; lots?: StockLot[] },
   })
 }
-export function useProductionTanks(warehouseId?: string, includeInactive = false) {
+export function useProductionTanks(warehouseId?: string, includeInactive = false, enabled = true) {
   return useQuery({
-    queryKey: [...K.tanks, warehouseId ?? '', includeInactive], staleTime: 10_000,
+    queryKey: [...K.tanks, warehouseId ?? '', includeInactive], enabled, staleTime: 10_000,
     queryFn: async () => (await apiClient.get('/wms/production/tanks', { params: { warehouse_id: warehouseId || undefined, include_inactive: includeInactive ? '1' : undefined } })).data.data as TankRow[],
   })
 }
@@ -268,9 +281,20 @@ export function useShiftReports(warehouseId: string | undefined) {
     queryFn: async () => (await apiClient.get('/wms/production/shift-reports', { params: { warehouse_id: warehouseId } })).data.data as ShiftReportHead[],
   })
 }
+/** Tên ca lấy từ danh mục ca dùng chung (Cài đặt WMS → Ca — cùng nguồn với Sổ đóng gói) để mẻ · báo cáo ca · trang sổ
+ *  cùng một nhãn. Danh mục trống ⇒ Ca 1–3. `current` (giá trị đang lưu không có trong danh mục) được giữ làm một lựa chọn. */
+export function useShiftNames(current?: string | null): string[] {
+  const { data } = useImportShifts()
+  return useMemo(() => {
+    const names = ((data ?? []) as { name?: string | null; code?: string | null; is_active?: boolean | null }[])
+      .filter(s => s.is_active !== false).map(s => (s.name || s.code || '').trim()).filter(Boolean)
+    const base = names.length ? names : ['Ca 1', 'Ca 2', 'Ca 3']
+    return current && !base.includes(current) ? [...base, current] : base
+  }, [data, current])
+}
 export function useShiftReport(id: string | undefined) {
   return useQuery({
-    queryKey: ['prod-shift-report', id], enabled: !!id, staleTime: 10_000, placeholderData: keepPreviousData,
+    queryKey: ['prod-shift-report', id], enabled: !!id, staleTime: 10_000,
     queryFn: async () => (await apiClient.get(`/wms/production/shift-reports/${id}`)).data.data as ShiftReport,
   })
 }

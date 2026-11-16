@@ -711,7 +711,8 @@ function initialFilters() {
                     ordersFrom: '', ordersTo: '', page: 1, pageSize: 100 },
     forklift:     { tab: 'board' as const, date: today(), warehouseId: '', from: daysAgo(7), to: today(), matrixFk: '', vehicleId: '' },
     inboundReturns: { search: '', warehouseId: '', dateFrom: daysAgo(30), dateTo: today(), kind: '', reason: '', recallId: '', page: 1, pageSize: 100 },
-    production: { search: '', warehouseId: '', dateFrom: daysAgo(14), dateTo: today(), status: '', qa: '', page: 1, pageSize: 100 },
+    // dateTo trống = tới hôm nay (và sau) — bộ lọc được nhớ qua ngày, mặc định today() thành 'hôm qua' ở lần mở sau, mẻ hôm nay biến mất khỏi danh sách
+    production: { search: '', warehouseId: '', dateFrom: daysAgo(14), dateTo: '', status: '', qa: '', page: 1, pageSize: 100 },
     productionTanks: { warehouseId: '', showInactive: false },
     packing:      { tab: 'board' as const, search: '', warehouseId: '', machine: '', cycle: '', status: '', dateFrom: daysAgo(7), dateTo: today(), page: 1, pageSize: 200, runStatus: '', runPage: 1, received: '' },
     alerts:       { tab: 'general' as const, search: '', warehouseId: '', rules: [], severity: [], status: 'open' },
@@ -832,6 +833,9 @@ export const useWmsFilterStore = create<WmsFilterState>()(
         // mặc định"). Bỏ tick hết trong phiên vẫn xem được tất cả, nhưng trạng thái rỗng KHÔNG được nhớ sang lần mở sau.
         const fill = merged.fill as { status?: string[] } | undefined
         if (fill && (!Array.isArray(fill.status) || fill.status.length === 0)) fill.status = ['PENDING']
+        // Mẻ chế biến (16/11): mốc 'đến ngày' đã qua (nhớ từ hôm trước) ⇒ bỏ mốc — danh sách mẻ luôn thấy mẻ mới mở hôm nay
+        const prod = merged.production as { dateTo?: string } | undefined
+        if (prod?.dateTo && prod.dateTo < today()) prod.dateTo = ''
         return merged as unknown as WmsFilterState
       },
     }

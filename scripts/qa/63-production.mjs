@@ -17,11 +17,12 @@
 //   [11] Báo cáo sử dụng NVL theo ca: một kho một ca mở; số dùng theo mẻ / tồn sổ khớp dữ liệu gốc; chốt ca chụp số (không đổi khi tồn đổi);
 //        ca sau lấy số đếm ca trước làm tồn đầu và chỉ tính lượng dùng sau lúc chốt; hàng nhận GỘP vào dòng tồn cũ vẫn lên cột Nhập (C113)
 //   [12] Phiếu theo dõi của mẻ (phối trộn · dịch thạch): lưu trọn nội dung, bỏ ô trống; QA xác nhận ⇒ khoá sửa + chụp mẫu, bỏ xác nhận ⇒ sửa lại được
+//   [14] Chức danh chỉ có quyền Sản xuất (mở mẻ) tìm được mã hàng cho form Mở mẻ / Định mức; chức danh chỉ xem thì không (16/11)
 //   [13] Mẫu phiếu là CẤU HÌNH (Cài đặt MES): tạo / sửa / ngưng mẫu; phiếu của mẻ sửa riêng cấu trúc cho lần đó (thêm lần, thêm ô) và về theo mẫu chung
 //   [9] Huỷ mẻ còn dòng rút ⇒ 409; đóng / mở lại mẻ; bất biến tồn: nhập − còn = Σ rút sống
 // Fixture QA63: kho cha QA63_PARENT + kho phụ QA63_CB (+ QA63_CB2 để thử chéo kho) · mã NVL/BTP QA63* · tem QA63_* — dọn bằng PostgREST.
 import { randomUUID } from 'crypto'
-import { login, api, rawFetch, restAll, restWrite, check, finish } from './lib.mjs'
+import { login, api, rawFetch, restAll, restWrite, check, finish, BASE } from './lib.mjs'
 
 const PACK = '63-production'
 await login()
@@ -30,10 +31,16 @@ const WP = 'QA63_PARENT', WC = 'QA63_CB', WC2 = 'QA63_CB2'
 const M_RM = 'QA63_RM1', M_BTP = 'QA63_BTP1', M_BTP2 = 'QA63_BTP2', M_EA = 'QA63_EA1'
 const qaX = (await restAll('QAStatus', 'select=id&code=eq.X'))[0]?.id
 const ts = () => new Date().toISOString()
+const JT_OPEN = 'QA63_JT_OPEN', JT_VIEW = 'QA63_JT_VIEW'
+let bcrypt = null
+try { bcrypt = await import('../../backend/node_modules/bcrypt/bcrypt.js').then(m => m.default ?? m) } catch { /* chưa npm i backend */ }
 const num = (v) => Number(v ?? 0)
 
 async function cleanup() {
   const whs = [WP, WC, WC2]
+  const roleEmps = await restAll('Employee', 'select=id&email=like.qa63role*')
+  for (const e of roleEmps) { await restWrite('UserWarehouseAccess', 'DELETE', `employee_id=eq.${e.id}`); await restWrite('Employee', 'DELETE', `id=eq.${e.id}`) }
+  await restWrite('JobTitle', 'DELETE', `id=in.(${JT_OPEN},${JT_VIEW})`)
   const runs = await restAll('packing_runs', `select=id&warehouse_id=in.(${whs.join(',')})`)
   const tanks = await restAll('production_tank', `select=id&warehouse_id=in.(${whs.join(',')})`)
   const batches = await restAll('production_batch', `select=id&warehouse_id=in.(${whs.join(',')})`)
@@ -526,6 +533,30 @@ try {
     && (tP.j?.data ?? []).some(t => t.id === T1.id) && (tP.j?.data ?? []).some(t => t.id === T3.id), `http=${lstP.s}/${tP.s} n=${lstP.j?.data?.rows?.length}/${tP.j?.data?.length}`)
   const cx3 = await api(`/wms/production/batches/${b3.id}/cancel`, 'POST', {})
   check('9e. Huỷ mẻ chưa rút / chưa nạp ⇒ 200', cx3.s === 200 && cx3.j?.data?.status === 'CANCELLED', `http=${cx3.s}`)
+
+  // ── [14] CHỨC DANH CHỈ CÓ QUYỀN SẢN XUẤT (16/11 — nghiệm thu bằng vai thật): form Mở / Sửa mẻ, Định mức tìm mã qua danh mục Mã hàng ──
+  if (!bcrypt) console.log('  ⏭  [14] không load được bcrypt của backend — bỏ qua')
+  else {
+    const pw = 'Qa' + randomUUID().slice(0, 10) + '!'   // dùng một lần, không in
+    await restWrite('JobTitle', 'POST', '', [
+      { id: JT_OPEN, name: 'QA63 tổ trưởng chế biến', updated_at: ts(), module_permissions: { production: ['view', 'open_batch', 'consume'] } },
+      { id: JT_VIEW, name: 'QA63 chỉ xem sản xuất', updated_at: ts(), module_permissions: { production: ['view'] } },
+    ])
+    const mk = async (jid, n) => {
+      const id = randomUUID()
+      await restWrite('Employee', 'POST', '', [{ id, employee_code: `QA63R${n}`, name: `QA63 vai ${n}`, email: `qa63role${n}@test.local`,
+        password: await bcrypt.hash(pw, 10), is_active: true, job_title_id: jid, warehouse_id: WC, warehouse_scope: 'ASSIGNED', updated_at: ts() }])
+      await restWrite('UserWarehouseAccess', 'POST', '', [{ id: randomUUID(), employee_id: id, warehouse_id: WC }])
+      const r = await fetch(`${BASE}/api/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: `qa63role${n}@test.local`, password: pw }) })
+      return (await r.json().catch(() => null))?.data?.token ?? null
+    }
+    const tkOpen = await mk(JT_OPEN, 1), tkView = await mk(JT_VIEW, 2)
+    const st = async (tk, p) => (await fetch(`${BASE}/api${p}`, { headers: { Authorization: `Bearer ${tk}` } })).status
+    const q = '/masterdata/materials?search=QA63BTP&limit=5&view=lite'
+    const sOpen = tkOpen ? await st(tkOpen, q) : 0, sView = tkView ? await st(tkView, q) : 0
+    check('14a. Chức danh chỉ có quyền Sản xuất được mở mẻ ⇒ tìm được mã hàng (200); chức danh chỉ xem ⇒ 403',
+      !!tkOpen && !!tkView && sOpen === 200 && sView === 403, `open=${sOpen} view=${sView}`)
+  }
 } finally {
   await cleanup()
   const left = await restAll('Warehouse', `select=id&id=in.(${WP},${WC},${WC2})`)

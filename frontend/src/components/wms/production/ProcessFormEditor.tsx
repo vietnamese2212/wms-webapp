@@ -7,7 +7,7 @@ import { ArrowDown, ArrowUp, X, Plus, MoreHorizontal, Table2, LayoutList, Minus,
 import { Input } from '@/components/ui/input'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import {
-  KIND_LABEL, PREFILL_LABEL, MAX_CELLS, blockCellCount, slugKey, shortKey, usedKeys,
+  KIND_LABEL, PREFILL_LABEL, MAX_CELLS, blockCellCount, slugKey, shortKey, usedKeys, gridKeyFor,
   type FormBlock, type FieldsBlock, type GridBlock, type ProcessField, type FieldKind, type Prefill,
 } from '@/config/processForms'
 import { parseVnNumber } from '@/utils/vnNumber'
@@ -212,7 +212,7 @@ export function ProcessFormEditor({ blocks, onChange, lockedKeys, disabled }: {
           </button>
           <button type="button"
             onClick={() => {
-              const key = slugKey('bang', usedKeys(blocks), 10).replace(/_/g, '')
+              const key = gridKeyFor(blocks)
               onChange([...blocks, { type: 'grid', key, title: '', rows: 5, cols: [{ key: 'c1', label: 'Cột 1' }], cells: [{ key: 't', label: 'Giờ', kind: 'time' }] }])
             }}
             className="touch-target inline-flex items-center gap-1 rounded-md border border-dashed border-slate-300 px-2.5 py-1.5 text-xs text-slate-700 hover:bg-slate-50">

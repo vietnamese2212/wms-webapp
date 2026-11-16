@@ -13,6 +13,7 @@ import { normalizeQR } from '../../utils/qrParser'
 import { qtyIntegerError } from '../../utils/qtyUnits'
 import type { TablesUpdate } from '../../types/database'
 import { normalizeBatchCode, BATCH_CODE_RE, batchCodeStem, nextBatchCode } from '../../utils/batchCode'
+import { processBlocksError } from '../../utils/processBlocks'
 import { PRODUCTION_QA_GATES } from '../../utils/putaway'
 import { invalidatePutawayConfig } from '../../services/putawayContext'
 import { categoryAllowed, scopeCategoriesOf, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
@@ -306,37 +307,12 @@ const zGridBlock = z.object({
   cells: z.array(z.object({ key: z.string().regex(/^[a-z0-9]{1,8}$/), label: zText(1, 20), kind: zFieldKind }).strict()).min(1).max(5),
 }).strict()
 const zBlocks = z.array(z.discriminatedUnion('type', [zFieldsBlock, zGridBlock])).min(1).max(30)
-type FormBlocks = z.infer<typeof zBlocks>
 export const zProcessFormParams = z.object({ code: zFormCode })
 export const zProcessFormPut = z.object({
   title: zText(1, 120), short: zText(1, 30), is_active: z.boolean(), sort_order: z.number().int().min(0).max(9999).optional(), blocks: zBlocks,
 })
-/** lỗi nghiệp vụ của một bộ khối ô (trùng mã ô, ngưỡng ngược, quá số ô một phiếu chứa được) — null = hợp lệ */
-export function processBlocksError(blocks: FormBlocks): string | null {
-  const keys = new Set<string>()
-  const gridKeys: string[] = []
-  let total = 0
-  for (const bl of blocks) {
-    if (bl.type === 'grid') {
-      if (gridKeys.includes(bl.key)) return `Hai bảng cùng mã "${bl.key}"`
-      gridKeys.push(bl.key)
-      if (new Set(bl.cols.map(c => c.key)).size !== bl.cols.length) return `Bảng "${bl.title}" có cột trùng mã`
-      if (new Set(bl.cells.map(c => c.key)).size !== bl.cells.length) return `Bảng "${bl.title}" có ô trùng mã`
-      total += bl.rows * bl.cols.length * bl.cells.length
-      continue
-    }
-    for (const f of bl.fields) {
-      if (keys.has(f.key)) return `Mã ô "${f.key}" bị trùng`
-      keys.add(f.key)
-      if (f.kind !== 'num' && (f.min != null || f.max != null)) return `Ô "${f.label}" không phải ô số — không đặt ngưỡng được`
-      if (f.min != null && f.max != null && f.min > f.max) return `Ô "${f.label}": ngưỡng dưới lớn hơn ngưỡng trên`
-      total++
-    }
-  }
-  for (const k of keys) if (gridKeys.some(g => k.startsWith(`${g}_`))) return `Mã ô "${k}" trùng tiền tố với bảng — đổi tên ô`
-  if (total > 300) return `Phiếu có ${total} ô — tối đa 300 ô (bảng tính số lần × cột × ô)`
-  return null
-}
+/** luật hình dạng chung với FE `blocksError` — utils/processBlocks.ts (mirror test) */
+export { processBlocksError }
 // GET /wms/production/process-forms — mọi mẫu phiếu (kể cả đã ngưng dùng — trang mẻ tự lọc)
 export async function listProcessForms(_req: Request, res: Response) {
   try {

@@ -58,6 +58,14 @@ export function shortKey(label: string, used: Set<string>): string {
   while (used.has(k)) k = `${base}${i++}`
   return k
 }
+/** Mã cho bảng theo dõi MỚI: bang, bang2, bang3… — không trùng bảng khác và không là tiền tố của mã ô nào (luật BE processBlocksError) */
+export function gridKeyFor(blocks: FormBlock[]): string {
+  const used = usedKeys(blocks)
+  const clash = (k: string) => used.has(k) || [...used].some(u => u.startsWith(`${k}_`))
+  let i = 1, k = 'bang'
+  while (clash(k)) k = `bang${++i}`
+  return k
+}
 /** Mọi mã ô "thường" + tiền tố bảng đang dùng trong phiếu — để sinh mã mới không đụng */
 export function usedKeys(blocks: FormBlock[]): Set<string> {
   const s = new Set<string>()
@@ -65,7 +73,8 @@ export function usedKeys(blocks: FormBlock[]): Set<string> {
   return s
 }
 
-/** Lỗi của bộ khối ô (cùng luật BE processBlocksError) — '' = hợp lệ */
+/** Lỗi của bộ khối ô — MIRROR của BE `utils/processBlocks.ts` processBlocksError (test backend/tests/mirror/processBlocks.mirror.test.ts);
+ *  thêm vài luật chỉ FE cần (tên trống, khối rỗng — BE chặn bằng zod). '' = hợp lệ */
 export function blocksError(blocks: FormBlock[]): string {
   if (!blocks.length) return 'Phiếu phải có ít nhất một khối ô'
   const keys = new Set<string>(); const grids: string[] = []
@@ -74,6 +83,8 @@ export function blocksError(blocks: FormBlock[]): string {
     if (b.type === 'grid') {
       if (grids.includes(b.key)) return `Hai bảng cùng mã "${b.key}"`
       grids.push(b.key)
+      if (new Set(b.cols.map(c => c.key)).size !== b.cols.length) return `Bảng "${b.title}" có cột trùng mã`
+      if (new Set(b.cells.map(c => c.key)).size !== b.cells.length) return `Bảng "${b.title}" có ô trùng mã`
       if (!b.cols.length || !b.cells.length) return `Bảng "${b.title}" phải có ít nhất một cột và một ô`
       if (b.cols.some(c => !c.label.trim()) || b.cells.some(c => !c.label.trim())) return `Bảng "${b.title}" có cột / ô chưa đặt tên`
       continue
@@ -83,9 +94,11 @@ export function blocksError(blocks: FormBlock[]): string {
       if (!f.label.trim()) return `Nhóm "${b.title}" có ô chưa đặt tên`
       if (keys.has(f.key)) return `Mã ô "${f.key}" bị trùng`
       keys.add(f.key)
+      if (f.kind !== 'num' && (f.min != null || f.max != null)) return `Ô "${f.label}" không phải ô số — không đặt ngưỡng được`
       if (f.min != null && f.max != null && f.min > f.max) return `Ô "${f.label}": ngưỡng dưới lớn hơn ngưỡng trên`
     }
   }
+  for (const k of keys) if (grids.some(g => k.startsWith(`${g}_`))) return `Mã ô "${k}" trùng tiền tố với bảng — đổi tên ô`
   const n = blockCellCount(blocks)
   if (n > MAX_CELLS) return `Phiếu có ${n} ô — tối đa ${MAX_CELLS} (bảng tính số lần × cột × ô)`
   return ''

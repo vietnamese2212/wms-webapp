@@ -10,7 +10,7 @@ import { Label } from '@/components/ui/label'
 import { useDebouncedValue } from '@/hooks/useDebouncedValue'
 import { useGlobalScopeStore } from '@/stores/globalScopeStore'
 import { useMaterials, useMaterialsByIds, useMachines } from '@/api/hooks'
-import { useProductionWarehouses, useNextBatchCode, useCreateBatch, useUpdateBatch, type BatchDetail } from '@/api/productionHooks'
+import { useProductionWarehouses, useNextBatchCode, useCreateBatch, useUpdateBatch, useShiftNames, defaultKitchen, type BatchDetail } from '@/api/productionHooks'
 import { unitLabel } from '@/utils/qtyUnits'
 import { parseVnNumber, vnNumberInput } from '@/utils/vnNumber'
 
@@ -40,6 +40,7 @@ export function BatchFormSheet({ open, onClose, batch, template, onSaved }: {
   const [note, setNote] = useState('')
   const [err, setErr] = useState('')
   const create = useCreateBatch()
+  const shiftNames = useShiftNames(shift || null)
   const update = useUpdateBatch()
 
   useEffect(() => {
@@ -53,10 +54,7 @@ export function BatchFormSheet({ open, onClose, batch, template, onSaved }: {
       setShift(template.shift ?? ''); setCycle(template.cycle ?? ''); setPlanned(vnNumberInput(template.planned_qty)); setCode(''); setNote('')
     } else {
       // bối cảnh Kho toàn cục: là kho chế biến thì lấy luôn; là kho nhà máy có đúng MỘT kho chế biến thì lấy kho đó
-      const g = useGlobalScopeStore.getState().warehouseId
-      const direct = kitchens.find(k => k.id === g)
-      const under = kitchens.filter(k => k.parent_warehouse_id === g)
-      setWh(direct?.id ?? (under.length === 1 ? under[0].id : kitchens.length === 1 ? kitchens[0].id : ''))
+      setWh(defaultKitchen(kitchens, useGlobalScopeStore.getState().warehouseId, true))
       setMat(''); setDate(todayVN()); setMachine(''); setShift(''); setCycle(''); setPlanned(''); setCode(''); setNote('')
     }
   }, [open]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -124,7 +122,9 @@ export function BatchFormSheet({ open, onClose, batch, template, onSaved }: {
           </div>
           <div>
             <Label className="text-xs">Ca</Label>
-            <Input value={shift} onChange={e => setShift(e.target.value)} maxLength={40} placeholder="Tuỳ chọn" className="h-8 text-xs mt-0.5" />
+            {/* cùng danh mục ca với báo cáo ca + Sổ đóng gói — một ca một nhãn */}
+            <SingleSelect value={shift || '__none__'} onChange={v => setShift(v === '__none__' ? '' : v)} searchable={false} triggerClassName="h-8 text-xs mt-0.5"
+              options={[{ value: '__none__', label: 'Không ghi' }, ...shiftNames.map(s => ({ value: s, label: s }))]} />
           </div>
           <div>
             <Label className="text-xs">Chu kỳ</Label>

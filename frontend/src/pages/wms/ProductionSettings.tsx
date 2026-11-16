@@ -16,7 +16,7 @@ import { useAuthStore } from '@/stores/authStore'
 import { useGlobalScopeStore } from '@/stores/globalScopeStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { useMaterials } from '@/api/hooks'
-import { useProductionWarehouses, useProductionSettings, useSaveProductionSettings, type ProductionSettings as Settings } from '@/api/productionHooks'
+import { useProductionWarehouses, useProductionSettings, useSaveProductionSettings, defaultKitchen, type ProductionSettings as Settings } from '@/api/productionHooks'
 import { useMobileTabs } from '@/hooks/useMobileSurface'
 import { ProcessFormSettings } from '@/components/wms/production/ProcessFormSettings'
 import { unitLabel } from '@/utils/qtyUnits'
@@ -37,7 +37,7 @@ export default function ProductionSettings() {
   const canConfigure = can(perms, 'production', 'configure')
   const { data: { kitchens } } = useProductionWarehouses()
   const [whPick, setWhPick] = useState(() => useGlobalScopeStore.getState().warehouseId ?? '')
-  const wh = kitchens.some(k => k.id === whPick) ? whPick : kitchens[0]?.id ?? ''
+  const wh = kitchens.some(k => k.id === whPick) ? whPick : defaultKitchen(kitchens, whPick)
   const q = useProductionSettings(wh || undefined)
   const save = useSaveProductionSettings()
   const [err, setErr] = useState('')

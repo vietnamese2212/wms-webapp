@@ -109,7 +109,7 @@ export default function ProductionTanks() {
                     <TableCell className={`${TD} sticky right-0 z-10 bg-white text-center`}>
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
-                          <button type="button" className="inline-flex items-center justify-center px-1.5 py-1 rounded text-slate-500 hover:bg-slate-100" title="Thao tác bồn"><MoreVertical className="h-3.5 w-3.5" /></button>
+                          <button type="button" className="touch-target inline-flex items-center justify-center px-1.5 py-1 rounded text-slate-500 hover:bg-slate-100" title="Thao tác bồn" aria-label={`Thao tác bồn ${t.code}`}><MoreVertical className="h-3.5 w-3.5" /></button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end" className="text-xs">
                           {canOps && t.is_active && <DropdownMenuItem onSelect={() => setOp({ tank: t, op: 'FILL' })}><ArrowDownToLine className="h-3.5 w-3.5 mr-2" />Nạp từ mẻ</DropdownMenuItem>}
@@ -130,7 +130,8 @@ export default function ProductionTanks() {
         <ListFooter page={1} pageSize={Math.max(tanks.length, 1)} total={tanks.length} unit="bồn" options={[]} onPageSize={() => {}} />
       </div>
       <TankFormSheet open={form.open} onClose={() => setForm({ open: false, tank: null })} tank={form.tank} defaultWarehouseId={f.warehouseId} />
-      <TankOpSheet open={!!op} onClose={() => setOp(null)} tank={op?.tank ?? null} op={op?.op ?? 'FILL'} />
+      {/* bồn lấy lại từ danh sách đang sống (realtime) — người khác vừa rút / nạp thì form tính chỗ trống theo số mới */}
+      <TankOpSheet open={!!op} onClose={() => setOp(null)} tank={op?.tank ? tanks.find(t => t.id === op.tank!.id) ?? op.tank : null} op={op?.op ?? 'FILL'} />
       <TankMovesSheet open={!!moves} onClose={() => setMoves(null)} tank={moves} />
     </div>
   )

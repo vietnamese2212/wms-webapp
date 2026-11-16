@@ -3,7 +3,7 @@
 // "Sửa cấu trúc". Bản sửa riêng lưu cùng phiếu (batch_process_log.blocks), mẫu chung không đổi; "Về theo mẫu chung" bỏ bản sửa riêng.
 // Ô giờ có nút điền giờ hiện tại; ô số vượt ngưỡng tô đỏ nhưng VẪN lưu được — phiếu ghi đúng thực tế.
 // QA xác nhận ⇒ phiếu khoá (và chụp mẫu đang áp vào phiếu); QA bỏ xác nhận thì sửa lại được.
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { AxiosError } from 'axios'
 import * as XLSX from 'xlsx'
 import { Clock, ShieldCheck, FileDown, Plus, Wrench, Undo2, Check, X } from 'lucide-react'
@@ -155,6 +155,10 @@ export function ProcessLogSheet({ open, onClose, batch, def, canWrite, canConfir
   const [draft, setDraft] = useState<FormBlock[] | null | undefined>(undefined)
   const [mode, setMode] = useState<'fill' | 'structure'>('fill')
   const [err, setErr] = useState('')
+  const [notice, setNotice] = useState('')
+  // giá trị đã nạp lần trước (để biết ô nào NGƯỜI KHÁC vừa đổi) + cờ "lần tải lại này do chính mình lưu"
+  const baseRef = useRef<{ sheet: string; vals: Record<string, string>; open: boolean }>({ sheet: '', vals: {}, open: false })
+  const selfSave = useRef(false)
   const [ask, confirmNode] = useConfirmDialog()
   const save = useSaveProcessLog()
   const confirm = useConfirmProcessLog()
@@ -165,7 +169,7 @@ export function ProcessLogSheet({ open, onClose, batch, def, canWrite, canConfir
   const lockedKeys = useMemo(() => new Set([...blockKeys(savedBlocks ?? def.blocks), ...Object.keys(log?.data ?? {})]), [savedBlocks, def.blocks, log?.data])
 
   useEffect(() => {
-    if (!open) return
+    if (!open) { baseRef.current.open = false; return }
     const base: Record<string, string> = { ...(log?.data ?? {}) }
     if (!log) {   // phiếu mới: điền sẵn những gì mẻ đã biết (ô khai "điền sẵn" ở mẫu)
       for (const b of def.blocks) if (b.type === 'fields') for (const f of b.fields) {
@@ -173,7 +177,22 @@ export function ProcessLogSheet({ open, onClose, batch, def, canWrite, canConfir
         if (f.prefill === 'planned_qty' && batch.planned_qty != null) base[f.key] = fmt(batch.planned_qty)
       }
     }
-    setV(base); setDraft(undefined); setMode('fill'); setErr('')
+    // Người khác lưu / QA xác nhận ⇒ phiếu tải lại. Đang gõ dở thì KHÔNG xoá trắng: nạp các ô họ đổi, giữ ô mình đang gõ.
+    const prev = baseRef.current
+    const sheet = `${batch.id}|${form}`
+    const keep = prev.open && prev.sheet === sheet && !selfSave.current && !locked
+    const localDirty = keep && (draft !== undefined
+      || [...new Set([...Object.keys(v), ...Object.keys(prev.vals)])].some(k => (v[k] ?? '').trim() !== (prev.vals[k] ?? '').trim()))
+    if (localDirty) {
+      setV(cur => {
+        const next = { ...cur }
+        for (const k of new Set([...Object.keys(base), ...Object.keys(prev.vals)])) if ((base[k] ?? '') !== (prev.vals[k] ?? '')) next[k] = base[k] ?? ''
+        return next
+      })
+      setNotice(`Phiếu vừa được ${log?.updated_by_name ?? 'người khác'} lưu — đã nạp các ô họ đổi, ô bạn đang gõ giữ nguyên. Bấm Lưu để ghi phần của bạn.`)
+    } else { setV(base); setDraft(undefined); setMode('fill'); setErr(''); setNotice('') }
+    selfSave.current = false
+    baseRef.current = { sheet, vals: base, open: true }
   }, [open, form, stamp]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const set = (k: string, val: string) => setV(s => ({ ...s, [k]: val }))
@@ -202,9 +221,10 @@ export function ProcessLogSheet({ open, onClose, batch, def, canWrite, canConfir
     setErr('')
     if (structErr) { setErr(structErr); throw new Error(structErr) }
     try {
+      selfSave.current = true
       await save.mutateAsync({ batchId: batch.id, form, data: v, ...(structDirty ? { blocks: draft ?? null } : {}) })
-      setMode('fill')
-    } catch (e) { setErr(apiMsg(e)); throw e }
+      setMode('fill'); setNotice('')
+    } catch (e) { selfSave.current = false; setErr(apiMsg(e)); throw e }
   }
   async function doConfirm(next: boolean) {
     setErr('')
@@ -250,6 +270,7 @@ export function ProcessLogSheet({ open, onClose, batch, def, canWrite, canConfir
         {editable && <Button size="sm" className="h-8" disabled={!dirty || busy || !!structErr} onClick={() => { void doSave().catch(() => {}) }}>{save.isPending ? 'Đang lưu…' : 'Lưu phiếu'}</Button>}
       </>}>
       <div className="space-y-3">
+        {notice && <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-800">{notice}</div>}
         {err && <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700">{err}</div>}
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-600">
           {locked ? <StatusBadge tone="green">QA đã xác nhận</StatusBadge> : log ? <StatusBadge tone="amber">Chưa xác nhận</StatusBadge> : <StatusBadge tone="slate">Chưa ghi</StatusBadge>}

@@ -2,7 +2,7 @@
 // Một báo cáo = MỘT CA của một kho chế biến. Mọi con số tự ra từ các lần cấp nguyên liệu cho mẻ; người chỉ nhập TỒN CUỐI THỰC TẾ rồi CHỐT ca.
 // Cột đúng thứ tự tờ giấy: Tồn đầu thực tế · Nhập · dùng theo TỪNG MẺ (BTP / chu kỳ / mẻ) · Tổng sử dụng · Tồn cuối thực tế · Tồn cuối sổ sách · Chênh lệch.
 // Máy tính = bảng; điện thoại = danh sách mỗi nguyên liệu một dòng có ô nhập số đếm.
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import type { AxiosError } from 'axios'
 import * as XLSX from 'xlsx'
@@ -22,7 +22,7 @@ import { useConfirmDialog } from '@/components/shared/ConfirmDialog'
 import { useAuthStore } from '@/stores/authStore'
 import { useGlobalScopeStore } from '@/stores/globalScopeStore'
 import { can, type ModulePermissions } from '@/config/permissions'
-import { useProductionWarehouses, useShiftReports, useShiftReport, useOpenShift, useSaveShift, type ShiftRow } from '@/api/productionHooks'
+import { useProductionWarehouses, useShiftReports, useShiftReport, useOpenShift, useSaveShift, useShiftNames, defaultKitchen, type ShiftRow } from '@/api/productionHooks'
 import { qtyLabel, unitLabel } from '@/utils/qtyUnits'
 import { parseVnNumber, vnNumberInput } from '@/utils/vnNumber'
 import { formatDate, formatDateTime } from '@/utils/formatters'
@@ -33,7 +33,6 @@ const TD = 'px-2 py-1 text-[10px] whitespace-nowrap'
 const NUM = `${TD} text-right font-semibold tabular-nums`
 const apiMsg = (e: unknown) => (e as AxiosError<{ error?: { message?: string } }>)?.response?.data?.error?.message ?? 'Lỗi không xác định'
 const todayVN = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
-const SHIFTS = ['Ca 1', 'Ca 2', 'Ca 3', 'Hành chính']
 const r3 = (n: number) => Math.round(n * 1000) / 1000
 const dash = <span className="text-slate-300 font-normal">—</span>
 
@@ -44,13 +43,14 @@ export default function ProductionUsageReport() {
   const canExport = can(perms, 'production', 'export')
   const { data: { kitchens } } = useProductionWarehouses()
   const [whPick, setWhPick] = useState(() => useGlobalScopeStore.getState().warehouseId ?? '')
-  const wh = kitchens.some(k => k.id === whPick) ? whPick : kitchens[0]?.id ?? ''
+  const wh = kitchens.some(k => k.id === whPick) ? whPick : defaultKitchen(kitchens, whPick)
   const listQ = useShiftReports(wh || undefined)
   const reports = listQ.data ?? []
   const [pick, setPick] = useState('')
   const reportId = reports.some(r => r.id === pick) ? pick : (reports.find(r => r.status === 'OPEN') ?? reports[0])?.id ?? ''
   const q = useShiftReport(reportId || undefined)
-  const data = q.data
+  // chỉ dùng số của ĐÚNG báo cáo đang chọn — đổi kho / đổi ca mà còn hiện bảng cũ thì nút Chốt ca bấm vào báo cáo của kho khác
+  const data = q.data && q.data.report.id === reportId ? q.data : undefined
   const rep = data?.report
   const isOpen = rep?.status === 'OPEN'
   const editable = isOpen && canWrite
@@ -63,9 +63,17 @@ export default function ProductionUsageReport() {
   const [openForm, setOpenForm] = useState(false)
 
   // BẢN NHÁP số đếm — material_id → chuỗi đang gõ
+  // Tải lại (realtime, người khác lưu) chỉ ghi đè ô mà SỐ TRÊN SERVER vừa đổi — ô đang gõ dở của mình giữ nguyên.
   const [draft, setDraft] = useState<Record<string, string>>({})
+  const serverRef = useRef<{ id: string; vals: Record<string, string> }>({ id: '', vals: {} })
   const stamp = rep ? `${rep.id}|${rows.map(r => `${r.material_id}:${r.actual ?? ''}`).join(',')}` : ''
-  useEffect(() => { setDraft(Object.fromEntries(rows.map(r => [r.material_id, vnNumberInput(r.actual)]))); setErr('') }, [stamp]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    const vals = Object.fromEntries(rows.map(r => [r.material_id, vnNumberInput(r.actual)]))
+    const prev = serverRef.current
+    if (!rep || prev.id !== rep.id) { setDraft(vals); setErr('') }
+    else setDraft(d => { const next = { ...d }; for (const [k, v] of Object.entries(vals)) if (!(k in d) || prev.vals[k] !== v) next[k] = v; return next })
+    serverRef.current = { id: rep?.id ?? '', vals }
+  }, [stamp]) // eslint-disable-line react-hooks/exhaustive-deps
   const parsed = (id: string): number | null | undefined => {   // undefined = gõ sai
     const t = (draft[id] ?? '').trim()
     if (!t) return null
@@ -85,7 +93,7 @@ export default function ProductionUsageReport() {
     if (close) {
       const missing = rows.length - counted
       const ans = await ask({
-        title: `Chốt ${rep.shift} ngày ${formatDate(rep.report_date)}?`,
+        title: `Chốt ${rep.shift} ngày ${formatDate(rep.report_date)} — ${kitchens.find(k => k.id === rep.warehouse_id)?.name ?? 'kho chế biến'}?`,
         body: `${missing > 0 ? `Còn ${missing} nguyên liệu CHƯA nhập tồn cuối thực tế — vẫn chốt được, các dòng đó để trống. ` : ''}Chốt xong báo cáo không sửa được nữa; ca sau lấy số đếm này làm tồn đầu.`,
         input: { label: 'Ghi chú giao ca (tuỳ chọn)', placeholder: 'VD: nguyên liệu đã cấp cho mẻ nào, còn chờ gì…' },
       })
@@ -156,7 +164,7 @@ export default function ProductionUsageReport() {
       <div className="flex flex-col flex-1 min-h-0 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm">
         <div className="border-b bg-white px-3 py-1.5 space-y-1 sm:py-2 shrink-0 sm:rounded-t-xl">
           <div className="flex items-center gap-1.5 flex-wrap xl:flex-nowrap">
-            <span className="hidden sm:inline text-sm font-semibold text-slate-700 shrink-0">Báo cáo sử dụng NVL</span>
+            <span className="hidden sm:inline text-sm font-semibold text-slate-700 shrink-0">Báo cáo sử dụng NVL{kitchens.length === 1 ? ` · ${kitchens[0].name}` : ''}</span>
             {kitchens.length > 1 && (
               <div className="w-40 sm:w-48 min-w-0 shrink">
                 <SingleSelect value={wh} onChange={v => { setWhPick(v); setPick('') }} triggerClassName="h-9 sm:h-7" placeholder="Kho chế biến" options={kitchens.map(k => ({ value: k.id, label: k.name }))} />
@@ -244,19 +252,21 @@ export default function ProductionUsageReport() {
 
 function OpenShiftSheet({ open, onClose, onOpen, busy }: { open: boolean; onClose: () => void; busy: boolean; onOpen: (date: string, shift: string) => Promise<void> }) {
   const [date, setDate] = useState(todayVN())
-  const [shift, setShift] = useState('Ca 1')
+  const shifts = useShiftNames()
+  const [shift, setShift] = useState('')
   const [err, setErr] = useState('')
   useEffect(() => { if (open) { setDate(todayVN()); setErr('') } }, [open])
+  const shiftVal = shifts.includes(shift) ? shift : shifts[0] ?? ''
   async function go() {
     setErr('')
-    try { await onOpen(date, shift); onClose() } catch (e) { setErr(apiMsg(e)) }
+    try { await onOpen(date, shiftVal); onClose() } catch (e) { setErr(apiMsg(e)) }
   }
   return (
     <FormSheet open={open} onClose={onClose} title="Mở báo cáo ca"
       description="Báo cáo tính từ lúc chốt ca trước tới lúc chốt ca này. Tồn đầu lấy theo số đếm của ca trước."
       footer={<>
         <Button variant="outline" size="sm" className="h-8" onClick={onClose}>Huỷ</Button>
-        <Button size="sm" className="h-8" disabled={busy || !date || !shift} onClick={() => void go()}>{busy ? 'Đang mở…' : 'Mở ca'}</Button>
+        <Button size="sm" className="h-8" disabled={busy || !date || !shiftVal} onClick={() => void go()}>{busy ? 'Đang mở…' : 'Mở ca'}</Button>
       </>}>
       <div className="space-y-3">
         {err && <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700">{err}</div>}
@@ -266,7 +276,7 @@ function OpenShiftSheet({ open, onClose, onOpen, busy }: { open: boolean; onClos
         </div>
         <div>
           <Label className="text-xs">Ca <span className="text-red-500">*</span></Label>
-          <SingleSelect value={shift} onChange={setShift} searchable={false} options={SHIFTS.map(s => ({ value: s, label: s }))} />
+          <SingleSelect value={shiftVal} onChange={setShift} searchable={false} options={shifts.map(s => ({ value: s, label: s }))} />
         </div>
       </div>
     </FormSheet>

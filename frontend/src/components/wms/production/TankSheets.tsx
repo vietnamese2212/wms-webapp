@@ -104,12 +104,12 @@ export function TankOpSheet({ open, onClose, tank, op, presetBatchId }: {
   useEffect(() => { if (open) { setBatchId(presetBatchId ?? ''); setToTank(''); setQty(op === 'ADJUST' && tank ? vnNumberInput(tank.content) : ''); setReason(''); setErr('') } }, [open]) // eslint-disable-line react-hooks/exhaustive-deps
   // mẻ nạp được: mẻ chưa huỷ, chưa bị QA loại, CÙNG kho, cùng đơn vị, cùng mã với hàng đang trong bồn (đúng luật BE — khỏi chọn rồi mới bị từ chối)
   const tankMat = tank?.lots[0]?.batch?.material?.material_code ?? null
-  const batches = useProductionBatches({ warehouse_id: open && op === 'FILL' ? tank?.warehouse_id : undefined, page: 1, pageSize: 200 })
+  const batches = useProductionBatches({ warehouse_id: tank?.warehouse_id, page: 1, pageSize: 200 }, open && op === 'FILL' && !!tank?.warehouse_id)
   const batchOpts = useMemo(() => (open && op === 'FILL' ? (batches.data?.rows ?? []) : [])
     .filter(b => b.status !== 'CANCELLED' && b.qa_status !== 'REJECTED' && b.warehouse_id === tank?.warehouse_id
       && (!tankMat || b.material_code === tankMat) && String(b.base_unit ?? '').toUpperCase() === tank?.unit)
     .map(b => ({ value: b.id, label: b.batch_code, sub: `${b.material_code} · ${b.prod_date}` })), [batches.data, open, op, tank?.warehouse_id, tank?.unit, tankMat])
-  const tanks = useProductionTanks(open && op === 'TRANSFER' ? tank?.warehouse_id : undefined).data ?? []
+  const tanks = useProductionTanks(tank?.warehouse_id, false, open && op === 'TRANSFER' && !!tank?.warehouse_id).data ?? []
   const targets = tanks.filter(t => t.id !== tank?.id && t.warehouse_id === tank?.warehouse_id && t.unit === tank?.unit)
   const qtyN = parseNum(qty)
   const needReason = op === 'ADJUST' || op === 'DISCARD'
@@ -218,7 +218,7 @@ export function BatchFillSheet({ open, onClose, batchId, batchCode, warehouseId,
 }) {
   const [tankId, setTankId] = useState(''); const [qty, setQty] = useState(''); const [err, setErr] = useState('')
   const fill = useTankFill()
-  const tanks = useProductionTanks(open ? warehouseId : undefined).data ?? []
+  const tanks = useProductionTanks(warehouseId, false, open && !!warehouseId).data ?? []
   useEffect(() => { if (open) { setTankId(''); setQty(suggestQty && suggestQty > 0 ? vnNumberInput(suggestQty) : ''); setErr('') } }, [open]) // eslint-disable-line react-hooks/exhaustive-deps
   const u = String(unit ?? '').toUpperCase()
   const usable = tanks.filter(t => t.warehouse_id === warehouseId && t.unit === u

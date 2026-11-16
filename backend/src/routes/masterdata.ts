@@ -121,7 +121,9 @@ router.delete('/manufacturers/:id',  requirePerm('materials', 'delete'), manufac
 
 // Material
 // external_do_sap.create: editor "Sửa DO" tra quy cách mã khi thêm dòng (cross-module — thiếu thì lookup 403 câm)
-router.get('/materials',            requireAnyPerm(['materials', 'view'], ['inbound', 'view'], ['inbound', 'create'], ['external_do_sap', 'create']), material.listMaterials)
+// production.open_batch / manage_recipe / configure (16/11): form Mở / Sửa mẻ, Sửa yêu cầu, Định mức, hạn lưu bồn ở Cài đặt MES tìm mã —
+// tổ trưởng chế biến chỉ có quyền Sản xuất bị 403, không chọn được mã bán thành phẩm (nghiệm thu bằng chức danh thật, gói 63 [14])
+router.get('/materials',            requireAnyPerm(['materials', 'view'], ['inbound', 'view'], ['inbound', 'create'], ['external_do_sap', 'create'], ['production', 'open_batch'], ['production', 'manage_recipe'], ['production', 'configure']), material.listMaterials)
 router.get('/materials/categories', requireAnyPerm(['materials', 'view'], ['inbound', 'view'], ['inbound', 'create']), material.listCategories)
 // Tổng SummaryBand trang danh mục Mã hàng (khai TRƯỚC '/materials/:id' để không bị nuốt)
 router.get('/materials/summary',    requirePerm('materials', 'view'),   material.listMaterialsSummary)

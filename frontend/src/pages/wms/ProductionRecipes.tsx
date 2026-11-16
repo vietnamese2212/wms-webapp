@@ -94,12 +94,15 @@ function RecipeSheet({ open, onClose, materialId, canManage, existing }: { open:
   const [err, setErr] = useState('')
   const save = useSaveRecipe()
   const rq = useRecipe(open ? (materialId ?? (mat || undefined)) : undefined)
-  const loaded = rq.data
-  useEffect(() => { if (open) { setMat(materialId ?? ''); setBase(''); setNote(''); setActive(true); setLines([]); setErr(''); setMatTerm('') } }, [open, materialId])
+  // chỉ dùng định mức của ĐÚNG mã đang chọn (đang tải mã mới thì chưa có)
+  const loaded = rq.data && rq.data.material_id === mat ? rq.data : null
+  // các ô đang hiện là định mức NẠP của mã nào — đổi sang mã khác thì bỏ, kẻo lưu định mức mã A dưới tên mã B
+  const [loadedFor, setLoadedFor] = useState('')
+  useEffect(() => { if (open) { setMat(materialId ?? ''); setBase(''); setNote(''); setActive(true); setLines([]); setErr(''); setMatTerm(''); setLoadedFor('') } }, [open, materialId])
   // mã đã có định mức ⇒ nạp lên để sửa (kể cả khi bấm "Khai định mức" rồi chọn trúng mã đã khai)
   useEffect(() => {
     if (!open || !loaded) return
-    setBase(vnNumberInput(loaded.base_qty)); setNote(loaded.note ?? ''); setActive(loaded.is_active)
+    setBase(vnNumberInput(loaded.base_qty)); setNote(loaded.note ?? ''); setActive(loaded.is_active); setLoadedFor(loaded.material_id)
     setLines(loaded.lines.map(l => toMatLine({ material_id: l.material_id, material_code: l.material?.material_code ?? '', material_name: l.material?.short_name ?? null, base_unit: l.material?.base_unit ?? null }, l.qty)))
   }, [open, loaded?.id, loaded?.updated_at]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -130,7 +133,7 @@ function RecipeSheet({ open, onClose, materialId, canManage, existing }: { open:
         {err && <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700">{err}</div>}
         <div>
           <Label className="text-xs">Mã bán thành phẩm <span className="text-red-500">*</span></Label>
-          <SingleSelect value={mat} onChange={setMat} disabled={!!materialId || !canManage} serverSearch onSearchChange={setMatTerm} loading={isFetching}
+          <SingleSelect value={mat} onChange={v => { setMat(v); if (loadedFor && loadedFor !== v) { setBase(''); setNote(''); setActive(true); setLines([]); setLoadedFor('') } }} disabled={!!materialId || !canManage} serverSearch onSearchChange={setMatTerm} loading={isFetching}
             selectedLabel={selMat?.material_code ?? loaded?.material?.material_code} placeholder="Tìm mã hoặc tên (chỉ mã tính L / KG)" options={matOpts} />
           {!materialId && loaded && <p className="text-[11px] text-amber-700 mt-1">Mã này đã có định mức — đang sửa định mức đó.</p>}
         </div>

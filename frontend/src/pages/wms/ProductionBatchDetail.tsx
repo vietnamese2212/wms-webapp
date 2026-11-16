@@ -55,7 +55,14 @@ const MOVE_COLS: RtColDef[] = [
   { id: 'qty', label: 'Lượng', w: 100, align: 'right' }, { id: 'by', label: 'Người', w: 130 }, { id: 'note', label: 'Lý do / cảnh báo', w: 260 },
 ]
 
-export default function ProductionBatchDetail() {
+/** Gắn key theo id: "Mở mẻ giống" chuyển từ mẻ này sang mẻ mới trên CÙNG route — không dựng lại thì form Rút NVL không tự mở
+ *  và trạng thái (lỗi, dòng đang cấp) của mẻ cũ dính sang mẻ mới. */
+export default function ProductionBatchDetailPage() {
+  const { id } = useParams<{ id: string }>()
+  return <ProductionBatchDetail key={id} />
+}
+
+function ProductionBatchDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const perms = useAuthStore(s => s.user)?.module_permissions as ModulePermissions | null ?? null
@@ -72,6 +79,8 @@ export default function ProductionBatchDetail() {
   const [consumeOpen, setConsumeOpen] = useState(fromCreate && can(perms, 'production', 'consume'))
   useEffect(() => { if (fromCreate) navigate(loc.pathname, { replace: true, state: null }) }, []) // eslint-disable-line react-hooks/exhaustive-deps -- gỡ cờ một lần: tải lại trang không bật lại form
   const [focusId, setFocusId] = useState<string | null>(null)
+  // bàn không nghe sổ tồn của cả app (quá nhiều sự kiện) ⇒ dòng "kho hết" vẫn bấm được: tải lại bàn rồi mở form — form tra tồn sống
+  const openConsume = (materialId: string, stale: boolean) => { if (stale) void q.refetch(); setFocusId(materialId); setConsumeOpen(true) }
   const [reqOpen, setReqOpen] = useState(false)
   const [logForm, setLogForm] = useState<string | null>(null)
   const { data: processForms = [] } = useProcessForms()
@@ -223,8 +232,8 @@ export default function ProductionBatchDetail() {
                     </p>
                   </div>
                   {canConsume && (
-                    <button type="button" disabled={noStock} onClick={() => { setFocusId(r.material_id); setConsumeOpen(true) }}
-                      className="touch-target shrink-0 inline-flex items-center gap-1 rounded border border-blue-200 bg-blue-50 px-2.5 py-1.5 text-xs text-blue-700 disabled:opacity-40">
+                    <button type="button" onClick={() => openConsume(r.material_id, noStock)}
+                      className={`touch-target shrink-0 inline-flex items-center gap-1 rounded border border-blue-200 bg-blue-50 px-2.5 py-1.5 text-xs text-blue-700 ${noStock ? 'opacity-60' : ''}`}>
                       {byScan ? <ScanIcon className="h-4 w-4" /> : <Plus className="h-4 w-4" />}Cấp
                     </button>
                   )}
@@ -259,9 +268,9 @@ export default function ProductionBatchDetail() {
                     <TableCell className={TD}>{extra ? <StatusBadge tone="slate">Ngoài yêu cầu</StatusBadge> : over ? <StatusBadge tone="red">Vượt yêu cầu</StatusBadge> : done ? <StatusBadge tone="green">Đủ</StatusBadge> : started ? <StatusBadge tone="amber">Đang cấp</StatusBadge> : <StatusBadge tone="slate">Chưa cấp</StatusBadge>}</TableCell>
                     <TableCell className={`${TD} sticky right-0 z-10 bg-white text-right`}>
                       {canConsume && (
-                        <button type="button" disabled={noStock} onClick={() => { setFocusId(r.material_id); setConsumeOpen(true) }}
-                          className="touch-target inline-flex items-center gap-1 rounded border border-blue-200 bg-blue-50 px-2 py-1 text-blue-700 hover:bg-blue-100 disabled:opacity-40 disabled:cursor-not-allowed"
-                          title={noStock ? 'Kho chế biến hết mã này' : byScan ? 'Quét tem để cấp nguyên liệu này' : 'Chọn lô để cấp nguyên liệu này (hàng không có tem)'}>
+                        <button type="button" onClick={() => openConsume(r.material_id, noStock)}
+                          className={`touch-target inline-flex items-center gap-1 rounded border border-blue-200 bg-blue-50 px-2 py-1 text-blue-700 hover:bg-blue-100 ${noStock ? 'opacity-60' : ''}`}
+                          title={noStock ? 'Lần tải trước kho chế biến hết mã này — bấm để kiểm lại (hàng vừa chuyển sang vẫn cấp được)' : byScan ? 'Quét tem để cấp nguyên liệu này' : 'Chọn lô để cấp nguyên liệu này (hàng không có tem)'}>
                           {byScan ? <ScanIcon className="h-3.5 w-3.5" /> : <Plus className="h-3.5 w-3.5" />}Cấp
                         </button>
                       )}
@@ -322,7 +331,7 @@ export default function ProductionBatchDetail() {
                     <TableCell className={`${TD} sticky right-0 z-10 bg-white text-right`}>
                       {canReverse && !gone && (
                         <button type="button" onClick={e => { e.stopPropagation(); void doReverse(c.id, `${c.pallet_code} (${qtyLabel(Number(c.qty), c.material)})`) }}
-                          className="px-1.5 py-1 rounded text-slate-500 hover:text-red-600 hover:bg-red-50" title="Huỷ dòng rút ghi nhầm (hoàn tồn)">
+                          className="touch-target px-1.5 py-1 rounded text-slate-500 hover:text-red-600 hover:bg-red-50" title="Huỷ dòng rút ghi nhầm (hoàn tồn)">
                           <Undo2 className="h-3.5 w-3.5" />
                         </button>
                       )}

@@ -8464,7 +8464,11 @@ export function useClosePackingRun() {
     // tank_qty (MES 14/11): lượng bán thành phẩm đã rút từ bồn của trang — BE đóng trang + rút bồn trong MỘT giao dịch
     mutationFn: ({ id, end_at, tank_qty }: { id: string; end_at?: string | null; tank_qty?: number | null }) =>
       apiClient.post(`/wms/packing-runs/${id}/close`, { end_at, tank_qty }).then(r => r.data.data as PackingRun & { tank_warnings?: string[] }),
-    onSettled: () => invalidatePacking(qc),
+    // đóng trang có khai lượng rút ⇒ bồn + mẻ đổi trong cùng giao dịch — cùng bộ khoá với Sửa lượng rút (không trông vào realtime)
+    onSettled: () => {
+      invalidatePacking(qc)
+      for (const k of [['prod-tanks'], ['prod-tank-moves'], ['prod-batch'], ['prod-batches'], ['prod-genealogy']]) void qc.invalidateQueries({ queryKey: k })
+    },
   })
 }
 /** Sửa / khai bù TỔNG lượng một trang ĐÃ ĐÓNG rút từ bồn (14/11 tối) — BE ghi thêm vào sổ bồn, không sửa dòng cũ. */

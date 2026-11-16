@@ -25,6 +25,12 @@ const apiMsg = (e: unknown) => (e as AxiosError<{ error?: { message?: string } }
 const avail = (e: ScanEntry) => Number(e.cartons_remaining ?? e.cartons_imported ?? 0) - Number(e.cartons_reserved ?? 0)
 const dayOf = (s: string | null | undefined) => (s ? String(s).slice(0, 10) : null)
 const r3 = (n: number) => Math.round(n * 1000) / 1000
+/** cùng luật qa_is_hold (BE): có trạng thái QA mà không phải OK = đang giữ */
+const qaHold = (e: ScanEntry) => !!(e.qa_status_id || e.qa_status) && e.qa_status?.code !== 'OK'
+/** lượng điền sẵn = phần còn thiếu, không vượt `cap`; mã có đơn vị nhập (bao / thùng) phải số nguyên đơn vị gốc ⇒ làm tròn LÊN
+ *  (định mức × kế hoạch hay ra số lẻ — điền số lẻ là form mở ra đã báo lỗi, nút Xác nhận tắt) */
+const prefill = (need: number, cap: number, mat: MatUnits | null | undefined) =>
+  need <= 0 ? 0 : Math.min(qtyIntegerError(need, mat ?? null) ? Math.ceil(need - 1e-9) : need, cap)
 
 export function ConsumeSheet({ open, onClose, batch, focusId }: {
   open: boolean; onClose: () => void; batch: BatchDetail
@@ -48,6 +54,7 @@ export function ConsumeSheet({ open, onClose, batch, focusId }: {
   const consumeLot = useConsumeLot()
 
   const focus = focusId ? batch.board.find(r => r.material_id === focusId) ?? null : null
+  const boardMat = (materialId: string | undefined) => batch.board.find(x => x.material_id === materialId) ?? null
   /** phần còn thiếu của một mã theo yêu cầu của mẻ (0 = đủ / không có yêu cầu) */
   const needOf = (materialId: string | undefined) => {
     const r = batch.board.find(x => x.material_id === materialId)
@@ -70,18 +77,18 @@ export function ConsumeSheet({ open, onClose, batch, focusId }: {
     try {
       const e = await scanCheck(batch.id, c)
       if (focus && e.material_id !== focus.material_id) {
-        setErr(`Tem này là mã ${e.material?.material_code ?? ''} — đang cấp ${focus.material_code}. Quét đúng tem, hoặc đóng form rồi bấm "Rút NVL" để cấp mã khác.`)
+        setErr(`Tem này là mã ${e.material?.material_code ?? ''} — đang cấp ${focus.material_code}. Quét đúng tem, hoặc đóng form rồi bấm "Quét cấp NVL" ở đầu bàn để cấp mã khác.`)
         return
       }
       setEntry(e)
-      const need = needOf(e.material_id)
-      setQty(need > 0 ? Math.min(need, avail(e)) : 0)   // điền sẵn phần còn thiếu (không vượt lượng trên tem)
+      setQty(qaHold(e) ? 0 : prefill(needOf(e.material_id), avail(e), e.material ?? boardMat(e.material_id)))   // điền sẵn phần còn thiếu (không vượt lượng trên tem)
     }
     catch (e) { setErr(apiMsg(e)) }
     finally { setLooking(false) }
   }
-  // Súng PDA: chỉ nghe khi đang CHỜ quét (chưa có tem trên màn) — có tem rồi thì cò súng không được ghi đè số đang nhập
-  useWedgeScanner(c => { void lookup(c) }, open && mode === 'SCAN' && !entry && !camOpen, { exclusive: true })
+  // Súng PDA nghe suốt lúc ở chế độ quét, KỂ CẢ khi đang hiện một tem: thấy nhắc "còn lô HSD sớm hơn" thì bắn ngay tem đúng là thay.
+  // Bắn trúng lúc con trỏ ở ô lượng: máy đọc trả lại số trong ô rồi mới phát mã (useWedgeScanner) — số đang nhập không bị chuỗi tem phá.
+  useWedgeScanner(c => { void lookup(c) }, open && mode === 'SCAN' && !camOpen && !consumeScan.isPending, { exclusive: true })
 
   // FEFO: cùng mã còn lô HSD sớm hơn tem vừa quét ⇒ nhắc (không chặn — user chốt 14/11 "nhắc thôi")
   const scanLots = useProductionStock(entry ? batch.warehouse_id : undefined, entry?.material_id).data?.lots ?? []
@@ -103,11 +110,12 @@ export function ConsumeSheet({ open, onClose, batch, focusId }: {
   const focusMat = focus && focus.material_id === matId ? focus : null
   const lotMat: (MatUnits & { material_code: string }) | null = selMat ?? focusMat ?? matMemo
   useEffect(() => { setLotKey(''); setQty(0) }, [matId])
+  // chọn sẵn lô HSD sớm nhất còn cấp được — chạy lại cả khi lô đang chọn bị bỏ (mở lại form cùng mã: danh sách lô không đổi tham chiếu)
   useEffect(() => {
     if (!lots.length || lots.some(l => keyOf(l) === lotKey && free(l) > 0)) return
     const first = lots.find(l => free(l) > 0)
-    if (first) { setLotKey(keyOf(first)); const need = needOf(matId); setQty(need > 0 ? Math.min(need, free(first)) : 0) }
-  }, [lots]) // eslint-disable-line react-hooks/exhaustive-deps
+    if (first) { setLotKey(keyOf(first)); setQty(prefill(needOf(matId), free(first), boardMat(matId) ?? lotMat)) }
+  }, [lots, lotKey]) // eslint-disable-line react-hooks/exhaustive-deps
   const firstFree = lots.find(l => free(l) > 0)
   const lotNotFirst = !!lot && !!firstFree && keyOf(lot) !== keyOf(firstFree)
 
@@ -116,7 +124,8 @@ export function ConsumeSheet({ open, onClose, batch, focusId }: {
   const intErr = qty > 0 ? qtyIntegerError(qty, mat) : null
   const over = qty > max + 1e-9
   const saving = consumeScan.isPending || consumeLot.isPending
-  const canSave = qty > 0 && !over && !intErr && !saving && (mode === 'SCAN' ? !!entry : !!lot && free(lot) > 0)
+  const held = mode === 'SCAN' && !!entry && qaHold(entry)
+  const canSave = qty > 0 && !over && !intErr && !saving && !held && (mode === 'SCAN' ? !!entry : !!lot && free(lot) > 0)
   const unitText = (n: number) => qtyLabel(n, mat)
 
   async function submit() {
@@ -129,7 +138,7 @@ export function ConsumeSheet({ open, onClose, batch, focusId }: {
         reset()
         setTimeout(() => inputRef.current?.focus(), 50)
       } else if (lot && matId) {
-        const r = await consumeLot.mutateAsync({ batchId: batch.id, material_id: matId, production_date: dayOf(lot.production_date), batch_lot: lot.batch_lot, qty })
+        const r = await consumeLot.mutateAsync({ batchId: batch.id, material_id: matId, production_date: dayOf(lot.production_date), batch_lot: lot.batch_lot?.trim() || null, qty })
         setDone(`Đã cấp ${unitText(qty)} ${lotMat?.material_code ?? ''} theo lô ${lot.batch_lot ?? formatDate(dayOf(lot.production_date) ?? '')} — trừ ${r.rows.length} dòng tồn (HSD sớm trước)`)
         setQty(0)
       }
@@ -160,7 +169,7 @@ export function ConsumeSheet({ open, onClose, batch, focusId }: {
         <div className="flex rounded-lg border overflow-hidden">
           {([['SCAN', 'Quét tem'], ['LOT', 'Không có tem']] as const).map(([k, label]) => (
             <button key={k} type="button" onClick={() => { setMode(k); reset(); if (k === 'LOT' && focus) setMatId(focus.material_id) }}
-              className={['flex-1 py-1.5 text-xs font-medium transition-colors', mode === k ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'].join(' ')}>{label}</button>
+              className={['touch-target flex-1 py-1.5 text-xs font-medium transition-colors', mode === k ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'].join(' ')}>{label}</button>
           ))}
         </div>
         {done && <div className="rounded-lg bg-green-50 border border-green-200 px-3 py-2 text-green-800">{done}</div>}
@@ -182,7 +191,7 @@ export function ConsumeSheet({ open, onClose, batch, focusId }: {
             <div className="rounded-lg border border-slate-200 p-2 space-y-1">
               <div className="flex items-center gap-1.5 flex-wrap">
                 <span className="font-mono font-semibold break-all">{entry.pallet_code}</span>
-                {entry.qa_status && entry.qa_status.code !== 'OK' && <StatusBadge tone="red">QA giữ</StatusBadge>}
+                {qaHold(entry) && <StatusBadge tone="red">QA giữ</StatusBadge>}
               </div>
               <div><span className="font-mono font-semibold">{entry.material?.material_code}</span> {entry.material?.short_name ?? ''}</div>
               <div className="text-slate-600">NSX {entry.production_date ? formatDate(String(entry.production_date).slice(0, 10)) : '—'}
@@ -191,7 +200,8 @@ export function ConsumeSheet({ open, onClose, batch, focusId }: {
               <div>Trên tem còn: <span className="font-semibold tabular-nums">{unitText(avail(entry))}</span>
                 {!focus && needOf(entry.material_id) > 0 && <> · mẻ còn thiếu <span className="font-semibold tabular-nums text-amber-700">{unitText(needOf(entry.material_id))}</span></>}</div>
               {offPlan && <div className="rounded bg-amber-50 border border-amber-200 px-2 py-1 text-amber-800">Mã này không có trong yêu cầu của mẻ — vẫn cấp được, sẽ hiện là "ngoài yêu cầu".</div>}
-              {earlier && <div className="rounded bg-amber-50 border border-amber-200 px-2 py-1 text-amber-800">Còn lô HSD sớm hơn ({formatDate(earlier.expiry_date ?? '')}{earlier.batch_lot ? ` · lô ${earlier.batch_lot}` : ''}) trong kho — nên dùng lô đó trước.</div>}
+              {held && <div className="rounded bg-red-50 border border-red-200 px-2 py-1 text-red-700">Tem đang bị QA giữ ({entry.qa_status?.name ?? entry.qa_status?.code ?? 'chưa duyệt'}) — không cấp được. Quét tem khác, hoặc nhờ QA đổi trạng thái.</div>}
+              {earlier && <div className="rounded bg-amber-50 border border-amber-200 px-2 py-1 text-amber-800">Còn lô HSD sớm hơn ({formatDate(earlier.expiry_date ?? '')}{earlier.batch_lot ? ` · lô ${earlier.batch_lot}` : ''}) trong kho — nên dùng lô đó trước. Bắn tem lô đó là thay.</div>}
             </div>
           )}
         </>)}
@@ -223,7 +233,7 @@ export function ConsumeSheet({ open, onClose, batch, focusId }: {
                       const f = free(l)
                       return (
                         <tr key={k} className={`border-t border-slate-100 ${f > 0 ? 'cursor-pointer' : 'text-slate-400'} ${k === lotKey ? 'bg-sky-50' : ''}`}
-                          onClick={() => { if (f > 0) { setLotKey(k); const need = needOf(matId); setQty(need > 0 ? Math.min(need, f) : 0) } }}>
+                          onClick={() => { if (f > 0) { setLotKey(k); setQty(prefill(needOf(matId), f, boardMat(matId) ?? lotMat)) } }}>
                           <td className="px-2 py-1.5"><input type="radio" readOnly disabled={f <= 0} checked={k === lotKey} className="h-3.5 w-3.5" /></td>
                           <td className="px-2 py-1.5 whitespace-nowrap tabular-nums">{l.production_date ? formatDate(dayOf(l.production_date)!) : '—'}</td>
                           <td className="px-2 py-1.5 whitespace-nowrap font-mono">{l.batch_lot ?? <span className="text-slate-300">—</span>}</td>
@@ -244,8 +254,9 @@ export function ConsumeSheet({ open, onClose, batch, focusId }: {
           )}
         </>)}
 
-        {(mode === 'SCAN' ? !!entry : !!lot && free(lot) > 0) && (
-          <div>
+        {(mode === 'SCAN' ? !!entry && !held : !!lot && free(lot) > 0) && (
+          // Enter ở ô lượng = Xác nhận cấp (vòng PDA: bắn tem → Enter). Enter của súng bị máy đọc chặn trước khi tới đây.
+          <div onKeyDown={e => { if (e.key === 'Enter' && canSave) { e.preventDefault(); void submit() } }}>
             <div className="flex items-center justify-between gap-2">
               <Label className="text-xs">Lượng cấp <span className="text-red-500">*</span></Label>
               {max > 0 && qty !== max && <button type="button" className="text-[11px] text-blue-600 hover:underline touch-target" onClick={() => setQty(max)}>Lấy hết ({unitText(max)})</button>}

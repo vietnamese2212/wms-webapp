@@ -5,7 +5,7 @@ description: DÙNG khi gặp bug / lỗi / hành vi sai mà chưa rõ nguyên nh
 
 # Debug có hệ thống — tìm nguyên nhân gốc
 
-Phỏng theo systematic-debugging. Nguyên tắc: **KHÔNG sửa khi chưa hiểu nguyên nhân.** Mỗi bước phải có bằng chứng, không suy diễn (CLAUDE.md #1).
+Phỏng theo systematic-debugging. Nguyên tắc: **KHÔNG sửa khi chưa hiểu nguyên nhân.** Mỗi bước phải có bằng chứng, không suy diễn.
 
 ## Bước 1 — Tái hiện & xác định triệu chứng
 - Triệu chứng CHÍNH XÁC là gì? (thông báo lỗi nguyên văn, số liệu sai cụ thể, bước nào trigger).
@@ -25,10 +25,10 @@ Thu hẹp dần "lỗi nằm ở đâu":
 - Kiểm chứng TRƯỚC khi sửa: query thêm / đọc thêm code / log tạm. Sai giả thuyết → quay lại bước 2, đừng cố sửa theo giả thuyết chưa chắc.
 
 ## Bước 4 — Sửa tối thiểu + verify
-- Sửa đúng nguyên nhân gốc, **phạm vi nhỏ nhất** (CLAUDE.md #3) — không "tiện tay" refactor vùng xung quanh.
+- Sửa đúng nguyên nhân gốc, **phạm vi nhỏ nhất** — không "tiện tay" refactor vùng xung quanh.
 - Chạy lại đúng kịch bản tái hiện ở bước 1 → xác nhận hết lỗi.
 - Tính năng đụng số liệu → chạy [[verify-feature]] (4 case realtime).
-- Nếu là lỗi dễ tái phát: cân nhắc ghi 1 dòng nguyên nhân vào memory/CLAUDE.md (nếu user muốn).
+- Ghi lỗi vào `docs/qa/BUG_CLASSES.md` (LẶP / MỚI) và thêm lưới máy ở tầng rẻ nhất bắt được nó (kiểu → test `backend/tests` → cổng tĩnh → gói QA). Không thêm luật vào CLAUDE.md.
 
 ## Cờ đỏ — đang debug sai cách
 - Sửa nhiều chỗ cùng lúc "cho chắc" → dừng, khoanh lại 1 nguyên nhân.

@@ -5,7 +5,7 @@ description: BẮT BUỘC chạy TRƯỚC khi báo "đã xong" cho bất kỳ t�
 
 # Verify Feature — kiểm chứng trước khi báo xong
 
-Hiện thực hóa CLAUDE.md mục #4 ("tiêu chí thành công verify được") + luật "Realtime & test bắt buộc". **Không claim "xong" nếu chưa qua các cổng dưới.** Báo cáo trung thực: pass/fail kèm bằng chứng; nếu skip bước nào, nói rõ skip.
+Hiện thực hóa mục "Nghiệm thu trước khi báo xong" của CLAUDE.md. **Không claim "xong" nếu chưa qua các cổng dưới.** Báo cáo trung thực: pass/fail kèm bằng chứng; nếu skip bước nào, nói rõ skip.
 
 ## Cổng 1 — Compile + test đơn vị (luôn luôn)
 - Sửa frontend: `cd frontend && npx tsc --noEmit && npm run build`.
@@ -25,9 +25,9 @@ Kiểm đủ: **1) Bắt đầu làm** (tạo mới → số liệu cập nhật
 Đọc code xác nhận: `onSettled/onSuccess` của mutation `invalidateQueries` đủ MỌI query key liên quan; `TABLE_QUERY_MAP` trong `realtimeEvents.ts` có query key mới ở bảng DB tương ứng; optimistic update có rollback khi lỗi.
 
 ## Cổng 4 — UI flow thật (Playwright MCP)
-- **Ưu tiên local dev**: nếu `localhost:5173` (FE) + `:4000` (BE) đang chạy thì test ở đó (an toàn, không đụng prod). Không chạy → hỏi user bật `npm run dev` hoặc cho phép test trên prod `wms-webapp.vercel.app` (lưu ý: thao tác ghi đụng DB production).
-- **Login**: đọc `frontend/.env` (gitignored) → `TEST_EMAIL` + `TEST_PASSWORD` (hiện là tài khoản Admin toàn quyền). Trang login dùng **email + mật khẩu**. KHÔNG hardcode credential vào skill/repo/commit.
-- **DB dùng chung (quan trọng)**: local dev và prod trỏ về CÙNG 1 Supabase — KHÔNG có DB test riêng. Nên thao tác GHI qua UI là đụng dữ liệu thật → ưu tiên smoke/đọc + verify bằng Postgres MCP; nếu cần test ghi thật thì dùng bản ghi nháp rõ ràng và DỌN sau, hoặc xin phép user.
+- **Chạy ở đâu**: tự bật BE + FE tại máy (dùng cổng khác nếu 4000 / 5173 đang bận vì phiên khác) hoặc dùng Preview của `dev`. Cả hai trỏ DB **staging** (dữ liệu test): ghi được, dọn sau. Không test trên production.
+- **Đăng nhập bằng vai thật**: tạo tài khoản tạm gắn đúng chức danh của người sẽ dùng tính năng (mẫu tạo tài khoản vai trong `scripts/qa/08-perm-coverage.mjs` / `41-idor-scope.mjs`), dọn sau khi xong. Tài khoản superadmin từ `scripts/qa/ci-account.mjs provision` chỉ để dựng dữ liệu — superadmin bỏ qua mọi kiểm quyền nên luôn thấy màn hình chạy tốt. Mật khẩu đọc trong tiến trình, không in, không hardcode vào repo; mật khẩu cũ trong `frontend/.env` không còn dùng được, đừng dò.
+- **Dữ liệu test**: gắn nhãn nhận diện (TAG) để dọn sạch; không đụng dữ liệu không do mình tạo.
 - Thao tác đúng luồng vừa code (nút action, dialog, scan…) → `browser_snapshot`/`browser_take_screenshot` xác nhận hiển thị đúng.
 - **BẮT BUỘC test CẢ desktop VÀ mobile** (không chỉ 1 cỡ) — dùng `browser_resize` rồi chụp từng cỡ:
   - **Desktop browser**: `1280×800` (kiểm bố cục đầy đủ, pane phải/cột, hover).
@@ -42,7 +42,7 @@ Kiểm đủ: **1) Bắt đầu làm** (tạo mới → số liệu cập nhật
 > **(1) App treo / đá user ra đăng nhập.** **(2) Dữ liệu chạy sai khi nhiều người cùng làm.**
 
 Cách mô phỏng (mẫu: `scratchpad/sim_wms.mjs`, `sim_booking.mjs` — setup/dryrun/run/verify/cleanup):
-1. **Gọi API THẬT** (login `TEST_EMAIL/PASSWORD` → `fetch` endpoint thật), KHÔNG chỉ ghi DB trực tiếp — để test đúng logic controller dưới đua. (SETUP/CLEANUP thì ghi DB trực tiếp cho nhanh.)
+1. **Gọi API THẬT** (login bằng tài khoản tạm như Cổng 4 → `fetch` endpoint thật), KHÔNG chỉ ghi DB trực tiếp — để test đúng logic controller dưới đua. (SETUP/CLEANUP thì ghi DB trực tiếp cho nhanh.)
 2. **Dữ liệu giả BÁM SÁT DB thật**: kho / loại kho (warehouse_type) / mã hàng theo loại kho / cpp / vị trí theo category… kéo từ DB thật (Postgres MCP) rồi dùng. Đơn phải GIỐNG THẬT (vd đơn thành phẩm = TP + Thùng + POSM). Gắn NHÃN nhận diện (vd pallet_code/group_code chứa `SIMWMS`) để **DỌN SẠCH sau**. KHÔNG đụng dữ liệu thật (chọn mã/khoá chưa có dữ liệu thật, hoàn tác mọi ghi).
 3. **Hai kịch bản**: **RẢI** (nhiều mã/bản ghi khác nhau — nhiều người làm nhiều việc khác nhau) + **TRANH CHẤP** (nhiều người cùng 1 pallet/slot/item — bộc lộ race). Và chạy **nhiều module ĐỒNG THỜI** (xuất + nhập + booking) như hệ thống thật.
 4. **Quy mô**: tổng vài nghìn thao tác, nhưng **giới hạn ~25–30 request in-flight cùng lúc** (pool/concurrency) — mô phỏng vài trăm user steady-state mà KHÔNG bão hoà `max_connections=60`. **KHÔNG bắn tải lớn khi user thật đang dùng app** (xem [[tms-bookings-scale-auth]]).
@@ -55,7 +55,7 @@ Cách mô phỏng (mẫu: `scratchpad/sim_wms.mjs`, `sim_booking.mjs` — setup/
 ## Cổng 5b — CHỐNG HỒI QUY (regression) — sau khi sửa
 Bắt lỗi cái ĐANG chạy bị vỡ bởi thay đổi mới (khác Cổng 1-5 vốn kiểm cái vừa làm). Chạy lại **bộ regression chuẩn** của dự án: `node scripts/qa/run-all.mjs` (57 gói, tag `QA-SUITE` tự dọn — memory `qa-regression-suite`), nay 3 bậc (11/09):
 - **Sửa nhỏ trên dev** → `--tier fast` (~5': static + unit/mirror + độ phủ + invariant + smoke + params-fuzz + perm) — bắt hồi quy do chính thay đổi này. Sửa module nào thì chạy thêm gói QA của module đó.
-- **Đêm** → `--tier full` tự chạy theo lịch (`.github/workflows/qa-nightly.yml`, 02:00 VN, đỏ = email).
+- **Đêm** → `qa-nightly` (bậc full theo lịch) đang TẮT để giữ hạn mức Supabase; `--tier full` chạy tay chỉ khi user cho phép (CLAUDE.md: hỏi trước).
 - **⭐ Trước khi merge `dev`→`main`** → **BẮT BUỘC `--tier full` XANH** (luật gốc ở CLAUDE.md). Đỏ = có hồi quy → sửa tới khi xanh, **KHÔNG merge** dù đã nghiệm thu Preview.
 - (Tùy chọn, luồng ổn định) lưu response chuẩn làm **golden**, chạy lại sau sửa → diff bắt hồi quy tinh vi.
 - Regression là CỔNG LẶP LẠI (chạy y hệt mỗi mốc), không phải audit khám phá — đừng lẫn với `check-app`.

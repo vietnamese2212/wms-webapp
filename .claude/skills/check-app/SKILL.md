@@ -22,13 +22,14 @@ description: SKILL DUY NHẤT để "kiểm tra app / rà lỗi / test / tìm ch
 User **AFK, không ngồi click**. Chạy TRỌN VẸN từ đầu tới cuối KHÔNG dừng hỏi, KHÔNG bắt user click:
 - **Tôi tự làm MỌI thao tác** (setup · seed SIM · click/điền/quét qua Playwright · gọi API · verify · dọn). Người dùng không phải chạm gì.
 - **KHÔNG dùng AskUserQuestion / không hỏi giữa chừng.** Gặp lựa chọn nhỏ (tham số/thứ tự/phạm vi) → chọn **default hợp lý + GHI vào báo cáo**, không chặn.
+- **Phần tốn hạn mức** (P4 tải, `run-all --tier full`, gói 03/05/06, lượt ước lượng > 20 MB tải về): CLAUDE.md đòi hỏi trước. Nếu yêu cầu chưa cho phép rõ thì hỏi MỘT lần ngay đầu, kèm ước lượng MB; không được phép thì thay bằng đóng vai + tầng rẻ và ghi rõ phần bỏ.
 - Gặp việc **KHÔNG được tự làm** (ghi production · thao tác phá hủy · ngoài phạm vi an toàn staging/SIM) → **KHÔNG làm âm thầm**; dồn thành **ĐỀ XUẤT** cuối báo cáo để user duyệt sau. (Chế độ tự chủ KHÔNG nới quyền production — vẫn "chỉ khi user nói RÕ".)
 - Chạy dài thì dùng background task/subagent, **tự chờ tự tiếp**, không nhờ user thúc.
 - **Chỉ dừng sớm** nếu: nguy cơ đụng data thật/production ngoài ý muốn, hoặc bế tắc kỹ thuật không tự qua — và nêu NGAY ĐẦU báo cáo lý do. (An toàn > tự chủ.)
 - **Kết thúc = BÁO CÁO ĐẦY ĐỦ + ĐỀ XUẤT** (bắt buộc, xem Phần 8), dứt điểm, không hỏi lại: đã kiểm gì (phần chạy/skip + quy mô + bằng chứng số/ảnh) · lỗi THẬT (phân loại ảo/thật + mức độ + cách tái hiện) · nghi ngờ nghiệp vụ/UX · đã fix + đo trước/sau + dọn 0 sót · **đề xuất**: fix chưa làm (ưu tiên), việc cần user duyệt (production/quyết định nghiệp vụ), follow-up.
 
 ## Công cụ
-pg trực tiếp (`scratchpad/node_modules/pg`) cho seed/cleanup/EXPLAIN/tính-lại; Postgres MCP đọc staging; **Vercel Preview dev** làm API tải; Playwright cho UI thật (login creds `frontend/.env`). `qty_semantics:'base'` trong BODY mọi write; prefix WMS `/api/wms`, TMS `/api/tms`.
+pg trực tiếp (`scratchpad/node_modules/pg`) cho seed/cleanup/EXPLAIN/tính-lại; Postgres MCP đọc staging; **Vercel Preview dev** làm API tải; Playwright cho UI thật (tài khoản tạm: `scripts/qa/ci-account.mjs provision` để dựng dữ liệu, tài khoản vai thật để kiểm — mật khẩu cũ trong `frontend/.env` không còn dùng được). `qty_semantics:'base'` trong BODY mọi write; prefix WMS `/api/wms`, TMS `/api/tms`.
 
 ---
 
@@ -78,7 +79,7 @@ Không chỉ login admin. Với action write: **ẩn nút đúng khi thiếu `ca
 ## Phần 7 — FIX tối thiểu + ĐO LẠI + (lên production)
 - Sửa đúng nguyên nhân gốc, phạm vi nhỏ ([[debug-systematic]]). Toàn vẹn: gộp ghi-nhiều-bước vào **1 RPC row-lock** + fallback. Perf: index/RPC. Mutation: [[mutation-realtime]] + migration `backend/migrations/*` + apply staging + `SCHEMA_REVIEW.md` + bump rebuild-token.
 - **ĐO LẠI cùng tham số → so trước/sau** (bằng chứng số). tsc/build xanh.
-- **CHỐNG HỒI QUY (sau MỌI fix):** `node scripts/qa/run-all.mjs --tier fast` (static + unit/mirror + độ phủ + invariant + smoke + fuzz, ~5') sau sửa nhỏ; **`--tier full` XANH BẮT BUỘC trước khi merge `dev`→`main`** (bậc full còn chạy đêm theo lịch `qa-nightly.yml`) — luật CLAUDE.md + [[verify-feature]] Cổng 5b + memory `qa-regression-suite`. Regression là cổng LẶP LẠI, không do check-app sở hữu — check-app chỉ GỌI nó để chắc fix không làm vỡ luồng đang chạy.
+- **CHỐNG HỒI QUY (sau MỌI fix):** `node scripts/qa/run-all.mjs --tier fast` (static + unit/mirror + độ phủ + invariant + smoke + fuzz, ~5') sau sửa nhỏ; **`--tier full` XANH BẮT BUỘC trước khi merge `dev`→`main`** (lịch đêm `qa-nightly.yml` đang tắt; bậc full chạy tay khi user cho phép) — luật CLAUDE.md + [[verify-feature]] Cổng 5b + memory `qa-regression-suite`. Regression là cổng LẶP LẠI, không do check-app sở hữu — check-app chỉ GỌI nó để chắc fix không làm vỡ luồng đang chạy.
 - **Fix kèm lưới đúng tầng:** helper thuần/mirror → thêm ca vào `backend/tests` · input xấu ở route → `validate({…})` + schema · tên bảng/cột → dùng `db` có kiểu · luật văn xuôi → ratchet 09. Xem bảng tầng ở `docs/qa/BUG_CLASSES.md`.
 - **⚠️ Verify FE fix qua trình duyệt PHẢI dùng fresh context/incognito** — app là PWA, service worker precache trả bundle CŨ cho context đang mở → tưởng fix không ăn (đã bị lừa 1 lần 23/07).
 - **Lên production (chỉ khi user nói RÕ)**: KHÔNG merge ẩu. preflight read-only → migration additive trước (thứ tự phụ thuộc) → cutover/data cùng cửa sổ deploy (freeze+backup+transaction verify+rollback nếu đổi nghĩa dữ liệu) → DROP sau khi code live → **verify 4 tầng** (DB·RPC·code probe route 401/404·app-smoke live 200). Chi tiết: [[production-golive-2026-07-23]] + `docs/plans/BASE_UNIT_EXECUTION_PLAN.md` 2.4.

@@ -9,7 +9,7 @@ Mỗi nút write = **1 permission riêng** — KHÔNG gộp `manage` cho nhiều
 
 ## 4 nơi BẮT BUỘC (đủ cả 4 mới đúng)
 1. **FE config** — thêm key action vào `MODULES` trong `frontend/src/config/permissions.ts`.
-2. **BE config** — thêm vào `backend/src/config/permissions.ts`. **BẮT BUỘC**: đây là nguồn `ALL_PERMISSIONS` mà superadmin (`name='Admin'` hoặc `employee_code='ADMIN'`) nhận lúc login (xem `authController.ts`). Thiếu → admin **không có** quyền đó dù là superadmin.
+2. **BE config** — thêm vào `backend/src/config/permissions.ts`. **BẮT BUỘC**: đây là nguồn `ALL_PERMISSIONS` mà superadmin (cột `Employee.is_superadmin`) nhận lúc login (xem `authController.ts`). Thiếu → admin **không có** quyền đó dù là superadmin.
 3. **Gate nút FE**:
    ```tsx
    const perms = user?.module_permissions as ModulePermissions | null ?? null   // user từ useAuthStore(s => s.user)
@@ -32,4 +32,5 @@ Mỗi nút write = **1 permission riêng** — KHÔNG gộp `manage` cho nhiều
 - [ ] BE `config/permissions.ts` có key (ĐỪNG QUÊN — admin mất quyền nếu thiếu)
 - [ ] Nút FE bọc `can(perms, module, action)`
 - [ ] Route BE có `requirePerm`/`requireAnyPerm`
+- [ ] Module / quyền MỚI: migration cấp cho các chức danh sẽ dùng (theo năng lực sẵn có, không so tên tiếng Việt — mẫu `20260924d`). Thiếu thì chỉ superadmin thấy tính năng.
 - [ ] Bump rebuild-token (vì sửa BE)

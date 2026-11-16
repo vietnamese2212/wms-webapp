@@ -252,6 +252,7 @@ export interface Material {
   no_qr_tracking:             boolean
   is_non_stock?:              boolean
   is_pallet_carrier?:         boolean   // mã là PALLET mang hàng (Loscam) — loại khỏi đếm Pallet chuyến xuất (tránh double)
+  is_semi_finished?:          boolean   // BÁN THÀNH PHẨM (dịch trộn từ NVL, vào bồn) — Sản xuất chỉ nhận mã này (C117); base L/KG
   pallet_color?:              string | null   // màu vẽ pallet trên sơ đồ xếp xe 3D (#rrggbb) — chỉ nghĩa khi là pallet; null = mặc định
   is_active:                  boolean
   created_at?:                string

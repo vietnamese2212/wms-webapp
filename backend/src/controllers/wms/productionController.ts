@@ -14,6 +14,7 @@ import { qtyIntegerError } from '../../utils/qtyUnits'
 import type { TablesUpdate } from '../../types/database'
 import { normalizeBatchCode, BATCH_CODE_RE, batchCodeStem, nextBatchCode } from '../../utils/batchCode'
 import { processBlocksError } from '../../utils/processBlocks'
+import { btpUseError } from '../../utils/semiFinished'
 import { PRODUCTION_QA_GATES } from '../../utils/putaway'
 import { invalidatePutawayConfig } from '../../services/putawayContext'
 import { categoryAllowed, scopeCategoriesOf, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
@@ -164,12 +165,10 @@ export async function createBatch(req: Request, res: Response) {
     if (!(await inScope(req, body.warehouse_id))) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
     const whErr = await productionWhError(body.warehouse_id)
     if (whErr) return fail(res, 422, 'NOT_PRODUCTION_WAREHOUSE', whErr)
-    const { data: m } = await db.from('Material').select('id, material_code, batch_prefix, base_unit, is_active').eq('id', body.material_id).maybeSingle()
+    const { data: m } = await db.from('Material').select('id, material_code, batch_prefix, base_unit, is_active, is_semi_finished').eq('id', body.material_id).maybeSingle()
     if (!m) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy mã bán thành phẩm')
-    if (m.is_active === false) return fail(res, 422, 'MATERIAL_INACTIVE', `Mã ${m.material_code} đang ngừng dùng`)
-    const unit = String(m.base_unit ?? '').toUpperCase()
-    if (unit !== 'L' && unit !== 'KG')
-      return fail(res, 422, 'BTP_UNIT', `Mã ${m.material_code} tính theo "${m.base_unit ?? '—'}" — bán thành phẩm vào bồn phải có đơn vị gốc L hoặc KG (sửa ở Mã hàng)`)
+    const btpErr = btpUseError(m)
+    if (btpErr) return fail(res, 422, btpErr.code, btpErr.message)
     const typed = body.batch_code ? normalizeBatchCode(body.batch_code) : ''
     if (body.batch_code && !BATCH_CODE_RE.test(typed)) return fail(res, 422, 'BATCH_CODE', 'Mã lô chỉ gồm chữ, số và _ . - (tối đa 40 ký tự)')
     const machine = body.machine_code ? body.machine_code.toUpperCase() : null
@@ -236,10 +235,10 @@ export async function updateBatch(req: Request, res: Response) {
         patch.batch_code = code
       }
       if (body.material_id !== undefined) {
-        const { data: m } = await db.from('Material').select('id, material_code, base_unit').eq('id', body.material_id).maybeSingle()
+        const { data: m } = await db.from('Material').select('id, material_code, base_unit, is_active, is_semi_finished').eq('id', body.material_id).maybeSingle()
         if (!m) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy mã bán thành phẩm')
-        const unit = String(m.base_unit ?? '').toUpperCase()
-        if (unit !== 'L' && unit !== 'KG') return fail(res, 422, 'BTP_UNIT', `Mã ${m.material_code} phải có đơn vị gốc L hoặc KG`)
+        const btpErr = btpUseError(m)
+        if (btpErr) return fail(res, 422, btpErr.code, btpErr.message)
         patch.material_id = m.id
       }
     }
@@ -455,11 +454,11 @@ export const zRecipePut = z.object({
 export async function putRecipe(req: Request, res: Response) {
   try {
     const body = req.body as z.infer<typeof zRecipePut>
-    const { data: m } = await db.from('Material').select('id, material_code, base_unit, category').eq('id', req.params.materialId).maybeSingle()
+    const { data: m } = await db.from('Material').select('id, material_code, base_unit, category, is_semi_finished').eq('id', req.params.materialId).maybeSingle()
     if (!m) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy mã bán thành phẩm')
     if (!categoryAllowed(req, m.category)) return fail(res, 403, 'FORBIDDEN', CATEGORY_FORBIDDEN_MSG)
-    const unit = String(m.base_unit ?? '').toUpperCase()
-    if (unit !== 'L' && unit !== 'KG') return fail(res, 422, 'BTP_UNIT', `Mã ${m.material_code} tính theo "${m.base_unit ?? '—'}" — bán thành phẩm phải có đơn vị gốc L hoặc KG`)
+    const btpErr = btpUseError(m)   // không xét is_active: định mức của mã đã ngừng vẫn sửa được (như trước)
+    if (btpErr) return fail(res, 422, btpErr.code, btpErr.message)
     const { data, error } = await db.rpc('mes_recipe_save', { p: {
       material_id: m.id, base_qty: round3(body.base_qty), note: body.note ?? null, is_active: body.is_active ?? true,
       lines: body.lines.map(l => ({ ...l, qty: round3(l.qty) })), actor_name: actor(req).actor_name,
@@ -838,9 +837,15 @@ export async function putSettings(req: Request, res: Response) {
     const holds = body.hold_hours ?? []
     if (new Set(holds.map(h => h.material_id)).size !== holds.length) return fail(res, 422, 'DUPLICATE', 'Mã hàng bị khai trùng')
     if (holds.length) {
-      const { data: mats } = await db.from('Material').select('id, category').in('id', holds.map(h => h.material_id)).limit(300)   // ≤300: zod chặn
+      const { data: mats } = await db.from('Material').select('id, material_code, category, base_unit, is_semi_finished').in('id', holds.map(h => h.material_id)).limit(300)   // ≤300: zod chặn
       if ((mats ?? []).length !== holds.length) return fail(res, 404, 'NOT_FOUND', 'Có mã hàng không còn trong danh mục')
       if ((mats ?? []).some(m => !categoryAllowed(req, m.category))) return fail(res, 403, 'FORBIDDEN', CATEGORY_FORBIDDEN_MSG)
+      // KHAI hạn lưu bồn chỉ cho mã BTP; GỠ hạn (null) thì mã nào cũng được — dọn được hạn cũ
+      const setIds = new Set(holds.filter(h => h.tank_hold_hours != null).map(h => h.material_id))
+      for (const m of mats ?? []) {
+        const e = setIds.has(m.id) ? btpUseError(m) : null
+        if (e) return fail(res, 422, e.code, e.message)
+      }
     }
     if (types.length) {
       const { data: cur } = await db.from('warehouse_type_configs').select('type_code').eq('warehouse_id', body.warehouse_id).limit(500)

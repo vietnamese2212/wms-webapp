@@ -10,6 +10,7 @@ import { safeSearch, searchLooksLikeInjection, normalizeSearchTerm, SEARCH_INVAL
 import { parseListParam } from '../../utils/httpQuery'
 import { parseSheetByHeader, expandMergedCells, readWorkbookSafe, BAD_EXCEL_MSG, type FieldDef } from '../../utils/excelHeader'
 import { isPreflight, buildPreflight } from '../../utils/uploadPreflight'
+import { semiFinishedFlagError } from '../../utils/semiFinished'
 
 // Màu pallet vẽ trên sơ đồ xếp xe (26/08) — chỉ có nghĩa với mã is_pallet_carrier.
 // null = màu mặc định; chuỗi lạ → 400 (DB cũng có CHECK hex, đây là lưới trước để lỗi ra tiếng Việt).
@@ -32,7 +33,7 @@ function buildShortName(description: string, code: string, custom?: string | nul
 const MATERIAL_LITE_COLS =
   'id, material_code, material_description, short_name, product_type, category, is_active,' +
   'cartons_per_pallet, pallet_per_ea, units_per_carton, base_unit, entry_unit, shelf_life_days,' +
-  'no_qr_tracking, is_non_stock, is_pallet_carrier, batch_prefix,' +
+  'no_qr_tracking, is_non_stock, is_pallet_carrier, is_semi_finished, batch_prefix,' +
   'warehouse_pallet_overrides, supplier_shelf_life_overrides'
 
 // ─── Phân trang SERVER cho TRANG DANH MỤC Mã hàng ───────────────────────────────────────────────
@@ -114,7 +115,7 @@ export async function listMaterialsSummary(req: Request, res: Response) {
 
 export async function listMaterials(req: Request, res: Response) {
   try {
-    const { active, search, manufacturer_id, storage_category, category, view, limit, codes, ids, pallet_carrier } = req.query
+    const { active, search, manufacturer_id, storage_category, category, view, limit, codes, ids, pallet_carrier, semi_finished } = req.query
     // Từ khóa dạng SQL-injection bị WAF trước Supabase chặn (trả HTML) → từng thành 500; báo 400 rõ.
     if (search && searchLooksLikeInjection(search)) return fail(res, 400, 'INVALID_SEARCH', SEARCH_INVALID_MSG)
     // Scope Loại hàng: chỉ thấy mã hàng thuộc loại được phân quyền (mã chưa gán loại vẫn hiện)
@@ -150,6 +151,8 @@ export async function listMaterials(req: Request, res: Response) {
       // KHÔNG cắt scope loại hàng cho nhánh này: quy cách pallet là tham số VẼ dùng chung — user
       // chỉ có scope Thành phẩm vẫn phải thấy pallet (mã pallet thường thuộc loại Thùng/bao bì).
       if (pallet_carrier === '1') query = query.eq('is_pallet_carrier', true)
+      // semi_finished=1: ô chọn "Mã bán thành phẩm" của Sản xuất (Mở mẻ · Định mức · Hạn lưu bồn) — chỉ mã đã đánh dấu BTP (C117)
+      if (semi_finished === '1') query = query.eq('is_semi_finished', true)
       if (scopeCats && pallet_carrier !== '1') query = query.or(`category.is.null,category.in.(${scopeCats.map(c => `"${c}"`).join(',')})`)
       // codes=A,B,C — tra ĐÚNG các mã đang có trên màn (luồng dán Excel / gõ tay), thay cho
       // việc nạp cả danh mục về trình duyệt chỉ để dựng map code→mã hàng.
@@ -231,6 +234,8 @@ function tankHoldHoursOf(v: unknown): { value: number | null } | { error: string
   if (typeof v === 'boolean' || !Number.isInteger(n) || n < 1 || n > 8760) return { error: 'Hạn lưu bồn phải là số giờ nguyên từ 1 tới 8760 (để trống = không giới hạn)' }
   return { value: n }
 }
+// Khai hạn lưu bồn chỉ cho mã bán thành phẩm (cùng luật cửa Cài đặt MES — `btpUseError`); gỡ (null) thì mã nào cũng được.
+const HOLD_NOT_BTP_MSG = 'Hạn lưu bồn chỉ khai cho mã bán thành phẩm — tích "Bán thành phẩm" cho mã này trước'
 
 export async function createMaterial(req: Request, res: Response) {
   try {
@@ -241,13 +246,16 @@ export async function createMaterial(req: Request, res: Response) {
       units_per_carton, pallet_per_ea, shelf_life_days, storage_category, old_code, image_url,
       warehouse_pallet_overrides, supplier_shelf_life_overrides, batch_prefix,
       carton_length_mm, carton_width_mm, carton_height_mm, max_stack_layers, loose_stack_layers, stack_on_top,
-      base_unit, entry_unit, is_non_stock, is_pallet_carrier, tank_hold_hours,
+      base_unit, entry_unit, is_non_stock, is_pallet_carrier, tank_hold_hours, is_semi_finished,
     } = req.body
     if (!material_code || !material_description)
       return fail(res, 400, 'VALIDATION_ERROR', 'Thiếu material_code hoặc material_description')
     const th = tankHoldHoursOf(tank_hold_hours)
     if ('error' in th) return fail(res, 400, 'VALIDATION_ERROR', th.error)
     const tankHold = th.value
+    const btpErr = semiFinishedFlagError({ is_semi_finished: Boolean(is_semi_finished), base_unit, is_non_stock: Boolean(is_non_stock), is_pallet_carrier: Boolean(is_pallet_carrier) })
+    if (btpErr) return fail(res, 400, 'VALIDATION_ERROR', btpErr)
+    if (tankHold != null && !is_semi_finished) return fail(res, 400, 'VALIDATION_ERROR', HOLD_NOT_BTP_MSG)
     // Scope Loại hàng: không tạo mã thuộc loại ngoài phạm vi (mã chưa gán loại → cho qua)
     if (!categoryAllowed(req, category)) return fail(res, 403, 'FORBIDDEN', CATEGORY_FORBIDDEN_MSG)
     const catErr = await unknownCategoryError(category)
@@ -291,6 +299,7 @@ export async function createMaterial(req: Request, res: Response) {
         entry_unit: entry_unit ? String(entry_unit).trim().toUpperCase() : null,
         is_non_stock: Boolean(is_non_stock),
         is_pallet_carrier: Boolean(is_pallet_carrier),   // mã PALLET mang hàng (Loscam) — loại khỏi đếm Pallet chuyến
+        is_semi_finished: Boolean(is_semi_finished),     // bán thành phẩm (dịch trộn, vào bồn) — Sản xuất chỉ nhận mã này (C117)
         pallet_color: palColor.value,                    // màu vẽ pallet trên sơ đồ 3D (chỉ nghĩa khi là pallet)
         storage_category: storage_category ?? null,
         old_code: old_code ? String(old_code).trim() : null,
@@ -327,7 +336,7 @@ export async function updateMaterial(req: Request, res: Response) {
       units_per_carton, pallet_per_ea, shelf_life_days, storage_category, old_code, image_url,
       warehouse_pallet_overrides, supplier_shelf_life_overrides, batch_prefix,
       carton_length_mm, carton_width_mm, carton_height_mm, max_stack_layers, loose_stack_layers, stack_on_top,
-      base_unit, entry_unit, is_non_stock, is_pallet_carrier, tank_hold_hours,
+      base_unit, entry_unit, is_non_stock, is_pallet_carrier, tank_hold_hours, is_semi_finished,
     } = req.body
 
     // Scope Loại hàng: chỉ sửa mã thuộc loại được phép + không đổi sang loại ngoài phạm vi (mã chưa gán loại → cho qua)
@@ -342,6 +351,22 @@ export async function updateMaterial(req: Request, res: Response) {
     }
     const negErr = negativeNumberError(req.body as Record<string, unknown>)
     if (negErr) return fail(res, 400, 'VALIDATION_ERROR', negErr)
+
+    // Bán thành phẩm — kiểm theo GIÁ TRỊ HIỆU LỰC sau patch (đổi đơn vị của mã BTP sang EA cũng bị chặn; DB còn CHECK làm lưới cuối)
+    const holdSet = tank_hold_hours !== undefined && tank_hold_hours !== null && tank_hold_hours !== ''
+    if (is_semi_finished !== undefined || base_unit !== undefined || is_non_stock !== undefined || is_pallet_carrier !== undefined || holdSet) {
+      const { data: cur } = await supabase.from('Material')
+        .select('base_unit, is_semi_finished, is_non_stock, is_pallet_carrier').eq('id', req.params.id).maybeSingle()
+      const eff = {
+        is_semi_finished: is_semi_finished !== undefined ? Boolean(is_semi_finished) : Boolean(cur?.is_semi_finished),
+        base_unit: base_unit !== undefined ? (base_unit ? String(base_unit) : null) : cur?.base_unit ?? null,
+        is_non_stock: is_non_stock !== undefined ? Boolean(is_non_stock) : Boolean(cur?.is_non_stock),
+        is_pallet_carrier: is_pallet_carrier !== undefined ? Boolean(is_pallet_carrier) : Boolean(cur?.is_pallet_carrier),
+      }
+      const btpErr = semiFinishedFlagError(eff)
+      if (btpErr) return fail(res, 400, 'VALIDATION_ERROR', btpErr)
+      if (holdSet && !eff.is_semi_finished) return fail(res, 400, 'VALIDATION_ERROR', HOLD_NOT_BTP_MSG)
+    }
 
     // Entry unit đòi hệ số 1 Entry = N Base + Entry PHẢI KHÁC Base — kiểm theo GIÁ TRỊ HIỆU LỰC sau patch
     if (entry_unit !== undefined || units_per_carton !== undefined || base_unit !== undefined) {
@@ -390,6 +415,7 @@ export async function updateMaterial(req: Request, res: Response) {
     if (entry_unit !== undefined) patch.entry_unit = entry_unit ? String(entry_unit).trim().toUpperCase() : null
     if (is_non_stock !== undefined) patch.is_non_stock = Boolean(is_non_stock)
     if (is_pallet_carrier !== undefined) patch.is_pallet_carrier = Boolean(is_pallet_carrier)
+    if (is_semi_finished !== undefined) patch.is_semi_finished = Boolean(is_semi_finished)
     if (req.body.pallet_color !== undefined) {
       const pc = parsePalletColor(req.body.pallet_color)
       if ('error' in pc) return fail(res, 400, 'VALIDATION_ERROR', pc.error)
@@ -476,6 +502,7 @@ const M_FIELDS: FieldDef[] = [
   { key: 'no_qr_tracking',       label: 'Không quản QR',      aliases: ['khong quan qr'] },
   { key: 'is_non_stock',         label: 'Mã phi hàng hóa',    aliases: ['ma phi hang hoa'] },
   { key: 'is_pallet_carrier',    label: 'Pallet mang hàng',   aliases: ['pallet mang hang'] },
+  { key: 'is_semi_finished',     label: 'Bán thành phẩm',     aliases: ['ban thanh pham', 'btp'] },
 ]
 
 const mStr = (v: unknown): string | null => { const s = String(v ?? '').trim(); return s || null }
@@ -517,10 +544,10 @@ export async function uploadExcel(req: Request, res: Response) {
       base_unit: string | null; entry_unit: string | null; batch_prefix: string | null
       carton_length_mm: number | null; carton_width_mm: number | null; carton_height_mm: number | null
       max_stack_layers: number | null; loose_stack_layers: number | null; stack_on_top: boolean
-      no_qr_tracking: boolean; is_non_stock: boolean; is_pallet_carrier: boolean
+      no_qr_tracking: boolean; is_non_stock: boolean; is_pallet_carrier: boolean; is_semi_finished: boolean
     }
     const existing = await fetchAllRowsParallel(() => supabase.from('Material').select(
-      'id, material_code, material_description, short_name, custom_short_name, category, product_type, weight_kg, cartons_per_pallet, units_per_carton, pallet_per_ea, shelf_life_days, notes, base_unit, entry_unit, batch_prefix, carton_length_mm, carton_width_mm, carton_height_mm, max_stack_layers, loose_stack_layers, stack_on_top, no_qr_tracking, is_non_stock, is_pallet_carrier'
+      'id, material_code, material_description, short_name, custom_short_name, category, product_type, weight_kg, cartons_per_pallet, units_per_carton, pallet_per_ea, shelf_life_days, notes, base_unit, entry_unit, batch_prefix, carton_length_mm, carton_width_mm, carton_height_mm, max_stack_layers, loose_stack_layers, stack_on_top, no_qr_tracking, is_non_stock, is_pallet_carrier, is_semi_finished'
     )) as ExistingMat[]
     const existingByCode = new Map<string, ExistingMat>()
     for (const m of existing) existingByCode.set(String(m.material_code).trim(), m)
@@ -562,6 +589,7 @@ export async function uploadExcel(req: Request, res: Response) {
       const noQr         = mBool(row.no_qr_tracking)      // mã không quản QR (kho QTY, hàng không tem)
       const nonStock     = mBool(row.is_non_stock)        // mã chiết khấu/dịch vụ — loại khỏi Xuất/Nhập/Tồn
       const palletCarry  = mBool(row.is_pallet_carrier)   // pallet mang hàng (Loscam) — không đếm trùng
+      const semiFin      = mBool(row.is_semi_finished)    // bán thành phẩm (dịch trộn, vào bồn) — C117
       const baseUnit     = (() => { const s = mStr(row.base_unit);  return s ? s.toUpperCase() : null })()
       const entryUnit    = (() => { const s = mStr(row.entry_unit); return s ? s.toUpperCase() : null })()
       const shortOf = (d: string) => `${d} [${material_code.slice(-3)}]`
@@ -589,6 +617,7 @@ export async function uploadExcel(req: Request, res: Response) {
         if (noQr         != null) base.no_qr_tracking = noQr
         if (nonStock     != null) base.is_non_stock = nonStock
         if (palletCarry  != null) base.is_pallet_carrier = palletCarry
+        if (semiFin      != null) base.is_semi_finished = semiFin
         base.updated_at = now
         return base
       }
@@ -636,6 +665,7 @@ export async function uploadExcel(req: Request, res: Response) {
           loose_stack_layers: dbRow!.loose_stack_layers,
           stack_on_top: dbRow!.stack_on_top, no_qr_tracking: dbRow!.no_qr_tracking,
           is_non_stock: dbRow!.is_non_stock, is_pallet_carrier: dbRow!.is_pallet_carrier,
+          is_semi_finished: dbRow!.is_semi_finished,
         }
         upsertByCode.set(material_code, apply(base))
       } else if (insertByCode.has(material_code)) {
@@ -651,9 +681,16 @@ export async function uploadExcel(req: Request, res: Response) {
           max_stack_layers: maxLayers, loose_stack_layers: looseLayers, stack_on_top: onTop ?? false,
           base_unit: baseUnit, entry_unit: entryUnit,
           no_qr_tracking: noQr ?? false, is_non_stock: nonStock ?? false, is_pallet_carrier: palletCarry ?? false,
+          is_semi_finished: semiFin ?? false,
           is_active: true, created_at: now, updated_at: now,
         })
       }
+    }
+    // Bán thành phẩm — cùng luật form (semiFinishedFlagError) trên bản CUỐI đã merge (mã khai nhiều dòng thì xét sau dòng cuối);
+    // còn lỗi là cả file không ghi (all-or-nothing). DB còn CHECK material_semi_finished_chk làm lưới cuối.
+    for (const [code, rec] of [...upsertByCode, ...insertByCode]) {
+      const btpErr = semiFinishedFlagError(rec as Parameters<typeof semiFinishedFlagError>[0])
+      if (btpErr) errors.push(`${code} — ${btpErr}`)
     }
 
     // ALL-OR-NOTHING (user chốt 27/07): còn 1 dòng lỗi là KHÔNG ghi gì.

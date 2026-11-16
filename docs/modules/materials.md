@@ -18,6 +18,8 @@ Mã hàng (+ Nhà sản xuất)
 
 **Quy cách xếp xe 3D (30/10):** `max_stack_layers` (Số lớp tối đa — xe pallet), `loose_stack_layers` (Chồng khi xếp xá — xe thùng rời; trống = như Số lớp tối đa, sữa 110ml: pallet 14 / xá 28), `stack_on_top` (hàng nhẹ). Form, chi tiết mã và file Excel (cột "Chồng xá (lớp)") cùng một luật; sơ đồ đọc qua chi tiết chuyến xuất (`outboundController` chọn cột).
 
+**Cờ "Bán thành phẩm" (16/11, C117):** `is_semi_finished` — dịch trộn từ NVL theo định mức, vào bồn (MES). Form (ô tím dưới "pallet mang hàng"; ẩn khi phi hàng hoá / pallet), file Excel (cột "Bán thành phẩm (1/0)"), API cùng luật `utils/semiFinished.ts` `semiFinishedFlagError`: base L / KG, không phi hàng hoá, không pallet; DB CHECK `material_semi_finished_chk` làm lưới cuối. Mã BTP không bắt buộc Loại hàng / Thùng-pallet / HSD / Pallet-EA (không nằm ở vị trí kho). Hạn lưu bồn (`tank_hold_hours`) chỉ KHAI được cho mã BTP. Trang Mã hàng: nhãn "BTP" ở cột Cờ, bộ lọc Cờ = Bán thành phẩm. Tìm mã `GET /masterdata/materials?semi_finished=1`.
+
 ## Actions
 
 view, create, edit, delete 

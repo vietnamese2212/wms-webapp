@@ -414,10 +414,11 @@ export function useManufacturers() {
 export type MaterialLite = Pick<import('@/types').Material,
   'id' | 'material_code' | 'material_description' | 'short_name' | 'product_type' | 'category'
   | 'is_active' | 'cartons_per_pallet' | 'pallet_per_ea' | 'units_per_carton' | 'base_unit'
-  | 'entry_unit' | 'shelf_life_days' | 'no_qr_tracking' | 'is_non_stock' | 'is_pallet_carrier'
+  | 'entry_unit' | 'shelf_life_days' | 'no_qr_tracking' | 'is_non_stock' | 'is_pallet_carrier' | 'is_semi_finished'
   | 'batch_prefix' | 'warehouse_pallet_overrides' | 'supplier_shelf_life_overrides'>
 
-type MaterialListParams = { search?: string; manufacturer_id?: string; category?: string; limit?: number }
+// semi_finished: 1 = chỉ mã BÁN THÀNH PHẨM (ô chọn của Sản xuất — C117) · active: true = bỏ mã ngừng dùng
+type MaterialListParams = { search?: string; manufacturer_id?: string; category?: string; limit?: number; semi_finished?: 1; active?: true }
 
 export function useMaterials(params?: MaterialListParams, enabled = true) {
   return useQuery({

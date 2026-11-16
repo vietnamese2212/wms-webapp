@@ -4,7 +4,7 @@
 import { useMemo } from 'react'
 import { useMutation, useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import { apiClient } from './client'
-import { useWarehouses, useImportShifts } from './hooks'
+import { useWarehouses, useImportShifts, useMaterials } from './hooks'
 import { useAuthStore } from '@/stores/authStore'
 import type { MatUnits } from '@/utils/qtyUnits'
 import type { FormBlock } from '@/config/processForms'
@@ -41,6 +41,16 @@ export function defaultKitchen(kitchens: ProdWarehouse[], globalWh: string | nul
   if (kitchens.length === 1 || !strict) return kitchens[0]?.id ?? ''
   return ''
 }
+
+/** Ô chọn "Mã bán thành phẩm" (Mở mẻ · Định mức · Hạn lưu bồn) — CHỈ mã đã đánh dấu "Bán thành phẩm" ở Mã hàng (C117, 16/11).
+ *  Trước đây ba ô tự lọc "mã tính L / KG" ⇒ chỉ toàn nguyên liệu. Luật nằm ở server (`semi_finished=1`); BE còn chặn ở mọi cửa ghi.
+ *  `none` = danh mục chưa có mã BTP nào (ô tìm trống mà không ra dòng) ⇒ màn hình chỉ lối sang Mã hàng. */
+export function useSemiFinishedSearch(term: string, enabled: boolean, activeOnly = false) {
+  const q = useMaterials({ search: term || undefined, limit: 50, semi_finished: 1, ...(activeOnly ? { active: true as const } : {}) }, enabled)
+  const found = q.data ?? []
+  return { found, isFetching: q.isFetching, none: enabled && !term && q.isSuccess && !q.isFetching && found.length === 0 }
+}
+export const SEMI_FINISHED_PLACEHOLDER = 'Tìm mã bán thành phẩm (mã hoặc tên dịch)'
 
 export type BatchStatus = 'OPEN' | 'CLOSED' | 'CANCELLED'
 export type BatchQa = 'HOLD' | 'RELEASED' | 'REJECTED'

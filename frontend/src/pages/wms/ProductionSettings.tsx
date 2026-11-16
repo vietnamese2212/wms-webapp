@@ -15,8 +15,8 @@ import { SettingsGroup, SettingRow } from '@/components/shared/SettingRow'
 import { useAuthStore } from '@/stores/authStore'
 import { useGlobalScopeStore } from '@/stores/globalScopeStore'
 import { can, type ModulePermissions } from '@/config/permissions'
-import { useMaterials } from '@/api/hooks'
-import { useProductionWarehouses, useProductionSettings, useSaveProductionSettings, defaultKitchen, type ProductionSettings as Settings } from '@/api/productionHooks'
+import { useProductionWarehouses, useProductionSettings, useSaveProductionSettings, defaultKitchen, useSemiFinishedSearch, SEMI_FINISHED_PLACEHOLDER, type ProductionSettings as Settings } from '@/api/productionHooks'
+import { NoSemiFinishedHint } from '@/components/wms/production/NoSemiFinishedHint'
 import { useMobileTabs } from '@/hooks/useMobileSurface'
 import { ProcessFormSettings } from '@/components/wms/production/ProcessFormSettings'
 import { unitLabel } from '@/utils/qtyUnits'
@@ -83,9 +83,10 @@ export default function ProductionSettings() {
   // thêm mã bán thành phẩm vào bảng hạn lưu — tìm trên server
   const [matTerm, setMatTerm] = useState('')
   const [matPick, setMatPick] = useState('')
-  const { data: found = [], isFetching } = useMaterials({ search: matTerm || undefined, limit: 50 }, canConfigure)
+  // chỉ mã đã đánh dấu "Bán thành phẩm" ở Mã hàng (C117) — BE cũng chặn khai hạn cho mã khác
+  const { found, isFetching, none: noBtp } = useSemiFinishedSearch(matTerm, canConfigure)
   const have = new Set(rows.map(r => r.id))
-  const matOpts = found.filter(m => ['L', 'KG'].includes(String(m.base_unit ?? '').toUpperCase()) && !have.has(m.id))
+  const matOpts = found.filter(m => !have.has(m.id))
     .map(m => ({ value: m.id, label: m.material_code, sub: `${m.short_name ?? m.material_description ?? ''} · ${unitLabel(m.base_unit)}` }))
   function addMat(id: string) {
     const m = found.find(x => x.id === id)
@@ -180,7 +181,8 @@ export default function ProductionSettings() {
                 {canConfigure && (
                   <SettingRow label={<><Plus className="h-3.5 w-3.5 text-slate-400" />Thêm mã bán thành phẩm</>}>
                     <SingleSelect value={matPick} onChange={addMat} serverSearch onSearchChange={setMatTerm} loading={isFetching} selectedLabel={undefined}
-                      triggerClassName="h-8" placeholder="Tìm mã hoặc tên (chỉ mã tính L / KG)" options={matOpts} />
+                      triggerClassName="h-8" placeholder={SEMI_FINISHED_PLACEHOLDER} options={matOpts} />
+                    {noBtp && <NoSemiFinishedHint />}
                   </SettingRow>
                 )}
               </SettingsGroup>

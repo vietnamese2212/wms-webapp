@@ -152,6 +152,7 @@ export default function Materials() {
   const [noQr,             setNoQr]             = useState(false)
   const [nonStock,         setNonStock]         = useState(false)   // mã phi hàng hóa (chiết khấu/dịch vụ) — chỉ cần Mã+Tên, loại khỏi mọi tác vụ kho
   const [palletCarrier,    setPalletCarrier]    = useState(false)
+  const [semiFinished,     setSemiFinished]     = useState(false)   // BÁN THÀNH PHẨM — dịch trộn vào bồn; Sản xuất chỉ nhận mã này (C117)
   // Màu vẽ pallet trên sơ đồ xếp xe — mỗi DẠNG pallet 1 màu (user 26/08); rỗng = mặc định xanh Loscam
   const [palletColor,      setPalletColor]      = useState('')   // mã là PALLET mang hàng (Loscam) — loại khỏi đếm Pallet chuyến xuất (tránh double)
   const [stackOnTop,       setStackOnTop]       = useState(false)   // hàng nhẹ — được xếp trên mã hàng khác (xếp xe 3D)
@@ -238,6 +239,12 @@ export default function Materials() {
     if (!form.material_description.trim()) return 'Mô tả là bắt buộc'
     // Mã phi hàng hóa (chiết khấu/dịch vụ): chỉ cần Mã + Tên
     if (nonStock) return null
+    // Bán thành phẩm: dịch trong bồn, KHÔNG nằm ở vị trí kho ⇒ chỉ cần Base Unit L / KG (luật BE semiFinishedFlagError);
+    // Loại hàng (= Loại kho), thùng/pallet, HSD, pallet/EA không áp — để trống Loại hàng thì mọi phạm vi đều thấy mã
+    if (semiFinished) {
+      if (!['L', 'KG'].includes(form.base_unit.trim().toUpperCase())) return 'Bán thành phẩm vào bồn nên Base Unit phải là L hoặc KG'
+      return null
+    }
     if (!form.category) return 'Loại hàng là bắt buộc'
     if (!form.base_unit.trim()) return 'Base Unit là bắt buộc'
     if (!form.cartons_per_pallet) return 'Thùng/pallet là bắt buộc'
@@ -279,6 +286,10 @@ export default function Materials() {
     labels.push('Chồng xá (lớp)')
     keys.push('loose_stack_layers')
     ex.push('')
+    // Bán thành phẩm (dịch trộn vào bồn — Sản xuất chỉ nhận mã này) — trống = giữ nguyên / tắt với mã mới
+    labels.push('Bán thành phẩm (1/0)')
+    keys.push('is_semi_finished')
+    ex.push(0)
     const ws = XLSX.utils.aoa_to_sheet([labels, keys, ex])
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'MaHang')
@@ -294,6 +305,7 @@ export default function Materials() {
     setNoQr(false)
     setNonStock(false)
     setPalletCarrier(false)
+    setSemiFinished(false)
     setPalletColor('')
     setStackOnTop(false)
     setFormError('')
@@ -340,6 +352,7 @@ export default function Materials() {
     setNoQr(mat.no_qr_tracking ?? false)
     setNonStock(mat.is_non_stock ?? false)
     setPalletCarrier(mat.is_pallet_carrier ?? false)
+    setSemiFinished(mat.is_semi_finished ?? false)
     setPalletColor(mat.pallet_color ?? '')
     setStackOnTop(mat.stack_on_top ?? false)
     setFormError('')
@@ -364,7 +377,8 @@ export default function Materials() {
         custom_short_name:             form.custom_short_name.trim() || undefined,
         category:                      form.category || undefined,
         product_type:                  form.product_type.trim() || undefined,
-        cartons_per_pallet:            Number(form.cartons_per_pallet),
+        // BTP (dịch trong bồn) được để trống Thùng/pallet ⇒ gửi null, không ghi số 0 vô nghĩa
+        cartons_per_pallet:            semiFinished && !form.cartons_per_pallet ? null : Number(form.cartons_per_pallet),
         units_per_carton:              form.units_per_carton ? Number(form.units_per_carton) : undefined,
         pallet_per_ea:                 parseDecimalInput(form.pallet_per_ea, decSep) ?? undefined,
         base_unit:                     form.base_unit.trim().toUpperCase() || null,
@@ -383,6 +397,7 @@ export default function Materials() {
         no_qr_tracking:                noQr,
         is_non_stock:                  nonStock,
         is_pallet_carrier:             palletCarrier,
+        is_semi_finished:              semiFinished && !nonStock && !palletCarrier,
         // Bỏ tick pallet thì màu về null luôn — không để giá trị ma nằm lại trên mã thường
         pallet_color:                  palletCarrier && palletColor ? palletColor : null,
         warehouse_pallet_overrides:    palletOverrides,
@@ -558,6 +573,7 @@ export default function Materials() {
         { value: 'non_stock', label: 'Phi hàng hóa' },
         { value: 'pallet_carrier', label: 'Pallet mang hàng' },
         { value: 'stack_on_top', label: 'Hàng nhẹ (lên nóc)' },
+        { value: 'semi_finished', label: 'Bán thành phẩm' },
       ], selected: flagsFilter, onChange: setFlagsFilter },
   ]
 
@@ -723,7 +739,8 @@ export default function Materials() {
                       {mat.is_pallet_carrier && <span className="px-1 py-0.5 rounded bg-sky-100 text-sky-700 mr-0.5">pallet</span>}
                       {mat.stack_on_top && <span className="px-1 py-0.5 rounded bg-emerald-100 text-emerald-700 mr-0.5">nhẹ↑</span>}
                       {mat.is_non_stock && <span className="px-1 py-0.5 rounded bg-amber-100 text-amber-700">phi HH</span>}
-                      {!mat.is_pallet_carrier && !mat.stack_on_top && !mat.is_non_stock && <span className="text-slate-300">—</span>}
+                      {mat.is_semi_finished && <span className="px-1 py-0.5 rounded bg-violet-100 text-violet-700">BTP</span>}
+                      {!mat.is_pallet_carrier && !mat.stack_on_top && !mat.is_non_stock && !mat.is_semi_finished && <span className="text-slate-300">—</span>}
                     </TableCell>
                     <TableCell className="px-2 py-1 whitespace-nowrap text-[10px] font-mono text-slate-500">
                       {mat.old_code ?? <span className="text-slate-300">—</span>}
@@ -848,6 +865,9 @@ export default function Materials() {
                     )}
                     {detailMat.is_pallet_carrier && (
                       <DRow label="Loại mã" value={<span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-sky-100 text-sky-700">Pallet mang hàng — không đếm Pallet chuyến</span>} />
+                    )}
+                    {detailMat.is_semi_finished && (
+                      <DRow label="Loại mã" value={<span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-violet-100 text-violet-700">Bán thành phẩm — dịch trộn, vào bồn</span>} />
                     )}
                     <DRow label="Loại hàng"  value={<CatBadge cat={detailMat.category} metaMap={whTypeMeta} />} />
                     <DRow label="Loại SP"    value={detailMat.product_type} />
@@ -996,7 +1016,7 @@ export default function Materials() {
 
             {/* Cờ PALLET MANG HÀNG (Loscam…) — user 22/07: dòng pallet trong đơn CHÍNH LÀ pallet chứa hàng
                 bên trên → không cộng vào đếm Pallet của chuyến (tránh double); vẫn tính ở Tổng (k QR). */}
-            {!nonStock && (
+            {!nonStock && !semiFinished && (
             <label className="flex items-start gap-2 cursor-pointer rounded-md border border-slate-200 bg-slate-50 px-2.5 py-2">
               <input type="checkbox" checked={palletCarrier} onChange={e => setPalletCarrier(e.target.checked)} className="h-4 w-4 mt-0.5 rounded accent-sky-600 shrink-0" />
               <span className="min-w-0">
@@ -1020,6 +1040,18 @@ export default function Materials() {
                   <span className="text-[10px] text-slate-400">mặc định — xanh Loscam</span>
                 )}
               </div>
+            )}
+
+            {/* Cờ BÁN THÀNH PHẨM (C117, user chốt 16/11) — dịch trộn từ nhiều NVL theo định mức, vào bồn chờ chiết rót.
+                Ô "Mã bán thành phẩm" của Sản xuất (Mở mẻ · Định mức · Hạn lưu bồn) CHỈ liệt kê mã đã tích ô này. */}
+            {!nonStock && !palletCarrier && (
+            <label className="flex items-start gap-2 cursor-pointer rounded-md border border-violet-200 bg-violet-50 px-2.5 py-2">
+              <input type="checkbox" checked={semiFinished} onChange={e => setSemiFinished(e.target.checked)} className="h-4 w-4 mt-0.5 rounded accent-violet-600 shrink-0" />
+              <span className="min-w-0">
+                <span className="block text-xs font-medium text-violet-800">Mã là BÁN THÀNH PHẨM (dịch trộn, vào bồn)</span>
+                <span className="block text-[11px] text-violet-700 leading-snug">Dịch trộn từ nhiều nguyên liệu theo định mức, chờ chiết rót (vd Dịch sữa chua uống dâu). Chỉ mã này mới chọn được khi Mở mẻ, khai Định mức, Hạn lưu bồn. Base Unit phải là L hoặc KG.</span>
+              </span>
+            </label>
             )}
 
             {/* Mã hàng */}
@@ -1063,7 +1095,7 @@ export default function Materials() {
             {!nonStock && (<>
             {/* Loại hàng — từ WMS Settings (SingleSelect chuẩn: có ô tìm) */}
             <div className="grid grid-cols-3 items-center gap-2">
-              <Label className="text-xs text-right">Loại hàng *</Label>
+              <Label className="text-xs text-right">Loại hàng{semiFinished ? '' : ' *'}</Label>
               <div className="col-span-2">
                 <SingleSelect
                   options={categories.map(c => ({ value: c, label: c }))}
@@ -1084,7 +1116,7 @@ export default function Materials() {
 
             {/* Thùng/pallet mặc định */}
             <div className="grid grid-cols-3 items-center gap-2">
-              <Label className="text-xs text-right">Thùng/pallet *</Label>
+              <Label className="text-xs text-right">Thùng/pallet{semiFinished ? '' : ' *'}</Label>
               <Input type="number" min={1} className="col-span-2 h-7 text-xs" value={form.cartons_per_pallet} onChange={e => setField('cartons_per_pallet', e.target.value)} placeholder="Mặc định cho mọi kho" />
             </div>
 

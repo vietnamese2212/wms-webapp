@@ -9,8 +9,9 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { useDebouncedValue } from '@/hooks/useDebouncedValue'
 import { useGlobalScopeStore } from '@/stores/globalScopeStore'
-import { useMaterials, useMaterialsByIds, useMachines } from '@/api/hooks'
-import { useProductionWarehouses, useNextBatchCode, useCreateBatch, useUpdateBatch, useShiftNames, defaultKitchen, type BatchDetail } from '@/api/productionHooks'
+import { useMaterialsByIds, useMachines } from '@/api/hooks'
+import { useProductionWarehouses, useNextBatchCode, useCreateBatch, useUpdateBatch, useShiftNames, defaultKitchen, useSemiFinishedSearch, SEMI_FINISHED_PLACEHOLDER, type BatchDetail } from '@/api/productionHooks'
+import { NoSemiFinishedHint } from './NoSemiFinishedHint'
 import { unitLabel } from '@/utils/qtyUnits'
 import { parseVnNumber, vnNumberInput } from '@/utils/vnNumber'
 
@@ -60,12 +61,12 @@ export function BatchFormSheet({ open, onClose, batch, template, onSaved }: {
   }, [open]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const term = useDebouncedValue(matTerm, 250)
-  const { data: found = [], isFetching } = useMaterials({ search: term || undefined, limit: 50 }, open)
+  // chỉ mã đã đánh dấu "Bán thành phẩm" ở Mã hàng (C117) — mã đang chọn (sửa mẻ cũ) vẫn giữ nhãn qua `picked`
+  const { found, isFetching, none: noBtp } = useSemiFinishedSearch(term, open, true)
   const { data: picked = [] } = useMaterialsByIds(mat ? [mat] : [], open && !!mat)
   const matOpts = useMemo(() => {
     const seen = new Set<string>()
     return [...picked, ...found].filter(m => { if (seen.has(m.id)) return false; seen.add(m.id); return true })
-      .filter(m => ['L', 'KG'].includes(String(m.base_unit ?? '').toUpperCase()))
       .map(m => ({ value: m.id, label: m.material_code, sub: `${m.short_name ?? m.material_description ?? ''} · ${unitLabel(m.base_unit)}` }))
   }, [picked, found])
   const selMat = picked.find(m => m.id === mat) ?? found.find(m => m.id === mat)
@@ -113,7 +114,8 @@ export function BatchFormSheet({ open, onClose, batch, template, onSaved }: {
         <div>
           <Label className="text-xs">Mã bán thành phẩm <span className="text-red-500">*</span></Label>
           <SingleSelect value={mat} onChange={v => { setMat(v); setCodeTouched(false) }} serverSearch onSearchChange={setMatTerm} loading={isFetching}
-            selectedLabel={selMat ? selMat.material_code : undefined} placeholder="Tìm mã hoặc tên (chỉ mã tính L / KG)" options={matOpts} />
+            selectedLabel={selMat ? selMat.material_code : undefined} placeholder={SEMI_FINISHED_PLACEHOLDER} options={matOpts} />
+          {noBtp && !mat && <NoSemiFinishedHint />}
         </div>
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
           <div className="col-span-2 sm:col-span-1">

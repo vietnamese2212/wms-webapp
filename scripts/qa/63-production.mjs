@@ -51,7 +51,9 @@ async function cleanup() {
   await restWrite('production_process_form', 'DELETE', 'code=like.QA63*')
   if (batches.length) await restWrite('batch_requirement', 'DELETE', `batch_id=in.(${batches.map(b => b.id).join(',')})`)
   await restWrite('production_shift_report', 'DELETE', `warehouse_id=in.(${whs.join(',')})`)
-  await restWrite('production_recipe', 'DELETE', `material_id=in.(${[M_BTP, M_BTP2].join(',')})`)
+  // đủ CẢ BỐN mã: bản lỗi C117 cho khai định mức với mã NVL ⇒ dòng định mức đó giữ khoá ngoại, mã hàng + kho thử không xoá được
+  await restWrite('production_recipe', 'DELETE', `material_id=in.(${[M_RM, M_BTP, M_BTP2, M_EA].join(',')})`)
+  await restWrite('Material', 'DELETE', 'material_code=eq.QA63BTPX')
   if (runs.length) {
     await restWrite('packing_logs', 'DELETE', `run_id=in.(${runs.map(r => r.id).join(',')})`)
     await restWrite('packing_runs', 'DELETE', `id=in.(${runs.map(r => r.id).join(',')})`)
@@ -74,11 +76,12 @@ try {
     { id: WC2, code: 'QA63CB2', name: 'QA63 — kho chế biến 2', warehouse_type: 'CENTRAL', inventory_mode: 'QR', parent_warehouse_id: WP, updated_at: ts() },
   ])
   // PostgREST đòi mọi dòng của một lô cùng bộ khoá ⇒ dựng qua một hàm có đủ cột
-  const MAT = (id, code, desc, unit, prefix = null, hold = null) => ({ id, material_code: code, material_description: desc, short_name: desc, base_unit: unit, batch_prefix: prefix, tank_hold_hours: hold, updated_at: ts() })
+  // btp = cờ "Bán thành phẩm" ở Mã hàng (16/11, C117) — Sản xuất chỉ nhận mã có cờ; NVL tính KG KHÔNG còn làm BTP được
+  const MAT = (id, code, desc, unit, prefix = null, hold = null, btp = false) => ({ id, material_code: code, material_description: desc, short_name: desc, base_unit: unit, batch_prefix: prefix, tank_hold_hours: hold, is_semi_finished: btp, updated_at: ts() })
   await restWrite('Material', 'POST', null, [
     MAT(M_RM, 'QA63RM1', 'QA63 NVL đường', 'KG'),
-    MAT(M_BTP, 'QA63BTP1', 'QA63 dịch sữa nền', 'L', 'QD', 48),
-    MAT(M_BTP2, 'QA63BTP2', 'QA63 dịch khác', 'L'),
+    MAT(M_BTP, 'QA63BTP1', 'QA63 dịch sữa nền', 'L', 'QD', 48, true),
+    MAT(M_BTP2, 'QA63BTP2', 'QA63 dịch khác', 'L', null, null, true),
     MAT(M_EA, 'QA63EA1', 'QA63 hàng chiếc', 'EA'),
   ])
   const E = (id, pallet, qty, wh, nsx, exp, extra = {}) => ({ id, pallet_code: pallet, material_id: M_RM, cartons_imported: qty, cartons_remaining: qty, status: 'IN_STOCK',
@@ -96,7 +99,10 @@ try {
   const r1a = await api('/wms/production/batches', 'POST', { warehouse_id: WP, material_id: M_BTP, prod_date: todayVN })
   check('1a. Mở mẻ ở kho KHÔNG phải kho phụ ⇒ 422 NOT_PRODUCTION_WAREHOUSE', r1a.s === 422 && r1a.j?.error?.code === 'NOT_PRODUCTION_WAREHOUSE', `http=${r1a.s} ${r1a.j?.error?.code}`)
   const r1b = await api('/wms/production/batches', 'POST', { warehouse_id: WC, material_id: M_EA, prod_date: todayVN })
-  check('1b. Mã tính theo EA ⇒ 422 BTP_UNIT', r1b.s === 422 && r1b.j?.error?.code === 'BTP_UNIT', `http=${r1b.s}`)
+  check('1b. Mã tính theo EA (không phải BTP) ⇒ 422 NOT_SEMI_FINISHED', r1b.s === 422 && r1b.j?.error?.code === 'NOT_SEMI_FINISHED', `http=${r1b.s} ${r1b.j?.error?.code}`)
+  // C117: NVL tính KG từng lọt làm "mã bán thành phẩm" (luật cũ chỉ xét đơn vị L / KG)
+  const r1b2 = await api('/wms/production/batches', 'POST', { warehouse_id: WC, material_id: M_RM, prod_date: todayVN })
+  check('1b2. Mở mẻ với mã NGUYÊN LIỆU tính KG (chưa đánh dấu BTP) ⇒ 422 NOT_SEMI_FINISHED', r1b2.s === 422 && r1b2.j?.error?.code === 'NOT_SEMI_FINISHED', `http=${r1b2.s} ${r1b2.j?.error?.code}`)
   const nc = await api(`/wms/production/batches/next-code?warehouse_id=${WC}&material_id=${M_BTP}&prod_date=${todayVN}&machine_code=t1`)
   const stem = `QD${todayVN.slice(2, 4)}${todayVN.slice(5, 7)}${todayVN.slice(8, 10)}T1`
   check('1c. Mã lô gợi ý = tiền tố + yymmdd + máy + 001', nc.s === 200 && nc.j?.data?.code === `${stem}001`, `http=${nc.s} code=${nc.j?.data?.code}`)
@@ -311,6 +317,10 @@ try {
   check('6w. Cửa Loại kho của Cài đặt WMS không đè / không ghi được công tắc MES', tc2.s === 200 && tcRow?.production_qa_gate === 'OFF', `http=${tc2.s} gate=${tcRow?.production_qa_gate}`)
   const stUnknown = await api('/wms/production/settings', 'PUT', { warehouse_id: WC, types: [{ type_code: 'QA63_KHONG_CO', production_qa_gate: 'OFF' }] })
   check('6x. Loại kho không thuộc kho ⇒ 422, không ghi gì', stUnknown.s === 422, `http=${stUnknown.s}`)
+  const stRm = await api('/wms/production/settings', 'PUT', { warehouse_id: WC, hold_hours: [{ material_id: M_RM, tank_hold_hours: 24 }] })
+  const stRmNull = await api('/wms/production/settings', 'PUT', { warehouse_id: WC, hold_hours: [{ material_id: M_RM, tank_hold_hours: null }] })
+  check('6y. Khai hạn lưu bồn cho mã NGUYÊN LIỆU ⇒ 422 NOT_SEMI_FINISHED; gỡ hạn (null) thì mã nào cũng được (C117)',
+    stRm.s === 422 && stRm.j?.error?.code === 'NOT_SEMI_FINISHED' && stRmNull.s === 200, `http=${stRm.s} ${stRm.j?.error?.code} / ${stRmNull.s}`)
   // trả về trạng thái các phép sau cần
   await api('/wms/production/settings', 'PUT', { warehouse_id: WC, production_qa_gate: 'WARN', types: [{ type_code: typeCode, production_qa_gate: null }],
     hold_hours: [{ material_id: M_BTP, tank_hold_hours: 48 }, { material_id: M_BTP2, tank_hold_hours: null }] })
@@ -351,7 +361,9 @@ try {
   // ── [10] BÀN LÀM VIỆC CỦA MẺ: định mức → yêu cầu → cấp ──
   const rcBad = await api(`/wms/production/recipes/${M_BTP2}`, 'PUT', { base_qty: 100, lines: [{ material_id: M_BTP2, qty: 1 }] })
   const rcEa = await api(`/wms/production/recipes/${M_EA}`, 'PUT', { base_qty: 100, lines: [{ material_id: M_RM, qty: 1 }] })
-  check('10a. Định mức chứa chính mã BTP ⇒ 422; mã không tính L / KG ⇒ 422', rcBad.s === 422 && rcEa.s === 422, `http=${rcBad.s}/${rcEa.s}`)
+  const rcRm = await api(`/wms/production/recipes/${M_RM}`, 'PUT', { base_qty: 100, lines: [{ material_id: M_EA, qty: 1 }] })
+  check('10a. Định mức chứa chính mã BTP ⇒ 422; mã EA ⇒ 422; mã NGUYÊN LIỆU tính KG ⇒ 422 NOT_SEMI_FINISHED (C117)',
+    rcBad.s === 422 && rcEa.s === 422 && rcRm.s === 422 && rcRm.j?.error?.code === 'NOT_SEMI_FINISHED', `http=${rcBad.s}/${rcEa.s}/${rcRm.s} ${rcRm.j?.error?.code}`)
   const rcOk = await api(`/wms/production/recipes/${M_BTP2}`, 'PUT', { base_qty: 100, note: 'QA63', lines: [{ material_id: M_RM, qty: 5 }, { material_id: M_EA, qty: 2 }] })
   const rcGet = await api(`/wms/production/recipes/${M_BTP2}`)
   const rcList = await api('/wms/production/recipes')
@@ -392,6 +404,8 @@ try {
       && num(board4.find(r => r.material_id === M_RM)?.consumed) === 6, `http=${upPlan.s} ${JSON.stringify(board4.map(r => [r.material_id, r.required, r.consumed]))}`)
   const bx = await api('/wms/production/batches', 'POST', { warehouse_id: WC, material_id: M_BTP2, prod_date: todayVN, planned_qty: 100 })
   const BX = bx.j?.data
+  const upRm = await api(`/wms/production/batches/${BX?.id}`, 'PATCH', { material_id: M_RM })
+  check('10j0. Sửa mẻ đổi mã BTP sang mã NGUYÊN LIỆU ⇒ 422 NOT_SEMI_FINISHED (C117)', upRm.s === 422 && upRm.j?.error?.code === 'NOT_SEMI_FINISHED', `http=${upRm.s} ${upRm.j?.error?.code}`)
   const upMat = await api(`/wms/production/batches/${BX?.id}`, 'PATCH', { material_id: M_BTP })
   const boardX = (await api(`/wms/production/batches/${BX?.id}`)).j?.data?.board ?? []
   const upBack = await api(`/wms/production/batches/${BX?.id}`, 'PATCH', { material_id: M_BTP2, planned_qty: 200 })
@@ -557,6 +571,29 @@ try {
     check('14a. Chức danh chỉ có quyền Sản xuất được mở mẻ ⇒ tìm được mã hàng (200); chức danh chỉ xem ⇒ 403',
       !!tkOpen && !!tkView && sOpen === 200 && sView === 403, `open=${sOpen} view=${sView}`)
   }
+
+  // ── [15] CỜ "BÁN THÀNH PHẨM" Ở MÃ HÀNG (16/11, C117 — ô "Mã bán thành phẩm" từng chỉ liệt kê nguyên liệu) ──
+  const sf = await api('/masterdata/materials?search=QA63&limit=20&view=lite&semi_finished=1')
+  const sfIds = (sf.j?.data ?? []).map(m => m.id).sort()
+  check('15a. Ô tìm mã BTP (semi_finished=1) chỉ ra mã đã đánh dấu — không có NVL / mã EA',
+    sf.s === 200 && JSON.stringify(sfIds) === JSON.stringify([M_BTP, M_BTP2].sort()), `http=${sf.s} ${JSON.stringify(sfIds)}`)
+  const pg = await api('/masterdata/materials?page=1&page_size=50&search=QA63&flags=semi_finished')
+  check('15b. Trang Mã hàng lọc Cờ = Bán thành phẩm ⇒ đúng 2 mã', pg.s === 200 && num(pg.j?.data?.total) === 2, `http=${pg.s} total=${pg.j?.data?.total}`)
+  const fEa = await api(`/masterdata/materials/${M_EA}`, 'PUT', { is_semi_finished: true })
+  const fUnit = await api(`/masterdata/materials/${M_BTP2}`, 'PUT', { base_unit: 'HOP' })
+  const fHold = await api(`/masterdata/materials/${M_RM}`, 'PUT', { tank_hold_hours: 12 })
+  const fNew = await api('/masterdata/materials', 'POST', { material_code: 'QA63BTPX', material_description: 'QA63 BTP sai đơn vị', base_unit: 'BAG', is_semi_finished: true })
+  const fRow = (await restAll('Material', `select=is_semi_finished,base_unit,tank_hold_hours&id=in.(${M_EA},${M_BTP2},${M_RM})`))
+  check('15c. Mã hàng: đánh dấu BTP cho mã EA · đổi BTP sang HOP · khai hạn lưu bồn cho NVL · tạo BTP tính BAG ⇒ đều 400, không ghi gì',
+    fEa.s === 400 && fUnit.s === 400 && fHold.s === 400 && fNew.s === 400
+      && fRow.every(r => r.base_unit !== 'HOP' && r.tank_hold_hours == null && !(r.base_unit === 'EA' && r.is_semi_finished)),
+    `http=${fEa.s}/${fUnit.s}/${fHold.s}/${fNew.s}`)
+  const fOn = await api(`/masterdata/materials/${M_RM}`, 'PUT', { is_semi_finished: true })
+  const fOff = await api(`/masterdata/materials/${M_RM}`, 'PUT', { is_semi_finished: false })
+  const rmFlag = (await restAll('Material', `select=is_semi_finished&id=eq.${M_RM}`))[0]
+  check('15d. Mã tính KG bật / tắt cờ BTP qua form Mã hàng ⇒ 200, ghi đúng', fOn.s === 200 && fOn.j?.data?.is_semi_finished === true && fOff.s === 200 && rmFlag?.is_semi_finished === false,
+    `http=${fOn.s}/${fOff.s} now=${rmFlag?.is_semi_finished}`)
+  if (fNew.s === 200) await restWrite('Material', 'DELETE', 'material_code=eq.QA63BTPX')
 } finally {
   await cleanup()
   const left = await restAll('Warehouse', `select=id&id=in.(${WP},${WC},${WC2})`)

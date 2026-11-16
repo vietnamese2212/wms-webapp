@@ -20,8 +20,9 @@ import { SingleSelect } from '@/components/shared/SingleSelect'
 import { MatLinesEditor, toMatLine, matLineError, matLinesPayload, type MatLine } from '@/components/wms/production/MatLinesEditor'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
-import { useMaterials, useMaterialsByIds } from '@/api/hooks'
-import { useRecipes, useRecipe, useSaveRecipe, type RecipeRow } from '@/api/productionHooks'
+import { useMaterialsByIds } from '@/api/hooks'
+import { useRecipes, useRecipe, useSaveRecipe, useSemiFinishedSearch, SEMI_FINISHED_PLACEHOLDER, type RecipeRow } from '@/api/productionHooks'
+import { NoSemiFinishedHint } from '@/components/wms/production/NoSemiFinishedHint'
 import { unitLabel } from '@/utils/qtyUnits'
 import { parseVnNumber, vnNumberInput } from '@/utils/vnNumber'
 import { formatDateTime } from '@/utils/formatters'
@@ -106,12 +107,12 @@ function RecipeSheet({ open, onClose, materialId, canManage, existing }: { open:
     setLines(loaded.lines.map(l => toMatLine({ material_id: l.material_id, material_code: l.material?.material_code ?? '', material_name: l.material?.short_name ?? null, base_unit: l.material?.base_unit ?? null }, l.qty)))
   }, [open, loaded?.id, loaded?.updated_at]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const { data: found = [], isFetching } = useMaterials({ search: matTerm || undefined, limit: 50 }, open && !materialId)
+  // chỉ mã đã đánh dấu "Bán thành phẩm" ở Mã hàng (C117)
+  const { found, isFetching, none: noBtp } = useSemiFinishedSearch(matTerm, open && !materialId)
   const { data: picked = [] } = useMaterialsByIds(mat ? [mat] : [], open && !!mat)
   const selMat = picked.find(m => m.id === mat) ?? found.find(m => m.id === mat)
   const has = new Set(existing.map(e => e.material_id))
   const matOpts = [...picked, ...found].filter((m, i, a) => a.findIndex(x => x.id === m.id) === i)
-    .filter(m => ['L', 'KG'].includes(String(m.base_unit ?? '').toUpperCase()))
     .map(m => ({ value: m.id, label: m.material_code, sub: `${m.short_name ?? m.material_description ?? ''} · ${unitLabel(m.base_unit)}${has.has(m.id) ? ' · đã có định mức' : ''}` }))
   const baseN = base.trim() ? parseVnNumber(base) : null
   const baseBad = !!base.trim() && (baseN == null || baseN <= 0)
@@ -134,8 +135,9 @@ function RecipeSheet({ open, onClose, materialId, canManage, existing }: { open:
         <div>
           <Label className="text-xs">Mã bán thành phẩm <span className="text-red-500">*</span></Label>
           <SingleSelect value={mat} onChange={v => { setMat(v); if (loadedFor && loadedFor !== v) { setBase(''); setNote(''); setActive(true); setLines([]); setLoadedFor('') } }} disabled={!!materialId || !canManage} serverSearch onSearchChange={setMatTerm} loading={isFetching}
-            selectedLabel={selMat?.material_code ?? loaded?.material?.material_code} placeholder="Tìm mã hoặc tên (chỉ mã tính L / KG)" options={matOpts} />
-          {!materialId && loaded && <p className="text-[11px] text-amber-700 mt-1">Mã này đã có định mức — đang sửa định mức đó.</p>}
+            selectedLabel={selMat?.material_code ?? loaded?.material?.material_code} placeholder={SEMI_FINISHED_PLACEHOLDER} options={matOpts} />
+          {noBtp && !mat && <NoSemiFinishedHint />}
+          {!materialId && loaded &&<p className="text-[11px] text-amber-700 mt-1">Mã này đã có định mức — đang sửa định mức đó.</p>}
         </div>
         <div className="grid grid-cols-2 gap-2 items-end">
           <div>

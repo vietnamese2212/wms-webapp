@@ -1,288 +1,138 @@
 # WMS Supply Chain Webapp
 
-> **File này = LUẬT phải làm (bản rút gọn, 28/09/2026).** Bản đầy đủ có lý do · số đo · lịch sử: luật chung ở `docs/rules/*.md`, từng module ở `docs/modules/<key>.md`. **Sửa module nào: đọc file module đó + mọi file trong mục "Giao thoa với" của nó + mục "GIAO THOA GIỮA CÁC MODULE" dưới đây.** Thêm luật mới: luật ngắn vào đây, diễn giải dài vào `docs/`.
+> File này chỉ ghi **luật đang hiệu lực**, ngắn, kèm lý do. Chi tiết, số đo và lịch sử nằm ở:
+> `docs/rules/*.md` (luật chung) · `docs/modules/<key>.md` (từng module) · `docs/qa/BUG_CLASSES.md` (sổ lớp lỗi) · skill trong `.claude/skills/`.
+> Bản đầy đủ trước ngày 16/11/2026 (có ngày chốt và lịch sử từng luật): `docs/rules/claude-md-full-2026-11-16.md` — tra khi cần biết vì sao một luật ra đời.
+>
+> Giữ file này dưới khoảng 250 dòng. Bài học mới ghi vào `docs/` hoặc sổ lớp lỗi. Chỉ thêm vào đây khi luật cần cho hầu hết mọi việc; khi thêm thì viết trạng thái hiện tại và xoá luật cũ nó thay, không ghi ngày và lịch sử.
 
-## Quy tắc làm việc
-- Ngôn ngữ trao đổi: **tiếng Việt**.
-- **User CHỈ làm trên `dev` / Preview + DB staging (user chốt 25–26/09 và nhắc lại 28/09: "không có main ở đây").** Báo cáo cho user KHÔNG nhắc `main` / production / merge / migration chờ lên production — đó là nhiễu. Việc cần làm khi lên production chỉ ghi vào `SCHEMA_REVIEW.md` / memory để lúc merge không sót; quy trình merge bên dưới chỉ áp khi user CHỦ ĐỘNG đòi lên production.
-- **Quy trình 2 môi trường (từ 07/07/2026)** — remote `https://github.com/vietnamese2212/wms-webapp.git`:
-  - **Làm việc mặc định trên branch `dev`** — push `dev` sau mỗi lần sửa → Vercel Preview (URL riêng) + **DB STAGING** (Supabase cũ `bxxryrmpfabvjitqbdnw`, data test). Dev/test/load-test/seed thoải mái ở đây.
-  - **User nghiệm thu trên Preview → mới merge `dev` vào `main`** → Vercel Production (`wms-webapp.vercel.app`) + **DB LOF production** (`svicyfquresxaigfxsdb`). KHÔNG push thẳng main trừ hotfix khẩn (lỗi chặn vận hành) — hotfix phải verify kỹ hơn vì không qua staging.
-  - **CHỐNG HỒI QUY — cổng CỨNG trước khi merge `dev`→`main`:** `node scripts/qa/run-all.mjs --tier full` phải **XANH TOÀN BỘ** (chưa xanh = KHÔNG merge, kể cả đã nghiệm thu Preview); hotfix thẳng main tối thiểu `invariant`+`smoke`. **Sau mỗi fix trên dev: `--tier fast`** + gói QA của module vừa sửa. **Gói tải `03-scale` · `05-rush` · `06-readload` PHẢI XIN PHÉP** (`QA_ALLOW_LOAD=1`, ngoài giờ) — staging là Supabase NANO, bắn tải cạn Disk IO là cả dev chết nhiều giờ. Chi tiết: [docs/rules/qa-and-release.md](docs/rules/qa-and-release.md).
-  - **TẦNG MÁY RẺ NHẤT:** `cd backend && npm test` (~3 s, không cần DB) = `tests/unit` (bất biến helper thuần) + `tests/mirror` (bản BE và FE của một helper PHẢI ra cùng kết quả — ratchet `mirror_helper_without_test`). **Phép kiểm mới phải ĐỎ trên bản lỗi trước khi tin** (`git stash` bản vá). **Sổ lớp lỗi `docs/qa/BUG_CLASSES.md`**: mỗi lỗi gắn **LẶP** (sửa LƯỚI, không chỉ vá bug) / **MỚI** (thêm dòng + tầng lưới rẻ nhất: tsc → test đơn vị → ratchet 09 → ratchet độ phủ → gói QA → error_logs). Route write MỚI bắt buộc `validate({…})` (zod, `middlewares/validate.ts`); file BE MỚI import `db` có kiểu (`npm run db:types` sau mỗi migration đã apply); route/quyền mới phải có gói QA chạm (`coverage-surface.mjs --ratchet`). Chi tiết: [docs/rules/qa-and-release.md](docs/rules/qa-and-release.md).
-  - **⚠️ TẠM DỪNG TỪ 27/10 — staging gói Free vượt egress 5 GB hai kỳ liền:** `qa-nightly` đã TẮT trên GitHub (bật lại: Actions → qa-nightly → Enable), job `qa-smoke` của `ci` chỉ chạy TAY (`workflow_dispatch`); job `static` vẫn chạy mỗi push. Mọi lượt test chạm DB staging (gói QA, Playwright) phải ước lượng MB trước và báo số đo sau — ngân sách cả org ~165 MB/ngày (memory `feedback-measure-supabase-quota-during-dev`).
-  - **PIPELINE ĐI TUẦN + CỔNG KHÔNG ĐƯỢC KÊU OAN:** mỗi push dev = GitHub Actions `ci` (cổng tĩnh + tsc BE/FE + build) + QA smoke trên Preview; tài khoản chạy bộ kiểm do CI **tự cấp rồi xoá** (`scripts/qa/ci-account.mjs`, CHỈ staging — khoá production không bao giờ vào CI). **`.githooks/pre-push`** chạy `run-all --tier fast --offline` + `tsc` BE/FE, đỏ là chặn push (bật một lần mỗi máy: `git config core.hooksPath .githooks`) — cổng tại máy phải chặn ĐỦ những gì job `static` chặn, phần chênh lệch chính là phần thành email đỏ. **MỌI workflow chạy bộ kiểm phải cài node_modules CẢ backend LẪN frontend** — bậc mirror import thẳng `frontend/src` (kéo theo `date-fns` của FE), `qa-nightly` chỉ cài backend nên đỏ CÂM 13 đêm liền 24/09→11/10 (C75); `run-all.mjs` nay chặn trước bằng `needs` và khi đỏ in MỘT `::error` liệt kê đủ tên bước hỏng. **Bước nào cũng phải tự nêu được tên khi đỏ** — người nhận email không có quyền tải log. Gói QA MỚI kết thúc bằng `finish()`/`tally()` (tự in `::error` nêu tên phép hỏng); chỉ gói đọc trạng thái CHUNG của DB mới dùng `retryOnFail`; phép kiểm mồ côi phải NÊU MÃ trong `detail`. Mọi 5xx BE + lỗi JS FE ghi `error_logs`, digest hằng ngày. **Cổng tĩnh ratchet** `09-static-gate.mjs` + `static-baseline.json`: vi phạm không được TĂNG, dọn được thì `--update-baseline`. Chi tiết + lịch sử các lần email đỏ oan: [docs/rules/qa-and-release.md](docs/rules/qa-and-release.md).
-  - **LUẬT "BUG CHẾT HAI LẦN" (chốt 29/07, thêm tầng 11/09):** fix bug nào cũng phải kèm ÍT NHẤT 1 trong 4 — (1) ràng buộc KIỂU làm lỗi đó thành lỗi biên dịch (vd `FilterBar serverSearch` bắt buộc `selectedOpts`, `db` có kiểu), (2) **test đơn vị/mirror trong `backend/tests`** (helper thuần, hai bản BE⇄FE), (3) luật vào cổng tĩnh ratchet (09-static-gate), (4) phép kiểm vào bộ QA (mẫu: bug `?codes=` rỗng → gói 07-params-fuzz). Chọn tầng RẺ NHẤT bắt được lớp đó. Không có = CHƯA fix xong. Gốc rễ đã đo 29/07: cả 3 lỗi nghiệm thu đều là VI PHẠM LẶP LẠI của luật đã ghi trong file này — luật văn xuôi không tự thi hành, phải chuyển thành máy móc.
-  - **Migration schema: apply STAGING trước → test → mới apply DB production** (cả 2 qua Supabase Dashboard từng project). `.env` local + `.mcp.json` trỏ STAGING; key production chỉ nằm trong Vercel env — Postgres MCP soi staging, muốn soi production phải nói rõ. ⚠️ `backend/.env` có **`LOF_DATABASE_URL`** (production) và **`DIRECT_URL`** (staging GHI ĐƯỢC — `DATABASE_URL` là read-only có chủ đích, `CREATE TRIGGER` qua nó sẽ 25006).
-  - **CUTOVER production: SO SCHEMA HAI BÊN BẰNG MÁY** — `node scripts/qa/prod-parity.mjs` (production ↔ staging: bảng · cột · hàm · index · trigger · event trigger + 3 bất biến bảo mật), không tin sổ tay; ranh giới migration lấy từ `git ls-tree main` ∖ `dev`, KHÔNG theo ngày; gom part bọc `BEGIN…COMMIT`. Mẫu `docs/plans/CUTOVER_2026-09-24.md`. Chi tiết: [docs/rules/qa-and-release.md](docs/rules/qa-and-release.md).
-  - Kiến trúc multi-tenant (1 code — mỗi đơn vị 1 DB+deploy, cờ theo khác biệt không theo tenant): memory `multi-tenant-silo-architecture`.
-- **Đổi DB schema**: SQL → `backend/migrations/YYYYMMDD_<desc>.sql` → apply qua Supabase Dashboard → push → cập nhật `SCHEMA_REVIEW.md`. (Chi tiết: skill `mutation-realtime`.)
-- **`Template upload.xlsx` (thư mục gốc) = DỮ LIỆU UPLOAD GỐC của user — TUYỆT ĐỐI KHÔNG sửa/ghi đè, KHÔNG `git add`** (OneDrive hay tự lưu lại đổi byte; luôn `git add` từng file cụ thể, đừng `git add -A`/`git add .`). Chỉ ĐỌC để soi cấu trúc/debug upload.
+## Cách làm việc
 
----
-## Nguyên tắc hành vi khi xây dựng app
+- Trao đổi bằng tiếng Việt, gọi người dùng là "bạn".
+- Người dùng làm việc một mình trên nhánh `dev`, Vercel Preview và DB staging. Báo cáo không nhắc `main`, production hay merge, trừ khi người dùng chủ động hỏi. Việc cần nhớ cho lúc lên production ghi vào `SCHEMA_REVIEW.md`.
+- **Bạn là người bảo trì lâu dài của codebase này.** Khi một thay đổi sắp chép lại logic đã có ở chỗ khác, hãy gom về một helper dùng chung thay vì chép thêm bản thứ hai; lớp lỗi lặp nhiều nhất của app là "hai cửa cùng một sổ mà khác luật". Ngoài việc đó, giữ thay đổi trong phạm vi yêu cầu: không đổi hành vi, không đổi giao diện, không dọn code không liên quan. Mọi thay đổi ngoài yêu cầu phải được nêu trong báo cáo cuối.
+- **Làm hết việc được giao.** Lỗi thường gặp (lỗi lệnh, hết giờ chờ, file bị khoá, Preview chưa lên bản mới) thì tự chẩn đoán và đi tiếp. Lựa chọn nhỏ về kỹ thuật thì chọn phương án hợp lý, ghi vào báo cáo, không dừng hỏi.
+- **Các bước làm luôn, không cần hỏi:**
+  - sửa code, viết test, viết migration, cập nhật docs và skill;
+  - chạy `npm test`, cổng tĩnh, `tsc`, build;
+  - commit và `git push origin dev`;
+  - đọc DB staging; áp migration lên staging;
+  - chạy gói QA của module vừa sửa và các lượt Playwright chỉ đọc, khi ước lượng dưới khoảng 20 MB tải về;
+  - cấp và dọn tài khoản CI bằng `scripts/qa/ci-account.mjs`.
+- **Hỏi trước khi làm, vì khó hoàn tác hoặc tốn hạn mức chung:**
+  - mọi thao tác trên `main` hoặc DB production;
+  - gói tải `03-scale`, `05-rush`, `06-readload` và `run-all --tier full` (staging là máy nhỏ, cạn Disk IO là dừng nhiều giờ);
+  - lượt test ước lượng trên 20 MB tải về;
+  - xoá dữ liệu không do bộ kiểm tạo ra;
+  - đổi một luật nghiệp vụ mà người dùng đã chốt.
+- **Câu hỏi về một luật không phải lệnh đổi luật.** Khi người dùng hỏi "sao lại thế này", hãy giải thích luật, lý do và các phương án, rồi chờ quyết định.
+- **Tính năng có nhiều luật nghiệp vụ** (điều vận, nhập trả, đặt lịch…): trước khi code, nêu các ca khó và hỏi người dùng một lượt, rồi viết thành bảng "tình huống → kết quả mong muốn". Bảng đó trở thành test. Lý do: nhiều luật của app đã phải làm lại vì chỉ lộ ra khi người dùng nhìn thấy màn hình.
+- **Nghiệm thu trước khi báo xong** (skill `verify-feature`):
+  - đăng nhập bằng một chức danh thật của người sẽ dùng tính năng, không dùng superadmin, và đi hết luồng. Superadmin bỏ qua mọi kiểm quyền nên luôn thấy màn hình chạy tốt;
+  - tự hỏi "người mới mở màn này có tìm thấy lối vào không";
+  - chụp màn ở 1280 và 390 và tự xem ảnh.
+- **Báo cáo:** giữa lượt chỉ viết một dòng trạng thái. Mọi tổng kết gom vào một tin cuối. Viết cho người không xem các bước làm: câu ngắn, từ thường, kết luận trước, nói rõ phần chưa làm và phần cần người dùng quyết.
+- Nhiều phiên Claude có thể cùng làm trên thư mục này. Trước khi sửa file đang nóng, xem `git status` và `git log -2`. Nếu cổng pre-push đỏ vì code dở của phiên khác thì chờ, không dùng `--no-verify`.
 
-### 1. Suy nghĩ trước khi code
-> **Đừng tự suy diễn. Đừng che giấu sự không chắc chắn. Hãy nêu rõ các đánh đổi.**
+## Môi trường
 
-Trước khi triển khai:
-- Nêu rõ các giả định của bạn. Nếu không chắc, hãy hỏi.
-- Nếu có nhiều cách hiểu khác nhau, hãy trình bày chúng — đừng tự âm thầm chọn một.
-- Nếu có cách đơn giản hơn, hãy nói ra. Sẵn sàng phản biện khi cần.
-- Nếu có điều gì chưa rõ, hãy dừng lại. Chỉ rõ điểm gây mơ hồ. Hỏi lại.
+- Remote `https://github.com/vietnamese2212/wms-webapp.git`. Nhánh `dev` → Vercel Preview + Supabase staging `bxxryrmpfabvjitqbdnw`. Nhánh `main` → production + DB `svicyfquresxaigfxsdb`.
+- `backend/.env`: `DATABASE_URL` chỉ đọc (staging) · `DIRECT_URL` ghi được (staging) · `LOF_DATABASE_URL` là production. `.mcp.json` trỏ staging và không được commit.
+- Mật khẩu và token không đi qua tham số lệnh gọi công cụ. Script tự đọc trong tiến trình (mẫu `scripts/qa/ci-account.mjs`).
+- `Template upload.xlsx` ở thư mục gốc là dữ liệu gốc của người dùng: chỉ đọc, không sửa, không `git add`. Luôn `git add` từng file cụ thể. Không add `docs/presentation/` và `ui-ux/`.
+- Sửa `backend/src` thì tăng `// rebuild-token` trong `api/index.ts`, nếu không Vercel không build lại hàm.
+- **Hạn mức Supabase:** staging dùng chung cho mọi lượt test. Trước lượt test chạm DB, ước lượng số MB tải về; sau lượt, báo số đo. Ngân sách cả ngày khoảng 165 MB. Lượt kiểm đêm (`qa-nightly`) đang tắt và `qa-smoke` chỉ chạy tay cho tới khi người dùng bật lại.
+- Chạy tại máy: `cd backend && npm run dev` (cổng 4000) · `cd frontend && npm run dev` (cổng 5173).
 
-### 2. Ưu tiên sự đơn giản
-> **Chỉ viết lượng code tối thiểu để giải quyết vấn đề. Không thêm thứ chưa cần.**
+## Kiểm thử và chống lỗi lặp
 
-- Không thêm tính năng ngoài yêu cầu.
-- Không tạo abstraction cho thứ chỉ dùng một lần.
-- Không thêm “tính linh hoạt” hay “khả năng cấu hình” nếu chưa được yêu cầu.
-- Không viết xử lý lỗi cho các trường hợp gần như không thể xảy ra.
-- Nếu bạn viết 200 dòng nhưng thực tế có thể giải bằng 50 dòng, hãy viết lại.
+- Tầng rẻ nhất chạy trước: `cd backend && npm test` (vài giây, không cần DB) → `node scripts/qa/09-static-gate.mjs` → `tsc`. Cổng `.githooks/pre-push` chạy đủ các bước này.
+- **Mỗi bản sửa lỗi kèm một lưới máy** ở tầng rẻ nhất bắt được: kiểu TypeScript → test trong `backend/tests` → luật ở cổng tĩnh → phép kiểm trong gói QA. Luật viết bằng chữ không tự thi hành. Phép kiểm mới phải đỏ trên bản lỗi rồi mới tin.
+- Mỗi lỗi ghi vào `docs/qa/BUG_CLASSES.md`: **LẶP** (lớp đã có: sửa lưới của lớp đó) hoặc **MỚI** (thêm dòng và lưới).
+- Đổi một luật thì rà cả phép kiểm đang đọc luật đó. Phép kiểm khoá hành vi cũ sẽ đỏ oan mỗi lượt.
+- Giao diện: `scripts/qa/ui-mobile-sweep.mjs` (mọi trang và form ở 1280 / 390 / 360) và `scripts/qa/ui-layout-sync.mjs` (bố cục máy tính giống nhau ở mọi cỡ màn từ 1280).
+- Chi tiết, các bậc `fast` / `full`, quy trình lên production: `docs/rules/qa-and-release.md`.
 
-Tự hỏi:
-> “Một senior engineer có thấy đoạn này bị over-engineering không?”
+## Luật code
 
-Nếu có, hãy đơn giản hóa.
+Mỗi dòng là một luật đã từng gây lỗi thật. Chi tiết và số đo: `docs/rules/scale-and-data.md`, `docs/rules/backend.md`.
 
-### 3. Thay đổi có chủ đích, phạm vi nhỏ
-> **Chỉ chạm vào thứ cần thiết. Chỉ dọn dẹp phần bạn gây ảnh hưởng.**
+**Quy mô** — thiết kế cho vài nghìn người dùng và bảng nghiệp vụ hàng triệu dòng:
+- PostgREST cắt âm thầm ở khoảng 1.000 dòng mỗi phản hồi. List dùng `fetchAllRowsParallel` hoặc phân trang server. Cần một tập hay một tổng thì hỏi DB bằng RPC, không kéo dòng về đếm.
+- `.in('col', ids)` nằm trên URL: chia lô 300 id, kể cả lệnh ghi. Danh sách id lớn thì truyền cho RPC qua body. Lọc theo kho dùng cột `warehouse_id`, không liệt kê vị trí.
+- Số request tới PostgREST là tài nguyên hiếm (khoảng 10 khe). RPC phân trang trả dòng, không trả id. Các ô tổng của một màn gom vào một lời gọi. Tổng hợp nặng phải cache, không nằm trong đường request.
+- Phản hồi qua Vercel tối đa 4,5 MB: trang nào dữ liệu tăng theo thời gian thì phân trang server. Upload Excel đi qua `excelUploadBody` + middleware `excelFromStorage`.
+- Danh mục lớn (mã hàng, vị trí, biển số) không nạp cả vào trình duyệt: ô chọn tìm trên server, giá trị đã chọn luôn có nhãn.
+- Bảng không phân trang mà dài theo dữ liệu thì vẽ thân bảng qua `WindowedRows`.
+- Ghi hàng loạt theo lô khoảng 500 dòng, không ghi tuần tự từng dòng (quá 60 giây của Vercel). Chuẩn đầy đủ: skill `upload-download-standard`.
+- Sổ nhật ký lớn lên theo năm phải đăng ký hạn giữ ở `services/dataArchive.ts`. Chuỗi truy xuất lô (pallet, nhập, quét, đơn xuất, kiểm kê) không lưu trữ ra ngoài.
 
-Khi chỉnh sửa code hiện có:
-- Đừng “tiện tay cải thiện” code, comment hay format ở vùng liên quan.
-- Đừng refactor thứ chưa hỏng.
-- Hãy theo style hiện có, kể cả khi bạn thích cách khác hơn.
-- Nếu thấy dead code không liên quan, hãy ghi chú — đừng tự xóa.
+**Ghi dữ liệu và realtime** (skill `mutation-realtime`):
+- Mọi INSERT có `id: randomUUID()` và `updated_at`. DB không có giá trị mặc định, thiếu là lỗi 23502.
+- Bộ đếm, tồn, sức chứa dùng chung phải cập nhật nguyên tử: RPC có khoá dòng, hoặc ghi có điều kiện "giá trị vẫn như lúc đọc" kèm thử lại có giãn cách ngẫu nhiên. Luôn hình dung vài trăm người cùng thao tác.
+- Cửa ghi chạm từ hai sổ trở lên phải nằm trong một giao dịch (RPC), hoặc trả lỗi để màn hình hỏi thử lại.
+- Số liệu cập nhật realtime: `invalidateQueries` đủ khoá, thêm bảng vào `TABLE_QUERY_MAP`. Realtime chạy bằng broadcast từ trigger DB. Không tạo policy cho vai `authenticated` hay `anon`; hai vai này có 0 quyền trên bảng và gói QA 00 gác điều đó.
+- Đổi schema: file `backend/migrations/YYYYMMDD_<mô tả>.sql` → áp staging → `npm run db:types` → cập nhật `SCHEMA_REVIEW.md`.
 
-Khi thay đổi của bạn tạo ra phần thừa:
-- Xóa import/variable/function mà CHÍNH thay đổi của bạn làm thành không dùng nữa.
-- Đừng xóa dead code có sẵn từ trước nếu chưa được yêu cầu.
+**Số lượng — đơn vị gốc (base unit):**
+- Mọi lưu trữ, phép tính và trường số lượng qua API là số theo đơn vị gốc của mã hàng. Thùng chỉ là lớp hiển thị: "N thùng + M hộp".
+- Mọi quy đổi đi qua `utils/qtyUnits.ts` (hai bản BE và FE phải ra cùng kết quả). Không tự chia, nhân hệ số ở chỗ khác.
+- Mã có đơn vị thùng thì số gốc phải nguyên. Tổng nhiều mã phải quy đổi từng mã rồi mới cộng, và dùng nhãn `QTY_CONVERTED_LABEL`.
+- Sau khi sửa, kiểm số hiển thị trên màn thật.
 
-Nguyên tắc kiểm tra:
-> Mỗi dòng thay đổi đều phải truy ngược được tới yêu cầu của người dùng.
+**Helper tập trung** — sửa luật ở một chỗ, không viết lại rải rác:
+- Biển số: `normalizePlate` (BE) và `normalizeLicensePlate` (FE), dạng `^[A-Z0-9]+$`, chuẩn hoá ở backend. Hai cột `WeighTicket.license_plate` và `erp_outbound_orders.license_plate` giữ nguyên văn nguồn ngoài.
+- Tem QR pallet (hai định dạng `_` và `;` cùng tồn tại): `parseInboundQR` và `normalizeQR` (BE), `utils/qr.ts` (FE). Mọi điểm quét gọi `normalizeQR`. Chi tiết: `docs/rules/multi-tenant-qr.md`.
+- %Date: `computePctDate` trong `shelfLife.ts`. Luật chặn theo date: `palletMeetsDateRule` / `dateRuleBelowError`, dùng ở mọi cửa chỉ đường và mọi cửa trừ tồn.
+- Ngày giờ (múi giờ Việt Nam): đọc mốc từ DB qua `utcMs()`, so với ngày Việt Nam qua `vnDayOf()`, hiển thị qua `utils/formatters.ts`. "Hôm nay" là hàm, không phải hằng số. `InventoryEntry.import_date` là ngày hàng thật sự vào kho; thao tác nội bộ kế thừa ngày này.
+- Đổi vị trí pallet: gọi `logPalletMoves`. Dòng xe của một kho: đọc qua `services/vehicleModelScope.ts`. Chuỗi tình trạng xe: `services/tripFlow.ts`.
 
-### 4. Thực thi theo mục tiêu rõ ràng
-> **Định nghĩa tiêu chí thành công. Lặp lại cho tới khi xác minh được.**
+**Backend:**
+- Gọi `fail(res, error)` với cả đối tượng lỗi để lỗi Postgres do đầu vào thành 400/409/404, không thành 500. Sửa hoặc xoá theo id phải kiểm số dòng bị tác động.
+- Route ghi mới có `validate({…})`. Router mới đi qua `catchAsyncErrors`. File BE mới dùng client `db` có kiểu.
+- Đường đọc cắt phạm vi kho giống đường ghi. Route có hai id phải kiểm id con thuộc id cha.
+- Việc nền ghi lỗi qua `recordBackgroundFailure` để phân biệt quá tải với hỏng thật.
+- Không dùng `as any` trong code mới. Code cũ chỉ dọn khi đụng tới file đó.
 
-Biến task thành các mục tiêu có thể kiểm chứng:
-- “Thêm validation” → “Viết test cho input không hợp lệ, sau đó làm cho test pass”
-- “Fix bug” → “Viết test tái hiện bug, sau đó sửa để test pass”
-- “Refactor X” → “Đảm bảo test pass cả trước và sau refactor”
+**Đa đơn vị:** một codebase, mỗi đơn vị một DB và một bản triển khai. Khác biệt xử lý bằng cờ trong `SystemSetting` (khai ở `KNOWN_SETTINGS`), mặc định là hành vi cũ. Không viết `if (tenant === …)`.
 
-Với task nhiều bước, hãy nêu kế hoạch ngắn gọn:
-```txt
-1. [Bước] → kiểm tra: [điều cần verify]
-2. [Bước] → kiểm tra: [điều cần verify]
-3. [Bước] → kiểm tra: [điều cần verify]
-```
+## Giao diện
 
-Tiêu chí thành công rõ ràng giúp bạn làm việc độc lập tốt hơn.
-Tiêu chí mơ hồ kiểu “làm cho nó chạy được” sẽ khiến phải hỏi lại liên tục.
+Chuẩn chi tiết: skill `table-format` (list, bảng, trang chi tiết), skill `qr-scan-flow` (quét), `docs/rules/ui.md`.
 
-### Các nguyên tắc này đang hiệu quả nếu:
-- Diff có ít thay đổi thừa hơn
-- Ít phải viết lại do over-engineering
-- Các câu hỏi làm rõ xuất hiện trước khi implement thay vì sau khi gây lỗi
+- Màn mới phải giống các màn sẵn có: so với một màn chuẩn cùng loại (`Inbound.tsx`, `InboundDetail.tsx`) trước khi báo xong.
+- Dùng component chung: `FormSheet` cho form thêm/sửa · `ActionCluster` cho nút thanh công cụ · `FloatingActionBar` cho thao tác khi chọn nhiều dòng · `ResizableTable`, `ListFooter`, `SummaryBand`, `StatusBadge`, `TableEmptyRow`, `InfoTip`, `ScanIcon`, `SingleSelect`, `useConfirmDialog`.
+- Bộ lọc của list lưu trong `useWmsFilterStore`. Slice mới có Kho hoặc Loại kho thì thêm vào `sweepGlobalScope`.
+- Điện thoại (đến 360 px): không tràn ngang, không phần tử nào đè phần tử khác, nút chính thấy ngay khi mở màn. Máy tính từ 1280 trở lên: cùng một bố cục ở mọi cỡ màn.
+- Lỗi API hiện băng đỏ ngay trong màn. Nút gọi API bị khoá trong lúc chờ.
+- Ô kế thừa giá trị từ cấp cha phải in giá trị đang hiệu lực. Nhãn đơn vị tính lấy từ danh mục qua `unitLabel()`.
+- Trang có tab mới thì khai vào `PAGE_TABS` và gọi `useMobileTabs`.
 
----
-## Chuẩn code bắt buộc (luật cốt tử — chi tiết nằm trong skill)
+## Phân quyền
 
-**QUY MÔ — app phục vụ VÀI NGHÌN người dùng, dữ liệu VÀI TRIỆU dòng/năm:**
-- Mọi thiết kế/query phải giả định bảng nghiệp vụ (InventoryEntry, OutboundScanEntry, TmsOrder, Attendance, gate_registrations…) sẽ có **hàng triệu dòng** — "hiện tại mới vài trăm dòng" KHÔNG phải lý do bỏ qua.
-- **PostgREST cap ~1000 dòng/response** — query không phân trang bị cắt ÂM THẦM (data thiếu, báo oan, dedup hỏng); `.limit(N>1000)` cũng KHÔNG vượt được cap.
-  - **Lớp lỗi tái phát nhiều nhất** — có 2 lưới: RUNTIME (`lib/supabase.ts` bắt response đúng trần mà không khai `limit` ⇒ `error_logs` `CAP_TRUNCATED`) + CI ratchet `unpaginated_in_query`. Gốc rễ: **đừng KÉO DÒNG để tính ra một TẬP** — hỏi DB trả DISTINCT/count (RPC). List dùng `fetchAllRowsParallel` (`utils/pagination`) / range-loop; kiểm quyền/scope phải trên ĐỦ mọi dòng; test tra-tập phải seed vượt ngưỡng. Chi tiết: [docs/rules/scale-and-data.md](docs/rules/scale-and-data.md).
-- **DANH SÁCH ID TRONG URL — 2 TRẦN CỨNG (đo thật 27/07, memory `id-list-url-limits`):** filter `.in()`/`.or(in.())` của PostgREST và query-string của API đều nằm trên URL.
-  - **BE → PostgREST: tối đa ~300 id uuid (~11KB)** — 400 id đứt kết nối, 700 id → `400 Bad Request`. Giá trị ngắn (mã hàng/DO 9–10 ký tự): ~800–1000. ⇒ mọi `.in('col', ids)` mà ids **có thể** vượt 300 phải **chunk 300** (`fetchAllByIdChunks` / `chunkArray`), kể cả UPDATE/DELETE (filter cũng trên URL). Chunk 500 là SAI. **`.slice(0, 300)` trên lệnh GHI = CẮT ÂM THẦM** (08/10: Xác nhận 819 xe chỉ đổi trạng thái 300 xe) — chia lô `for (i += 300)`; đầu vào đã chặn ≤ 300 thì ghi chú `≤300: lý do` tại chỗ (ratchet `write_in_sliced_cap`).
-  - **Client → API (Vercel): query string tối đa ~800 id uuid (~32KB)** → vượt là **414** *trước khi* tới BE (chunk phía BE vô hiệu). ⇒ FE **không** nhồi danh sách id lớn vào query: gửi **cờ ngữ nghĩa** để BE tự resolve (mẫu `requires_only=1` ở Kiểm kê), hoặc chặn + hướng dẫn thu hẹp (KHÔNG cắt âm thầm).
-  - **Lọc theo KHO phải dùng cột `warehouse_id` trực tiếp**, KHÔNG liệt kê vị trí của kho (bug 504 Bàu Bàng 27/07 — 1.517 vị trí = 55KB URL).
-  - **Danh sách id truyền cho RPC thì đi POST body → KHÔNG dính trần URL.** Cần lọc theo tập id lớn (vị trí của kho, scope nhân sự…) mà vẫn phải ORDER BY/OFFSET/COUNT chính xác ⇒ viết RPC nhận `text[]` rồi `= ANY($1)`. Kho 1.517 vị trí: từ 24 round-trip (chunk 300 × 4 câu đếm) còn **1**.
-- **SỐ REQUEST PostgREST MỖI LẦN MỞ TRANG LÀ TÀI NGUYÊN HIẾM (đo 28/07, memory `postgrest-pool-roundtrips`):** nút thắt dưới tải KHÔNG phải máy Postgres mà là **pool ~10 khe NỘI BỘ của PostgREST**. Bằng chứng — cùng lúc 24 luồng ghi, một câu CỰC NHẸ qua 3 đường: **pg trực tiếp p95 347ms** (máy DB khoẻ hoàn toàn) · PostgREST trực tiếp p95 2.414ms · qua backend p95 4.404ms; đỉnh connection chỉ 24-27/60 nên **KHÔNG phải `max_connections`**. Mỗi request HTTP tới PostgREST chiếm 1 khe + tốn **3 câu SQL** (`set_config` + câu thật + `COMMIT`). Có hàng đợi thì độ trễ ≈ **SỐ REQUEST × thời gian chờ**, nên request thừa làm chậm CẢ APP, không chỉ trang đó. Ba luật:
-  1. **RPC phân trang phải trả về DÒNG (jsonb), KHÔNG trả id rồi để backend nạp lại** — trả id biến 1 request thành `1 + n/300`. In tem 1 trang 100 phiếu (~3.000 tem): **11 request → 1**. Sắp xếp làm luôn trong SQL.
-  2. **Ô SummaryBand/tổng: gom hết vào 1 lời gọi**, đừng mỗi ô một câu đếm. Suy ra được thì đừng đếm (`Vehicle.is_active` NOT NULL ⇒ `inactive = total − active`). Danh sách + tổng + tra tên của cùng một dải nên đi chung 1 RPC (Dashboard khu: 3 request → 1).
-  3. **Đếm round-trip bằng ĐO, đừng đọc code đếm tay** (vòng lặp chunk phụ thuộc dữ liệu): `pg_stat_statements` lọc `userid` = role **`service_role`** (KHÔNG phải `authenticator`), và so khớp theo TỪNG `queryid` chỉ lấy delta dương — `sum(calls)` sai vì bảng đầy 5.000 entry sẽ EVICT làm tổng TỤT.
-- **THẤY HẾT ≠ VẼ HẾT (07/10, C65):** bảng không phân trang mà số dòng tăng theo dữ liệu (Xem đơn Điều vận — user chốt thấy hết một màn) ⇒ thân bảng qua `WindowedRows` (chỉ vẽ dòng đang thấy, dòng phải cao đều). Đo: 3.529 dòng vẽ hết = 207 nghìn phần tử, tick 1 đơn ~1,1 s → ~38 ms. Test `backend/tests/unit/rowWindow.test.ts`. Chi tiết: skill `table-format` mục 4b.
-- **TRẦN 4,5MB RESPONSE của Vercel (đo 28/07)** — không chỉ upload mới có trần. Mọi endpoint trả list phải hỏi "mỗi dòng bao nhiêu byte × bao nhiêu dòng tối đa?": dòng công 552 B, dòng nhân sự ~830 B, dòng tồn kho ~700 B. Bảng công 1 tháng vượt trần từ **~290 nhân sự**; danh sách nhân sự từ ~5.400. ⇒ Trang nào payload tăng theo dữ liệu thì phân trang server, đừng chờ "khi nào đông thì tính". **UPLOAD > 4MB (29/09, ZSD02 8,4 MB bị chặn): mọi hook upload Excel đi qua `excelUploadBody` — file lớn đẩy THẲNG lên bucket riêng tư `excel-uploads` bằng vé ký (`POST /wms/uploads/sign`) rồi gọi cửa nạp với `{ storage_path }`; BE middleware `excelFromStorage` (sau multer ở MỌI route upload Excel) tải về, dựng `req.file`, xoá file — controller không đổi. Cửa upload Excel MỚI phải nối `excelFromStorage`. Trần thật 10 MB (multer) / 30 MB (bucket).**
-- **DANH MỤC LỚN KHÔNG ĐƯỢC NẠP CẢ VÀO TRÌNH DUYỆT (chốt 27/07, memory `catalogue-payload-campaign`):** Mã hàng / Vị trí / Biển số xe (và mọi danh mục sẽ vượt ~1.000 dòng). Đo thật: 2.740 mã = **2.566KB**/lần gọi, nạp ở 12 chỗ; cột **rỗng 100% vẫn tốn ~60KB** vì tên cột lặp theo SỐ DÒNG. Ba luật:
-  1. **Ô chọn (dropdown/filter) = TÌM TRÊN SERVER** (`search` + `limit: 50` + `useDebouncedValue(term, 250)`, bật `serverSearch` của `SingleSelect`/`FilterBar`). **Giá trị đã chọn PHẢI LUÔN CÓ NHÃN** — ghép dòng đang chọn tra theo id (`useMaterialsByIds`…, chunk 300) với kết quả tìm qua `dedupOpts`; ưu tiên MÃ NGHIỆP VỤ làm value. Chi tiết: [docs/rules/scale-and-data.md](docs/rules/scale-and-data.md).
-  1a′. **Số của MỘT mã đứng cạnh nhãn đơn vị = `qtyLabel` "N thùng + M hộp", KHÔNG `qtyEntryText` (thùng thập phân) — ratchet `entry_decimal_beside_unit_label` baseline 0 (19/09):** soi màn bằng vai thủ kho thấy cột "Vị trí lấy" in "76,438th" cho pallet mà bảng Tối ưu tuyến in "76 thùng + 21 hộp", dialog tra tồn in "16.345,667 thùng" — 0,438 thùng là 21 hộp, người kho không đọc ra; 10 chỗ cùng khuôn đã sửa. `qtyEntryText` CHỈ cho cột số hẹp có tiêu đề "Thùng" và ô tổng cross-mã.
-  1b. **Ô tổng gộp nhiều ĐƠN VỊ = nhãn `QTY_CONVERTED_LABEL` "SL (quy đổi)" + `QTY_CONVERTED_TIP`** (từ `utils/qtyUnits.ts` — nguồn DUY NHẤT, đừng tự đặt chữ; từ vựng chốt 26/07, quét toàn app 29/07): ô "Thùng tồn" cũ thực chất = thùng thật + EA + KG + SET/M2/BAG (đo staging: 118.195.050 mà chỉ 1.127.990 là thùng) — công thức đúng luật base-unit nhưng nhãn khiến đọc ra "118 triệu thùng hàng". Cột per-MÃ tách Thùng/Hộp (OutboundDetail/LoosePickingDetail) giữ nhãn "Tổng thùng" — đó là số CHÍNH XÁC per-mã, không phải bug. Cổng tĩnh 09 gác nhãn sai bằng ratchet.
-  2. **Bảng tra hiển thị (lịch sử, map code→tên) = tra ĐÚNG mã trên màn**: `useMaterialsByCodes(codes)` (chunk 300). KHÔNG nạp cả danh mục để dò vài dòng.
-  3. **Chỗ quy đổi số lượng (`qtyFromEntryBase`) phải tra ĐỒNG BỘ trước khi ghi/điền** (`fetchMaterialsByCodes`) — điền trước rồi vá sau = **SỐ SAI**. Dán Excel: `e.preventDefault()` TRƯỚC `await`.
-  Chỉ trang danh mục gốc mới lấy đủ cột (`useMaterialsFull` / `useLocationsFull`); còn lại mặc định `view=lite`.
-  **Vị trí cũng thuộc luật này (15/08):** ô chọn vị trí tìm-trên-server, cắt 50 dòng phải giữ nhóm ★ "đang để dở cùng mã" (`sameMaterialLocIds`), nhãn giá trị qua param `ids` + `useLocationsByIds`; ratchet `catalogue_full_load` gác. Chi tiết: [docs/rules/scale-and-data.md](docs/rules/scale-and-data.md).
-- **N+1 KHÔNG CÓ TRIỆU CHỨNG — để MÁY canh:** ratchet `n_plus_1_supabase_in_map` gác `.map(async …)` gọi supabase không chia lô; cần tập thì hỏi DB trả DISTINCT/tổng hợp. N+1 chạy SAU khi đã commit còn đẻ bản ghi đôi khi user bấm lại lúc quá hạn. Chi tiết: [docs/rules/scale-and-data.md](docs/rules/scale-and-data.md).
-- **SỔ LỚN LÊN THEO NĂM PHẢI CÓ HẠN GIỮ (20/10, đo staging 502 MB chạm trần 500 MB gói Free):** dung lượng đi đâu thì ĐO (`pg_stats` avg_width × dòng vs `pg_relation_size` — 84 MB dữ liệu thật, 215 MB chỉ mục, 115 MB chỗ trống ghi-rồi-xoá), đừng nhân ước lượng. Sổ nhật ký / bản chép nguồn ngoài đăng ký vào bộ bảo trì `services/dataArchive.ts` (cờ `retention_days`, 0 = giữ mãi; RPC `archive_spec` danh sách trắng — tháng quá hạn ra CSV.gz trong Storage rồi xoá, keyset + ổ khoá có token + xoá đúng khoảng đã ghi). **KHÔNG lưu trữ chuỗi truy xuất lô** (pallet · nhập · quét · đơn xuất · kiểm kê): Truy xuất lô chỉ tra trong DB, hạn dùng dài nhất 2.160 ngày. Việc nền xoá dữ liệu: đọc cờ MỚI NHẤT (bỏ cache), chạy MỘT lượt mỗi lúc. Chi tiết: `docs/modules/wms_settings.md`.
-- Gặp vấn đề cùng họ scale (query kéo cả bảng, N+1 roundtrip, đếm/tổng client-side trên list cắt cụt, ghi tuần tự từng dòng…) → **tìm giải pháp và xử lý NGAY trong lượt làm việc đó**, không hoãn, không chỉ fix chỗ đang đụng — quét luôn các chỗ cùng pattern.
+Chi tiết: skill `add-permission`, `docs/rules/rbac.md`.
 
-**Mutation & realtime** (skill `mutation-realtime` + `verify-feature`):
-- Mọi INSERT phải có `id: randomUUID()` + `updated_at: new Date().toISOString()` — DB không có DEFAULT, thiếu → **lỗi 23502**. `import { randomUUID } from 'crypto'`. DB client: `import { supabase } from '../../lib/supabase'`.
-- **Upload/ghi hàng loạt KHÔNG ghi tuần tự từng dòng** (`for...await` ⇒ quá 60 s Vercel): ghi LÔ chunk ~500 — mã mới `insert(chunk)`, mã đã có `upsert(chunk, { onConflict: 'id' })` với record ĐỦ CỘT merge trong JS; lỗi lô rơi về từng dòng. Mẫu `materialController.uploadExcel`; chuẩn đầy đủ ở skill `upload-download-standard`. Chi tiết: [docs/rules/scale-and-data.md](docs/rules/scale-and-data.md).
-- Tính năng cập nhật số liệu phải **realtime** (không refresh tay) + test đủ **4 case: tạo / sửa / xóa / làm lại**. `invalidateQueries` đủ MỌI key liên quan; thêm key vào `TABLE_QUERY_MAP` (`realtimeEvents.ts`); optimistic phải rollback khi lỗi.
-- **REALTIME = BROADCAST TỪ TRIGGER DB** (`trg_wms_notify`, kênh riêng tư `wms-db-changes`), không còn `postgres_changes`. **Bảng mới cần realtime → chỉ thêm dòng `TABLE_QUERY_MAP`** (event trigger tự gắn trigger); **TUYỆT ĐỐI KHÔNG `CREATE POLICY … TO authenticated`** — `authenticated`/`anon` có 0 quyền bảng · 0 policy · 0 hàm (gói QA 00 mục 10b/10c gác); RPC mới KHÔNG cần GRANT. `SUPABASE_JWT_SECRET` trên Vercel bắt buộc (thiếu = realtime chết câm). Chi tiết: [docs/rules/backend.md](docs/rules/backend.md).
+- Quyền nằm trên chức danh (`JobTitle.module_permissions`). Superadmin là cột `Employee.is_superadmin`. Vai trò đọc theo cờ danh mục, không so tên tiếng Việt.
+- Mỗi nút hoặc route ghi có quyền riêng, khai đủ bốn nơi: `MODULES` (FE), `ALL_PERMISSIONS` (BE), `can()` ở nút, `requirePerm` ở route. Xuất dữ liệu ra file cần quyền `export` riêng.
+- **Module hoặc quyền mới phải kèm migration cấp cho các chức danh sẽ dùng.** Nếu không, chỉ superadmin thấy tính năng.
+- Phạm vi dữ liệu: người dùng chỉ thấy và ghi được dữ liệu của kho và loại kho được giao. FE dùng `useScopedWarehouses` / `useScopedWhTypes`; BE dùng `utils/categoryScope.ts`. Một bản ghi mang nhiều loại kho thì "giao ít nhất một loại là thấy".
+- Lối tắt tới trang khác kiểm quyền qua `useCanSeePath()`.
 
-**Đồng thời — VÀI TRĂM nhân sự cùng thao tác** (skill `verify-feature` Cổng 5 + `concurrency-hardening`):
-- **Luôn đặt app vào tình huống hàng trăm người cùng xuất/nhập/booking** khi làm/test tính năng ghi số liệu. Hai điều TỐI KỴ: (1) app treo / đá user ra `/login`; (2) dữ liệu sai khi nhiều người cùng làm.
-- Mọi cập nhật trên **bộ đếm/tổng/tồn/sức chứa DÙNG CHUNG** phải nguyên tử: đếm sống dưới row-lock (RPC, vd `book_vehicle_slot`) hoặc **optimistic-CAS** (`update … WHERE col=giá_trị_đọc`) — KHÔNG ghi mù `col = đọc + delta` (mất cập nhật khi đua). Mẫu: `consumeInventoryExact`, `addItemScanned`, `adjustInventoryAtomic`.
-- **Optimistic-CAS / retry-on-conflict PHẢI có jitter+backoff** giữa các lần thử (không thì thundering herd → nửa số request 409 oan).
-- Test tải: gọi **API thật**, dữ liệu **bám DB thật**, **rải + tranh chấp + đa-module đồng thời**, ~25–30 in-flight (đừng bão hoà `max_connections=60`, đừng bắn lúc user thật đang dùng), Playwright **refresh giữa tải** (không văng) + kiểm bất biến (tồn không âm/không xuất quá, không overbooking, cache khớp), rồi **dọn sạch**.
+## Giao thoa giữa các module
 
-**Phân quyền** (skill `add-permission`):
-- Mọi nút/route gọi API write phải gate `can(perms, module, action)` (FE) + `requirePerm` (BE). Mỗi action = 1 permission riêng (không gộp `manage`). Thêm action = đủ **4 nơi**: FE config, **BE config** (thiếu → admin mất quyền), gate nút, route BE.
-- **Lối tắt tới trang module nằm NGOÀI menu** ("Thao tác nhanh", "Mở chuyến", "Khách hàng →"…) hỏi CÙNG luật với menu qua `useCanSeePath()` — không thì vai thiếu quyền thấy nút chết (C66, ratchet `page_link_without_perm_guard`).
+Sửa module nào thì đọc `docs/modules/<key>.md` của nó và các file trong mục "Giao thoa với" của file đó. Các dòng chảy chính:
 
-**BASE UNIT — lõi số lượng (LUẬT CỐT TỬ, user chốt 19–20/07 — "làm sai là vứt đi"):**
-- **App TÍNH TOÁN toàn bộ bằng BASE UNIT** (hộp/chai/KG… = đơn vị gốc khai per mã ở `Material.base_unit`): MỌI lưu trữ, cộng/trừ, tồn kho, xuất/nhập/nhặt lẻ, đối chiếu = số **BASE**. **Entry unit (thùng, `Material.entry_unit`, hệ số `units_per_carton`) CHỈ là lớp THỂ HIỆN.**
-- **Hiển thị = Entry + phần Base thừa**: số base → `qtySplit` = **"N thùng + M hộp"** (M = phần lẻ vượt bội số 1 thùng). Mã KHÔNG entry → hiện nguyên base (KG/EA). Tồn kho, Xuất, Nhặt lẻ, quét… đều phải thể hiện **Thùng + Hộp lẻ**. Helper TẬP TRUNG BE+FE mirror `utils/qtyUnits.ts`: `qtySplit`/`qtyLabel`/`qtyEntryDecimal`/`qtyFromEntryBase`/`qtyIntegerError` — **sửa công thức = sửa 1 chỗ, KHÔNG tự `/`·`%`·`× upc` rải rác**.
-- **Luật số nguyên**: mã có entry → base phải **SỐ NGUYÊN** (hộp không có 0,5); nhập liệu = **2 ô Thùng+Hộp** (`components/shared/QtyInput`), quy đổi tại rìa bằng `qtyFromEntryBase`. Mã không entry (KG) → thập phân tự do. BE chặn 422 (`qtyIntegerError`) + upload lỗi theo dòng kèm gợi ý quy đổi.
-- **Tổng cross-mã (khác `units_per_carton`) PHẢI `qtyEntryDecimal` per-mã TRƯỚC khi cộng** → "thùng quy đổi" (cộng base thô rồi gắn nhãn "thùng" = SAI, thổi tổng). Mọi trường số lượng qua API = BASE (cờ `qty_semantics:'base'` chặn bundle cũ 409); FE quy đổi tại rìa.
-- **Quét nhặt lẻ HỘP = quét QR PALLET (đã có) + trừ số hộp khỏi tồn base** — KHÔNG cần QR tới hộp (QR nhỏ nhất = pallet/thùng). Thùng lẻ = quét; hộp lẻ = nhập tay/đếm.
-- **BẮT BUỘC CHÍNH XÁC + fix MỌI lỗi hiển thị/tính toán liên quan.** Rà kỹ mọi điểm đọc `cartons_*`/`loose_picking` (nhất là **tổng ở list/detail** + **Nhặt lẻ** — hay sót). **Luôn VERIFY SỐNG số hiển thị, đừng tin "đã kiểm OK".** Chi tiết + tiến độ: memory `base-unit-campaign` + `docs/plans/BASE_UNIT_EXECUTION_PLAN.md`.
+- **SAP → xe:** ZSD02/VL06O (`external_do_sap`) → Điều vận (`dispatch`) → Kế hoạch xuất (`external_khvc`) → chuyến Xuất kho (`outbound`) và lệnh vận chuyển (`tms_plan`) → khung giờ, cổng, cân → cước (`freight`). Xuất kho là kết quả dẫn xuất: muốn sửa thì sửa ở nguồn. Với kho dùng bàn ghép xe, bàn là cửa ghi duy nhất của Kế hoạch xuất. Luật ghép xe nằm trong một hàm `manualRuleBlocks`. "Đã xuất" chỉ tính theo chuyến hoàn thành trong app, không theo cờ SAP. Ngày giao trong ZSD02 không quyết định gì.
+- **Tồn kho** là đích ghi của nhập, xuất, nhặt lẻ, kiểm kê, dồn/tách, slotting, fill: mọi cửa ghi theo đơn vị gốc và nguyên tử.
+- **Hạ hàng xuống ô nhặt lẻ:** Fill ⇄ Việc cần làm ⇄ Nhặt lẻ. Phép trừ "đã có người lo" đếm cả hai nguồn.
+- **Sản xuất (MES, `production`):** kho chế biến là kho phụ nội bộ; nguyên liệu → mẻ → bồn → Sổ đóng gói → pallet thành phẩm. Rút nguyên liệu vào mẻ và "xuất tiêu hao" ở kho phụ là hai cửa trừ cùng một sổ, nên cùng luật giữ QA và FEFO. Hàng có tem QR phải quét. Sổ bồn chỉ ghi thêm. Chuỗi gia phả mẻ không lưu trữ ra ngoài. Chi tiết: `docs/modules/production.md`.
+- **Hàng trả về:** phiếu nhập `source_type='RETURN'`; chi tiết ở `docs/modules/inbound.md`.
+- **Khách hàng** nuôi %Date (kho), kho đích chuyển kho (`Customer.warehouse_id`) và luật dòng xe (điều vận). **Loại kho** quyết định phạm vi quyền và điều kiện bảo quản.
+- Mẫu lỗi hay gặp nhất: hai cửa cùng ghi hoặc đọc một sổ mà khác luật (form ↔ upload ↔ API ↔ máy tự làm). Đổi luật ở một cửa thì rà mọi cửa của bảng đó.
 
-**BIỂN SỐ XE — chỉ CHỮ và SỐ, viết HOA, không ngăn cách (`^[A-Z0-9]+$`, user chốt 31/07):**
-- Chuẩn hoá bằng helper TẬP TRUNG, đừng tự `replace` rải rác: BE `utils/plate.ts` (`normalizePlate`) ↔ FE `utils/formatters.ts` (`normalizeLicensePlate`) — 2 bản MIRROR, sửa luật phải sửa cả hai.
-- **Chuẩn hoá ở BACKEND, không chỉ ở ô nhập.** Form FE chuẩn hoá từ lâu mà dữ liệu vẫn bẩn (đo 30/07: Vehicle 11 dòng, gate 2 dòng) vì còn đường ghi KHÔNG qua form (API tích hợp, upload Excel, script import) — và `vehicleController` cũ chỉ bỏ khoảng trắng, GIỮ dấu gạch nên tự đẻ ra `29E-09404`. Thêm đường ghi biển số mới → gọi `normalizePlate` tại rìa.
-- **DB có CHECK `^[A-Z0-9]+$`** trên `Vehicle` · `gate_registrations` · `GroupDeliveryOrder` · `TmsVehicleSlot` (migration `20260731_plate_format`) — ghi sai dạng là **23514**, không âm thầm.
-- **NGOẠI LỆ — 2 cột lưu NGUYÊN VĂN nguồn ngoài, KHÔNG chuẩn hoá:** `WeighTicket.license_plate` (bản sao phiếu cân giấy; dạng chuẩn nằm ở cột `license_plate_norm`, FE hiển thị cột này) và `erp_outbound_orders.license_plate` (raw SAP). Sửa 2 cột đó = mất khả năng đối chiếu chứng từ gốc.
-- So khớp biển giữa các module (phiếu cân ↔ chuyến ↔ cổng) luôn so trên dạng CHUẨN, đừng so chuỗi thô.
+## Bản đồ module
 
-**Timezone — Asia/Ho_Chi_Minh (UTC+7):**
-- ⚠️ **ĐỌC MỐC TỪ DB PHẢI QUA `utcMs()`; SO MỐC VỚI NGÀY VN PHẢI QUA `vnDayOf()`** (`utils/dates.ts`, phía script `scripts/qa/utcms.mjs`): schema trộn `timestamp` không offset và `timestamptz`, `new Date(chuỗi không offset)` lệch 7 giờ trên máy ở VN (không bao giờ lộ ở production). Ratchet `naive_db_timestamp_parse` · `utc_slice_as_vn_day`. **Khuôn: thấy `new Date(<cột thời gian>)` hoặc `.slice(0,10)` trên một mốc thì hỏi "đang đo bằng đồng hồ nào?"**. Chi tiết: [docs/rules/backend.md](docs/rules/backend.md).
-- Business date (`import_date`…): lưu ngày VN `new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })`. System timestamp (`created_at`…): UTC `toISOString()`. Query khoảng ngày VN: `new Date(\`${vnDate}T00:00:00+07:00\`).toISOString()`.
-- Hiển thị: date-only → `formatDate()`; timestamp → `formatDateTime()`/`formatTimestampDate()`/`formatTimestampTime()` (dùng `Intl` + timezone VN, không phụ thuộc OS). Cell hẹp: `formatTimestampDate(s, true)` → `dd-MM-yy`. Tất cả từ `utils/formatters.ts`.
-- **`InventoryEntry.import_date` = NGÀY HÀNG THỰC TẾ VÀO KHO**, không phải ngày chứng từ; thao tác NỘI BỘ (tách pallet…) phải KẾ THỪA ngày này, không đặt `vnDate()`. Thêm đường ghi `InventoryEntry` mới → hỏi "hàng có thật sự vừa vào kho không?". Chi tiết: [docs/rules/backend.md](docs/rules/backend.md).
-
-**LỖI 5xx PHẢI NÓI RÕ CHỖ XẢY RA:** `recordServerError('be', …)` bắt buộc `url` ở mức kiểu; `fail()` tự lấy route. **Id rác trên `:param` → 400; tham số trông như injection → 400** (một middleware `/api` ở `app.ts`, QA gói 07). **Ngày đúng dạng nhưng không có thật → 400, lưới phủ CẢ `req.query` LẪN `req.body`**; trong controller dùng `isDay`/`dayOrNull` (`utils/dates.ts`), ratchet `date_regex_without_calendar_check`. Khuôn: lưới chặn input phải phủ cả query lẫn body, cả mọi động từ. Chi tiết: [docs/rules/backend.md](docs/rules/backend.md).
-
-**VIỆC NỀN HỎNG PHẢI PHÂN BIỆT QUÁ TẢI VỚI HỎNG THẬT:** đường nền (`alertScanner`, `planGdoTasks`…) ghi lỗi qua `recordBackgroundFailure(message, code, where, e)` — quá tải ⇒ 503 `*_OVERLOAD` (không cờ đỏ), hỏng thật ⇒ 500; ratchet `background_error_500_hardcoded`. Vá luật vào `fail()` thì hỏi "đường nào ghi error_logs mà không đi qua fail?". Chi tiết: [docs/rules/backend.md](docs/rules/backend.md).
-
-**LỖI POSTGRES = LỖI ĐẦU VÀO:** gọi `fail(res, error)` với CẢ đối tượng lỗi (đừng `error.message`) để `pgUserError` dịch 22P02/23xxx/22xxx → 400/409, PGRST116 0 dòng → 404. ĐỪNG chặn id theo hình dạng UUID (48/82 bảng khoá TEXT). Mọi `.delete()`/`.update()` theo id phải `.select()` rồi kiểm số dòng (0 dòng = 404). Chi tiết: [docs/rules/backend.md](docs/rules/backend.md).
-
-**HANDLER ASYNC NÉM LỖI = TREO 60s → 504:** router MỚI mount vào `app.ts` phải đi qua `catchAsyncErrors` (lưới cuối trả JSON `INTERNAL` + ghi `error_logs`); handler mới vẫn tự `try/catch` + kiểm kiểu. Thấy 504 ở route nhẹ → nghi TypeError trên body sai kiểu. Cổng ERP `/integration/v1/*` `MAX_LIMIT=999`; route xác thực bằng khoá API thì bộ kiểm tự cấp khoá. **Đường ĐỌC phải cắt scope như đường GHI.** Chi tiết: [docs/rules/backend.md](docs/rules/backend.md).
-
-**PHÉP KIỂM CŨNG CÓ ĐIỂM MÙ THEO CHIỀU (chốt 07/09, memory `qa-blind-spot-by-verb`):** lưới id-rác quét route TỪ CODE nhưng chỉ khớp `router.get(` ⇒ mù với PUT/PATCH/DELETE — nơi 500 sống dai nhất (12 ca bị bỏ lọt suốt 17 ngày). Viết phép kiểm quét-từ-code thì liệt kê **đủ mọi động từ**, và tự hỏi "lưới này bỏ sót CHIỀU nào?", không chỉ "bỏ sót ROUTE nào". Cùng họ: chỉ soi đường ĐỌC mà không soi đường GHI (lỗ hổng phạm vi kho 06/09), chỉ soi FORM mà không soi UPLOAD (loại hàng mồ côi 07/09) — **hai cửa cùng một sổ mà khác luật** là mẫu tìm bug nhanh nhất.
-
-**TỔNG HỢP NẶNG KHÔNG ĐƯỢC NẰM TRONG ĐƯỜNG REQUEST (chốt 21/08):** nút thắt dưới tải KHÔNG phải máy Postgres mà là **xếp hàng ở pool ~10 khe PostgREST** — đo 06-readload trên dữ liệu lớn: Dashboard p50 28,3s (query ấm chỉ 64ms). ⇒ (a) số liệu tổng hợp toàn công ty phải **CACHE** (`dashboard_all_cached`, TTL = cờ `dashboard_cache_seconds`); (b) **việc nền không được ké vào GET của người xem** — quét cảnh báo đã tách khỏi `GET /wms/alerts` sang `POST /wms/alerts/scan` (FE gọi sau khi trang đã hiện + định kỳ 10'; đo trước khi tách: mở trang chờ **1.940ms**). Đừng dùng `void fn()` fire-and-forget trên serverless — response trả xong lambda có thể bị đóng băng giữa việc.
-
-**ĐO MỨC PHỤC VỤ — KHÔNG ĐƯỢC XOÁ DẤU VẾT:** trigger `trg_outbound_qty_reduced` ghi mọi lần `OutboundItem.cartons_ordered` giảm (phân loại giao thiếu / cắt kế hoạch) ⇒ tab "Dịch vụ" (RPC `service_level`) dựng lại nhu cầu gốc; dữ liệu trước 28/08 không có vết và màn hình phải nói thẳng. Thêm bảng/cột nhu cầu MỚI thì nghĩ lại chỗ dựng nhu cầu gốc. Chi tiết: [docs/rules/backend.md](docs/rules/backend.md).
-
-**TypeScript:** không `as any`/`as any[]` — type rõ ràng. Axios error: `import type { AxiosError } from 'axios'`.
-- **Nợ `as any` (đang dọn dần):** code cũ còn ~341 chỗ `as any`/`: any` (Stage A đã gỡ 66% an toàn: `(supabase.from(...) as any)` + `(req as any).user`→`req.user`, BE 588→138). **Code MỚI tuyệt đối không `as any`**; đuôi dài chỉ dọn **khi đụng vào từng file**, KHÔNG mass-rewrite (rủi ro churn, lợi ích 0-runtime). Gốc rễ: `backend/src/lib/supabase.ts` thiếu generic `Database` → cách triệt để là `supabase gen types typescript` + `createClient<Database>()` (mini-project, chưa làm). Chi tiết: memory `as-any-cleanup`.
-
-**Frontend:**
-- Lỗi API: banner đỏ inline trong component (không chỉ `console.error`).
-- Bulk action **song song** `Promise.all(ids.map(...))` (không `for...of await`). Button gọi API: `disabled={saving}` + text chờ.
-- Date input form tạo & sửa: `min={TODAY()}` (sửa vẫn pre-fill & lưu được giá trị cũ). **"Hôm nay" phải là HÀM, không phải hằng module** — PDA/màn kho mở qua đêm sẽ giữ ngày HÔM QUA (min chặn oan, chip "Hôm nay" lọc sai); ratchet `today_frozen_at_import` (baseline 0) gác, khai trong thân component vẫn OK.
-- **Nhãn đơn vị tính lấy từ DANH MỤC**, không hardcode: `unitLabel()` đọc bảng nạp từ LookupValue `unit_of_measure` (Shell gọi `setUnitLabels` lúc khởi động) — thêm ĐVT mới trong Cài đặt là hiện đúng tiếng Việt, không ra mã thô.
-- Filter state mọi list page → `useWmsFilterStore` (không `useState` thuần). **Nhớ filter theo từng user là TỰ ĐỘNG** qua `scopedPersist.ts` (key persist gắn `user.id`) — field mới chỉ cần khai trong slice + có default trong `initialFilters()`; KHÔNG tự gắn `localStorage`/`useState` cho filter (sẽ dùng chung giữa các user). QR: sau parse ngày kiểm `isNaN(date.getTime())`.
-- **BỐI CẢNH Kho/Loại kho TOÀN CỤC ở Header (19/08, kiểu Infor):** nút `GlobalScopePicker` (option từ 2 hook scoped = tự validate quyền, có "Tất cả") → `useGlobalScopeStore` (`stores/globalScopeStore.ts`, localStorage per-user qua scopedPersist) + `sweepGlobalScope` quét giá trị vào MỌI slice filter có Kho/Loại kho (đúng tên field + ngữ nghĩa từng trang; đổi tay = force ghi cả rỗng, mở app/login = chỉ áp phần đang chọn). **Phạm vi chỉ MỘT kho (ASSIGNED một kho — đa số nhân sự) ⇒ bối cảnh TỰ = kho đó, không có "Tất cả kho" (09/10: vai Thủ kho mở Kế hoạch VC gặp "Chọn kho để xem" dù chỉ có một kho).** **Thêm slice filter mới có Kho/Loại kho → BẮT BUỘC thêm dòng vào `sweepGlobalScope`**; form tạo mới init Kho/Loại → đọc `useGlobalScopeStore.getState()` làm mặc định (mẫu: Inbound CreateOrderDialog, Packing OpenRunSheet). Trang giữ quyền chỉnh filter lẻ sau khi sweep.
-
----
-## UI — Manhattan Active WMS
-
-**MENU 3 CẤP** (`config/navigation.ts`: nhóm lớn → `NavSection` → trang; chỉ gom nhóm đủ đông; `canSeeNavItem`/`visibleEntries` dùng chung Sidebar + MobileNav). **BỀ MẶT ĐIỆN THOẠI do superadmin cấu hình** (`config/mobileSurface.ts`, cờ `SystemSetting.mobile_surface`, hook `useMobileSurface`/`useMobileTabs`, UI `MobileSurfaceSettings` — hình thức kiểu "Views" của AppSheet đã chốt, đừng quay lại bản cũ): **trang có tab MỚI → khai vào `PAGE_TABS` + gọi `useMobileTabs`** (trước mọi return sớm); **một tab chỉ một nút Lưu** (ratchet `settings_draft_not_in_dirty`); điểm chạm 44 px; bảng mới có cột nút đứng cuối thì ghim `sticky right-0`. Chi tiết: [docs/rules/ui.md](docs/rules/ui.md).
-
-
-**MÀN MỚI PHẢI TRÔNG NHƯ APP CŨ (user 25/09, lớp C40 — skill `table-format` mục 22):** một cụm một nút chính `variant:'default'`, không tự chế màu · hộp thoại xác nhận = `useConfirmDialog` (cấm `window.confirm/alert/prompt`) · tab cạnh tiêu đề · bảng nghiệp vụ = `ResizableTable` · chân bảng = `ListFooter` · nút toolbar qua `ActionCluster` · trang nằm trong `navigation.ts` là tự có đường dẫn đầu trang (`navTrail`, bảng chép tay cũ bỏ sót 26/38 trang). Sàn điểm chạm 44 px (`.touch-target`) chỉ áp `pointer: coarse` — trước 25/09 nó đè `h-7` của mọi `<Button>` thô trên PC. Ratchet `native_browser_dialog` · `action_item_custom_fill` · `list_table_not_resizable` gác. Trước khi báo xong: **chụp màn mới cạnh một màn chuẩn cùng loại ở 1280 + 390**.
-
-**Mọi list page / table / trang detail: theo skill `table-format`** (card trên canvas xám, toolbar + FilterBar + SavedViews + density, SummaryBand, kéo giãn cột, sticky header/cột đầu, typography 2 cỡ, màu row theo trạng thái, responsive PC/tablet/phone, detail section-band). Module mẫu: `Inbound.tsx` / `InboundDetail.tsx`.
-**Quét QR: theo skill `qr-scan-flow`** (flow confirm/instant, camera keep-alive, auto-resume).
-
-**Mọi form Thêm/Sửa: dùng `FormSheet`** (`components/shared/FormSheet.tsx`) — panel trượt từ **lề PHẢI**, cao full màn hình, chia 3 vùng **header cố định · thân cuộn · footer dính đáy** (nút Lưu/Huỷ luôn thấy trên cả PC & mobile; mobile full-width). KHÔNG dùng `Dialog` giữa màn cho form thêm/sửa (Dialog giữa chỉ để **xác nhận/thông báo nhỏ**: xóa, đặt mật khẩu, kết quả). Nút thao tác đặt ở prop `footer`. Mẫu: form trong `UserManagement.tsx`.
-- **Dropdown trong form panel phải render qua PORTAL VÀO NODE DIALOG** (`usePopoverAnchor` → `anchor.target` + `anchor.style`), KHÔNG portal ra `document.body`. Vì Radix Sheet/Dialog (modal) dùng `react-remove-scroll` + `pointer-events:none` trên body + bẫy focus → menu portal ra body sẽ **không cuộn / không gõ tìm / khó bấm**. Các dropdown tự chế đã theo chuẩn: `SingleSelect`, `WarehouseSingleSelect`, `WarehouseMultiSelect`, `PlateCombobox`/`NppCombobox`. Radix `Select`/`Popover` portal sẵn nên OK. Dropdown chọn-1 trong form ưu tiên `SingleSelect` (có ô tìm), không dùng `<Select>` Radix thô.
-- **FORM CẤU HÌNH XẾP THEO KHU VỰC — XUẤT liền nhau rồi mới tới NHẬP:** `SettingsGroup area="XUẤT" | "NHẬP"` (tự in tiền tố), bộ chung `OutboundStrategyFields`/`InboundStrategyFields`; thêm nhóm mới → đặt vào lưới của đúng khu. Ratchet `settings_area_interleaved` (C26). Chi tiết: [docs/rules/ui.md](docs/rules/ui.md).
-- **THANH THAO TÁC CHỌN-NHIỀU KHÔNG ĐƯỢC CHIẾM CHỖ TRONG LUỒNG (user chốt 16/09: "tick multi là hiện action lên, table không được resize — action lên header hoặc ở giữa như Tồn kho"):** thứ chỉ hiện khi có dòng được tick mà chèn một hàng giữa band và bảng thì bảng co lại đúng lúc đang tick, dòng nhảy dưới con trỏ. **MỘT lối duy nhất (user chốt lại 29/09: "chọn multi hiện action phải đồng bộ — như Tồn kho, action ở giữa"): `FloatingActionBar`** (`components/shared/FloatingActionBar.tsx` — pill tối nổi giữa đáy, `bottom-16` chừa bottom-nav, nút bên trong dùng `FLOATING_BTN`/`FLOATING_BTN_DANGER` hoặc `ActionCluster className="w-auto shrink-0"` với className đó; "Bỏ chọn" là link nhỏ cuối pill). Lối "nút h-7 trên header" (22/07) ĐÃ BỎ — Xuất kho · DO SAP · Kế hoạch xuất · Quy định date · Luân phiên ABC · Cảnh báo · Nhập kho chi tiết · In tem lịch sử chuyển hết 29/09; Mã hàng · Vị trí bỏ pill tự vẽ (bottom-20) dùng component chung. Ratchet **`bulk_bar_inline_reflows_table`** (baseline 0, nay bắt cả nút đặt theo `.size > 0` ngoài pill) gác. Lớp C28.
-- **Action của mỗi dòng list nên có cả trong pane detail** (khỏi kéo ngang bảng mới thấy cột action) — gate đúng quyền như nút trong bảng. Mẫu: pane detail nhân viên `UserManagement.tsx`.
-
-- **Ô "THEO CHA" PHẢI IN GIÁ TRỊ ĐANG HIỆU LỰC (user chốt 29/09):** mọi ô/nhãn kế thừa từ bảng cha (khách ← kênh · Loại kho ← kho · ô ← Loại kho · kho ← mục tiêu chung) ghi rõ giá trị cha đang áp — `Theo kênh GT: FG01 ≥ 60 %` · placeholder `Theo kênh GT: 3` · `— Theo kho (FEFO) —` — không ghi trần "theo kênh" bắt người xem sang bảng cha tra. Giá trị lấy theo cha ĐANG CHỌN trong form (đổi kênh là câu đổi theo), không theo bản đã lưu. Nút hành động gỡ khai riêng đặt chữ "Về theo …". Ratchet `inherit_label_without_value` gác. Chi tiết: [docs/rules/ui.md](docs/rules/ui.md).
-- **Màu thương hiệu:** accent điều hướng `sky-400/500`; CTA `blue-600`; OK `green-500`; cảnh báo `amber-500`; lỗi `red-500`. Canvas `bg-slate-100`, app bar/sidebar `bg-slate-900`.
-- **MỘT symbol QUÉT toàn app = `ScanIcon`** (`components/shared/ScanIcon.tsx`, user chốt 21/08 "mỗi chỗ 1 icon là k đc"): mọi nút/tiêu đề/placeholder của **hành động quét** dùng icon này — trước đó 3 icon sống lẫn (`QrCode` 25 chỗ · `ScanLine` · `ScanBarcode`) nên cùng một việc mà mỗi màn nhìn một kiểu. Ranh giới: nói về **TEM QR** (trang In tem, cờ "không theo dõi QR") mới dùng `QrCode`; **chụp ảnh** dùng `Camera`. Ratchet `scan_icon_not_unified` (baseline 0) gác.
-- **Quét TEM VỊ TRÍ ở mọi chỗ chọn vị trí** (21/08): nút `LocationScanButton` đứng CẠNH ô chọn tay — **chỉ THÊM, không đổi** dropdown/checkbox đang có (user chốt). Cửa tra duy nhất `GET /masterdata/locations/resolve` khớp **TRỌN mã** (đừng dùng `?search=` — quét tem `_5_T1` sẽ nhận `_5_T10`); chuẩn hoá mã quét ở `utils/locationScan.ts` (mirror BE↔FE). Súng PDA: `useWedgeScanner` có **khoá độc quyền** (2 hook cùng bật = 1 phát bắn chạy cả hai việc); `armWedge` CHỈ bật ở trạng thái mà cò súng vốn đang tắt. Màn mới dùng hook vị trí mà thiếu nút quét ⇒ ratchet `location_picker_without_scan` đỏ. In tem vị trí: `locationLabel.tsx` (8 tem/A4, QR mã hoá NGUYÊN VĂN `location_code`), quyền `locations.print_label`.
-- **Responsive bắt buộc** — đẹp ở PC + Tablet + Phone (≤360px không tràn); test cả 3 trước khi push. **Đo bằng `scripts/qa/ui-mobile-sweep.mjs`** (29/10, lớp C4: mọi trang menu + form Tạo/Thêm ở 1280 / 390 / 360 cảm ứng — đè nhau · nút bị che · chữ bẻ dọc; chặn lệnh ghi, ~1 MB). Khuôn hay gặp: thứ có sàn 44 px đặt trong khung `h-8` cố định, hoặc khung `flex-1 min-h-0` cạnh khung không co ⇒ thò ra đè thứ khác.
-- **DIỄN GIẢI = `InfoTip` ⓘ** (dưới `sm` là tấm trượt đáy): băng cảnh báo chỉ mang CON SỐ + việc phải làm, phần giải thích vào ⓘ; `tip` dạng hàm `close => …` khi bên trong có nút điều hướng. Chi tiết: [docs/rules/ui.md](docs/rules/ui.md).
-- **DÒNG "TRỐNG" TRONG BẢNG RỘNG = `TableEmptyRow`** (câu căn giữa `colSpan` sẽ nằm ngoài màn 360 px; ratchet `empty_row_centered_in_wide_td`). **Badge/số đếm TOÀN KHO phải lấy từ truy vấn toàn kho**, không từ board đang xem (C34). Chi tiết: [docs/rules/ui.md](docs/rules/ui.md).
-- **PHẦN CO ĐƯỢC ĐỨNG CẠNH PHẦN KHÔNG CO = CHỮ BỊ BẺ DỌC (16/09):** `ListFooter` để phần ĐẾM `min-w-0` còn ghi chú phụ (`right`) `shrink-0` ⇒ ở 360 px một câu dài (Tối ưu vị trí: "xếp hạng theo lượt nhặt 30 ngày…") bóp phần đếm còn ~20 px và bẻ **"1–132 / 132 mã" thành NĂM dòng dọc**, chân trang cao 111 px. Cùng họ `shrinking_flex_row_of_nowrap_chips` nhưng nạn nhân là CHỮ nên ratchet cũ không bắt. Đã sửa ở component dùng chung (mọi list page hưởng): phần đếm `whitespace-nowrap` (không co), ghi chú `flex-1 truncate` rồi tự xuống dòng nhờ `flex-wrap`. Khuôn: trong một hàng flex, **hỏi phần nào được phép co** — không được để thứ PHỤ giữ chỗ còn thứ CHÍNH co lại.
-- **HÀNG NÚT KHÔNG CO ĐƯỢC THÌ PHẢI WRAP HOẶC CUỘN** (`flex-wrap` · `overflow-x-auto` · `grid-cols-*` · `sm:flex`) — không thì nút cuối trôi ra ngoài màn/nằm dưới phần tử khác mà không lỗi nào nổ; ratchet `shrinking_flex_row_of_nowrap_chips` + `tablist_center_blocks_scroll`. **Hỏi "ở 360 px hàng này rộng bao nhiêu?"**, đừng tin mắt nhìn ở 1280. Chi tiết: [docs/rules/ui.md](docs/rules/ui.md).
-- **BỐ CỤC MÁY TÍNH GIỐNG NHAU Ở MỌI CỠ MÀN ≥ 1280 (user chốt 14/10: "màn 24 inch hiển thị khác — phải đồng bộ với các loại màn hình trên máy tính, đó là yêu cầu của toàn app"; lớp C81):** mỗi phần tử đầu trang · thanh công cụ · hàng chip lọc · chân bảng đứng ở MỘT hàng cố định — hàng `flex-wrap` phải kèm `xl:flex-nowrap`. Màn rộng thì phần `flex-1` (ô tìm, dải chỉ số) rộng ra; màn hẹp thì CO (nhãn / giá trị cắt "…" kèm `title`, CON SỐ không cắt) hoặc cuộn ngang có mép mờ (`hooks/useEdgeFade`) — KHÔNG xuống dòng, không đổi hàng. Thông tin dài (tỷ trọng, danh sách theo loại…) vào ô bấm xem chi tiết, không trải ngang bắt cuộn. Dưới 1280 (máy tính bảng / điện thoại) vẫn wrap theo luật dưới. Đo bằng `scripts/qa/ui-layout-sync.mjs` (1280 / 1536 / 1920 phải cùng số hàng + cùng đỉnh bảng). Chi tiết: [docs/rules/ui.md](docs/rules/ui.md).
-- **CUỘN ĐƯỢC MÀ KHÔNG AI BIẾT THÌ CŨNG NHƯ KHÔNG (chốt 12/09):** `TabsList` tràn khung nay (a) tự kéo **tab ĐANG CHỌN** vào tầm nhìn và (b) **mờ dần mép** nào còn nội dung khuất. Vì sao: Xe nâng 6 tab, ở 360 px chỉ thấy 2 tab rưỡi, 4 tab còn lại nằm ngoài màn **không một dấu hiệu nào** — và mở lại trang khi tab thứ 6 đang active thì dải vẫn hiện tab 1, người dùng tưởng mình đang đứng ở đó. Khác ca "Sắp quét" ở chỗ nó KHÔNG bị đè, chỉ là vô hình. Cả hai việc chỉ chạm `scrollLeft` của chính dải tab (không `scrollIntoView` — hàm đó kéo cả trang); không tràn thì không mờ gì, đừng làm nhoè tab cuối của trang chỉ có 2–3 tab.
-- **`ActionCluster` mặc định `w-full` trên mobile — ĐÚNG cho header trang detail, SAI ở thanh tiêu đề khối:** ở thanh tiêu đề khối (section-band) nó nuốt trọn bề ngang, ép tiêu đề còn ~60 px và bẻ thành 5 dòng (đo 360 px: "DANH MỤC XE NÂNG (21)" ở tab Cài đặt Xe nâng). Cụm đứng CẠNH một tiêu đề thì truyền `className="w-auto shrink-0"` (tiêu đề giữ `flex-1 min-w-0`), hoặc `mobileInline` nếu là toolbar list page.
-- **Thứ tự rollout còn lại:** Outbound (hoàn thiện) → Inventory → Nhặt lẻ → ScanLog → Deliveries → Đăng ký cổng → Materials → TMS Bookings/Report/Settings → Locations → Stocktake → HR.
-
----
-## Tech Stack
-- **Frontend:** React 18 + TS + Vite · Tailwind v3 + shadcn/ui · React Router v6 · TanStack Query · **quét QR = `BarcodeDetector` của trình duyệt, trượt thì rơi về `zxing-wasm`** (KHÔNG còn `html5-qrcode`/`qr-scanner` — gỡ 16/09 vì đã thay từ đợt 11/08 mà 2 gói vẫn nằm trong `package.json`) · `qrcode` chỉ để SINH tem · date-fns · Lucide. Supabase Realtime (`frontend/src/lib/supabase.ts`, anon key).
-- **Backend:** Node + Express + TS · `@supabase/supabase-js` service role (`backend/src/lib/supabase.ts`). JWT auth **đã implement** (`authController.ts`: bcrypt + `jwt.sign`; route bảo vệ bằng `requirePerm`/`requireAnyPerm`).
-- **Infra:** Supabase (PostgreSQL + Realtime) ×2: staging `bxxryrmpfabvjitqbdnw` (branch `dev` → Vercel Preview) + production LOF `svicyfquresxaigfxsdb` (branch `main` → Vercel Production) · backend serverless qua `api/index.ts`.
-
-**API format:**
-```json
-{ "success": true, "data": {} }
-{ "success": false, "error": { "code": "NOT_FOUND", "message": "..." } }
-```
-
-**Bối cảnh:** App dùng giữa Kho tổng và Kho NPP. Kho nhận có trong danh sách NPP → có inbound tại kho nhận, dùng nhập hàng / tồn kho bình thường.
-
----
-## Đa đơn vị (multi-tenant SILO) — ĐANG XÂY cho 2 đơn vị, khác nhau ở ĐỊNH DẠNG QR PALLET
-
-**1 codebase phục vụ NHIỀU đơn vị độc lập** — mỗi đơn vị 1 Supabase + 1 Vercel + 1 link riêng (cách ly dữ liệu tuyệt đối). **TUYỆT ĐỐI KHÔNG `if (tenant === 'X')`, không fork/copy project.** Khác biệt giữa đơn vị xử bằng **cờ theo KHÁC BIỆT** (không theo tên đơn vị) trong bảng `SystemSetting` (key-value jsonb, per-DB). Kiến trúc + thang xử lý khác biệt 5 bậc: memory `multi-tenant-silo-architecture`. Khác biệt ĐÃ CÓ THẬT hiện nay = **định dạng tem/QR pallet** (memory `qr-format-v2-semicolon`).
-
-**2 định dạng QR sống chung VÔ THỜI HẠN** (tồn cũ toàn V1; đơn vị mỗi bên 1 format cố định):
-
-| | **V1 — Đơn vị 1 (LOF), delimiter `_`** | **V2 — Đơn vị 2, delimiter `;`** |
-|---|---|---|
-| Ví dụ | `070526_510000127_C05_M1_001_B` | `50033;      1;TA260705A018;05/07/2026;05/03/2027;      1;05:26` |
-| Cấu trúc | `ddmmyy_MãHàng_ChuKỳ_<Máy\|MãNCC>_STT_NMSX` | `MãHàng;QA;MãLô;NSX;HSD;Mẻ;Giờ:Phút` (7 đoạn, **có đệm SPACE → phải trim**) |
-| Đoạn ý nghĩa | 1=ngày SX ddmmyy · 2=mã hàng · 3=chu kỳ · **4=Máy (thành phẩm) HOẶC mã NCC (hàng NCC: POSM/Raw/Thùng/Giấy)** · 5=STT pallet · 6=NMSX (hàng NCC: nơi nhận đầu) | 1=mã hàng · **2=QA (1=OK, 0/khác=X)** · **3=Mã lô** (`2 ký tự tắt hàng`+`yymmdd`+`Máy 1 ký tự`+`SEQ 3 số`, vd TA+260705+A+018) · 4=NSX dd/mm/yyyy · 5=HSD dd/mm/yyyy · 6+7=giờ:phút:giây SX |
-| HSD / %Date | suy từ NSX + shelf-life (mã/NCC) | **HSD tường minh trên tem** → %Date dùng thẳng HSD (không cần khai shelf-life mã) |
-| Mã lô (batch) | không có (cột `batch`=null) | **= khóa liên kết KẾ TOÁN/ERP** (kế toán chỉ giữ mã lô `TA260705A018`); khớp qua import/API sau khi có kết nối |
-| NCC | đoạn 4 (hàng NCC) → tự resolve khi quét | tem KHÔNG mang NCC → chọn tay nếu cần |
-
-**PARSE PHẢI TẬP TRUNG — KHÔNG tự `split('_')`/`split(';')` rải rác (nếu không, sửa 1 chỗ sẽ đè/lệch chỗ khác):**
-- **BE:** `backend/src/utils/qrParser.ts` — `parseInboundQR(raw)` tự nhận nhánh theo delimiter, trả `ParsedQR` (có `format:'v1'|'v2'`, `qa_ok`, `batch`, `expiry_date`, `machine_code`, `pallet_sequence_no`…) + `normalizeQR(raw)` = **CHỈ trim NGOÀI, GIỮ đệm space bên trong** (pallet_code lưu ĐÚNG như QR quét ra — user chốt "QR quét sao lưu vậy"; trim từng đoạn CHỈ khi bóc tách field trong `parseV2`, KHÔNG khi lưu/khớp). MỌI điểm quét gọi `normalizeQR` trước khi khớp `pallet_code`: inbound scan, outbound scan (`checkScanItem`/`scanItem`), inventory `stocktakeCheck`, pallet-ops `merge`/`ungroup`/`split`.
-- **FE:** `frontend/src/utils/qr.ts` — `normalizeQR` / `materialCodeOf(code)` (V2=đoạn 0, V1=đoạn 1) / `isValidDMY`; `frontend/src/components/shared/palletLabel.tsx` — `parseCodeFields(code)` (bóc trường hiển thị 2 format, QR luôn mã hóa NGUYÊN VĂN `pallet_code` nên scan không phụ thuộc). `InboundScanSheet` validate cả 2; `PalletLabels` (entryToLabel/logRowToLabel/auditSummary) + render tem V2 (Mã lô + HSD, đáy 2 ô Máy/Số pallet).
-- **%Date TẬP TRUNG:** `computePctDate(entry, material, now)` ở `shelfLife.ts` (BE + FE KHỚP NHAU) — ưu tiên `expiry_date` tường minh (mẫu số HSD−NSX) → fallback NSX+shelflife (V1 kết quả không đổi). Áp mọi nơi tính %Date (inventory list/facets/summary, outbound check/scan/prepare, FE Inventory/PalletDetailDialog/StocktakeDashboard). **Sửa công thức %Date = sửa 1 hàm này**, đừng viết lại rời.
-
-**Cờ & hạ tầng:**
-- Cột: `InventoryEntry.batch` (mã lô V2, null với V1) + `InventoryEntry.expiry_date` (HSD V2) — migration `20260707_systemsetting_qr_v2.sql`.
-- Bảng `SystemSetting` + cờ `label_format` (`'underscore'`/`'semicolon'`) điều khiển chiều IN tem **và** gate chiều QUÉT inbound (quét nhầm format ⇒ 422 `QR_FORMAT_MISMATCH`); sổ cờ `KNOWN_SETTINGS` (`systemSettingController.ts`), route `GET/PUT /wms/settings/:key`, tab Hệ thống ở Cài đặt WMS; sinh tem V2 đủ 7 đoạn giữ format nhà máy (`buildQRv2`/`buildBatchV2`). Chi tiết: [docs/rules/multi-tenant-qr.md](docs/rules/multi-tenant-qr.md).
-- **Luật vàng chống đè:** mọi thay đổi liên quan format QR phải đi qua các helper tập trung trên (BE↔FE giữ KHỚP NHAU); thêm điểm quét mới → BẮT BUỘC `normalizeQR`; thêm cờ khác biệt mới → thêm vào `KNOWN_SETTINGS` (sổ cờ) + default = hành vi V1 cũ (đơn vị 1 không đổi).
-
-**ĐỊNH HƯỚNG QR-tới-THÙNG (chốt 07/07, CHƯA build):** tồn vẫn theo pallet, tem thùng chỉ để quét-đếm; STT thùng = đoạn `;` thứ 8; đuôi tách pallet `.N` đặt ở đuôi MÃ LÔ. ⚠️ Nợ: `splitPallet` V2 đang gắn `.N` cuối chuỗi. Chi tiết: [docs/rules/multi-tenant-qr.md](docs/rules/multi-tenant-qr.md) + memory `qr-format-v2-semicolon`.
-
----
-## Phân quyền (RBAC) — chi tiết skill `add-permission`
-
-**Kiến trúc:**
-- Quyền lưu trên **`JobTitle.module_permissions`** (KHÔNG phải Employee). Resolve khi login/`/me` (`authController`): superadmin → `ALL_PERMISSIONS`; còn lại → quyền của chức danh. Cột `Employee.module_permissions` không dùng (dead).
-- **Hiệu lực khi ĐỔI quyền:** quyền nằm trong JWT 24 giờ; `/me` re-resolve + trả token mới, FE refresh định kỳ 5 phút ⇒ cấp/gỡ quyền có hiệu lực ≤ 5 phút. Login khớp `email`. **Chống dò mật khẩu** ở DB (RPC `auth_throttle`: 10 sai/15' theo tài khoản, 30 theo IP ⇒ 429), mở khoá trong app (`user_admin.unlock`). **Chính sách mật khẩu MỘT nguồn** `utils/passwordPolicy.ts` (BE + mirror FE; ratchet `password_rule_hand_rolled`). **Trang đăng nhập KHÔNG có nút hiện mật khẩu** — đừng thêm lại. `npm i` thư viện mới qua ratchet `npm audit` (gói 44); checklist bảo mật: skill `security-hardening`. Chi tiết: [docs/rules/rbac.md](docs/rules/rbac.md).
-- **Hở đọc có chủ đích (chưa siết)**: `GET /inventory*`, `GET /inbound-orders*`, `/lookup`, `/zones`, `/tms/transport-companies`, `/tms/vehicles` (2 route TMS bỏ gate 10/07 — danh mục NCC/ĐVVT + biển số đọc chéo khắp WMS, gate TMS làm vai kho thuần 403 âm thầm: panel Sửa NCC rỗng) KHÔNG gate `view` ở BE (Header omni-search + nhiều trang cross-module cần) — user đăng nhập nào cũng đọc được, nhưng dữ liệu **vẫn bị cắt theo scope kho** trong controller. Muốn siết phải liệt kê đủ consumers rồi `requireAnyPerm`.
-- **VAI TRÒ đọc theo CỜ DANH MỤC, không so TÊN tiếng Việt:** `JobTitle.is_driver` · `Department.is_carrier` · `JobTitle.is_forklift_driver` — cờ là nguồn DUY NHẤT cho CẢ ô chọn LẪN cửa ghi (lọc ở ô chọn là gợi ý, gác ở BE mới là luật); ratchet `role_by_vietnamese_name`. Thêm cờ vai trò là đổi điều kiện của FIXTURE QA. Ca làm việc gom ở `config/shifts.ts`. Chi tiết: [docs/rules/rbac.md](docs/rules/rbac.md).
-- **Superadmin = CỘT `Employee.is_superadmin`** (từ 13/08, migration `20260813f` — hết so tên 'Admin'): authController nhét cờ vào JWT + user object; BE kiểm `req.user?.is_superadmin === true`, FE `isAdmin(user)` đọc cờ. Bỏ qua mọi `requirePerm`. **KHÔNG so tên/mã 'Admin' để quyết quyền** — ratchet `superadmin_by_name` (baseline 0) chặn tái sinh; guard duy nhất còn so tên = chặn ĐẶT TÊN tài khoản mới 'Admin' (employeeController, chống giả mạo).
-- **Định nghĩa quyền** ở 2 file PHẢI khớp: FE `frontend/src/config/permissions.ts` (`MODULES` — có label/actions, hiển thị trong trình phân quyền) · BE `backend/src/config/permissions.ts` (`ALL_PERMISSIONS` — thiếu → **superadmin mất quyền** đó). Helper FE: `can(perms, module, action)` / `canAccess` / `isAdmin`. BE: `requirePerm` / `requireAnyPerm`.
-- **Scope dữ liệu nhân sự** (`employeeController.visibleEmployeeIds`): non-admin chỉ thấy (kho được gán nếu `warehouse_scope==='ASSIGNED'`) ∩ (cấp dưới theo **`JobTitle.parent_id`** đệ quy + chính mình). Sơ đồ ở JobTitle, KHÔNG ở `Employee.manager_id`.
-- **Scope Kho + Loại hàng — "phân quyền Kho + Loại kho nào thì CHỈ thấy dữ liệu của Kho + Loại đó":** FE lấy option qua `useScopedWhTypes()` / `useScopedWarehouses()` (`hooks/useUserScope.ts`); BE guard ghi (403) + cắt LIST bằng `utils/categoryScope.ts`, mọi cắt đều null-inclusive; pallet-ops guard theo kho THẬT của entry. **IDOR theo CẶP id:** route có 2 id phải ràng id con THUỘC id cha (mẫu `itemOfGdo`); DO SAP cắt theo `Warehouse.sap_plant`. Thêm form/filter/list mới có Kho/Loại → 2 hook scoped + guard/cắt BE. Chi tiết (danh sách từng chỗ đã cắt): [docs/rules/rbac.md](docs/rules/rbac.md).
-- **MỘT BẢN GHI CÓ THỂ MANG NHIỀU LOẠI — "giao ≥1 loại là THẤY":** `GroupDeliveryOrder.warehouse_type` lưu chuỗi ghép `'FG01+PM01'` ⇒ tách rồi lấy GIAO ≥1 (TS `splitCategories`/`categoryAllowed`, SQL `wt_cats(x) && mảng`, KHÔNG `= ANY`) cho cả đọc lẫn ghi; facet trả từng loại. Ratchet `gdo_category_exact_match`. Chi tiết: [docs/rules/rbac.md](docs/rules/rbac.md).
-- **CỬA ĐẶT LỊCH `booking_category` — tách khỏi luật giao ≥1:** `warehouse_type` (chuỗi ghép) = quyền + lọc; `booking_category` (giá trị ĐƠN, khai ở Kế hoạch xuất) = CHỈ khớp khung giờ + gác đặt lịch. **1 Số xe = 1 cửa**, khoá 4 tầng (trigger DB · upload từ chối cả file · CRUD ép theo xe · 422 `BOOKING_CATEGORY_MISMATCH` ở BE); đồng bộ cấp-xe ghi CẢ XE trong MỘT câu và TRƯỚC câu sửa dòng lẻ. Chi tiết: [docs/rules/rbac.md](docs/rules/rbac.md).
-- **Bảo vệ Admin**: chỉ superadmin sửa hồ sơ/đặt-MK/xóa/đổi-kho tài khoản Admin (`blockIfTargetSuperadmin`, `isSuperadmin`). Sửa **hồ sơ** nhân viên = superadmin; non-admin chỉ chỉnh **Kỹ năng/Vị trí**. **Chống leo thang**: non-admin không cấp cho chức danh quyền vượt quyền mình (`escalationError`).
-- **Sửa chức danh / phòng ban**: tên / phân quyền / cấu trúc (`createJobTitle`/`updateJobTitle`/`setJobTitleParent`/`create|updateDepartment`) = **chỉ superadmin**. Non-admin chỉ sửa **Danh mục Vị trí/Skill** của chức danh **CẤP DƯỚI mình** — `skillController` scope create/update/delete skill theo `JobTitle.parent_id` (cấp dưới của job_title người gọi, qua `writableJobTitleIds`); FE `JobTitleFormDialog` chỉ hiện phần Vị trí/Skill cho non-admin + ẩn nút Sửa nếu không phải chức danh cấp dưới.
-
-**GIAO THOA GIỮA CÁC MODULE — luật chung, đọc TRƯỚC khi sửa bất kỳ module nào nằm trên các dòng chảy này** (chi tiết mỗi module ở `docs/modules/<key>.md`, mục "Giao thoa với" liệt kê hai chiều):
-- **Dòng SAP → xe:** ZSD02/VL06O (`external_do_sap`) → Điều vận (`dispatch`) → Kế hoạch xuất (`external_khvc`) → chuyến Xuất kho (`outbound`) + lệnh VC (`tms_plan`) → khung giờ · cổng · cân (`tms_slots` · `gate_registration` · `weigh_station`) → cước (`freight`). Xuất là KẾT QUẢ DẪN XUẤT: muốn sửa thì sửa ở nguồn trước; OD bị SAP đổi / thay / huỷ phải hiện cờ ở MỌI màn đang cầm OD đó. **13/10 (user chốt): kho dùng BÀN GHÉP XE thì bàn là cửa ghi DUY NHẤT của Kế hoạch xuất — dòng `source='DISPATCH'` khoá ở tab Kế hoạch xuất (409 `KHVC_LINE_FROM_DISPATCH`, cả 5 cửa), ĐVVT / dòng xe đổi ngay trên bàn kể cả xe đã chốt (`PATCH /tms/dispatch/trips/:id` ghi xuyên `khvc_lines` → replan), thêm bớt DO / dời ngày = Mở lại; Excel / sửa tay chỉ cho kho chưa dùng bàn; KHÔNG cờ cấu hình, khoá theo nguồn từng dòng. 16/10 (user chốt): sửa kế hoạch ĐÃ XÁC NHẬN = tab Kế hoạch → "Sửa" (nạp đơn chờ vào chính kế hoạch đó, về bàn) → mở khoá TỪNG xe (`reopen trip_ids`, xe khác giữ KH xuất + khung giờ); kế hoạch CONFIRMED vẫn nhận thao tác mức xe (`EDIT_PLAN`), có xe nháp là Xác nhận được; "Xoá kế hoạch" (23/10, thay "Huỷ kế hoạch"); không còn nút tạo nháp thứ hai cho ngày đã xác nhận. 23/10 (user chốt — THAY luật 17/10 "bàn rút xe đã quét, hỏi một lần rồi force"): SỬA = BẢN NHÁP có LƯU + KHÔI PHỤC — bấm Sửa / mở khoá xe chụp bản đã lưu (`dispatch_plan_edit`), mở khoá KHÔNG đụng Kế hoạch xuất / chuyến / khung giờ; Lưu (cửa Xác nhận) so bản chụp: xe không đổi chỉ khoá lại, xe đổi ghi đè CÙNG Số xe (RPC `dispatch_commit_lines` một giao dịch), xe đã chốt bị bỏ hết đơn bị gỡ; Khôi phục = RPC `dispatch_edit_restore`. Bên Xuất đã làm: chưa đụng ⇒ áp thẳng; ĐANG XUẤT ⇒ kho phải Tạm dừng; Tạm dừng / đã quét / giữ nhặt lẻ ⇒ đi đường GỘP giữ hàng, kế hoạch mới phải ≥ phần kho đã làm theo NPP + mã (`mergeKeepIssues` — một hàm cho cả cửa gộp chuyến Tạm dừng); vướng ⇒ 409 `OUTBOUND_WORK_BLOCKS`, không ghi gì. MỘT nút "Xoá kế hoạch" (xoá mềm, thay Bỏ nháp / Bỏ xe chưa chốt / Huỷ) — xe bên Xuất đã bắt đầu / quét / nhặt lẻ ⇒ 409 `PLAN_HAS_OUTBOUND_WORK`, kho gỡ trước. Số xe đã có chuyến bên Xuất KHÔNG BAO GIỜ dùng lại (lập lại = số mới, chuyến cũ giữ nguyên). Đơn đã thực thi tô cam + không tick / kéo (/sync `work`); không có tính năng gửi yêu cầu cho kho — hai bên trao đổi ngoài app.** **18/10 (user chốt): CHUỖI TÌNH TRẠNG XE kiểu "document flow" SAP — một Số xe đi qua 8 sổ (bàn → KH xuất → khung giờ → vào cổng → cân → chuyến → ra cổng → đã giao); `services/tripFlow.ts` là nguồn DUY NHẤT dựng chuỗi (`GET /tms/trip-flow?codes=`), component `TripFlow` = **MỘT NÚT WORKFLOW NHỎ (19/10, user chốt lại — không trải chấm trên dòng) → popup BẢNG 8 bước: tình trạng · chứng từ · ai làm · lúc nào · ghi chú · Mở sang sổ đó**, dữ liệu chỉ tải khi mở, gắn ở MỌI màn cầm Số xe (bàn · tab Kế hoạch · Xem đơn · KH xuất · Đặt lịch · Xuất kho · Cổng · Cân); "Đã giao" của đơn bán hàng = TÀI XẾ / ĐVVT xác nhận (`POST /tms/vehicle-slots/:id/delivered`, quyền `tms_plan.confirm_delivery`, chỉ khi chuyến ĐÃ HOÀN THÀNH; chuyển kho giữ `transfer_status`). Thêm bước / sổ mới vào chuỗi ⇒ sửa `tripFlow.ts`, không vẽ chip riêng ở một màn.** **19/10 (user chốt "đổi ngày dễ như bên Kế hoạch xuất; giữ Số xe; xe đã đặt khung giờ vẫn cho đổi kèm nhả khung"): ĐỔI NGÀY ngay trên bàn — cả xe (`POST /tms/dispatch/plans/:id/move-date`: xe sang kế hoạch ngày mới, lập nếu chưa có; Kế hoạch xuất đổi ngày xuất; chuyến + lệnh VC dội theo; khung giờ nhả; chuyến hoàn thành / đang xuất / đã quét bị chừa) hoặc từng đơn = đơn rớt (FE dàn: mở lại xe → hoãn đơn tới ngày → xác nhận lại, cùng Số xe); mọi thao tác ghi `outbound_events` (ai · lúc nào · lý do) và hiện ở bảng "Lịch sử thao tác" trong popup tình trạng xe. Thay đổi ngày KHÔNG làm ở tab Kế hoạch xuất (dòng DISPATCH khoá). Xoá xe / xe hết đơn bị bỏ / bỏ nháp / huỷ kế hoạch cũng ghi vết (`PLAN_TRIP_DELETED` · `PLAN_TRIP_DISCARDED` kèm danh sách DO · `DISPATCH_PLAN_*` trên TIỀN TỐ Số xe kho×ngày) — xem ở TAB "LỊCH SỬ" của Điều vận (20/10: `GET /tms/dispatch/history` phân trang + lọc + tìm, khoảng tối đa 1 năm / tìm chữ 3 tháng, kể cả xe đã bỏ / xoá; nút "Lịch sử" ở tab Kế hoạch mở tab này lọc sẵn ngày; sổ vết sống vài năm ⇒ cờ `retention_days.ledger` lưu trữ tháng quá hạn ra bucket `ledger-archive` rồi xoá khỏi DB — bộ bảo trì chung `services/dataArchive.ts`, giữ `QTY_REDUCED*`); cửa bỏ / xoá xe hay kế hoạch MỚI phải ghi vết cùng kiểu. 20/10 (user chốt): SO có ngày tạo SAU ngày đi hàng (`dispatch_trip_od.so_created_date > plan_date`) KHÔNG tự vào kế hoạch — Sửa / Tối ưu lại bỏ qua (`lateSo`), chỉ tick tay / kéo tay (đơn bù), chip "SO sau ngày đi" ở Xem đơn + bàn + panel xe; cửa tự ghép MỚI phải lọc `lateSo`.** **14/10 (user chốt): làm tay SAI LUẬT GHÉP XE ⇒ CHẶN + HỘP THOẠI ở MỌI cửa (kéo thả vào xe · xe mới · chuyển từng OD · đổi dòng xe · cửa Xác nhận 409 `TRIP_RULE_VIOLATION`) qua MỘT hàm `manualRuleBlocks` (dispatchEngine) — đúng các luật máy ghép tuân thủ: tải ≤ trần dải · số khách · đi xe riêng · không trộn kênh / Loại kho · điều kiện bảo quản · dòng xe khách được vào · thẻ nhiều xe. Thay chốt 25/09 "vượt tải cho thả, đánh dấu đỏ". KHÔNG chặn: Non tải (Gom lô) · khách chưa khai dòng xe (KHAC tự lấy) · số khách trên xe bật công tắc "Cho vượt số khách" (16/10, `dispatch_trip.allow_extra_drops` — ngoại lệ người chủ động cho MỘT xe, như switch "Ghép Loại kho khác"). Luật ghép mới ⇒ thêm vào hàm này, không kiểm lẻ ở một cửa (C80). Mọi cấu hình khách mà luật đọc (kể cả KÊNH — 15/10) là BẢN CHỤP lúc lập trên `dispatch_trip_od`; đổi cấu hình sau khi lập thì "Tối ưu lại" mới áp. Bàn chỉ sửa BẢN CHỤP — icon xe tải = ngoại lệ "dòng xe được vào" cho MỘT xe (15/10, user: "chỉ thay đổi cho chuyến đó"); cấu hình gốc của khách chỉ sửa ở trang Khách hàng. Chip "Sai quy định" phải bắt ĐỦ mọi luật cửa Xác nhận chặn (mirror `dispatchRuleChip`).** **03/10 tối (user chốt): NGUỒN SỰ THẬT về điều vận = lịch sử của app + dấu tay của người; cờ SAP (Mat Doc · gắn xe) chỉ THAM CHIẾU, không tự loại đơn.** **05/10 (user chốt): NGÀY GIAO ZSD02 không đáng tin — KHÔNG quyết đơn vào / ra bàn, không cờ / luật / "trễ n ngày" theo nó; mọi đơn chưa đi nằm tab Điều, NGƯỜI chọn; Đã điều của ngày D = Kế hoạch xuất có ngày xuất D.** Rào cứng DB `trg_khvc_one_export_day` + `trg_dispatch_od_one_open_vehicle` (một DO hoặc HỌ HÀNG qua `od_lineage` chỉ ở MỘT ngày xuất / MỘT xe đang mở — ba cửa ghi Kế hoạch xuất đều qua); **ZSD02 theo SO (24/10, user chốt — thay "khoảng phủ ngày tạo OD" + công tắc `zsd02_coverage_mode` đã bỏ): MỌI tính toán với ZSD02 dùng NGÀY TẠO SO; SO có trong file = BẢN CUỐI của SO đó ⇒ DO / dòng của SO đó vắng file bị XOÁ MỀM (OBSOLETE + `erp_od_versions` chép bản cũ, truy vết `GET /external/do-sap/versions`); SO vắng file không đụng. Hai kiểu nạp người chọn mỗi lần: LẺ (chỉ SO trong file) · BAO PHỦ (khai khoảng ngày tạo SO; file phải chứa ngày tạo SO của MỌI đơn chưa xuất của plant, thiếu / dòng ngoài khoảng ⇒ từ chối; SO chưa xuất trong khoảng mà vắng file ⇒ SAP đã xoá — có dù 1 SO sắp xoá ⇒ LUÔN bắt tick xác nhận trên bảng kiểm trước kèm danh sách, chiều nguy hiểm là file lẻ bấm nhầm Bao phủ; dòng đã xoá mềm mà file lại có ⇒ sống lại). "ĐÃ XUẤT" CHỈ theo APP (chuyến Xuất kho hoàn thành, RPC `ods_shipped_in_app`) — Mat Doc / post SAP không có nghĩa; đơn đã xuất KHÔNG bao giờ bị xoá mềm, DO mới cùng dòng SO với nó = cạnh AFTER_POST ⇒ máy không tự ghép, người quyết TỪNG DO "Phần đã đi" / "Giao thêm" ở Xem đơn → Cần xử lý (gợi ý theo số kho đã quét). Sổ các lần nạp `zsd02_upload_log` hiện ở hộp upload; file cũ đè dữ liệu mới là quy ước ngoài app. Luật thuần `dispatchPool.soScopedChanges`;** kho không Bắt đầu / quét / Hoàn thành chuyến có đơn SAP đã bỏ / thay hoặc còn việc Cần xử lý (`sapIssueError`, 409 `SAP_ISSUE_OPEN`). Chi tiết: `docs/plans/DISPATCH_OD_LIFECYCLE_2026-10-03.md`.
-- **%Date:** mức chốt (Quy định date · `customers` · `outbound.set_date`) thuộc về DÒNG ĐƠN; MỌI cửa chỉ đường (Việc cần làm · Tối ưu tuyến · Fill) VÀ mọi cửa trừ tồn (quét xuất · nhặt lẻ · Xuất luôn) đọc cùng một luật (`palletMeetsDateRule` / `dateRuleBelowError`). Vá luật ở một cửa thì hỏi ngay "cửa kia đã đọc luật này chưa?" (C19).
-- **Hạ hàng xuống ô nhặt lẻ:** Fill (`fill`) ⇄ Việc cần làm (`directed_work`, việc `LOOSE_FEED`) ⇄ Nhặt lẻ (`loosepicking`) — mỗi phép trừ "đã có người lo" phải đếm CẢ hai nguồn và theo NGÀY; thêm đường thứ ba thì vào cả hai phép trừ.
-- **Nhập hàng trả về (26/10, user chốt):** phiếu nhập `source_type='RETURN'` + `return_id` (đầu phiếu `inbound_return`), thủ kho lập ở Nhập kho theo CHUYẾN XUẤT GỐC (khai ≤ đã xuất − đã khai trả) hoặc lập tay; công tắc QA theo phiếu mặc định KHÔNG giữ; giao lại = đơn riêng (SAP DO mới). KHÔNG gắn `from_gdo_id` (cửa nhận chuyển kho đếm theo cột đó). Mọi lần nhận ghi `inbound_return_scan` (tem gốc) ⇒ truy xuất lô trừ phần trả về, sổ pallet thấy trên tem gốc; hàng lẻ ⇒ tem con `.N` (`utils/palletChild`, dùng chung Tách pallet). Phiếu GIỮ QA không cộng dồn vào tem còn tồn (tách tem con giữ QA); phiếu theo chuyến chỉ nhận tem đã đi trên chuyến đó; nhận VƯỢT số tem đã xuất = hàng THỪA (tách tem con, `inbound_return_scan.surplus`, truy xuất lô không trừ). Lý do trả = danh mục `return_reason`; lý do bắt đợt ⇒ chọn ĐỢT THU HỒI (`recall_campaign`, duyệt ngoài app). Phiếu TF từ kho loại NPP = hàng NPP chuyển về — BẮT BUỘC gắn lý do trước khi Hoàn thành (422 `NPP_RETURN_REASON_REQUIRED`; tab Chuyển kho của TMS cũng gắn được). Thống kê: trang Hàng trả về (RPC `inbound_return_report`). Chi tiết `docs/modules/inbound.md`.
-- **MES (`production`, 14/11):** kho chế biến = KHO PHỤ nội bộ (không loại kho mới); NVL → mẻ → bồn → Sổ đóng gói → pallet TP. Rút NVL vào mẻ (quét tem / chọn lô) và "xuất tiêu hao" ở kho phụ là HAI CỬA trừ cùng một sổ — cùng luật QA giữ (`qa_is_hold`) + FEFO. Mọi lấy ra khỏi bồn chia theo tỷ lệ lượng còn từng mẻ (`mes_tank_take`); đóng trang sổ + rút bồn = MỘT giao dịch (`mes_close_run`); trang đã đóng sửa lượng rút = `mes_run_redraw` (sổ bồn chỉ ghi thêm, đọc lượng rút phải cộng đại số). Cấu hình MES (công tắc lô chờ QA · hạn lưu bồn) chỉ ghi ở trang Cài đặt MES. **Bỏ giấy ở xưởng (14/11 đêm):** trang mẻ = BÀN LÀM VIỆC (yêu cầu NVL chép từ Định mức × kế hoạch, sửa được theo mẻ); **hàng CÓ TEM QR phải quét** — đường chọn lô chỉ cho tồn gộp không tem (409 `MES_MUST_SCAN`); báo cáo sử dụng NVL theo ca tự ra từ các lần cấp, chốt ca chụp số và KHÔNG tự sửa tồn; phiếu theo dõi của mẻ: MẪU PHIẾU là cấu hình (`production_process_form`, Cài đặt MES → "Mẫu phiếu theo dõi"), tại bàn sửa riêng được cho từng lần (`batch_process_log.blocks`) — mẫu chung không đổi; mã ô đã lưu không đổi. Chuỗi gia phả (`batch_consumption` · `tank_movement`) không lưu trữ / xoá theo hạn. Chi tiết `docs/modules/production.md`.
-- **Tồn kho (`inventory`)** là đích ghi của nhập · xuất · nhặt lẻ · kiểm kê · dồn/tách · slotting · fill: base unit + ghi nguyên tử (CAS / RPC row-lock) ở MỌI cửa. Mọi cửa đổi `location_id` gọi `logPalletMoves` (ratchet `move_without_ledger`); nguồn mới của sổ pallet = thêm nhánh vào RPC `pallet_ledger`, không dựng sổ mới.
-- **Bản vẽ kho (`warehouse_map`)** nuôi cửa xuất có sức chứa (`outbound` RULE 3) và BFS đường đi (`directed_work`, `loosepicking`); khoảng cách không lưu, luôn tính từ bản vẽ (`utils/warehouseGrid.ts`).
-- **Loại kho (`wms_settings`)** quyết phạm vi quyền, điều kiện bảo quản (→ `dispatch`, `tms_vehicle_types`) và chiến thuật 2 tầng Kho + Loại kho; đổi tên loại phải qua cascade `rename_warehouse_type` (mọi cột mang giá trị loại).
-- **Khách hàng (`customers`)** nuôi %Date tự động (`outbound`), luật chuyển kho (`tms_plan`, `Customer.warehouse_id`) và dòng xe được vào / đi xe riêng / số khách tối đa cùng xe (`dispatch`; **29/09: KHÔNG còn kiểu đi Pallet/Xá** — họ xe = đúng danh sách dòng xe, "xe pallet một khách" = `vehicle_model.max_drops`). Kênh quyết %Date bên kho — bàn điều vận KHÔNG đổi kênh. **Kho WMS = plant (user chốt 28/09): kho đích của ship-to = CHỈ `Customer.warehouse_id`** (`services/transferDest` — không dò mã kho, không dò tên; dò tên chỉ là gợi ý theo cấu hình kho xuất NONE/WARN/BLOCK); ship-to trùng mã kho tự nối; xuất xong mới trỏ kho ⇒ nút "Đẩy lại cho kho nhận", không nối tự động. **Không tự ép gì — mọi thứ là cấu hình** (đi xe riêng, số khách/xe, nhắc/chặn).
-- **Dòng xe (`tms_vehicle_types`) — MỘT bản Chung, cấu hình RIÊNG theo kho (03/10):** master data (mã SAP · tên · cha · ĐK bảo quản · thước đo · cách tính cước) chỉ ở `vehicle_model`; kho chỉ chỉnh dùng/không + sức chứa + điểm giao ở `warehouse_vehicle_model` (bản chụp, không kế thừa). **Mọi cửa đọc dòng xe "của một kho" (điều vận · cước ước tính · cột Tải Xuất kho · danh sách ở tab Mã dòng xe · bàn ghép xe) đi qua `services/vehicleModelScope.ts`**, không tự join. Sức chứa = MỘT thước đo (PALLET chỉ pallet, TON chỉ tấn); ngưỡng Non tải không còn ở dòng xe (dải tải theo cha của kho → ngưỡng kho → 70).
-- **Chuỗi điều vận không được mắc giữa các sổ (24/10, C97):** cửa ghi chạm ≥ 2 sổ (bàn · Kế hoạch xuất · chuyến Xuất kho · lệnh VC / khung giờ) phải MỘT giao dịch (RPC, mẫu `dispatch_move_trips_date`) hoặc trả `replan_error` để màn hỏi **Thử lại** (`POST /tms/dispatch/plans/:id/resync-outbound`) — không `console.error` rồi báo xong. Đổi ĐVVT / cửa đặt lịch trên xe đã chốt ⇒ nhả khung giờ + biển số bên cũ (không cần ĐVVT phản hồi). Lưới: gói 00 [14c2] `dispatch_chain_audit` (20 phép, hằng đêm).
-- **Mẫu lỗi giao thoa hay gặp nhất: HAI CỬA CÙNG MỘT SỔ MÀ KHÁC LUẬT** (form ↔ upload ↔ API ↔ máy tự làm, đọc ↔ ghi). Đổi luật ở một cửa thì rà mọi cửa ghi/đọc cùng bảng — `docs/modules` chỉ là bản đồ, lưới thật vẫn là gói QA + ratchet. **Và rà cả PHÉP KIỂM: nó cũng là một cửa đọc luật** — bỏ sót thì gói QA khoá hành vi CŨ, lượt đêm đỏ oan mỗi đêm (C109: gỡ hình thức OTHER 20/10 ⇒ gói 58 + 02-race đỏ liền 7 đêm, không lỗi app nào). Kỳ vọng phụ thuộc CẤU HÌNH (cờ Cài đặt) thì hỏi cấu hình rồi mới đặt, đừng đòi cứng — người dùng tắt một ô không được làm bộ kiểm đỏ.
-
-**Bản đồ module → trang (để biết nút nào dùng quyền nào):**
-
-> **Chi tiết từng module (luật · lý do · số đo · gói QA) nằm ở `docs/modules/<key>.md`** — tách 28/09/2026, nguyên văn. Sửa module nào: đọc file của module đó **và mọi file trong mục "Giao thoa với"** của nó (bản đồ dựng hai chiều, `node scripts/docs/check-modules.mjs` kiểm). Thêm module mới: thêm dòng bảng này + file module + nối "Giao thoa với" hai phía.
+`node scripts/docs/check-modules.mjs` kiểm bảng này với `docs/modules/`. Thêm module: thêm dòng ở đây, thêm file module, nối "Giao thoa với" hai phía.
 
 | Module key | Nhãn (bảng quyền) | Trang / Menu | Actions (theo `ALL_PERMISSIONS`) | Chi tiết |
 |---|---|---|---|---|
@@ -326,55 +176,30 @@ Tiêu chí mơ hồ kiểu “làm cho nó chạy được” sẽ khiến phả
 | `fill` | Fill hàng (nhặt lẻ) | Fill hàng | view, plan, cancel, change_dest, assign, execute | [docs/modules/fill.md](docs/modules/fill.md) |
 | `forklift` | Xe nâng | Xe nâng (check list) | view, check, delete_check, manage_vehicle, manage_item | [docs/modules/forklift.md](docs/modules/forklift.md) |
 | `packing` | Sổ đóng gói | Sổ đóng gói | view, record, open_run, edit, cancel, export | [docs/modules/packing.md](docs/modules/packing.md) |
-| `production` | Sản xuất (Mẻ chế biến · Bồn) | Mẻ chế biến · Bồn · Báo cáo NVL · Định mức · Cài đặt MES (nhóm menu cấp 1 "Sản xuất (MES)") — MES gđ1 | view, open_batch, consume, reverse, qa_release, manage_tank, tank_ops, export, configure, manage_recipe, shift_report, process_log | [docs/modules/production.md](docs/modules/production.md) |
 | `inbound_plan` | Kế hoạch nhập chuyển kho | trong TMS Bookings (tab Kế hoạch) | view, edit | [docs/modules/inbound_plan.md](docs/modules/inbound_plan.md) |
 | `external_khvc` | Dữ liệu bên ngoài → Kế hoạch xuất | Dữ liệu bên ngoài → Kế hoạch xuất | view, create, edit, delete | [docs/modules/external_khvc.md](docs/modules/external_khvc.md) |
+| `production` | Sản xuất (Mẻ chế biến · Bồn) | Mẻ chế biến · Bồn · Báo cáo NVL · Định mức · Cài đặt MES (nhóm menu cấp 1 "Sản xuất (MES)") — MES gđ1 | view, open_batch, consume, reverse, qa_release, manage_tank, tank_ops, export, configure, manage_recipe, shift_report, process_log | [docs/modules/production.md](docs/modules/production.md) |
 
-> **Cross-module**:
-> - Nút "Quét/Hoàn thành" + thao tác dòng NSX kho QTY_DATE (lưu số/xóa số đã lưu/hủy dòng — route `scan-manual`, `entries` DELETE, `cancel`) trong tab **Chuyển kho** gọi API Inbound nhưng được điều khiển bằng `tms_plan.confirm_receipt` (FE + BE `requireAnyPerm(['inbound',...],['tms_plan','confirm_receipt'])`). Khi nút ở trang A nhưng thao tác chạm module B → dùng `requireAnyPerm` + ghi nhãn cho rõ, đừng bắt user đoán.
-> - Trang **Tồn kho** có nút tắt **Tách/Dồn** (thanh thao tác khi chọn pallet) dùng quyền `pallet_ops.split` / `pallet_ops.merge`: nút chỉ **điều hướng** sang trang Dồn/Tách (KHÔNG gọi API chéo) nên chỉ cần gate nút bằng `pallet_ops` (không cần `requireAnyPerm` ở route Inventory); API thực thi nằm ở route `/pallet-ops/*` đã gate `pallet_ops`.
-> - **VỊ TRÍ PHẦN CÒN LẠI KHI XUẤT (30/07)**: quét xuất/nhặt lẻ mà pallet KHÔNG đi hết thì FE bắt chọn chỗ đặt phần dư mới cho Lưu, và `POST /outbound/:gdoId/items/:itemId/scan` nhận `leftover_location_id` (`'KEEP'` = giữ chỗ cũ | id vị trí mới) → BE tự chuyển vị trí qua RPC `move_pallets_to_location`. Đây là ghi `location_id` NẰM TRONG luồng quét: gate vẫn là `outbound.scan`/`loosepicking.scan` (KHÔNG đòi thêm `inventory.move_location`) vì người quét BẮT BUỘC phải khai được chỗ đặt — đòi quyền khác sẽ khóa chính người đang làm việc. Phạm vi ghi bị chặn hẹp: chỉ đúng pallet vừa quét, chỉ vị trí thuộc kho của chuyến. Đổi vị trí pallet BẤT KỲ ngoài luồng quét vẫn phải qua `inventory.move_location`.
-> - **ĐỔI VỊ TRÍ phiếu nhập** (Inbound detail, nút bút chì + select "Chưa chọn vị trí") dùng quyền **`inbound.edit_pallet` / `force_edit_pallet`** (sửa pallet của mình / bất kỳ) — **KHÔNG** dùng `inbound.edit` (vốn là "Sửa nhóm phiếu NCC"). Route riêng `PATCH /inbound-orders/:id/location` (`requireAnyPerm(edit_pallet, force_edit_pallet)`) chỉ đổi `location_id` — KHÔNG gộp vào `updateOrder` (để không nới quyền sửa field khác). **Bài học: một capability riêng (đổi vị trí) phải map đúng quyền sở hữu nó, đừng gộp ké vào quyền không liên quan** — nếu cần tách thì tạo route/permission riêng, đừng dùng chung gây "gộp quyền".
+## Skill
 
-**LUẬT khi thêm/sửa tính năng có nút/route write — BẮT BUỘC đủ 5 việc:**
-1. Thêm action vào **FE `MODULES`** (label phải mô tả đúng TRANG nó điều khiển — để admin biết link tới đâu).
-2. Thêm action vào **BE `ALL_PERMISSIONS`** (thiếu → superadmin mất quyền).
-3. Gate nút FE: `can(perms, module, action)`.
-4. Gate route BE: `requirePerm` / `requireAnyPerm`.
-5. Cập nhật dòng module ở bảng bản đồ trên + `docs/modules/<key>.md` (chạm module khác ⇒ nối "Giao thoa với" CẢ HAI phía; `node scripts/docs/check-modules.mjs` kiểm). Nếu nút nằm khác module với quyền nó cần → dùng `requireAnyPerm` + nhãn rõ.
-6. ⭐ **CẤP CHO CHỨC DANH NÀO (lớp C37, đã lặp HAI LẦN):** bốn việc trên chỉ làm quyền TỒN TẠI, không làm ai CÓ nó — superadmin bỏ qua mọi `requirePerm` nên người làm luôn thấy màn hình chạy tốt trong khi 100 % nhân viên thật không thấy mục menu. Đo thật: `directed_work` ra máy 10/09 với **0/9** chức danh kho; `dispatch` + `freight` ra máy 23–24/09 với **0/19** chức danh (41 nhân sự). Module MỚI ⇒ kèm migration cấp theo **NĂNG LỰC SẴN CÓ** (`20260912d`, `20260924d` là hai mẫu; KHÔNG so tên tiếng Việt — ratchet `role_by_vietnamese_name`), quyền GHI của module B thì đòi đúng năng lực ghi B. Gói QA 08 tầng **2b** nay FAIL nếu một module không chức danh nào nắm bất kỳ action nào (action lẻ chưa ai cấp vẫn chỉ warn — đó là quyết định quản trị); ngoại lệ khai `MODULE_ADMIN_ONLY` kèm lý do.
+Skill chứa chuẩn chi tiết của từng loại việc. Nạp skill khi việc khớp, thay vì làm theo trí nhớ. Một việc có thể cần nhiều skill.
 
-**NÚT XUẤT EXCEL / EXPORT = phải có quyền `export` RIÊNG (chốt 26/07)** — mang dữ liệu ra khỏi app là hành vi riêng, KHÔNG đi ké `view`. Đã gate: `inventory.export` · `scanlog.export` · `locations.export` · `stocktake.export` (2 tab) · `leave.export` (file có LÝ DO nghỉ) · `attendance.report` (bảng công) · `tms_plan.export` (Báo cáo nhập) · `external_do_sap.export`. Export dựng client-side (không có route BE riêng) thì gate ở NÚT; điểm chặn dữ liệu thật vẫn là **list API phải cắt scope kho + loại** — đã siết cho `/hr/attendance` + `/hr/leaves` ngày 26/07 (trước đó rò toàn công ty).
-
----
-## Công cụ (skill · MCP · hook)
-
-**Skill — BẮT BUỘC gọi đúng skill TRƯỚC khi làm** (đừng dựa vào trí nhớ, đừng tự suy luận lại chuẩn). Gọi qua công cụ Skill hoặc `/<tên>`; file ở `.claude/skills/<tên>/SKILL.md`:
-
-| Khi… | BẮT BUỘC gọi skill |
+| Việc | Skill |
 |---|---|
-| Bắt đầu việc lớn (module mới, đổi schema, refactor nhiều file, yêu cầu mơ hồ) | `brainstorm-plan` |
-| Rà soát / audit toàn bộ 1 module (chiến dịch review từng module) | `review-module` |
-| Kiểm tra app toàn diện · tìm lỗi · cải tiến (user gọi "kiểm tra app / rà lỗi / test / tìm chỗ sai"). 1 skill bao trọn: chức năng+nghiệp vụ · UI/hiển thị · phân quyền · đồng thời/tải · hiệu năng · edge/realtime · phán đoán nghiệp vụ+UX | `check-app` |
-| Tạo/sửa list page · table · trang detail | `table-format` |
-| Làm/sửa tính năng quét QR | `qr-scan-flow` |
-| Thêm/sửa upload file (Excel/bulk) hoặc download/export dữ liệu | `upload-download-standard` |
-| Thêm/sửa nút hay route gọi API write (tạo/sửa/xóa/quét/duyệt/phát hành…) | `add-permission` |
-| Thêm/sửa INSERT/UPDATE · mutation số liệu · đổi DB schema | `mutation-realtime` |
-| Trước khi báo “đã xong” bất kỳ tính năng/sửa lỗi nào | `verify-feature` |
-| Gặp bug / hành vi sai chưa rõ nguyên nhân | `debug-systematic` |
-| Thêm/sửa route có id trên URL · bảng/RPC mới · đăng nhập/mật khẩu · upload · `npm i` thư viện · user hỏi "bảo mật / rủi ro / IT chủ đầu tư hỏi" | `security-hardening` (cửa đã đóng 02–03/09 + lưới QA 40–44 gác từng cửa + việc còn mở) |
+| Việc lớn: module mới, đổi schema, yêu cầu còn mơ hồ | `brainstorm-plan` |
+| Rà một module | `review-module` |
+| Kiểm app, tìm lỗi | `check-app` |
+| List, bảng, trang chi tiết | `table-format` |
+| Quét QR | `qr-scan-flow` |
+| Upload, export | `upload-download-standard` |
+| Nút hoặc route ghi | `add-permission` |
+| INSERT/UPDATE, đổi schema | `mutation-realtime` |
+| Trước khi báo xong | `verify-feature` |
+| Lỗi chưa rõ nguyên nhân | `debug-systematic` |
+| Route có id, bảng/RPC mới, đăng nhập, thư viện mới | `security-hardening` |
 
-**Một việc thường chạm NHIỀU skill — gọi đủ.** Vd thêm nút Xóa trong table = `table-format` + `add-permission` + `mutation-realtime`, xong `verify-feature`.
+## Tech stack
 
-**MCP:** Postgres (query DB read-only — `mcp__postgres__query`) · Playwright (test UI thật, login đọc từ `frontend/.env`) · Vercel (trạng thái deploy/log). Cấu hình ở `.mcp.json` — **gitignored** (chứa DATABASE_URL, không commit).
-
-**Backend deploy:** sửa `backend/src` → **bump `// rebuild-token`** trong `api/index.ts` để Vercel rebuild function (có hook nhắc).
-
----
-## Development
-```bash
-cd backend && npm run dev    # port 4000
-cd frontend && npm run dev   # port 5173
-```
-Vercel env: `SUPABASE_URL` · `SUPABASE_SERVICE_ROLE_KEY` (BE) · `VITE_SUPABASE_URL` · `VITE_SUPABASE_ANON_KEY` (FE).
+- Frontend: React 18, TypeScript, Vite, Tailwind v3, shadcn/ui, React Router v6, TanStack Query. Quét mã bằng `BarcodeDetector`, dự phòng `zxing-wasm`.
+- Backend: Node, Express, TypeScript, `@supabase/supabase-js` (service role), chạy serverless qua `api/index.ts`. Đăng nhập bằng JWT.
+- Định dạng API: `{ "success": true, "data": {} }` hoặc `{ "success": false, "error": { "code": "…", "message": "…" } }`.

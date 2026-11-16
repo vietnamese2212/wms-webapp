@@ -24,3 +24,9 @@
 
 - **ĐO MỨC PHỤC VỤ — KHÔNG ĐƯỢC XOÁ DẤU VẾT (chốt 28/08):** luật "xuất thiếu thì hạ SL đơn = thực xuất mới cho Hoàn thành" khiến dữ liệu sau khi hoàn thành LUÔN nói giao đủ 100% (đo staging: **24.459/24.459 dòng COMPLETED khớp tuyệt đối**, và `outbound_events` không có loại sự kiện nào ghi việc hạ) ⇒ **fill rate / OTIF — chỉ số số 1 của chuỗi cung ứng — không đo được**. Nay **TRIGGER DB** `trg_outbound_qty_reduced` ghi mọi lần `OutboundItem.cartons_ordered` giảm (migration 20260828): trigger chứ không phải code app vì SL bị hạ qua NHIỀU đường (sửa đơn 2 nhánh, SAP dội xuống, script) — chặn ở DB thì không đường nào lách. Tự phân loại: `QTY_REDUCED_TO_ACTUAL` (hạ đúng bằng thực xuất = GIAO THIẾU) · `QTY_REDUCED_PLAN` (chưa lấy hàng = cắt kế hoạch, KHÔNG tính giao thiếu) · `QTY_REDUCED`. Báo cáo = **tab "Dịch vụ" trang Tổng quan** (RPC `service_level`, quyền `dashboard.view`): giao đủ · đúng hạn · OTIF · sao kho nhận chấm · theo kho · mã giao thiếu nhiều nhất. **Nhu cầu GỐC dựng lại = số hiện tại + Σ mức đã hạ** ⇒ dữ liệu trước 28/08 không có vết nên luôn 100% — **màn hình PHẢI nói thẳng điều đó**, giấu đi là để người đọc tin nhầm. Thêm đường ghi làm giảm `cartons_ordered` → không cần làm gì (trigger tự bắt); nhưng thêm bảng/cột nhu cầu MỚI thì phải nghĩ lại chỗ dựng nhu cầu gốc.
 
+## Chuyển từ CLAUDE.md cũ (16/11/2026)
+
+> Luật còn hiệu lực mà bản CLAUDE.md rút gọn ngày 16/11 không nhắc lại. Chép nguyên văn từ `docs/rules/claude-md-full-2026-11-16.md`.
+
+- Mọi cập nhật trên **bộ đếm/tổng/tồn/sức chứa DÙNG CHUNG** phải nguyên tử: đếm sống dưới row-lock (RPC, vd `book_vehicle_slot`) hoặc **optimistic-CAS** (`update … WHERE col=giá_trị_đọc`) — KHÔNG ghi mù `col = đọc + delta` (mất cập nhật khi đua). Mẫu: `consumeInventoryExact`, `addItemScanned`, `adjustInventoryAtomic`.
+- **Optimistic-CAS / retry-on-conflict PHẢI có jitter+backoff** giữa các lần thử (không thì thundering herd → nửa số request 409 oan).

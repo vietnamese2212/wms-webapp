@@ -22,3 +22,9 @@
   90 %; mình khai qua cửa app nhưng bằng tài khoản `ci-account.mjs` ⇒ dòng `date_rule_master` mang `updated_by = "CI runner …"` ⇒ bất biến C49
   (`00-invariant`, "bộ kiểm không ghi vào cấu hình THẬT dùng chung") đỏ đúng như thiết kế. Cấu hình người dùng duyệt: ghi bằng tài khoản người
   thật, hoặc sửa `updated_by` thành "Theo yêu cầu người dùng <ngày>" ngay sau khi ghi — đừng nới lưới.
+
+## Chuyển từ CLAUDE.md cũ (16/11/2026)
+
+> Luật còn hiệu lực mà bản CLAUDE.md rút gọn ngày 16/11 không nhắc lại. Chép nguyên văn từ `docs/rules/claude-md-full-2026-11-16.md`.
+
+**PHÉP KIỂM CŨNG CÓ ĐIỂM MÙ THEO CHIỀU (chốt 07/09, memory `qa-blind-spot-by-verb`):** lưới id-rác quét route TỪ CODE nhưng chỉ khớp `router.get(` ⇒ mù với PUT/PATCH/DELETE — nơi 500 sống dai nhất (12 ca bị bỏ lọt suốt 17 ngày). Viết phép kiểm quét-từ-code thì liệt kê **đủ mọi động từ**, và tự hỏi "lưới này bỏ sót CHIỀU nào?", không chỉ "bỏ sót ROUTE nào". Cùng họ: chỉ soi đường ĐỌC mà không soi đường GHI (lỗ hổng phạm vi kho 06/09), chỉ soi FORM mà không soi UPLOAD (loại hàng mồ côi 07/09) — **hai cửa cùng một sổ mà khác luật** là mẫu tìm bug nhanh nhất.

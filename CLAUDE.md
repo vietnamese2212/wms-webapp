@@ -117,6 +117,7 @@ Chi tiết: skill `add-permission`, `docs/rules/rbac.md`.
 - **Module hoặc quyền mới phải kèm migration cấp cho các chức danh sẽ dùng.** Nếu không, chỉ superadmin thấy tính năng.
 - Phạm vi dữ liệu: người dùng chỉ thấy và ghi được dữ liệu của kho và loại kho được giao. FE dùng `useScopedWarehouses` / `useScopedWhTypes`; BE dùng `utils/categoryScope.ts`. Một bản ghi mang nhiều loại kho thì "giao ít nhất một loại là thấy".
 - Lối tắt tới trang khác kiểm quyền qua `useCanSeePath()`.
+- Chỉ superadmin được sửa hồ sơ, đặt mật khẩu, xoá hoặc đổi kho của tài khoản superadmin (`blockIfTargetSuperadmin`), và người không phải superadmin không được cấp cho chức danh quyền vượt quyền của chính mình (`escalationError`). Lý do: một tài khoản quản lý thường không được tự leo lên quyền cao nhất. Chi tiết: `docs/rules/rbac.md`.
 
 ## Giao thoa giữa các module
 

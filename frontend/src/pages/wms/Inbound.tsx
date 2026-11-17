@@ -55,6 +55,8 @@ import { qtyEntryText, qtyUnitLabel, qtyEntryDecimal, unitCodeOf, type MatUnits 
 import { QtyInput } from '@/components/shared/QtyInput'
 import { isQtyLike } from '@/utils/inventoryMode'
 import { useActiveInboundStore } from '@/stores/activeInboundStore'
+import { temCycleHeader } from '@/utils/cargoCategory'
+import { useIsNccAt } from '@/hooks/useWhTypeMeta'
 
 const TODAY = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })   // 00:00–07:00 sáng VN: UTC vẫn là hôm qua → filter/min lệch ngày
 
@@ -1471,6 +1473,10 @@ export default function Inbound() {
   // không còn gom từ toàn bộ dòng đã tải (đã bỏ nạp-cả-list vào trình duyệt)
   const materialOptions = facets?.materials ?? []
   const cycleOptions    = useMemo(() => (facets?.cycles ?? []).map(c => ({ value: c, label: c })), [facets])
+  // nhãn đoạn 3 theo Loại kho đang lọc: hàng NCC ⇒ Lot; thành phẩm ⇒ Chu kỳ; chưa lọc ⇒ "Chu kỳ / Lot" (17/11)
+  const isNccAtInb = useIsNccAt()
+  const inboundNcc = !!f.materialCategory && isNccAtInb(f.warehouseId || null, f.materialCategory)
+  const inboundCycleLabel = temCycleHeader(f.materialCategory ? [inboundNcc] : [])
   const machineOptions  = useMemo(() => (facets?.machines ?? []).map(m => ({ value: m, label: m })), [facets])
 
   // Totals + bảng "Vị trí hàng nhập" — SQL tính trên TOÀN BỘ kết quả lọc (RPC inbound_orders_summary,
@@ -1521,10 +1527,11 @@ export default function Inbound() {
       onChange: v => setInbound({ filterShiftIds: v, page: 1 }) },
     { key: 'material', label: 'Material',   type: 'multi', options: materialOptions, selected: filterMaterials, searchable: true,
       onChange: v => setInbound({ filterMaterials: v, page: 1 }) },
-    { key: 'cycle',    label: 'Chu kỳ',     type: 'multi', options: cycleOptions,    selected: filterCycles,
+    { key: 'cycle',    label: inboundCycleLabel, type: 'multi', options: cycleOptions,    selected: filterCycles,
       onChange: v => setInbound({ filterCycles: v, page: 1 }) },
-    { key: 'machine',  label: 'Máy',        type: 'multi', options: machineOptions,  selected: filterMachines,
-      onChange: v => setInbound({ filterMachines: v, page: 1 }) },
+    // hàng NCC không có máy (đoạn 4 tem là mã NCC) ⇒ lọc Loại kho hàng NCC thì bỏ ô Máy (17/11)
+    ...(inboundNcc ? [] : [{ key: 'machine', label: 'Máy', type: 'multi' as const, options: machineOptions, selected: filterMachines,
+      onChange: (v: string[]) => setInbound({ filterMachines: v, page: 1 }) }]),
     { key: 'importer', label: 'Người nhập', type: 'text',  value: importerSearch, placeholder: 'Tên người nhập…',
       onChange: v => setInbound({ importerSearch: v, page: 1 }) },
   ]

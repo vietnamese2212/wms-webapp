@@ -20,6 +20,7 @@ import { guardPutawayBatch, type IncomingInput } from '../../services/putawayCon
 import { logPalletMoves } from '../../services/palletMoveLog'
 import { resolveActorId } from '../../utils/actor'
 import { putawayEnforces } from '../../utils/putaway'
+import { moveSourceWarehouse } from '../../utils/entryWarehouse'
 
 // Quyền duyệt cất khác quy tắc — MỘT quyền cho cả app (`inbound.putaway_override`), không đẻ thêm
 // bản riêng cho từng trang: nó là một NĂNG LỰC ("được cất lệch luật"), không phải một cái nút.
@@ -1046,9 +1047,10 @@ export async function bulkTransferLocation(req: Request, res: Response) {
   {
     const destWh = (destLoc as { warehouse_id?: string | null } | null)?.warehouse_id ?? null
     type MovRow = { pallet_code: string; warehouse_id?: string | null; location?: { warehouse_id?: string | null } | null }
+    // kho của pallet = moveSourceWarehouse — CÙNG hàm với ô chọn vị trí ở màn hình (mirror, C118)
     const crossing = destWh
       ? (moving as unknown as MovRow[]).filter(e => {
-          const src = e.warehouse_id ?? e.location?.warehouse_id ?? null
+          const src = moveSourceWarehouse(e)
           return !!src && src !== destWh
         })
       : []

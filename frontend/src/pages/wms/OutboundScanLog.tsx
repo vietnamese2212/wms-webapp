@@ -27,6 +27,9 @@ import { pctDateCls } from '@/utils/pctDateBands'
 import type { ScanLogParams } from '@/api/hooks'
 import { qtyLabel, qtyEntryDecimal, qtyUnitLabel } from '@/utils/qtyUnits'
 import { useScopedWhTypes } from '@/hooks/useUserScope'
+import { useIsNccAt } from '@/hooks/useWhTypeMeta'
+import { temSegLabels } from '@/utils/cargoCategory'
+import { parseCodeFields } from '@/components/shared/palletLabel'
 import { formatDate, formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 import { useWmsFilterStore, type ScanLogFilters } from '@/stores/wmsFilterStore'
 import { useSavedViewsStore } from '@/stores/savedViewsStore'
@@ -161,6 +164,12 @@ export default function OutboundScanLog() {
   const categories  = (whTypesData ?? []).map(t => t.value)
 
   const { data: facets } = useOutboundScanLogFacets(filters.material_category || undefined)
+  // Loại hàng đang lọc là hàng NCC (RM01…) ⇒ cột Chu kỳ = Lot, cột Máy = mã NCC trên tem (17/11 — temSegLabels)
+  const isNccAtLog = useIsNccAt()
+  const logNcc = !!filters.material_category && isNccAtLog(filters.warehouses.length === 1 ? filters.warehouses[0] : null, filters.material_category)
+  const logSeg = temSegLabels(logNcc)
+  const seg4Of = (r: { machine_code?: string | null; pallet_code?: string | null }) =>
+    r.machine_code ?? (logNcc ? (parseCodeFields(r.pallet_code ?? '').machine || null) : null)
   // Filter Mã hàng: TÌM TRÊN SERVER (50 dòng) — trước đây chọn Loại kho là kéo về toàn bộ
   // mã hàng của loại đó chỉ để dựng options.
   const [matTerm, setMatTerm] = useState('')
@@ -312,8 +321,8 @@ export default function OutboundScanLog() {
           'Date nên lấy': rowRot.bestDate ? formatDate(rowRot.bestDate) : '',
           'Thứ tự lấy': row.rotation_violation == null ? '' : (rowRot.bad ? 'SAI' : 'Đúng'),
           'Lý do lấy khác thứ tự': row.rotation_override_reason ? rotationReasonLabel(row.rotation_override_reason) : '',
-          '% Date': pct ?? '', 'Vị trí': row.location_code ?? '', 'Máy': row.machine_code ?? '',
-          'Chu kỳ': row.cycle ?? '', 'NMSX': row.nmsx ?? '',
+          '% Date': pct ?? '', 'Vị trí': row.location_code ?? '', [logSeg.machine]: seg4Of(row) ?? '',
+          [logSeg.cycle]: row.cycle ?? '', 'NMSX': row.nmsx ?? '',
           'Ngày nhập': row.import_date ? formatTimestampDate(row.import_date, true) : '',
           'Ghi chú': row.header_text ?? '', 'Người quét': row.scanner_name ?? '',
           'TG quét': fmtTs(row.scanned_at),
@@ -432,7 +441,7 @@ export default function OutboundScanLog() {
                 {SCANLOG_COLS.map((c, i) => (
                   <TableHead key={c.id}
                     className={`text-[9px] font-medium text-slate-500 py-1.5 px-2 whitespace-nowrap ${c.align === 'right' ? 'text-right' : ''} ${i === 0 ? 'sticky left-0 z-20 bg-slate-50' : ''}`}>
-                    {c.label}
+                    {c.id === 'cycle' ? logSeg.cycle : c.id === 'machine' ? logSeg.machine : c.label}
                     {i > 0 && (
                       <span
                         onPointerDown={e => startResize(i, e)}
@@ -496,7 +505,7 @@ export default function OutboundScanLog() {
                         : <span className="text-slate-300">—</span>}
                     </TableCell>
                     <TableCell className="px-2 py-1 text-[10px] font-mono whitespace-nowrap">{row.location_code ?? <span className="text-slate-300">—</span>}</TableCell>
-                    <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{row.machine_code ?? <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{seg4Of(row) ?? <span className="text-slate-300">—</span>}</TableCell>
                     <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{row.cycle ?? <span className="text-slate-300">—</span>}</TableCell>
                     <TableCell className="px-2 py-1 text-[10px] font-mono font-semibold whitespace-nowrap">{row.nmsx ?? <span className="text-slate-300">—</span>}</TableCell>
                     <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">

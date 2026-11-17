@@ -37,4 +37,5 @@
 **Cờ & hạ tầng:**
 - Cột: `InventoryEntry.batch` (mã lô V2, null với V1) + `InventoryEntry.expiry_date` (HSD V2) — migration `20260707_systemsetting_qr_v2.sql`.
 - Bảng `SystemSetting` + cờ `label_format` (`'underscore'`/`'semicolon'`) điều khiển chiều IN tem **và** gate chiều QUÉT inbound (quét nhầm format ⇒ 422 `QR_FORMAT_MISMATCH`); sổ cờ `KNOWN_SETTINGS` (`systemSettingController.ts`), route `GET/PUT /wms/settings/:key`, tab Hệ thống ở Cài đặt WMS; sinh tem V2 đủ 7 đoạn giữ format nhà máy (`buildQRv2`/`buildBatchV2`). Chi tiết: [docs/rules/multi-tenant-qr.md](docs/rules/multi-tenant-qr.md).
+- **Nhãn hiển thị đoạn 3 / 4 (17/11):** thành phẩm = Chu kỳ · Máy; hàng NCC (`is_ncc_goods`) = **Lot · NCC**. Mọi bảng / chi tiết lấy nhãn qua `temSegLabels` (`frontend/src/utils/cargoCategory.ts`), không viết chữ rời. Tem in (khổ 1/4 A4) chưa đổi — ô đáy vẫn "Chu kỳ / Máy".
 - **Luật vàng chống đè:** mọi thay đổi liên quan format QR phải đi qua các helper tập trung trên (BE↔FE giữ KHỚP NHAU); thêm điểm quét mới → BẮT BUỘC `normalizeQR`; thêm cờ khác biệt mới → thêm vào `KNOWN_SETTINGS` (sổ cờ) + default = hành vi V1 cũ (đơn vị 1 không đổi).

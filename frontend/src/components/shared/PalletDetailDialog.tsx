@@ -5,6 +5,9 @@ import { computePctDate } from '@/utils/shelfLife'
 import { qtyLabel } from '@/utils/qtyUnits'
 import { InventoryStatusBadge } from '@/lib/statusMaps'
 import { parseCodeFields } from '@/components/shared/palletLabel'
+import { temSegLabels, temSeg4 } from '@/utils/cargoCategory'
+import { useIsNccAt } from '@/hooks/useWhTypeMeta'
+import { moveSourceWarehouse } from '@/utils/entryWarehouse'
 
 function datePctCls(pct: number): string {
   if (pct >= 70) return 'text-green-600 font-semibold'
@@ -36,6 +39,7 @@ function Row({ label, value, mono, bold, cls, wrap }: {
 
 export function PalletDetailDialog({ entryId, onClose }: { entryId: string; onClose: () => void }) {
   const { data: entry, isLoading } = useInventoryEntry(entryId)
+  const isNccAt = useIsNccAt()
 
   const remaining = entry ? (entry.cartons_remaining ?? entry.cartons_imported) : 0
   const exported  = entry ? Math.max(0, Number(entry.cartons_imported) - Number(remaining)) : 0
@@ -46,8 +50,11 @@ export function PalletDetailDialog({ entryId, onClose }: { entryId: string; onCl
   // là helper tập trung, khớp qrParser BE). Hàng NCC: đoạn 4 là MÃ NCC chứ không phải máy → chỉ
   // fallback "Máy" khi dòng không gắn NCC.
   const tem     = entry ? parseCodeFields(entry.pallet_code ?? '') : null
+  // hàng NCC (RM01…): đoạn 3 = Lot, đoạn 4 = mã NCC (17/11 — temSegLabels)
+  const isNcc   = !!entry && isNccAt(moveSourceWarehouse(entry), entry.material?.category)
+  const segL    = temSegLabels(isNcc)
   const cycle   = entry?.cycle || tem?.cycle || ''
-  const machine = entry?.machine_code || (entry?.ncc ? '' : (tem?.machine ?? ''))
+  const machine = temSeg4(isNcc, entry?.machine_code, tem?.machine ?? '', !!entry?.ncc)
   const nmsx    = entry?.nmsx || tem?.nmsx || ''
   const seq     = entry?.pallet_sequence_no != null ? String(entry.pallet_sequence_no) : (tem?.seq ?? '')
 
@@ -107,12 +114,12 @@ export function PalletDetailDialog({ entryId, onClose }: { entryId: string; onCl
               </Section>
 
               {(entry.manufacturer || entry.ncc || cycle || machine || nmsx || seq) && (
-                <Section title="Sản xuất (thông số tem)">
+                <Section title={segL.section}>
                   {entry.manufacturer && <Row label="NMSX"    value={entry.manufacturer.code} mono />}
                   {entry.ncc          && <Row label="NCC"     value={entry.ncc.name} wrap />}
                   {nmsx    && <Row label="Kho SX (ký hiệu)" value={nmsx} mono />}
-                  {cycle   && <Row label="Chu kỳ"    value={cycle} mono />}
-                  {machine && <Row label="Máy"       value={machine} mono />}
+                  {cycle   && <Row label={segL.cycle}   value={cycle} mono />}
+                  {machine && <Row label={segL.machine} value={machine} mono />}
                   {seq     && <Row label="Số pallet" value={seq} mono />}
                 </Section>
               )}

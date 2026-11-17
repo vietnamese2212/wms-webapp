@@ -74,3 +74,24 @@ export function whTypeBadgeCls(category: string | null | undefined, metaMap?: Wh
   const color = metaMap?.get(category)?.badge_color || LEGACY_BADGE[category] || 'slate'
   return WH_BADGE_COLORS[color] ?? WH_BADGE_COLORS.slate
 }
+
+// ── NHÃN ĐOẠN 3 / 4 CỦA TEM V1 (user 17/11: "RM01 … thay vì máy như TP thì nó là NCC … chu kỳ phải là Lot") ──
+// Thành phẩm: đoạn 3 = Chu kỳ · đoạn 4 = Máy. Hàng NCC (cờ is_ncc_goods của Loại kho, vd RM01): đoạn 3 = Lot ·
+// đoạn 4 = mã NCC. Dữ liệu KHÔNG đổi: cột cycle giữ Lot; hàng NCC không ghi machine_code (đoạn 4 vào ncc_id lúc quét
+// nhập) ⇒ muốn in mã NCC trên tem thì bóc từ pallet_code. Mọi bảng / chi tiết lấy nhãn ở đây, không viết chữ rời.
+export function temSegLabels(isNcc: boolean): { cycle: string; machine: string; section: string } {
+  return isNcc
+    ? { cycle: 'Lot', machine: 'NCC', section: 'Thông số tem' }
+    : { cycle: 'Chu kỳ', machine: 'Máy', section: 'Sản xuất (thông số tem)' }
+}
+/** Bảng / bộ lọc gom nhiều loại hàng: mọi loại là hàng NCC ⇒ "Lot"; không loại nào ⇒ "Chu kỳ"; chưa lọc loại / lẫn ⇒ "Chu kỳ / Lot". */
+export function temCycleHeader(nccFlags: boolean[]): string {
+  if (nccFlags.length && nccFlags.every(Boolean)) return 'Lot'
+  if (nccFlags.length && !nccFlags.some(Boolean)) return 'Chu kỳ'
+  return 'Chu kỳ / Lot'
+}
+/** Đoạn 4 để HIỂN THỊ: hàng NCC = mã NCC trên tem; thành phẩm = máy (pallet hàng NCC có gắn NCC thì không lấy đoạn 4 làm máy). */
+export function temSeg4(isNcc: boolean, machineCode: string | null | undefined, temSeg4Raw: string, hasNcc: boolean): string {
+  if (isNcc) return machineCode || temSeg4Raw || ''
+  return machineCode || (hasNcc ? '' : temSeg4Raw) || ''
+}

@@ -36,6 +36,9 @@ import { PalletLedgerDialog } from '@/components/wms/PalletLedgerDialog'
 import { StatusBadge } from '@/components/shared/StatusBadge'
 import { InventoryStatusBadge, inventoryStatusInfo } from '@/lib/statusMaps'
 import { parseCodeFields } from '@/components/shared/palletLabel'
+import { selectionWarehouses, moveSourceWarehouse } from '@/utils/entryWarehouse'
+import { temSegLabels, temCycleHeader, temSeg4 } from '@/utils/cargoCategory'
+import { useIsNccAt } from '@/hooks/useWhTypeMeta'
 import { PUTAWAY_OVERRIDE_REASONS } from '@/utils/putaway'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
@@ -311,8 +314,11 @@ function NccPanel({ ids, material, onClose }: {
   )
 }
 
-function LocationPanel({ ids, warehouseId, category, materialId, onClose }: {
-  ids: string[]; warehouseId?: string; category?: string; materialId?: string; onClose: () => void
+function LocationPanel({ ids, warehouseId, warehouseName, multiWarehouse, category, materialId, onClose }: {
+  ids: string[]; warehouseId?: string; warehouseName?: string
+  /** các pallet đang chọn thuộc từ 2 kho trở lên ⇒ không chuyển một lần được (BE chặn CROSS_WAREHOUSE) */
+  multiWarehouse?: boolean
+  category?: string; materialId?: string; onClose: () => void
 }) {
   const user = useAuthStore(s => s.user)
   const perms = (user?.module_permissions as ModulePermissions | null) ?? null
@@ -374,7 +380,18 @@ function LocationPanel({ ids, warehouseId, category, materialId, onClose }: {
           <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">{error}</div>
         )}
         <div className="space-y-1.5">
-          <Label className="text-xs">Vị trí mới</Label>
+          <Label className="text-xs">Vị trí mới{warehouseName ? <span className="font-normal text-slate-500"> · kho {warehouseName}</span> : null}</Label>
+          {multiWarehouse && (
+            <div className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded px-3 py-2" data-testid="move-multi-wh">
+              Các pallet đang chọn thuộc nhiều kho. Chuyển vị trí chỉ làm trong một kho — lọc theo một kho rồi chọn lại.
+            </div>
+          )}
+          {!multiWarehouse && !warehouseId && (
+            <div className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded px-3 py-2">
+              Không xác định được kho của pallet đang chọn.
+            </div>
+          )}
+          {!!warehouseId && <>
           <div className="flex items-center gap-1.5">
             <Input placeholder="Tìm vị trí…" value={search} autoFocus
               onChange={e => setSearch(e.target.value)} className="h-8 text-sm" />
@@ -392,7 +409,7 @@ function LocationPanel({ ids, warehouseId, category, materialId, onClose }: {
           )}
           <div className="border rounded max-h-[calc(100vh-280px)] overflow-y-auto">
             {filtered.length === 0 ? (
-              <div className="px-3 py-2 text-xs text-slate-400 text-center">Không tìm thấy</div>
+              <div className="px-3 py-2 text-xs text-slate-400 text-center">{search ? 'Không tìm thấy' : `Kho ${warehouseName ?? 'này'} chưa có vị trí nào`}</div>
             ) : (
               // Ô nào cất được / vì sao ★ đều do BE chấm (utils/putaway.ts) — FE KHÔNG tự so
               // sức chứa nữa: bản tự so ở đây từng là bản chép tay thứ 4 của luật, và nó chỉ biết
@@ -424,6 +441,7 @@ function LocationPanel({ ids, warehouseId, category, materialId, onClose }: {
               <button className="ml-2 text-slate-400 hover:text-red-500" onClick={reset}>✕ bỏ chọn</button>
             </p>
           )}
+          </>}
         </div>
         {/* Kho bật "bắt buộc cất đúng quy tắc" → 2 lối thoát: đổi vị trí (ai cũng làm được) hoặc
             chọn lý do (cần quyền duyệt). KHÔNG có lối "cứ Chuyển đại". */}
@@ -927,7 +945,11 @@ Gồm: ${unitBreakdown.join(' · ')}` : QTY_CONVERTED_TIP,
   const firstCheckedEntry = useMemo(() =>
     displayEntries.find(e => checkedIds.has(e.id)), [displayEntries, checkedIds]
   )
-  const actionWarehouseId = firstCheckedEntry?.location?.warehouse?.id
+  // KHO của lô đang chọn = kho của CHÍNH pallet (cột warehouse_id; pallet cũ cột này trống thì suy từ ô — đúng
+  // thứ tự BE dùng để chặn CROSS_WAREHOUSE). Trước 17/11 chỉ lấy kho của Ô ⇒ pallet chưa xếp ô (kho chế biến,
+  // hàng vừa nhận) mất kho và ô chọn liệt kê vị trí của MỌI kho (C118). Lô trải nhiều kho ⇒ không chuyển một lần.
+  const checkedWarehouseIds = useMemo(() => selectionWarehouses(displayEntries.filter(e => checkedIds.has(e.id))), [displayEntries, checkedIds])
+  const actionWarehouseId = checkedWarehouseIds.length === 1 ? checkedWarehouseIds[0] : undefined
   const actionCategory    = firstCheckedEntry?.material?.category ?? undefined
   // Gợi ý ★/chặn trên picker chỉ ĐẦY ĐỦ khi cả lô cùng MỘT mã (luật số mã/NCC/trộn date chấm theo
   // mã sắp cất). Lô nhiều mã → không truyền, picker vẫn báo được ô cấm/nhặt lẻ/QA giữ, còn phần
@@ -993,6 +1015,11 @@ Gồm: ${unitBreakdown.join(' · ')}` : QTY_CONVERTED_TIP,
     ({ value: m.id, label: m.short_name ? `${m.material_code} – ${m.short_name}` : m.material_code })
   const materialOpts   = matFilterRows.map(matLabel)
   const cycleOpts      = (facets?.cycles ?? []).map(c => ({ value: c, label: c }))
+  const isNccAtList = useIsNccAt()
+  // nhãn ô lọc đoạn 3 theo Loại kho đang lọc: toàn hàng NCC ⇒ Lot; toàn thành phẩm ⇒ Chu kỳ; lẫn / chưa lọc ⇒ "Chu kỳ / Lot"
+  const filterNcc        = f.materialCategories.map(c => isNccAtList(f.warehouseIds.length === 1 ? f.warehouseIds[0] : null, c))
+  const cycleFilterLabel = temCycleHeader(filterNcc)
+  const allNccFilter     = filterNcc.length > 0 && filterNcc.every(Boolean)
   const machineOpts    = (facets?.machines ?? []).map(m => ({ value: m, label: m }))
   // NMSX = nmsx_code các kho tổng (B/D…) + O (gia công ngoài). Dedup theo value.
   const nmsxOpts: { value: string; label: string }[] = (() => {
@@ -1030,10 +1057,11 @@ Gồm: ${unitBreakdown.join(' · ')}` : QTY_CONVERTED_TIP,
       onChange: v => setInventory({ filterLocations: v, page: 1 }) },
     { key: 'qa', label: 'QA Status', type: 'multi', options: qaOpts, selected: f.qaStatusIds,
       onChange: v => setInventory({ qaStatusIds: v, page: 1 }) },
-    { key: 'cycle', label: 'Chu kỳ', type: 'multi', options: cycleOpts, selected: f.filterCycles, searchable: cycleOpts.length > 5,
+    { key: 'cycle', label: cycleFilterLabel, type: 'multi', options: cycleOpts, selected: f.filterCycles, searchable: cycleOpts.length > 5,
       onChange: v => setInventory({ filterCycles: v, page: 1 }) },
-    { key: 'machine', label: 'Máy', type: 'multi', options: machineOpts, selected: f.filterMachines, searchable: machineOpts.length > 5,
-      onChange: v => setInventory({ filterMachines: v, page: 1 }) },
+    // hàng NCC không có máy (đoạn 4 là mã NCC) ⇒ lọc toàn hàng NCC thì bỏ ô Máy
+    ...(allNccFilter ? [] : [{ key: 'machine', label: 'Máy', type: 'multi' as const, options: machineOpts, selected: f.filterMachines, searchable: machineOpts.length > 5,
+      onChange: (v: string[]) => setInventory({ filterMachines: v, page: 1 }) }]),
     { key: 'nmsx', label: 'NMSX', type: 'multi', options: nmsxOpts, selected: f.filterNmsx, searchable: false,
       onChange: v => setInventory({ filterNmsx: v, page: 1 }) },
     { key: 'datePct', label: '% Date', type: 'multi', options: datePctOpts, selected: f.datePctRanges, searchable: false,
@@ -1248,7 +1276,8 @@ Gồm: ${unitBreakdown.join(' · ')}` : QTY_CONVERTED_TIP,
         ) : actionModal === 'ncc' ? (
           <NccPanel ids={checkedIdArr} material={ncMaterial} onClose={closeActionModal} />
         ) : actionModal === 'location' ? (
-          <LocationPanel ids={checkedIdArr} warehouseId={actionWarehouseId} category={actionCategory} materialId={actionMaterialId} onClose={closeActionModal} />
+          <LocationPanel ids={checkedIdArr} warehouseId={actionWarehouseId} warehouseName={actionWarehouseId ? warehouseMap[actionWarehouseId] : undefined}
+            multiWarehouse={checkedWarehouseIds.length > 1} category={actionCategory} materialId={actionMaterialId} onClose={closeActionModal} />
         ) : actionModal === 'material' ? (
           <MaterialPanel ids={checkedIdArr} category={actionCategory} onClose={closeActionModal} />
         ) : actionModal === 'production-date' ? (
@@ -1568,6 +1597,7 @@ function DetailPanel({ entry: e, onClose, warehouseMap, onQuickAction, onSplit }
   onQuickAction: (m: QuickAction) => void; onSplit: () => void
 }) {
   const user = useAuthStore(s => s.user)
+  const isNccAt = useIsNccAt()
   const [adjInput, setAdjInput]       = useState('')
   const [adjUnit, setAdjUnit]         = useState<'entry' | 'base'>('base')   // BASE UNIT: ĐVT của số vừa gõ (mã có entry)
   const [adjNote, setAdjNote]         = useState('')
@@ -1611,8 +1641,11 @@ function DetailPanel({ entry: e, onClose, warehouseMap, onQuickAction, onSplit }
   // (parseCodeFields = helper tập trung, khớp qrParser BE). Hàng NCC: đoạn 4 là MÃ NCC chứ không
   // phải máy → chỉ fallback "Máy" khi dòng không gắn NCC.
   const tem     = parseCodeFields(e.pallet_code ?? '')
+  // hàng NCC (RM01…) tại kho của pallet: đoạn 3 = Lot, đoạn 4 = mã NCC (17/11)
+  const isNcc   = isNccAt(moveSourceWarehouse(e), e.material?.category)
+  const segL    = temSegLabels(isNcc)
   const cycle   = e.cycle || tem.cycle || ''
-  const machine = e.machine_code || (e.ncc ? '' : tem.machine)
+  const machine = temSeg4(isNcc, e.machine_code, tem.machine, !!e.ncc)
   const nmsx    = e.nmsx || tem.nmsx || ''
   const seq     = e.pallet_sequence_no != null ? String(e.pallet_sequence_no) : tem.seq
 
@@ -1677,12 +1710,12 @@ function DetailPanel({ entry: e, onClose, warehouseMap, onQuickAction, onSplit }
           )}
         </Section>
 
-        {/* Production — thuật ngữ đồng bộ Truy xuất lô / Sổ đóng gói: Chu kỳ · Máy · Số pallet · Kho SX (ký hiệu) */}
-        <Section title="Sản xuất (thông số tem)">
+        {/* Thông số trên tem — thành phẩm: Chu kỳ · Máy (đồng bộ Truy xuất lô / Sổ đóng gói); hàng NCC: Lot · NCC (temSegLabels) */}
+        <Section title={segL.section}>
           {e.manufacturer && <Row label="NMSX" value={e.manufacturer.code} mono />}
           <Row label="Kho SX (ký hiệu)" value={nmsx || '—'} mono />
-          <Row label="Chu kỳ"    value={cycle || '—'} mono />
-          <Row label="Máy"       value={machine || '—'} mono />
+          <Row label={segL.cycle}   value={cycle || '—'} mono />
+          <Row label={segL.machine} value={machine || '—'} mono />
           <Row label="Số pallet" value={seq || '—'} mono />
         </Section>
 

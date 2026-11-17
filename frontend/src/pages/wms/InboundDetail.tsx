@@ -42,6 +42,9 @@ import { qtyLabel, qtyEntryText } from '@/utils/qtyUnits'
 import { QtyInput } from '@/components/shared/QtyInput'
 import type { InboundOrder, InboundOrderStatus, PalletEntry } from '@/types'
 import { PutawayOption, type PutawayLocRow } from '@/components/wms/PutawayOption'
+import { temSegLabels } from '@/utils/cargoCategory'
+import { useIsNccAt } from '@/hooks/useWhTypeMeta'
+import { parseCodeFields } from '@/components/shared/palletLabel'
 
 // ─── Pill chọn vị trí (có ô tìm) ──────────────────────────────
 // Thay Radix <Select> pill "Đổi vị trí"/"Chọn vị trí" — kho nhiều vị trí phải tìm được.
@@ -161,6 +164,10 @@ export default function InboundDetail() {
   const autoScan = searchParams.get('scan') === '1'
 
   const { data: order, isLoading, isPlaceholderData } = useInboundOrder(id)
+  // phiếu hàng NCC (RM01…): cột CK = Lot, cột Máy = mã NCC trên tem (17/11 — temSegLabels)
+  const isNccAt = useIsNccAt()
+  const orderNcc = isNccAt(order?.warehouse_id ?? null, order?.warehouse_type ?? null)
+  const segL = temSegLabels(orderNcc)
   // TÌM TRÊN SERVER (luật danh mục lớn): trước nạp TOÀN BỘ vị trí của kho (Bàu Bàng 1.517 = 616KB
   // mỗi lần mở phiếu). BE ưu tiên nhóm ★ "đang để dở cùng mã" vào 50 dòng nên gợi ý không mất.
   const [locTerm, setLocTerm] = useState('')
@@ -1019,8 +1026,8 @@ export default function InboundDetail() {
                       <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500 whitespace-nowrap">Ngày</TableHead>
                       <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500 whitespace-nowrap">Giờ</TableHead>
                       <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">NMSX</TableHead>
-                      <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">CK</TableHead>
-                      <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">Máy</TableHead>
+                      <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">{orderNcc ? segL.cycle : 'CK'}</TableHead>
+                      <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500">{segL.machine}</TableHead>
                       <TableHead className="px-2 py-1.5 text-[9px] font-medium text-slate-500 text-right">STT</TableHead>
                       {isOpen && <TableHead className="px-1 py-1.5 w-12" />}
                     </TableRow>
@@ -1073,7 +1080,7 @@ export default function InboundDetail() {
                           {entry.cycle ?? '—'}
                         </TableCell>
                         <TableCell className="px-2 py-1 text-[10px] text-slate-500 whitespace-nowrap">
-                          {entry.machine_code ?? '—'}
+                          {entry.machine_code ?? (orderNcc ? (parseCodeFields(entry.pallet_code ?? '').machine || '—') : '—')}
                         </TableCell>
                         <TableCell className="px-2 py-1 text-[10px] text-right tabular-nums text-slate-500">
                           {entry.pallet_sequence_no ?? '—'}

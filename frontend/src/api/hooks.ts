@@ -62,7 +62,10 @@ export type LocationLite = {
 export function useLocationsReal(params?: LocationListParams, enabled = true) {
   return useQuery({
     queryKey: ['locations-real', 'lite', params],
-    enabled,
+    // params vắng = "chưa đủ điều kiện để hỏi" (mọi chỗ gọi viết `kho ? {...} : undefined`). Trước 17/11 vắng
+    // tham số vẫn gọi API KHÔNG lọc kho ⇒ ô chọn vị trí liệt kê vị trí của MỌI kho (Chuyển vị trí ở Tồn kho
+    // với pallet chưa xếp ô của kho chế biến). Lớp C118.
+    enabled: enabled && params !== undefined,
     queryFn: async () => {
       const { data } = await apiClient.get('/masterdata/locations', { params: { ...params, view: 'lite' } })
       return data.data as any[]

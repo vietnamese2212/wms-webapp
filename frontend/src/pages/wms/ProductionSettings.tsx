@@ -19,7 +19,7 @@ import { useProductionWarehouses, useProductionSettings, useSaveProductionSettin
 import { NoSemiFinishedHint } from '@/components/wms/production/NoSemiFinishedHint'
 import { useMobileTabs } from '@/hooks/useMobileSurface'
 import { ProcessFormSettings } from '@/components/wms/production/ProcessFormSettings'
-import { unitLabel } from '@/utils/qtyUnits'
+import { unitCode } from '@/utils/unitCode'
 
 const GATE_OPTS = [
   { value: 'WARN',  label: 'Cảnh báo',   sub: 'cho rót, báo người đóng trang — ghi vào sổ bồn' },
@@ -87,7 +87,7 @@ export default function ProductionSettings() {
   const { found, isFetching, none: noBtp } = useSemiFinishedSearch(matTerm, canConfigure)
   const have = new Set(rows.map(r => r.id))
   const matOpts = found.filter(m => !have.has(m.id))
-    .map(m => ({ value: m.id, label: m.material_code, sub: `${m.short_name ?? m.material_description ?? ''} · ${unitLabel(m.base_unit)}` }))
+    .map(m => ({ value: m.id, label: m.material_code, sub: `${m.short_name ?? m.material_description ?? ''} · ${unitCode(m.base_unit)}` }))
   function addMat(id: string) {
     const m = found.find(x => x.id === id)
     if (!m) return

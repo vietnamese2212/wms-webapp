@@ -12,7 +12,7 @@ import { TableEmptyRow } from '@/components/shared/TableEmptyRow'
 import { Input } from '@/components/ui/input'
 import { SingleSelect } from '@/components/shared/SingleSelect'
 import { useMaterials } from '@/api/hooks'
-import { unitLabel } from '@/utils/qtyUnits'
+import { unitCode } from '@/utils/unitCode'
 import { parseVnNumber, vnNumberInput } from '@/utils/vnNumber'
 
 export interface MatLine {
@@ -59,7 +59,7 @@ export function MatLinesEditor({ lines, onChange, excludeId, disabled, emptyText
   const { data: found = [], isFetching } = useMaterials({ search: term || undefined, limit: 50 }, !disabled)
   const have = new Set(lines.map(l => l.material_id))
   const opts = found.filter(m => !have.has(m.id) && m.id !== excludeId)
-    .map(m => ({ value: m.id, label: m.material_code, sub: `${m.short_name ?? m.material_description ?? ''} · ${unitLabel(m.base_unit)}` }))
+    .map(m => ({ value: m.id, label: m.material_code, sub: `${m.short_name ?? m.material_description ?? ''} · ${unitCode(m.base_unit)}` }))
   const pick = (id: string) => {
     const m = found.find(x => x.id === id)
     return m ? { material_id: m.id, material_code: m.material_code, material_name: m.short_name ?? m.material_description ?? null, base_unit: m.base_unit ?? null } : null
@@ -127,7 +127,7 @@ export function MatLinesEditor({ lines, onChange, excludeId, disabled, emptyText
                       onChange={ev => set(i, { qty: ev.target.value })}
                       className={`${INP} w-full ${e ? 'border-red-400' : off ? 'border-amber-400' : ''}`} />
                   </TableCell>
-                  <TableCell className={`${TD} text-slate-500`}>{unitLabel(l.base_unit)}</TableCell>
+                  <TableCell className={`${TD} font-mono text-slate-500`}>{unitCode(l.base_unit)}</TableCell>
                   {withTol && (
                     <TableCell className={`${TD} text-right`}>
                       <Input value={l.tol ?? ''} disabled={disabled} inputMode="decimal" placeholder="—" aria-label={`Mức lệch cho phép ${l.material_code} (%)`}

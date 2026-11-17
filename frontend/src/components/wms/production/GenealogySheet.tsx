@@ -13,7 +13,7 @@ import { Input } from '@/components/ui/input'
 import { useCanSeePath } from '@/hooks/useCanSeePath'
 import { useGenealogy, BATCH_QA_VI, type GenealogyBatch } from '@/api/productionHooks'
 import { normalizeQR } from '@/utils/qr'
-import { unitLabel } from '@/utils/qtyUnits'
+import { unitCode } from '@/utils/unitCode'
 import { formatDate } from '@/utils/formatters'
 
 type Kind = 'FG_PALLET' | 'RM_PALLET' | 'BATCH'
@@ -67,7 +67,7 @@ export function GenealogySheet({ open, onClose, onTraceFg }: { open: boolean; on
 function BatchCard({ b, highlight, onTraceFg }: { b: GenealogyBatch; highlight?: string; onTraceFg?: (code: string) => void }) {
   const navigate = useNavigate()
   const canSeePath = useCanSeePath()
-  const u = unitLabel(b.base_unit)
+  const u = unitCode(b.base_unit)
   const fgCount = b.runs.reduce((s, r) => s + r.pallets.length, 0)
   return (
     <div className="rounded-lg border border-slate-200">
@@ -96,7 +96,7 @@ function BatchCard({ b, highlight, onTraceFg }: { b: GenealogyBatch; highlight?:
                     <td className={`${TD} tabular-nums`}>{m.production_date ? formatDate(m.production_date) : '—'}</td>
                     <td className={`${TD} font-mono`}>{m.batch_lot ?? '—'}</td>
                     <td className={TD}>{m.ncc_name ?? '—'}</td>
-                    <td className={`${TD} text-right font-semibold tabular-nums`}>{nf(m.qty)} <span className="text-slate-400 font-normal">{unitLabel(m.base_unit)}</span></td>
+                    <td className={`${TD} text-right font-semibold tabular-nums`}>{nf(m.qty)} <span className="text-slate-400 font-normal">{unitCode(m.base_unit)}</span></td>
                     <td className={TD}>{m.source === 'SCAN' ? 'Quét tem' : 'Theo lô (gộp)'}</td>
                   </tr>
                 ))}

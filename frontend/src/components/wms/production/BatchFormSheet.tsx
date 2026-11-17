@@ -12,7 +12,7 @@ import { useGlobalScopeStore } from '@/stores/globalScopeStore'
 import { useMaterialsByIds, useMachines } from '@/api/hooks'
 import { useProductionWarehouses, useNextBatchCode, useCreateBatch, useUpdateBatch, useShiftNames, defaultKitchen, useSemiFinishedSearch, useRecipes, SEMI_FINISHED_PLACEHOLDER, type BatchDetail } from '@/api/productionHooks'
 import { NoSemiFinishedHint } from './NoSemiFinishedHint'
-import { unitLabel } from '@/utils/qtyUnits'
+import { unitCode } from '@/utils/unitCode'
 import { parseVnNumber, vnNumberInput } from '@/utils/vnNumber'
 
 const apiMsg = (e: unknown) => (e as AxiosError<{ error?: { message?: string } }>)?.response?.data?.error?.message ?? 'Lỗi không xác định'
@@ -70,7 +70,7 @@ export function BatchFormSheet({ open, onClose, batch, template, onSaved }: {
   const matOpts = useMemo(() => {
     const seen = new Set<string>()
     return [...picked, ...found].filter(m => { if (seen.has(m.id)) return false; seen.add(m.id); return true })
-      .map(m => ({ value: m.id, label: m.material_code, sub: `${m.short_name ?? m.material_description ?? ''} · ${unitLabel(m.base_unit)}` }))
+      .map(m => ({ value: m.id, label: m.material_code, sub: `${m.short_name ?? m.material_description ?? ''} · ${unitCode(m.base_unit)}` }))
   }, [picked, found])
   const selMat = picked.find(m => m.id === mat) ?? found.find(m => m.id === mat)
   const { data: recipes = [], isFetching: recipesLoading } = useRecipes(mat || undefined, true, open && !editing && !!mat)
@@ -133,7 +133,7 @@ export function BatchFormSheet({ open, onClose, batch, template, onSaved }: {
             <Label className="text-xs">Công thức</Label>
             {recipes.length ? (
               <SingleSelect value={recipeId} onChange={setRecipeId} searchable={recipes.length > 6} triggerClassName="h-8 text-xs mt-0.5"
-                options={recipes.map(r => ({ value: r.id, label: r.name, sub: `cỡ chuẩn ${Number(r.base_qty).toLocaleString('vi-VN', { maximumFractionDigits: 3 })} ${unitLabel(r.material?.base_unit)}${r.is_default ? ' · mặc định' : ''}` }))} />
+                options={recipes.map(r => ({ value: r.id, label: r.name, sub: `cỡ chuẩn ${Number(r.base_qty).toLocaleString('vi-VN', { maximumFractionDigits: 3 })} ${unitCode(r.material?.base_unit)}${r.is_default ? ' · mặc định' : ''}` }))} />
             ) : (
               <p className="text-[11px] text-amber-700 mt-0.5">{recipesLoading ? 'Đang tải công thức…' : 'Mã này chưa có công thức đang dùng — phiếu của mẻ sẽ trống (khai ở Sản xuất (MES) → Định mức, hoặc thêm tay trên mẻ).'}</p>
             )}
@@ -164,7 +164,7 @@ export function BatchFormSheet({ open, onClose, batch, template, onSaved }: {
               : <Input value={machine} onChange={e => { setMachine(e.target.value.toUpperCase()); setCodeTouched(false) }} maxLength={20} placeholder="Tuỳ chọn" className="h-8 text-xs mt-0.5" />}
           </div>
           <div>
-            <Label className="text-xs">Lượng kế hoạch{selMat ? ` (${unitLabel(selMat.base_unit)})` : ''}</Label>
+            <Label className="text-xs">Lượng kế hoạch{selMat ? ` (${unitCode(selMat.base_unit)})` : ''}</Label>
             <Input value={planned} onChange={e => setPlanned(e.target.value)} inputMode="decimal" placeholder="Tuỳ chọn" className={`h-8 text-xs mt-0.5 ${plannedBad ? 'border-red-400' : ''}`} />
           </div>
         </div>

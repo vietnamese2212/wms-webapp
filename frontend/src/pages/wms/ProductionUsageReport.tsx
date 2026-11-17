@@ -23,7 +23,9 @@ import { useAuthStore } from '@/stores/authStore'
 import { useGlobalScopeStore } from '@/stores/globalScopeStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { useProductionWarehouses, useShiftReports, useShiftReport, useOpenShift, useSaveShift, useShiftNames, defaultKitchen, type ShiftRow } from '@/api/productionHooks'
-import { qtyLabel, unitLabel } from '@/utils/qtyUnits'
+import { qtyNum, matUnitCode, unitCode } from '@/utils/unitCode'
+import { Check } from 'lucide-react'
+import { MobileNumHead, MobileNumRow, type NumCol } from '@/components/wms/production/MobileNumGrid'
 import { parseVnNumber, vnNumberInput } from '@/utils/vnNumber'
 import { formatDate, formatDateTime } from '@/utils/formatters'
 import { saveWorkbook } from '@/utils/saveExcel'
@@ -35,6 +37,11 @@ const apiMsg = (e: unknown) => (e as AxiosError<{ error?: { message?: string } }
 const todayVN = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
 const r3 = (n: number) => Math.round(n * 1000) / 1000
 const dash = <span className="text-slate-300 font-normal">—</span>
+// điện thoại: nhãn cột in một lần, mỗi dòng chỉ con số (user 17/11 "hạn chế văn viết"); ô bên phải = tồn cuối thực tế (đếm)
+const MOBILE_COLS: NumCol[] = [
+  { label: 'Đầu', title: 'Tồn đầu thực tế' }, { label: 'Nhập' }, { label: 'Dùng', title: 'Tổng sử dụng trong ca' },
+  { label: 'Sổ còn', title: 'Tồn cuối sổ sách' }, { label: 'Lệch', title: 'Tồn cuối thực tế − sổ sách · ✓ = khớp' },
+]
 
 export default function ProductionUsageReport() {
   const navigate = useNavigate()
@@ -118,7 +125,7 @@ export default function ProductionUsageReport() {
       ['', '', '', '', '', ...batches.map(b => `Mẻ: ${b.batch_code}`), '', '', '', ''],
       ...rows.map(r => {
         const d = diffOf(r)
-        return [r.material_code, r.material_name ?? '', unitLabel(r.base_unit), Number(r.opening), Number(r.received),
+        return [r.material_code, r.material_name ?? '', unitCode(r.base_unit), Number(r.opening), Number(r.received),
           ...batches.map(b => (r.by_batch[b.id] != null ? Number(r.by_batch[b.id]) : '')), Number(r.used), actualOf(r) ?? '', Number(r.book), d ?? '']
       }),
       [],
@@ -133,7 +140,8 @@ export default function ProductionUsageReport() {
   }
 
   const cols: RtColDef[] = useMemo(() => [
-    { id: 'mat', label: 'Nguyên liệu', w: 210 }, { id: 'open', label: 'Tồn đầu thực tế', w: 110, align: 'right' }, { id: 'in', label: 'Nhập', w: 90, align: 'right' },
+    { id: 'mat', label: 'Nguyên liệu', w: 210 }, { id: 'unit', label: 'ĐVT', w: 56 },
+    { id: 'open', label: 'Tồn đầu thực tế', w: 110, align: 'right' }, { id: 'in', label: 'Nhập', w: 90, align: 'right' },
     ...batches.map(b => ({ id: `b_${b.id}`, label: `${b.material_code}${b.cycle ? ` · CK ${b.cycle}` : ''} · ${b.batch_code}`, w: 150, align: 'right' as const })),
     { id: 'used', label: 'Tổng sử dụng', w: 110, align: 'right' }, { id: 'actual', label: 'Tồn cuối thực tế', w: 130, align: 'right' },
     { id: 'book', label: 'Tồn cuối sổ sách', w: 120, align: 'right' }, { id: 'diff', label: 'Chênh lệch', w: 110, align: 'right' },
@@ -151,8 +159,8 @@ export default function ProductionUsageReport() {
   const diffCell = (r: ShiftRow) => {
     const d = diffOf(r)
     if (d == null) return dash
-    if (d === 0) return <span className="text-green-700">khớp</span>
-    return <span className={d < 0 ? 'text-red-600' : 'text-amber-700'}>{d > 0 ? '+' : '−'}{qtyLabel(Math.abs(d), r)}</span>
+    if (d === 0) return <Check className="inline h-3.5 w-3.5 text-green-600" aria-label="Khớp" />
+    return <span className={d < 0 ? 'text-red-600' : 'text-amber-700'}>{d > 0 ? '+' : '−'}{qtyNum(Math.abs(d), r)}</span>
   }
   const input = (r: ShiftRow, cls: string) => (
     <Input value={draft[r.material_id] ?? ''} onChange={e => setDraft(s => ({ ...s, [r.material_id]: e.target.value }))} inputMode="decimal" placeholder="đếm"
@@ -198,42 +206,52 @@ export default function ProductionUsageReport() {
           {!!kitchens.length && !listQ.isLoading && !reports.length && (
             <p className="p-3 text-xs text-slate-500">Kho này chưa có báo cáo ca nào.{canWrite ? ' Bấm "Mở ca" để bắt đầu — từ đó mọi lần cấp nguyên liệu cho mẻ tự vào báo cáo.' : ''}</p>
           )}
-          {/* ĐIỆN THOẠI: mỗi nguyên liệu một dòng + ô nhập số đếm */}
+          {/* ĐIỆN THOẠI: bảng thu nhỏ — nhãn cột một lần, mỗi dòng mã · tên · ĐVT rồi chỉ con số + ô nhập số đếm */}
           {rep && (
-            <div className="sm:hidden divide-y divide-slate-100">
+            <div className="sm:hidden">
               {!rows.length && <p className="px-3 py-3 text-xs text-slate-400">{q.isLoading ? 'Đang tải…' : 'Ca này chưa có nguyên liệu nào (kho chế biến trống, chưa cấp gì).'}</p>}
-              {rows.map(r => (
-                <div key={r.material_id} className="flex items-center gap-2 px-3 py-2">
-                  <div className="flex-1 min-w-0">
-                    <p className="text-xs truncate"><span className="font-mono font-semibold">{r.material_code}</span> <span className="text-slate-600">{r.material_name ?? ''}</span></p>
-                    <p className="text-[11px] text-slate-500 tabular-nums">Đầu <b className="text-slate-700">{qtyLabel(Number(r.opening), r)}</b>{Number(r.received) > 0 && <> · nhập <b className="text-slate-700">{qtyLabel(Number(r.received), r)}</b></>} · dùng <b className="text-slate-700">{qtyLabel(Number(r.used), r)}</b></p>
-                    <p className="text-[11px] tabular-nums text-slate-500">Sổ còn <b className="text-slate-700">{qtyLabel(Number(r.book), r)}</b> · lệch {diffCell(r)}</p>
-                  </div>
-                  {editable ? input(r, 'h-10 w-24 text-sm shrink-0') : <span className="shrink-0 text-xs font-semibold tabular-nums">{r.actual != null ? qtyLabel(Number(r.actual), r) : dash}</span>}
-                </div>
-              ))}
+              {rows.length > 0 && <MobileNumHead cols={MOBILE_COLS} asideClass="w-20" asideLabel="Thực tế" />}
+              <div className="divide-y divide-slate-100">
+                {rows.map(r => (
+                  <MobileNumRow key={r.material_id} asideClass="w-20"
+                    head={<>
+                      <span className="font-mono font-semibold shrink-0">{r.material_code}</span>
+                      <span className="truncate text-slate-600">{r.material_name ?? ''}</span>
+                      <span className="ml-auto shrink-0 font-mono text-[10px] text-slate-400">{matUnitCode(r)}</span>
+                    </>}
+                    cells={[
+                      <span className="font-normal" title={r.opening_src === 'BOOK' ? 'Chưa có số đếm của ca trước — lấy theo sổ lúc mở ca' : undefined}>{qtyNum(Number(r.opening), r)}</span>,
+                      Number(r.received) > 0 ? <span className="font-normal">{qtyNum(Number(r.received), r)}</span> : dash,
+                      Number(r.used) > 0 ? qtyNum(Number(r.used), r) : dash,
+                      <span className="font-normal">{qtyNum(Number(r.book), r)}</span>,
+                      diffCell(r),
+                    ]}
+                    aside={editable ? input(r, 'h-10 w-20 text-sm') : <span className="text-xs font-semibold tabular-nums">{r.actual != null ? qtyNum(Number(r.actual), r) : dash}</span>} />
+                ))}
+              </div>
             </div>
           )}
           {rep && (
             <div className="hidden sm:block">
-              <ResizableTable storageKey={`production_usage_cols_v1_${batches.length}`} cols={cols}>
+              <ResizableTable storageKey={`production_usage_cols_v2_${batches.length}`} cols={cols}>
                 <TableBody>
                   {!rows.length && <TableEmptyRow colSpan={cols.length}>{q.isLoading ? 'Đang tải…' : 'Ca này chưa có nguyên liệu nào (kho chế biến trống, chưa cấp gì).'}</TableEmptyRow>}
                   {rows.map(r => (
                     <TableRow key={r.material_id}>
                       <TableCell className={`${TD} sticky left-0 z-10 bg-white truncate`} title={r.material_name ?? ''}><span className="font-mono font-semibold">{r.material_code}</span> {r.material_name ?? ''}</TableCell>
+                      <TableCell className={`${TD} font-mono text-slate-500`}>{matUnitCode(r)}</TableCell>
                       <TableCell className={NUM} title={r.opening_src === 'BOOK' ? 'Chưa có số đếm của ca trước — lấy theo sổ lúc mở ca' : 'Số đếm lúc chốt ca trước'}>
-                        {qtyLabel(Number(r.opening), r)}{r.opening_src === 'BOOK' && <span className="ml-1 font-normal text-slate-400">(sổ)</span>}
+                        {qtyNum(Number(r.opening), r)}{r.opening_src === 'BOOK' && <span className="ml-1 font-normal text-slate-400">(sổ)</span>}
                       </TableCell>
-                      <TableCell className={NUM}>{Number(r.received) > 0 ? qtyLabel(Number(r.received), r) : dash}</TableCell>
+                      <TableCell className={NUM}>{Number(r.received) > 0 ? qtyNum(Number(r.received), r) : dash}</TableCell>
                       {batches.map(b => (
                         <TableCell key={b.id} className={`${NUM} cursor-pointer hover:bg-sky-50`} title={`Mở mẻ ${b.batch_code}`} onClick={() => navigate(`/wms/production/${b.id}`)}>
-                          {r.by_batch[b.id] != null ? qtyLabel(Number(r.by_batch[b.id]), r) : dash}
+                          {r.by_batch[b.id] != null ? qtyNum(Number(r.by_batch[b.id]), r) : dash}
                         </TableCell>
                       ))}
-                      <TableCell className={NUM}>{Number(r.used) > 0 ? qtyLabel(Number(r.used), r) : dash}</TableCell>
-                      <TableCell className={`${NUM} !py-0.5`}>{editable ? input(r, 'h-7 w-full text-[11px]') : r.actual != null ? qtyLabel(Number(r.actual), r) : dash}</TableCell>
-                      <TableCell className={NUM}>{qtyLabel(Number(r.book), r)}</TableCell>
+                      <TableCell className={NUM}>{Number(r.used) > 0 ? qtyNum(Number(r.used), r) : dash}</TableCell>
+                      <TableCell className={`${NUM} !py-0.5`}>{editable ? input(r, 'h-7 w-full text-[11px]') : r.actual != null ? qtyNum(Number(r.actual), r) : dash}</TableCell>
+                      <TableCell className={NUM}>{qtyNum(Number(r.book), r)}</TableCell>
                       <TableCell className={NUM}>{diffCell(r)}</TableCell>
                     </TableRow>
                   ))}

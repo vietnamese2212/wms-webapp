@@ -25,7 +25,7 @@ import { can, type ModulePermissions } from '@/config/permissions'
 import { useMaterialsByIds } from '@/api/hooks'
 import { useRecipes, useRecipe, useSaveRecipe, useSemiFinishedSearch, SEMI_FINISHED_PLACEHOLDER, type RecipeRow } from '@/api/productionHooks'
 import { NoSemiFinishedHint } from '@/components/wms/production/NoSemiFinishedHint'
-import { unitLabel } from '@/utils/qtyUnits'
+import { unitCode } from '@/utils/unitCode'
 import { parseVnNumber, vnNumberInput } from '@/utils/vnNumber'
 import { formatDateTime } from '@/utils/formatters'
 
@@ -82,7 +82,7 @@ export default function ProductionRecipes() {
                   <TableCell className={`${TD} sticky left-0 z-10 bg-white font-mono font-semibold`}>{r.material?.material_code ?? '—'}</TableCell>
                   <TableCell className={`${TD} truncate`} title={r.material?.short_name ?? ''}>{r.material?.short_name ?? ''}</TableCell>
                   <TableCell className={`${TD} truncate font-semibold`} title={r.name}>{r.name}</TableCell>
-                  <TableCell className={`${TD} text-right font-semibold tabular-nums`}>{nf(r.base_qty)} <span className="text-slate-400 font-normal">{unitLabel(r.material?.base_unit)}</span></TableCell>
+                  <TableCell className={`${TD} text-right font-semibold tabular-nums`}>{nf(r.base_qty)} <span className="text-slate-400 font-normal">{unitCode(r.material?.base_unit)}</span></TableCell>
                   <TableCell className={`${TD} text-right tabular-nums`}>{r.line_count ?? '—'}</TableCell>
                   <TableCell className={TD}>{!r.is_active ? <StatusBadge tone="slate">Ngừng</StatusBadge> : r.is_default ? <StatusBadge tone="sky">Mặc định</StatusBadge> : <StatusBadge tone="green">Đang dùng</StatusBadge>}</TableCell>
                   <TableCell className={`${TD} truncate`} title={r.note ?? ''}>{r.note ?? <span className="text-slate-300">—</span>}</TableCell>
@@ -135,7 +135,7 @@ function RecipeSheet({ open, onClose, recipeId, canManage, all }: { open: boolea
   const selMat = picked.find(m => m.id === mat) ?? found.find(m => m.id === mat)
   const countOf = (id: string) => all.filter(r => r.material_id === id).length
   const matOpts = [...picked, ...found].filter((m, i, a) => a.findIndex(x => x.id === m.id) === i)
-    .map(m => ({ value: m.id, label: m.material_code, sub: `${m.short_name ?? m.material_description ?? ''} · ${unitLabel(m.base_unit)}${countOf(m.id) ? ` · đã có ${countOf(m.id)} công thức` : ''}` }))
+    .map(m => ({ value: m.id, label: m.material_code, sub: `${m.short_name ?? m.material_description ?? ''} · ${unitCode(m.base_unit)}${countOf(m.id) ? ` · đã có ${countOf(m.id)} công thức` : ''}` }))
   const siblings = all.filter(r => r.material_id === mat && r.id !== rid)
   const nameDup = !!name.trim() && siblings.some(r => r.name.trim().toLowerCase() === name.trim().toLowerCase())
   const baseN = base.trim() ? parseVnNumber(base) : null
@@ -153,7 +153,7 @@ function RecipeSheet({ open, onClose, recipeId, canManage, all }: { open: boolea
   function copyAsNew() {
     setRid(null); setName(`${name.trim()} (bản sao)`.slice(0, 80)); setIsDefault(false); setActive(true); setErr('')
   }
-  const u = unitLabel(selMat?.base_unit ?? loaded?.material?.base_unit)
+  const u = unitCode(selMat?.base_unit ?? loaded?.material?.base_unit)
   return (
     <FormSheet open={open} onClose={onClose} widthClass="sm:max-w-3xl"
       title={creating ? (loadedFor ? 'Công thức mới (chép)' : 'Thêm công thức') : `Công thức ${loaded?.material?.material_code ?? ''} — ${loaded?.name ?? ''}`}

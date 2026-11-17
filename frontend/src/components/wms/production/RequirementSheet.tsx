@@ -12,7 +12,7 @@ import { Label } from '@/components/ui/label'
 import { useConfirmDialog } from '@/components/shared/ConfirmDialog'
 import { MatLinesEditor, toMatLine, matLineError, matLinesPayload, type MatLine } from './MatLinesEditor'
 import { useSetRequirements, useApplyRecipe, useRecipes, type BatchDetail } from '@/api/productionHooks'
-import { unitLabel } from '@/utils/qtyUnits'
+import { unitCode } from '@/utils/unitCode'
 
 const apiMsg = (e: unknown) => (e as AxiosError<{ error?: { message?: string } }>)?.response?.data?.error?.message ?? 'Lỗi không xác định'
 const nf = (n: number) => Number(n).toLocaleString('vi-VN', { maximumFractionDigits: 3 })
@@ -82,7 +82,7 @@ export function RequirementSheet({ open, onClose, batch }: { open: boolean; onCl
                 <button key={r.material_id} type="button" onClick={() => restore(r)} disabled={lines.some(l => l.material_id === r.material_id)}
                   className="touch-target inline-flex items-center gap-1 rounded border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] text-slate-600 hover:bg-white disabled:opacity-40"
                   title={r.change_reason ? `Lý do bỏ: ${r.change_reason}` : undefined}>
-                  <Undo2 className="h-3 w-3" /><span className="font-mono">{r.material_code}</span> {r.standard != null ? `${nf(r.standard)} ${unitLabel(r.base_unit)}` : ''}
+                  <Undo2 className="h-3 w-3" /><span className="font-mono">{r.material_code}</span> {r.standard != null ? `${nf(r.standard)} ${unitCode(r.base_unit)}` : ''}
                 </button>
               ))}
             </div>
@@ -100,7 +100,7 @@ export function RequirementSheet({ open, onClose, batch }: { open: boolean; onCl
             <div className="flex items-center gap-2">
               <div className="flex-1 min-w-0">
                 <SingleSelect value={recipeId} onChange={setRecipeId} searchable={recipes.length > 6} triggerClassName="h-9 sm:h-8 text-xs"
-                  options={recipes.map(r => ({ value: r.id, label: r.name, sub: `cỡ ${nf(r.base_qty)} ${unitLabel(r.material?.base_unit)}${r.is_default ? ' · mặc định' : ''}${r.id === batch.recipe_id ? ' · đang dùng' : ''}` }))} />
+                  options={recipes.map(r => ({ value: r.id, label: r.name, sub: `cỡ ${nf(r.base_qty)} ${unitCode(r.material?.base_unit)}${r.is_default ? ' · mặc định' : ''}${r.id === batch.recipe_id ? ' · đang dùng' : ''}` }))} />
               </div>
               <button type="button" disabled={busy || !recipeId} onClick={() => void doApply()}
                 className="touch-target shrink-0 inline-flex items-center gap-1 rounded border border-blue-200 bg-white px-2.5 py-1.5 text-[11px] text-blue-700 hover:bg-blue-50 disabled:opacity-50">

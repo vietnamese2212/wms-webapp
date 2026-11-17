@@ -1,10 +1,10 @@
 // CHI TIẾT MẺ CHẾ BIẾN (MES giai đoạn 1, 14/11/2026). Header: mã lô + trạng thái + QA + nút (Rút NVL là việc chính khi mẻ đang mở).
 // Khối NGUYÊN LIỆU ĐÃ RÚT (sổ tiêu hao: tem · NSX · lượng · cách ghi · huỷ dòng hoàn tồn) · khối RA BỒN (lô của mẻ trong từng bồn +
-// sổ nạp / rút). Số lượng NVL in theo đơn vị của MÃ đó (qtyLabel), số bồn in theo đơn vị bồn.
+// sổ nạp / rút). Số lượng NVL in CON SỐ TRẦN + cột ĐVT bằng mã danh mục (utils/unitCode — user 17/11 "hạn chế văn viết"), số bồn in theo đơn vị bồn.
 import { useEffect, useState } from 'react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import type { AxiosError } from 'axios'
-import { ArrowLeft, Plus, Pencil, Lock, Unlock, XCircle, ShieldCheck, ShieldAlert, ShieldX, Container, Undo2, Copy, AlertTriangle, ListChecks } from 'lucide-react'
+import { ArrowLeft, Plus, Pencil, Lock, Unlock, XCircle, ShieldCheck, ShieldAlert, ShieldX, Container, Undo2, Copy, AlertTriangle, ListChecks, Check } from 'lucide-react'
 import { TableBody, TableCell, TableRow } from '@/components/ui/table'
 import { ResizableTable, type RtColDef } from '@/components/shared/ResizableTable'
 import { TableEmptyRow } from '@/components/shared/TableEmptyRow'
@@ -20,6 +20,7 @@ import { ProcessLogSheet } from '@/components/wms/production/ProcessLogSheet'
 import { blockCellCount } from '@/config/processForms'
 import { ScanIcon } from '@/components/shared/ScanIcon'
 import { BatchFillSheet, nfQty } from '@/components/wms/production/TankSheets'
+import { MobileNumHead, MobileNumRow, type NumCol } from '@/components/wms/production/MobileNumGrid'
 import { useAuthStore } from '@/stores/authStore'
 import { useCanSeePath } from '@/hooks/useCanSeePath'
 import { can, type ModulePermissions } from '@/config/permissions'
@@ -29,21 +30,27 @@ import {
   useProcessForms,
 } from '@/api/productionHooks'
 import { BATCH_STATUS_TONE, BATCH_QA_TONE, batchRowKey } from './ProductionBatches'
-import { qtyLabel, unitLabel } from '@/utils/qtyUnits'
+import { qtyNum, qtyCode, matUnitCode, unitCode } from '@/utils/unitCode'
 import { formatDate, formatDateTime } from '@/utils/formatters'
 import { reqLineState, devLabel, type ReqLineResult } from '@/utils/reqTolerance'
 
 const TD = 'px-2 py-1 text-[10px] whitespace-nowrap'
 const NUM = `${TD} text-right font-semibold tabular-nums`
 const apiMsg = (e: unknown) => (e as AxiosError<{ error?: { message?: string } }>)?.response?.data?.error?.message ?? 'Lỗi không xác định'
-// BÀN LÀM VIỆC: mỗi nguyên liệu của mẻ một dòng — yêu cầu · đã cấp · còn thiếu · tồn ở kho chế biến · cách cấp
+// BÀN LÀM VIỆC: mỗi nguyên liệu của mẻ một dòng — cần · đã cấp · còn thiếu · tồn ở kho chế biến · cách cấp.
+// Ô số in CON SỐ TRẦN, ĐVT in một lần ở cột ĐVT bằng mã của danh mục (user 17/11: "hạn chế văn viết, dùng đơn vị tính của app").
 const BOARD_COLS: RtColDef[] = [
-  { id: 'mat', label: 'Nguyên liệu', w: 220 }, { id: 'req', label: 'Yêu cầu', w: 110, align: 'right' }, { id: 'done', label: 'Đã cấp', w: 110, align: 'right' },
-  { id: 'need', label: 'Còn thiếu', w: 110, align: 'right' }, { id: 'stock', label: 'Tồn kho chế biến', w: 130, align: 'right' },
-  { id: 'how', label: 'Cách cấp', w: 110 }, { id: 'st', label: 'Tình trạng', w: 100 }, { id: 'act', label: '', w: 76, stickyRight: true },
+  { id: 'mat', label: 'Nguyên liệu', w: 220 }, { id: 'unit', label: 'ĐVT', w: 56 }, { id: 'req', label: 'Cần', w: 110, align: 'right' },
+  { id: 'done', label: 'Đã cấp', w: 100, align: 'right' }, { id: 'need', label: 'Thiếu', w: 100, align: 'right' },
+  { id: 'stock', label: 'Tồn kho', w: 100, align: 'right' }, { id: 'how', label: 'Cách cấp', w: 100 }, { id: 'st', label: 'Tình trạng', w: 100 },
+  { id: 'act', label: '', w: 76, stickyRight: true },
+]
+// điện thoại: cùng bốn cột số, nhãn in một lần ở đầu danh sách
+const MOBILE_BOARD_COLS: NumCol[] = [
+  { label: 'Cần' }, { label: 'Đã cấp' }, { label: 'Thiếu', title: 'Còn thiếu · ✓ = đủ · +x% = cấp vượt mức lệch cho phép' }, { label: 'Tồn kho', title: 'Tồn ở kho chế biến' },
 ]
 const RM_COLS: RtColDef[] = [
-  { id: 'mat', label: 'Nguyên liệu', w: 170 }, { id: 'qty', label: 'Lượng rút', w: 110, align: 'right' }, { id: 'pallet', label: 'Tem', w: 210 },
+  { id: 'mat', label: 'Nguyên liệu', w: 170 }, { id: 'qty', label: 'Lượng rút', w: 100, align: 'right' }, { id: 'unit', label: 'ĐVT', w: 56 }, { id: 'pallet', label: 'Tem', w: 210 },
   { id: 'nsx', label: 'NSX', w: 78 }, { id: 'lot', label: 'Mã lô', w: 110 }, { id: 'src', label: 'Cách ghi', w: 86 },
   { id: 'at', label: 'Lúc', w: 120 }, { id: 'by', label: 'Người rút', w: 130 }, { id: 'act', label: '', w: 60, stickyRight: true },
 ]
@@ -100,7 +107,7 @@ function ProductionBatchDetail() {
     </div>
   )
 
-  const u = unitLabel(b.material?.base_unit)
+  const u = unitCode(b.material?.base_unit)
   const open = b.status === 'OPEN'
   const live = b.consumption.filter(c => !c.reversed_at)
   const filled = b.movements.filter(m => m.kind === 'FILL').reduce((s, m) => s + Number(m.qty), 0)
@@ -231,47 +238,55 @@ function ProductionBatchDetail() {
           <div className="px-3 py-1.5 sm:px-4 sm:py-2 bg-slate-100 border-b border-slate-200 flex items-center gap-1.5">
             <span className="h-3.5 w-1 rounded-full bg-sky-500" />
             <h2 className="text-xs font-semibold uppercase tracking-wide text-slate-600">Nguyên liệu của mẻ</h2>
-            <span className="text-[11px] text-slate-400 truncate">{reqRows.length ? `${reqDone}/${reqRows.length} đã đủ` : 'chưa có yêu cầu'}</span>
           </div>
-          {/* ĐIỆN THOẠI: mỗi nguyên liệu một dòng gọn — số yêu cầu / đã cấp / còn thiếu và nút Cấp thấy ngay, không phải cuộn ngang bảng */}
-          <div className="sm:hidden divide-y divide-slate-100">
+          {/* ĐIỆN THOẠI: bảng thu nhỏ — nhãn cột in một lần, mỗi dòng mã · tên · ĐVT rồi chỉ CON SỐ (user 17/11 "hạn chế văn viết");
+              nút Cấp thấy ngay, không phải cuộn ngang. Trạng thái bằng màu số: thiếu cam · đủ ✓ xanh · ngoài mức lệch đỏ. */}
+          <div className="sm:hidden">
             {!board.length && <p className="px-3 py-3 text-xs text-slate-400">{open ? <>Mẻ chưa có phiếu nguyên liệu — mã {b.material?.material_code} chưa có công thức. Bấm ⋮ → "Sửa định mức" để thêm, hoặc "Quét cấp NVL" để cấp luôn.</> : 'Mẻ không có nguyên liệu nào.'}</p>}
-            {board.map(r => {
-              const st = stOf(r)
-              const need = st.need
-              const extra = st.state === 'extra' || st.state === 'removed'
-              const done = st.state === 'ok' || st.state === 'over'
-              const noStock = Number(r.available) <= 0
-              const byScan = Number(r.tem_pallets) > 0
-              return (
-                <div key={r.material_id} className={`flex items-center gap-2 px-3 py-2 ${r.removed ? 'opacity-60' : ''}`}>
-                  <div className="flex-1 min-w-0">
-                    <p className={`text-xs truncate ${r.removed ? 'line-through' : ''}`}><span className="font-mono font-semibold">{r.material_code}</span> <span className="text-slate-600">{r.material_name ?? ''}</span></p>
-                    <p className="text-[11px] text-slate-500 tabular-nums">
-                      {r.removed ? <>Đã bỏ khỏi phiếu{r.standard != null ? ` (gốc ${nfq(r.standard)})` : ''}{r.replaced_by_code ? ` → ${r.replaced_by_code}` : ''}{r.change_reason ? ` · ${r.change_reason}` : ''}</>
-                        : extra ? <>Ngoài phiếu · đã cấp <b className="text-slate-700">{qtyLabel(Number(r.consumed), r)}</b></>
-                        : <>Cần <b className="text-slate-700">{qtyLabel(Number(r.required), r)}</b>{reqNote(r)} · đã cấp <b className="text-slate-700">{qtyLabel(Number(r.consumed), r)}</b></>}
-                    </p>
-                    {!r.removed && (
-                    <p className="text-[11px] tabular-nums">
-                      {st.outOfTol ? <span className="text-red-600 font-semibold">{st.state === 'over' ? (r.tol_pct != null ? `Lệch ${devLabel(st.devPct)}` : 'Vượt yêu cầu') : `Thiếu ${devLabel(st.devPct) || 'chưa cấp'}`}</span>
-                        : done ? <span className="text-green-700 font-semibold">Đủ</span> : need > 0 ? <span className="text-amber-700 font-semibold">Thiếu {qtyLabel(need, r)}</span> : null}
-                      <span className={`${done || need > 0 || st.outOfTol ? 'ml-1.5 ' : ''}${!done && need > Number(r.available) ? 'text-red-600' : 'text-slate-400'}`}>{noStock ? 'kho hết' : `kho còn ${qtyLabel(Number(r.available), r)}`}</span>
-                    </p>
-                    )}
-                  </div>
-                  {canConsume && !r.removed && (
-                    <button type="button" onClick={() => openConsume(r.material_id, noStock)}
-                      className={`touch-target shrink-0 inline-flex items-center gap-1 rounded border border-blue-200 bg-blue-50 px-2.5 py-1.5 text-xs text-blue-700 ${noStock ? 'opacity-60' : ''}`}>
-                      {byScan ? <ScanIcon className="h-4 w-4" /> : <Plus className="h-4 w-4" />}Cấp
-                    </button>
-                  )}
-                </div>
-              )
-            })}
+            {board.length > 0 && <MobileNumHead cols={MOBILE_BOARD_COLS} asideClass={canConsume ? 'w-16' : undefined} />}
+            <div className="divide-y divide-slate-100">
+              {board.map(r => {
+                const st = stOf(r)
+                const outside = st.state === 'extra' || st.state === 'removed'
+                const done = st.state === 'ok' || st.state === 'over'
+                const noStock = Number(r.available) <= 0
+                const short = !outside && !done && st.need > Number(r.available)
+                const byScan = Number(r.tem_pallets) > 0
+                const dash = <span className="font-normal text-slate-300">—</span>
+                const changed = !outside && r.standard != null && Math.abs(Number(r.required) - Number(r.standard)) > 0.0005
+                return (
+                  <MobileNumRow key={r.material_id} className={r.removed ? 'opacity-60' : ''} asideClass={canConsume ? 'w-16' : undefined}
+                    head={<>
+                      <span className={`font-mono font-semibold shrink-0 ${r.removed ? 'line-through' : ''}`}>{r.material_code}</span>
+                      <span className={`truncate text-slate-600 ${r.removed ? 'line-through' : ''}`} title={r.change_reason ?? undefined}>{r.material_name ?? ''}</span>
+                      {r.removed && <span className="shrink-0"><StatusBadge tone="slate" title={changeTip(r)}>Đã bỏ{r.replaced_by_code ? ` → ${r.replaced_by_code}` : ''}</StatusBadge></span>}
+                      {st.state === 'extra' && <span className="shrink-0"><StatusBadge tone="slate">Ngoài phiếu</StatusBadge></span>}
+                      {!outside && r.standard == null && <span className="shrink-0 text-[9px] text-blue-700" title={changeTip(r)}>{r.replaces_code ? `thay ${r.replaces_code}` : 'thêm'}</span>}
+                      <span className="ml-auto shrink-0 font-mono text-[10px] text-slate-400">{matUnitCode(r)}</span>
+                    </>}
+                    cells={[
+                      r.removed ? <s className="font-normal text-slate-400">{r.standard != null ? qtyNum(Number(r.standard), r) : '—'}</s>
+                        : st.state === 'extra' ? dash
+                        : <>{qtyNum(Number(r.required), r)}{changed && <span className="block text-[9px] font-normal text-amber-700" title={changeTip(r)}>gốc {qtyNum(Number(r.standard), r)}</span>}</>,
+                      Number(r.consumed) > 0 ? <span className={st.outOfTol ? 'text-red-600' : done ? 'text-green-700' : ''}>{qtyNum(Number(r.consumed), r)}</span> : dash,
+                      outside ? dash
+                        : st.state === 'ok' ? <Check className="inline h-3.5 w-3.5 text-green-600" aria-label="Đủ" />
+                        : st.state === 'over' ? <span className="text-red-600" title={r.tol_pct != null ? `Mức lệch cho phép ±${nfq(r.tol_pct)}%` : 'Vượt yêu cầu'}>{r.tol_pct != null ? devLabel(st.devPct) : `+${qtyNum(Number(r.consumed) - Number(r.required), r)}`}</span>
+                        : <span className={st.outOfTol ? 'text-red-600' : 'text-amber-700'}>{qtyNum(st.need, r)}</span>,
+                      r.removed ? dash : <span className={short ? 'text-red-600' : 'font-normal text-slate-500'} title={short ? 'Tồn ở kho chế biến không đủ phần còn thiếu' : undefined}>{qtyNum(Math.max(Number(r.available), 0), r)}</span>,
+                    ]}
+                    aside={canConsume && !r.removed ? (
+                      <button type="button" onClick={() => openConsume(r.material_id, noStock)} aria-label={`Cấp ${r.material_code}`}
+                        className={`touch-target inline-flex items-center gap-1 rounded border border-blue-200 bg-blue-50 px-2.5 py-1.5 text-xs text-blue-700 ${noStock ? 'opacity-60' : ''}`}>
+                        {byScan ? <ScanIcon className="h-4 w-4" /> : <Plus className="h-4 w-4" />}Cấp
+                      </button>
+                    ) : null} />
+                )
+              })}
+            </div>
           </div>
           <div className="hidden sm:block">
-          <ResizableTable storageKey="production_batch_board_cols_v1" cols={BOARD_COLS}>
+          <ResizableTable storageKey="production_batch_board_cols_v2" cols={BOARD_COLS}>
             <TableBody>
               {!board.length && (
                 <TableEmptyRow colSpan={BOARD_COLS.length}>
@@ -289,10 +304,11 @@ function ProductionBatchDetail() {
                 return (
                   <TableRow key={r.material_id} className={r.removed ? 'text-slate-400' : done ? rowText('full') : started ? rowText('inProgress') : ''}>
                     <TableCell className={`${TD} sticky left-0 z-10 bg-white truncate ${r.removed ? 'line-through' : ''}`} title={[r.material_name, r.note, r.replaces_code ? `thay cho ${r.replaces_code}` : null].filter(Boolean).join(' · ')}><span className="font-mono font-semibold">{r.material_code}</span> {r.material_name ?? ''}</TableCell>
-                    <TableCell className={NUM} title={changeTip(r)}>{r.removed ? reqNote(r) : extra ? <span className="text-slate-300 font-normal">—</span> : <>{qtyLabel(Number(r.required), r)}{reqNote(r)}</>}</TableCell>
-                    <TableCell className={`${NUM} ${st.outOfTol ? 'text-red-600' : ''}`}>{started ? qtyLabel(Number(r.consumed), r) : <span className="text-slate-300 font-normal">—</span>}</TableCell>
-                    <TableCell className={`${NUM} ${need > 0 ? 'text-amber-700' : ''}`}>{need > 0 ? qtyLabel(need, r) : <span className="text-slate-300 font-normal">—</span>}</TableCell>
-                    <TableCell className={`${NUM} ${!done && need > Number(r.available) ? 'text-red-600' : ''}`} title={!done && need > Number(r.available) ? 'Tồn ở kho chế biến không đủ phần còn thiếu — chuyển thêm hàng sang kho chế biến' : undefined}>{noStock ? <span className="font-normal">hết</span> : qtyLabel(Number(r.available), r)}</TableCell>
+                    <TableCell className={`${TD} font-mono text-slate-500`}>{matUnitCode(r)}</TableCell>
+                    <TableCell className={NUM} title={changeTip(r)}>{r.removed ? reqNote(r) : extra ? <span className="text-slate-300 font-normal">—</span> : <>{qtyNum(Number(r.required), r)}{reqNote(r)}</>}</TableCell>
+                    <TableCell className={`${NUM} ${st.outOfTol ? 'text-red-600' : ''}`}>{started ? qtyNum(Number(r.consumed), r) : <span className="text-slate-300 font-normal">—</span>}</TableCell>
+                    <TableCell className={`${NUM} ${need > 0 ? 'text-amber-700' : ''}`}>{need > 0 ? qtyNum(need, r) : <span className="text-slate-300 font-normal">—</span>}</TableCell>
+                    <TableCell className={`${NUM} ${!done && need > Number(r.available) ? 'text-red-600' : ''}`} title={!done && need > Number(r.available) ? 'Tồn ở kho chế biến không đủ phần còn thiếu — chuyển thêm hàng sang kho chế biến' : undefined}>{qtyNum(Math.max(Number(r.available), 0), r)}</TableCell>
                     <TableCell className={TD}>{noStock ? <span className="text-slate-300">—</span> : byScan ? <StatusBadge tone="sky">Quét tem</StatusBadge> : <StatusBadge tone="purple">Chọn lô</StatusBadge>}</TableCell>
                     <TableCell className={TD}>{statusBadge(r)}</TableCell>
                     <TableCell className={`${TD} sticky right-0 z-10 bg-white text-right`}>
@@ -342,7 +358,7 @@ function ProductionBatchDetail() {
             <h2 className="text-xs font-semibold uppercase tracking-wide text-slate-600">Nhật ký cấp nguyên liệu</h2>
             <span className="text-[11px] text-slate-400">{live.length} dòng{b.consumption.length > live.length ? ` · ${b.consumption.length - live.length} dòng đã huỷ` : ''}</span>
           </div>
-          <ResizableTable storageKey="production_batch_rm_cols_v2" cols={RM_COLS}>
+          <ResizableTable storageKey="production_batch_rm_cols_v3" cols={RM_COLS}>
             <TableBody>
               {!b.consumption.length && <TableEmptyRow colSpan={RM_COLS.length}>{open ? 'Chưa cấp nguyên liệu nào.' : 'Mẻ không có lần cấp nguyên liệu nào.'}</TableEmptyRow>}
               {b.consumption.map(c => {
@@ -350,7 +366,8 @@ function ProductionBatchDetail() {
                 return (
                   <TableRow key={c.id} className={gone ? `${rowText('completed')} opacity-70` : ''} title={gone ? `Huỷ: ${c.reversed_by_name ?? ''} · ${c.reverse_reason ?? ''}` : undefined}>
                     <TableCell className={`${TD} sticky left-0 z-10 bg-white truncate`} title={c.material?.short_name ?? ''}><span className="font-mono font-semibold">{c.material?.material_code}</span> {c.material?.short_name ?? ''}</TableCell>
-                    <TableCell className={NUM}>{qtyLabel(Number(c.qty), c.material)}</TableCell>
+                    <TableCell className={NUM}>{qtyNum(Number(c.qty), c.material)}</TableCell>
+                    <TableCell className={`${TD} font-mono text-slate-500`}>{matUnitCode(c.material)}</TableCell>
                     <TableCell className={`${TD} font-mono truncate`} title={c.pallet_code}>{c.pallet_code}</TableCell>
                     <TableCell className={`${TD} tabular-nums`}>{c.production_date ? formatDate(c.production_date) : <span className="text-slate-300">—</span>}</TableCell>
                     <TableCell className={`${TD} font-mono`}>{c.batch_lot ?? <span className="text-slate-300">—</span>}</TableCell>
@@ -359,7 +376,7 @@ function ProductionBatchDetail() {
                     <TableCell className={`${TD} truncate`}>{c.created_by_name ?? '—'}</TableCell>
                     <TableCell className={`${TD} sticky right-0 z-10 bg-white text-right`}>
                       {canReverse && !gone && (
-                        <button type="button" onClick={e => { e.stopPropagation(); void doReverse(c.id, `${c.pallet_code} (${qtyLabel(Number(c.qty), c.material)})`) }}
+                        <button type="button" onClick={e => { e.stopPropagation(); void doReverse(c.id, `${c.pallet_code} (${qtyCode(Number(c.qty), c.material)})`) }}
                           className="touch-target px-1.5 py-1 rounded text-slate-500 hover:text-red-600 hover:bg-red-50" title="Huỷ dòng rút ghi nhầm (hoàn tồn)">
                           <Undo2 className="h-3.5 w-3.5" />
                         </button>

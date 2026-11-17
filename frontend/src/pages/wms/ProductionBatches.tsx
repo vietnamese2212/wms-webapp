@@ -25,7 +25,7 @@ import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { useProductionBatches, useProductionWarehouses, BATCH_STATUS_VI, BATCH_QA_VI, type BatchRow, type BatchQa, type BatchStatus } from '@/api/productionHooks'
-import { unitLabel } from '@/utils/qtyUnits'
+import { unitCode } from '@/utils/unitCode'
 import { formatDate } from '@/utils/formatters'
 import { saveWorkbook } from '@/utils/saveExcel'
 import { sanitizeRows } from '@/utils/excelSafe'
@@ -77,7 +77,7 @@ export default function ProductionBatches() {
 
   function exportExcel() {
     const sheet = rows.map((r: BatchRow) => ({
-      'Mã lô': r.batch_code, 'Ngày SX': r.prod_date, 'Mã BTP': r.material_code, 'Tên BTP': r.material_name ?? '', 'Đơn vị': unitLabel(r.base_unit),
+      'Mã lô': r.batch_code, 'Ngày SX': r.prod_date, 'Mã BTP': r.material_code, 'Tên BTP': r.material_name ?? '', 'Đơn vị': unitCode(r.base_unit),
       'Trạng thái': BATCH_STATUS_VI[r.status], 'QA': BATCH_QA_VI[r.qa_status], 'Dòng NVL đã rút': r.rm_lines, 'Số mã NVL': r.rm_materials,
       'Đã nạp bồn': Number(r.filled), 'Còn trong bồn': Number(r.in_tank), 'Kế hoạch': r.planned_qty ?? '', 'Kho chế biến': r.warehouse_name,
       'Máy': r.machine_code ?? '', 'Ca': r.shift ?? '', 'Người mở': r.opened_by_name ?? '', 'Ghi chú': r.note ?? '',
@@ -135,7 +135,7 @@ export default function ProductionBatches() {
               {!q.isError && q.isLoading && !rows.length && <TableEmptyRow colSpan={COLS.length}>Đang tải…</TableEmptyRow>}
               {!q.isError && !q.isLoading && !rows.length && <TableEmptyRow colSpan={COLS.length}>{kitchens.length ? 'Không có mẻ nào trong khoảng đang lọc.' : 'Chưa có kho chế biến trong phạm vi — khai kho phụ nội bộ ở Cài đặt WMS → Kho.'}</TableEmptyRow>}
               {rows.map(r => {
-                const u = unitLabel(r.base_unit)
+                const u = unitCode(r.base_unit)
                 return (
                   <TableRow key={r.id} className={`cursor-pointer ${rowText(batchRowKey(r))} ${dense ? '' : '[&_td]:py-2.5'}`}
                     onClick={() => navigate(`/wms/production/${r.id}`)} title="Mở mẻ">

@@ -17,14 +17,16 @@ import { Label } from '@/components/ui/label'
 import { useDebouncedValue } from '@/hooks/useDebouncedValue'
 import { useWedgeScanner } from '@/hooks/useWedgeScanner'
 import { scanCheck, useConsumeScan, useConsumeLot, useProductionStock, type BatchDetail, type ScanEntry, type StockLot } from '@/api/productionHooks'
-import { qtyLabel, qtyIntegerError, type MatUnits } from '@/utils/qtyUnits'
+import { hasEntry, qtyIntegerError, type MatUnits } from '@/utils/qtyUnits'
+import { qtyCode, qtyNum, matUnitCode } from '@/utils/unitCode'
+import { reqLineState } from '@/utils/reqTolerance'
+import { Check } from 'lucide-react'
 import { normalizeQR } from '@/utils/qr'
 import { formatDate } from '@/utils/formatters'
 
 const apiMsg = (e: unknown) => (e as AxiosError<{ error?: { message?: string } }>)?.response?.data?.error?.message ?? 'Lỗi không xác định'
 const avail = (e: ScanEntry) => Number(e.cartons_remaining ?? e.cartons_imported ?? 0) - Number(e.cartons_reserved ?? 0)
 const dayOf = (s: string | null | undefined) => (s ? String(s).slice(0, 10) : null)
-const r3 = (n: number) => Math.round(n * 1000) / 1000
 /** cùng luật qa_is_hold (BE): có trạng thái QA mà không phải OK = đang giữ */
 const qaHold = (e: ScanEntry) => !!(e.qa_status_id || e.qa_status) && e.qa_status?.code !== 'OK'
 /** lượng điền sẵn = phần còn thiếu, không vượt `cap`; mã có đơn vị nhập (bao / thùng) phải số nguyên đơn vị gốc ⇒ làm tròn LÊN
@@ -55,10 +57,10 @@ export function ConsumeSheet({ open, onClose, batch, focusId }: {
 
   const focus = focusId ? batch.board.find(r => r.material_id === focusId) ?? null : null
   const boardMat = (materialId: string | undefined) => batch.board.find(x => x.material_id === materialId) ?? null
-  /** phần còn thiếu của một mã theo yêu cầu của mẻ (0 = đủ / không có yêu cầu) */
+  /** phần còn thiếu của một mã theo yêu cầu của mẻ (0 = đủ trong mức lệch / không có yêu cầu) — CÙNG luật với bàn của mẻ (reqLineState) */
   const needOf = (materialId: string | undefined) => {
     const r = batch.board.find(x => x.material_id === materialId)
-    return r?.required != null ? Math.max(r3(Number(r.required) - Number(r.consumed)), 0) : 0
+    return r ? reqLineState(r, batch.status === 'CLOSED').need : 0
   }
 
   useEffect(() => {
@@ -126,7 +128,7 @@ export function ConsumeSheet({ open, onClose, batch, focusId }: {
   const saving = consumeScan.isPending || consumeLot.isPending
   const held = mode === 'SCAN' && !!entry && qaHold(entry)
   const canSave = qty > 0 && !over && !intErr && !saving && !held && (mode === 'SCAN' ? !!entry : !!lot && free(lot) > 0)
-  const unitText = (n: number) => qtyLabel(n, mat)
+  const unitText = (n: number) => qtyCode(n, mat)
 
   async function submit() {
     setErr('')
@@ -156,14 +158,23 @@ export function ConsumeSheet({ open, onClose, batch, focusId }: {
       </>}>
       <div className="space-y-3 text-xs">
         {focus && (
-          <div className="rounded-lg bg-slate-50 border border-slate-200 px-3 py-2 space-y-0.5">
-            <p><span className="font-mono font-semibold">{focus.material_code}</span> {focus.material_name ?? ''}</p>
-            <p className="text-slate-600">
-              {focus.required != null
-                ? <>Yêu cầu <b className="tabular-nums">{qtyLabel(Number(focus.required), focus)}</b> · đã cấp <b className="tabular-nums">{qtyLabel(Number(focus.consumed), focus)}</b> · {focusNeed > 0
-                  ? <span className="text-amber-700">còn thiếu <b className="tabular-nums">{qtyLabel(focusNeed, focus)}</b></span> : <span className="text-green-700 font-semibold">đã đủ</span>}</>
-                : <>Ngoài yêu cầu · đã cấp <b className="tabular-nums">{qtyLabel(Number(focus.consumed), focus)}</b></>}
-            </p>
+          // ba ô số có nhãn (user 17/11 "hạn chế văn viết") — ĐVT in một lần cạnh tên
+          <div className="rounded-lg bg-slate-50 border border-slate-200 px-3 py-2 space-y-1">
+            <div className="flex items-center gap-1.5 min-w-0">
+              <span className="font-mono font-semibold shrink-0">{focus.material_code}</span>
+              <span className="truncate">{focus.material_name ?? ''}</span>
+              {focus.required == null && <span className="shrink-0"><StatusBadge tone="slate">Ngoài phiếu</StatusBadge></span>}
+              <span className="ml-auto shrink-0 font-mono text-[10px] text-slate-400">{matUnitCode(focus)}</span>
+            </div>
+            <div className="grid grid-cols-3 gap-2 text-center">
+              <div><p className="text-[10px] text-slate-500">Cần</p><p className="text-sm font-semibold tabular-nums">{focus.required != null ? qtyNum(Number(focus.required), focus) : '—'}</p></div>
+              <div><p className="text-[10px] text-slate-500">Đã cấp</p><p className="text-sm font-semibold tabular-nums">{Number(focus.consumed) > 0 ? qtyNum(Number(focus.consumed), focus) : '—'}</p></div>
+              <div><p className="text-[10px] text-slate-500">Thiếu</p>
+                <p className={`text-sm font-semibold tabular-nums ${focus.required == null ? '' : focusNeed > 0 ? 'text-amber-700' : 'text-green-600'}`}>
+                  {focus.required == null ? '—' : focusNeed > 0 ? qtyNum(focusNeed, focus) : <Check className="inline h-4 w-4" aria-label="Đủ" />}
+                </p>
+              </div>
+            </div>
           </div>
         )}
         <div className="flex rounded-lg border overflow-hidden">
@@ -212,7 +223,7 @@ export function ConsumeSheet({ open, onClose, batch, focusId }: {
               <Label className="text-xs">Nguyên liệu <span className="text-red-500">*</span></Label>
               <SingleSelect value={matId} onChange={setMatId} serverSearch onSearchChange={setMatTerm} loading={mats.isFetching}
                 selectedLabel={(selMat ?? matMemo)?.material_code} placeholder="Tìm mã / tên — chỉ mã còn hàng KHÔNG có tem"
-                options={matList.map(m => ({ value: m.material_id, label: m.material_code, sub: `${m.material_name ?? ''} · không tem còn ${qtyLabel(Number(m.available_no_tem ?? 0), m)}` }))} />
+                options={matList.map(m => ({ value: m.material_id, label: m.material_code, sub: `${m.material_name ?? ''} · không tem còn ${qtyCode(Number(m.available_no_tem ?? 0), m)}` }))} />
               {!mats.isFetching && !matList.length && !term && <p className="mt-1 text-slate-500">Kho chế biến này không có hàng nào thiếu tem — mọi nguyên liệu đều phải quét tem.</p>}
             </div>
           )}
@@ -224,7 +235,7 @@ export function ConsumeSheet({ open, onClose, batch, focusId }: {
                   <thead><tr className="bg-slate-50 text-[9px] text-slate-500">
                     <th className="px-2 py-1 text-left whitespace-nowrap" />
                     <th className="px-2 py-1 text-left whitespace-nowrap">NSX</th><th className="px-2 py-1 text-left whitespace-nowrap">Mã lô</th>
-                    <th className="px-2 py-1 text-left whitespace-nowrap">HSD</th><th className="px-2 py-1 text-right whitespace-nowrap">Cấp được (không tem)</th>
+                    <th className="px-2 py-1 text-left whitespace-nowrap">HSD</th><th className="px-2 py-1 text-right whitespace-nowrap">Cấp được{lotMat ? ` (${matUnitCode(lotMat)})` : ''}</th>
                   </tr></thead>
                   <tbody>
                     {!lots.length && <tr><td colSpan={5} className="px-2 py-1.5 text-slate-400 whitespace-nowrap">{lotsQ.isLoading ? 'Đang tải…' : 'Không còn lô nào cấp được'}</td></tr>}
@@ -239,7 +250,7 @@ export function ConsumeSheet({ open, onClose, batch, focusId }: {
                           <td className="px-2 py-1.5 whitespace-nowrap font-mono">{l.batch_lot ?? <span className="text-slate-300">—</span>}</td>
                           <td className="px-2 py-1.5 whitespace-nowrap tabular-nums">{l.expiry_date ? formatDate(l.expiry_date) : '—'}</td>
                           <td className="px-2 py-1.5 whitespace-nowrap text-right font-semibold tabular-nums">
-                            {f > 0 ? qtyLabel(f, lotMat) : <span className="font-normal">có tem — quét</span>}
+                            {f > 0 ? qtyNum(f, lotMat) : <span className="font-normal">có tem — quét</span>}
                             {f > 0 && Number(l.tem_pallets ?? 0) > 0 && <span className="ml-1 font-normal text-slate-400">+ {l.tem_pallets} tem</span>}
                           </td>
                         </tr>
@@ -258,7 +269,7 @@ export function ConsumeSheet({ open, onClose, batch, focusId }: {
           // Enter ở ô lượng = Xác nhận cấp (vòng PDA: bắn tem → Enter). Enter của súng bị máy đọc chặn trước khi tới đây.
           <div onKeyDown={e => { if (e.key === 'Enter' && canSave) { e.preventDefault(); void submit() } }}>
             <div className="flex items-center justify-between gap-2">
-              <Label className="text-xs">Lượng cấp <span className="text-red-500">*</span></Label>
+              <Label className="text-xs">Lượng cấp{mat && !hasEntry(mat) && mat.base_unit ? ` (${matUnitCode(mat)})` : ''} <span className="text-red-500">*</span></Label>
               {max > 0 && qty !== max && <button type="button" className="text-[11px] text-blue-600 hover:underline touch-target" onClick={() => setQty(max)}>Lấy hết ({unitText(max)})</button>}
             </div>
             <div className="mt-0.5"><QtyInput value={qty} mat={mat} onChange={setQty} autoFocus /></div>

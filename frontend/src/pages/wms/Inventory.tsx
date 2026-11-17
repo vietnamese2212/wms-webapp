@@ -364,8 +364,11 @@ function LocationPanel({ ids, warehouseId, warehouseName, multiWarehouse, catego
     )
   }
 
+  // BỐ CỤC (user 17/11: "mục này bị che đi nhiều … nhìn khó chịu quá"): trước đây pane cuộn CẢ khung và danh sách có thanh cuộn
+  // riêng (hai thanh cuộn chồng nhau), nút Huỷ / Chuyển nằm dưới danh sách 300 ô nên bị đẩy khỏi màn. Nay: đầu + chân cố định,
+  // CHỈ danh sách vị trí cuộn; pane rộng 320 px để nhãn ★ "đang để dở cùng mã" đọc trọn một dòng.
   return (
-    <div className="fixed inset-0 z-50 w-full border-l bg-white overflow-y-auto flex flex-col lg:static lg:inset-auto lg:z-auto lg:w-72 lg:shrink-0">
+    <div className="fixed inset-0 z-50 w-full border-l bg-white flex flex-col lg:static lg:inset-auto lg:z-auto lg:w-80 lg:shrink-0 lg:min-h-0" data-testid="move-panel">
       <div className="flex items-center justify-between px-3 py-2 border-b bg-slate-50 shrink-0">
         <p className="text-xs font-semibold text-slate-700">Chuyển vị trí</p>
         <div className="flex items-center gap-2">
@@ -375,11 +378,11 @@ function LocationPanel({ ids, warehouseId, warehouseName, multiWarehouse, catego
           </button>
         </div>
       </div>
-      <div className="p-3 space-y-3 text-xs flex-1">
+      <div className="p-3 space-y-3 text-xs flex-1 min-h-0 overflow-y-auto flex flex-col">
         {error && (
           <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">{error}</div>
         )}
-        <div className="space-y-1.5">
+        <div className="space-y-1.5 flex-1 min-h-0 flex flex-col">
           <Label className="text-xs">Vị trí mới{warehouseName ? <span className="font-normal text-slate-500"> · kho {warehouseName}</span> : null}</Label>
           {multiWarehouse && (
             <div className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded px-3 py-2" data-testid="move-multi-wh">
@@ -407,7 +410,7 @@ function LocationPanel({ ids, warehouseId, warehouseName, multiWarehouse, catego
           {filtered.length >= 50 && (
             <p className="text-[10px] text-slate-400">Đang hiện 50 vị trí đầu — gõ để tìm tiếp</p>
           )}
-          <div className="border rounded max-h-[calc(100vh-280px)] overflow-y-auto">
+          <div className="border rounded flex-1 min-h-[9rem] overflow-y-auto" data-testid="move-loc-list">
             {filtered.length === 0 ? (
               <div className="px-3 py-2 text-xs text-slate-400 text-center">{search ? 'Không tìm thấy' : `Kho ${warehouseName ?? 'này'} chưa có vị trí nào`}</div>
             ) : (
@@ -469,12 +472,12 @@ function LocationPanel({ ids, warehouseId, warehouseName, multiWarehouse, catego
             )}
           </div>
         )}
-        <div className="flex gap-2 pt-1">
-          <Button variant="outline" className="flex-1" onClick={() => { reset(); onClose() }}>Huỷ</Button>
-          <Button className="flex-1" disabled={!locId || isPending} onClick={() => handleSubmit()}>
-            {isPending ? '…' : 'Chuyển'}
-          </Button>
-        </div>
+      </div>
+      <div className="shrink-0 border-t bg-white px-3 py-2 flex gap-2">
+        <Button variant="outline" className="flex-1" onClick={() => { reset(); onClose() }}>Huỷ</Button>
+        <Button className="flex-1" disabled={!locId || isPending} onClick={() => handleSubmit()}>
+          {isPending ? '…' : 'Chuyển'}
+        </Button>
       </div>
     </div>
   )
@@ -1297,10 +1300,12 @@ Gồm: ${unitBreakdown.join(' · ')}` : QTY_CONVERTED_TIP,
      </div>
 
       {/* ── Floating action bar (when items checked) ── */}
+      {/* Điện thoại: khung thao tác (Chuyển vị trí, QA, NCC…) mở TOÀN MÀN ⇒ ẩn thanh nổi, nếu không nó đè lên danh sách và nút của
+          khung (17/11, lớp C119). Máy tính: khung nằm cạnh bảng, thanh nổi vẫn hiện. */}
       {checkedCount > 0 && (
-        <div className="fixed bottom-16 lg:bottom-6 left-1/2 -translate-x-1/2 z-50
+        <div className={`fixed bottom-16 lg:bottom-6 left-1/2 -translate-x-1/2 z-50
           bg-slate-800 text-white rounded-full shadow-2xl px-4 py-2
-          flex items-center gap-3 text-sm whitespace-nowrap">
+          ${actionModal ? 'hidden lg:flex' : 'flex'} items-center gap-3 text-sm whitespace-nowrap`} data-testid="inv-floating-bar">
           <span className="text-slate-300 text-xs font-medium">{checkedCount} pallet</span>
           <div className="w-px h-4 bg-slate-600" />
           {/* Cụm action bulk — ActionCluster chuẩn; className w-auto để pill nổi ôm sát nội dung

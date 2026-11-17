@@ -33,19 +33,20 @@ export function PutawayOption({ loc }: { loc: PutawayLocRow }) {
   const isFull = loc.max_pallets > 0 && used >= loc.max_pallets
 
   return (
-    <span className="flex-1 min-w-0 flex items-center gap-1 text-[11px]">
+    <span className="flex-1 min-w-0 flex flex-wrap items-center gap-x-1 gap-y-0.5 text-[11px]">
       {reason && <span className="text-amber-500 font-bold shrink-0">★</span>}
-      {/* MÃ VỊ TRÍ là thứ người ta cần đọc nhất ⇒ `shrink-0`: khi chật thì NHÃN LÝ DO co lại, không
-          phải mã. Trước đó cả hai cùng co và mã (có `truncate`) là bên nhường — trong pane hẹp 288px
-          của Chuyển vị trí hàng loạt nó hiện ra "D_TP1_7…", "D_TP1_A12…", đọc không ra ô nào. */}
+      {/* MÃ VỊ TRÍ là thứ người ta cần đọc nhất ⇒ `shrink-0`: trước đó cả hai cùng co và mã (có `truncate`)
+          là bên nhường — trong pane hẹp của Chuyển vị trí hàng loạt nó hiện ra "D_TP1_7…", đọc không ra ô nào. */}
       <span className={`font-mono shrink-0 ${
         blocked ? 'text-slate-400 line-through' : isFull ? 'text-blue-700 font-semibold' : used > 0 ? 'text-amber-600' : 'text-slate-700'
       }`}>{loc.location_code}</span>
       <span className="ml-auto shrink-0 text-[10px] text-slate-400">{used}/{loc.max_pallets}</span>
+      {/* NHÃN LÝ DO cũng KHÔNG cắt "…" nữa (user 17/11: "mục này bị che đi nhiều … nhìn khó chịu quá" — mọi dòng ★ đọc ra
+          "đang để dở cùng …"): không đủ chỗ thì cả nhãn xuống dòng dưới (flex-wrap), đủ chỗ thì vẫn chung một dòng. */}
       {blocked
-        ? <span className="shrink-0 text-[10px] px-1 rounded bg-red-50 text-red-600 border border-red-200">{blockShort(blocked)}</span>
+        ? <span className="shrink-0 whitespace-nowrap text-[10px] px-1 rounded bg-red-50 text-red-600 border border-red-200">{blockShort(blocked)}</span>
         : reason
-        ? <span className="min-w-0 truncate text-[10px] text-amber-600">{PUTAWAY_REASON_LABEL[reason]}</span>
+        ? <span className="shrink-0 whitespace-nowrap text-[10px] text-amber-600">{PUTAWAY_REASON_LABEL[reason]}</span>
         : null}
     </span>
   )

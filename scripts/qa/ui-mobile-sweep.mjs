@@ -12,6 +12,9 @@
  *   chữ cụt không "…" · chữ bẻ dọc (≥ 3 dòng trong khung < 80 px) · nhãn / ô nhập / ô chọn ĐÈ NHAU · lỗi console · API ≥ 400.
  * Form: bấm các nút "Tạo / Thêm / Lập / Đăng ký…" của trang (tối đa 4), đo trong hộp thoại rồi đóng. Trong lúc mở form MỌI lệnh ghi
  * (POST/PUT/PATCH/DELETE) bị chặn ở trình duyệt ⇒ không đụng dữ liệu.
+ * Khung thao tác (17/11, lớp C119 — user: "mục này bị che đi nhiều … nhìn khó chịu quá"): khung mở từ thanh chọn nhiều dòng (vd Tồn kho →
+ * Chuyển vị trí) KHÔNG phải hộp thoại nên bước form không thấy. `ACTION_PANES` chọn dòng đầu, mở khung, đo riêng khung: nút chân khuất ·
+ * khung cuộn CHỒNG khung con cuộn · chữ bị cắt "…" trong khung · phần tử bị thanh nổi che.
  *
  * Danh sách trang đọc thẳng từ `frontend/src/config/navigation.ts` (trang mới vào menu là tự được rà). Không nằm trong run-all (CI không có
  * trình duyệt). Chạy tay trước khi báo xong một thay đổi giao diện:
@@ -39,12 +42,16 @@ const PAGES = [...new Set([...nav.matchAll(/\bto:\s*'([^']+)'/g)].map(m => m[1])
   .filter(p => !process.argv[2] || p.includes(process.argv[2]))
 
 // Đo trong trang (inDialog=false) hoặc trong hộp thoại đang mở trên cùng (true). Trả [{ k: loại, d: mô tả }].
+// `inDialog` = chuỗi CSS ⇒ đo một KHUNG THAO TÁC (không phải hộp thoại) theo cùng luật với form + luật riêng của khung.
 function measure(inDialog) {
   const vw = document.documentElement.clientWidth, vh = window.innerHeight
   const out = []
   const dlgs = [...document.querySelectorAll('[role=dialog], [role=alertdialog]')]
-  const root = inDialog ? dlgs[dlgs.length - 1] : document.body
-  if (inDialog && !root) return [{ k: 'không-mở-form', d: '' }]
+  const pane = typeof inDialog === 'string'
+  // 'title:<tiêu đề>' = khung có dòng tiêu đề đó (đầu khung) — tìm được cả trên bản cũ chưa gắn data-testid
+  const byTitle = t => [...document.querySelectorAll('p, h2, h3')].find(x => (x.textContent || '').trim() === t)?.parentElement?.parentElement ?? null
+  const root = pane ? (inDialog.startsWith('title:') ? byTitle(inDialog.slice(6)) : document.querySelector(inDialog)) : inDialog ? dlgs[dlgs.length - 1] : document.body
+  if (inDialog && !root) return [{ k: pane ? 'không-mở-khung' : 'không-mở-form', d: '' }]
   const vis = el => { const r = el.getBoundingClientRect(); const cs = getComputedStyle(el); return r.width > 0 && r.height > 0 && cs.visibility !== 'hidden' && cs.display !== 'none' && +cs.opacity > 0.05 }
   const lab = el => (el.getAttribute('aria-label') || el.getAttribute('title') || (el.textContent || '').replace(/\s+/g, ' ').trim() || el.getAttribute('placeholder') || el.tagName).slice(0, 40)
   const clips = cs => cs.overflowX !== 'visible' || cs.overflowY !== 'visible'
@@ -67,8 +74,33 @@ function measure(inDialog) {
     if (r.right > vw + 1 || r.left < -1) out.push({ k: 'form-tràn-màn', d: `form x ${Math.round(r.left)}→${Math.round(r.right)} / ${vw}` })
     if (root.scrollWidth > root.clientWidth + 1 && getComputedStyle(root).overflowX !== 'hidden') out.push({ k: 'form-trượt-ngang', d: `${root.scrollWidth} > ${root.clientWidth}` })
     // nút Lưu / Huỷ ở CHÂN form (ngoài vùng cuộn) phải thấy mà không cần cuộn
-    const foot = [...root.querySelectorAll('button')].filter(b => vis(b) && !scrollsY(b, root) && /^(Lưu|Tạo|Thêm|Xác nhận|Cập nhật|Huỷ|Hủy|Đóng)/.test((b.textContent || '').trim()))
+    const foot = [...root.querySelectorAll('button')].filter(b => vis(b) && !scrollsY(b, root) && /^(Lưu|Tạo|Thêm|Xác nhận|Cập nhật|Huỷ|Hủy|Đóng|Chuyển)/.test((b.textContent || '').trim()))
     for (const b of foot) { const q = b.getBoundingClientRect(); if (q.bottom > vh + 1 || q.top < 0) out.push({ k: 'nút-chân-form-khuất', d: `"${lab(b)}" top ${Math.round(q.top)} / vh ${vh}` }) }
+    if (pane) {
+      // nút chân của KHUNG phải nằm NGOÀI vùng cuộn (thấy ngay) — khung cũ đặt Huỷ / Chuyển dưới danh sách 300 ô
+      const acts = [...root.querySelectorAll('button')].filter(b => vis(b) && /^(Huỷ|Hủy|Chuyển|Cập nhật|Lưu)$/.test((b.textContent || '').trim()))
+      for (const b of acts) if (scrollsY(b, root.parentElement) && b.getBoundingClientRect().bottom > vh + 1) out.push({ k: 'nút-chân-khung-khuất', d: `"${lab(b)}" nằm trong vùng cuộn, đáy ${Math.round(b.getBoundingClientRect().bottom)} / vh ${vh}` })
+      // khung cuộn CHỒNG lên danh sách cuộn bên trong = hai thanh cuộn, phần dưới bị đẩy khỏi màn
+      const cs = getComputedStyle(root)
+      const inner = [...root.querySelectorAll('*')].some(el => /(auto|scroll)/.test(getComputedStyle(el).overflowY) && el.scrollHeight > el.clientHeight + 1)
+      if (/(auto|scroll)/.test(cs.overflowY) && root.scrollHeight > root.clientHeight + 1 && inner) out.push({ k: 'khung-cuộn-chồng', d: `khung ${root.scrollHeight} > ${root.clientHeight} và có danh sách cuộn bên trong` })
+      // phần tử NỔI (fixed) ngoài khung nằm ĐÈ LÊN khung — thanh thao tác nổi che danh sách / nút của khung toàn màn trên điện thoại
+      const rr = root.getBoundingClientRect()
+      for (const el of document.querySelectorAll('body *')) {
+        if (root.contains(el) || el.contains(root) || getComputedStyle(el).position !== 'fixed' || !vis(el) || /devtools/i.test(lab(el))) continue
+        const q = el.getBoundingClientRect()
+        const w = Math.min(q.right, rr.right) - Math.max(q.left, rr.left), h = Math.min(q.bottom, rr.bottom) - Math.max(q.top, rr.top)
+        if (w < 20 || h < 10) continue
+        const hit = document.elementFromPoint(Math.max(q.left, rr.left) + w / 2, Math.max(q.top, rr.top) + h / 2)
+        if (hit && el.contains(hit)) out.push({ k: 'khung-bị-đè', d: `"${lab(el)}" đè ${Math.round(w)}×${Math.round(h)}px` })
+      }
+      // chữ trong khung bị cắt "…" (nhãn ★ "đang để dở cùng …") — khung là chỗ đọc kỹ, không cắt
+      for (const el of root.querySelectorAll('span, p, div')) {
+        if (!vis(el) || el.children.length) continue
+        const c = getComputedStyle(el)
+        if (c.textOverflow === 'ellipsis' && el.scrollWidth > el.clientWidth + 1) out.push({ k: 'chữ-khung-bị-cắt', d: `"${(el.textContent || '').trim().slice(0, 30)}" ${el.scrollWidth} > ${el.clientWidth}` })
+      }
+    }
   }
   // B. phần tử bấm được: ra ngoài màn · pointer-events none · bị che
   const ctrls = [...root.querySelectorAll('button, a[href], input:not([type=hidden]), select, textarea, [role=tab], [role=combobox], [role=checkbox], [role=switch]')].filter(vis)
@@ -123,6 +155,37 @@ function measure(inDialog) {
     if (w > 6 && h > 1.5) out.push({ k: 'đè-nhau', d: `"${lab(a.el)}" ⟷ "${lab(b.el)}" chồng ${Math.round(w)}×${Math.round(h)}px` })
   }
   const seen = new Set(); return out.filter(x => { const key = x.k + x.d; if (seen.has(key)) return false; seen.add(key); return true })
+}
+
+// Khung thao tác mở từ thanh chọn nhiều dòng — chọn dòng đầu của bảng rồi bấm nút (điện thoại: nút phụ nằm trong menu ⋮ "Thao tác khác")
+const ACTION_PANES = [
+  { page: '/wms/inventory', name: 'Chuyển vị trí', root: 'title:Chuyển vị trí', button: 'Vị trí' },
+]
+async function panePhase(page, path, w, name, report) {
+  const panes = ACTION_PANES.filter(p => p.page === path)
+  if (!panes.length) return
+  const handler = route => ['GET', 'HEAD', 'OPTIONS'].includes(route.request().method()) ? route.continue() : route.abort()
+  await page.route('**/api/**', handler)
+  try {
+    for (const p of panes) {
+      const key = `${path} @${w} khung "${p.name}"`
+      await page.goto(`${BASE}${path}`, { waitUntil: 'networkidle', timeout: 60000 }).catch(() => {}); await sleep(1800)
+      const first = page.locator('tbody tr td:first-child').first()
+      if (!(await first.count())) { report[key] = [{ k: 'không-có-dòng-để-chọn', d: '' }]; note(`  ${key}`, report[key]); continue }
+      await first.click().catch(() => {}); await sleep(500)
+      let b = page.getByRole('button', { name: p.button, exact: true }).last()
+      if (!(await b.count()) || !(await b.isVisible().catch(() => false))) {
+        await page.getByRole('button', { name: 'Thao tác khác' }).last().click().catch(() => {}); await sleep(400)
+        b = page.getByRole('menuitem', { name: new RegExp(p.button) }).first()
+      }
+      if (!(await b.count())) { report[key] = [{ k: 'không-thấy-nút-mở-khung', d: p.button }]; note(`  ${key}`, report[key]); continue }
+      await b.click().catch(() => {}); await sleep(2200)
+      const issues = await page.evaluate(measure, p.root)
+      report[key] = issues
+      await page.screenshot({ path: join(OUT, `${name}_${w}_K_${p.name.replace(/[^\p{L}\p{N}]+/gu, '-')}.png`) })
+      note(`  ${key}`, issues)
+    }
+  } finally { await page.unroute('**/api/**', handler) }
 }
 
 const FORM_BTN = /^(\+\s*)?(Tạo|Thêm|Lập|Đăng ký|Mở chuyến|Mở phiên|Ghi|Hàng trả về|Nhập trả về|Check)/i
@@ -211,6 +274,7 @@ try {
           note(`${String(w).padEnd(4)} ${path}`, issues, `${errs.length ? ` console:${errs.length} (${errs[0]})` : ''}${bad.length ? ` api≥400:${bad.join(' · ')}` : ''}`)
         }
         await formPhase(page, path, dev.more.length ? dev.more[dev.more.length - 1][0] : dev.w, name, report)
+        await panePhase(page, path, dev.more.length ? dev.more[dev.more.length - 1][0] : dev.w, name, report)
       } catch (e) { problems++; console.log(`✗ ${path} @${dev.w} lỗi đo: ${String(e).slice(0, 120)}`) }
     }
     await ctx.close()

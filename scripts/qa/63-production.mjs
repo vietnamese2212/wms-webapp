@@ -24,6 +24,9 @@
 //        khác mã; nạp sai bồn ⇒ 409; kho bật `mes_flow_gate`: chưa đủ 2 duyệt không cấp NVL, QA duyệt ⇒ phiếu khoá; tem pallet i/n;
 //        đổ bồn sai bồn / sai tem / tem cũ ⇒ chặn; đổi bồn ⇒ mã lô đổi + tem mất hiệu lực; nạp bồn cần đủ tem + đủ NVL + ô bắt buộc;
 //        QA đạt / không đạt ở BỒN (cửa QA ở mẻ đã gỡ)
+//   [2g] "Lấy ở đâu" GOM THEO DATE (17/11): tem cùng HSD cùng vị trí = một nhóm; hàng không tem gom theo lô; hàng hết hạn chưa duyệt không xếp hạng
+//   [2e] NVL HẾT HẠN (17/11 — user chốt "chặn và cho qua khi QA duyệt"): cấp ⇒ 422; gửi QA ⇒ chờ; từ chối / gửi lại / duyệt; lô không tem cùng luật
+//   [2l] cửa "Không có tem" CÙNG luật luân chuyển với cửa quét (kho bắt buộc ⇒ lý do + quyền, dòng cấp ghi vết)
 // Fixture QA63: kho cha QA63_PARENT + kho phụ QA63_CB (+ QA63_CB2 để thử chéo kho) · mã NVL/BTP QA63* · tem QA63_* — dọn bằng PostgREST.
 import { randomUUID } from 'crypto'
 import { login, api, rawFetch, restAll, restWrite, check, finish, BASE } from './lib.mjs'
@@ -32,7 +35,7 @@ const PACK = '63-production'
 await login()
 const todayVN = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
 const WP = 'QA63_PARENT', WC = 'QA63_CB', WC2 = 'QA63_CB2'
-const M_RM = 'QA63_RM1', M_BTP = 'QA63_BTP1', M_BTP2 = 'QA63_BTP2', M_EA = 'QA63_EA1'
+const M_RM = 'QA63_RM1', M_BTP = 'QA63_BTP1', M_BTP2 = 'QA63_BTP2', M_EA = 'QA63_EA1', M_RM2 = 'QA63_RM2'
 const qaX = (await restAll('QAStatus', 'select=id&code=eq.X'))[0]?.id
 const ts = () => new Date().toISOString()
 const JT_OPEN = 'QA63_JT_OPEN', JT_VIEW = 'QA63_JT_VIEW'
@@ -51,6 +54,7 @@ async function cleanup() {
   if (tanks.length) await restWrite('tank_movement', 'DELETE', `tank_id=in.(${tanks.map(t => t.id).join(',')})`)
   if (tanks.length) await restWrite('tank_lot', 'DELETE', `tank_id=in.(${tanks.map(t => t.id).join(',')})`)
   if (batches.length) await restWrite('batch_consumption', 'DELETE', `batch_id=in.(${batches.map(b => b.id).join(',')})`)
+  if (batches.length) await restWrite('mes_expiry_approval', 'DELETE', `batch_id=in.(${batches.map(b => b.id).join(',')})`)
   if (batches.length) await restWrite('batch_pour_scan', 'DELETE', `batch_id=in.(${batches.map(b => b.id).join(',')})`)
   if (batches.length) await restWrite('batch_process_log', 'DELETE', `batch_id=in.(${batches.map(b => b.id).join(',')})`)
   await restWrite('production_process_form', 'DELETE', 'code=like.QA63*')
@@ -67,7 +71,7 @@ async function cleanup() {
   if (tanks.length) await restWrite('production_tank', 'DELETE', `id=in.(${tanks.map(t => t.id).join(',')})`)
   await restWrite('InventoryEntry', 'DELETE', `warehouse_id=in.(${whs.join(',')})`)
   await restWrite('warehouse_type_configs', 'DELETE', `warehouse_id=in.(${whs.join(',')})`)
-  await restWrite('Material', 'DELETE', `id=in.(${[M_RM, M_BTP, M_BTP2, M_EA].join(',')})`)
+  await restWrite('Material', 'DELETE', `id=in.(${[M_RM, M_BTP, M_BTP2, M_EA, M_RM2].join(',')})`)
   await restWrite('Warehouse', 'DELETE', `id=in.(${WC},${WC2})`)
   await restWrite('Warehouse', 'DELETE', `id=eq.${WP}`)
 }
@@ -147,12 +151,14 @@ try {
   // mẻ RIÊNG cho phần này (cấp rồi trả lại) — không làm lệch số dòng cấp của mẻ 1 mà các phép sau đếm
   const BR = (await api('/wms/production/batches', 'POST', NEW({ cycle: 'QR', material_id: M_BTP, tank_id: T1.id }))).j?.data
   const pk = await api(`/wms/production/batches/${BR.id}/pick-list?material_id=${M_RM}`)
-  const pkRows = pk.j?.data?.rows ?? []
-  check('2r1. Lấy ở đâu: tem của mã trong kho chế biến theo FEFO — HSD sớm nhất (P1) đứng 1, tem QA giữ (P3) không xếp hạng và xuống cuối, tem kho khác (P4) không có',
-    pk.s === 200 && pk.j?.data?.principle === 'FEFO' && pkRows[0]?.entry_id === 'QA63_E1' && pkRows[0]?.rank === 1
-      && pkRows[pkRows.length - 1]?.entry_id === 'QA63_E3' && pkRows[pkRows.length - 1]?.qa_hold === true && pkRows[pkRows.length - 1]?.rank === null
-      && !pkRows.some(r => r.entry_id === 'QA63_E4') && typeof pkRows[0]?.pct_date === 'number',
-    `http=${pk.s} ${JSON.stringify(pkRows.map(r => [r.entry_id, r.rank, r.qa_hold]))}`)
+  const tg = pk.j?.data?.tem_groups ?? [], lg = pk.j?.data?.lot_groups ?? []
+  const ids = g => (g?.items ?? []).map(i => i.entry_id)
+  check('2r1. Lấy ở đâu (gom theo date): nhóm tem HSD sớm nhất (P1) hạng 1, nhóm QA giữ (P3) không xếp hạng và xuống cuối, tem kho khác (P4) không có; hàng không tem gom theo lô',
+    pk.s === 200 && pk.j?.data?.principle === 'FEFO' && ids(tg[0]).join() === 'QA63_E1' && tg[0]?.rank === 1
+      && tg[tg.length - 1]?.state === 'QA' && ids(tg[tg.length - 1]).join() === 'QA63_E3' && tg[tg.length - 1]?.rank === null
+      && !tg.some(g => ids(g).includes('QA63_E4')) && typeof tg[0]?.pct_date === 'number'
+      && lg.length === 2 && lg.every(g => g.kind === 'LOT' && g.state === 'OK' && typeof g.rank === 'number'),
+    `http=${pk.s} tem=${JSON.stringify(tg.map(g => [ids(g), g.rank, g.state]))} lot=${JSON.stringify(lg.map(g => [g.production_date, g.rank, g.state]))}`)
   const sOk = await api(`/wms/production/batches/${BR.id}/scan-check?code=QA63_P1`)
   const sLate = await api(`/wms/production/batches/${BR.id}/scan-check?code=QA63_P2`)
   check('2r2. Quét tem HSD sớm nhất ⇒ đúng thứ tự; tem HSD muộn hơn ⇒ sai thứ tự, chỉ đúng tem P1 phải dùng trước (kho không bắt buộc)',
@@ -177,6 +183,86 @@ try {
   check('2r4. Cấp đúng thứ tự ⇒ dòng cấp ghi rotation_violation = false; trả lại ⇒ tồn P1 100 · P2 50 như trước',
     okRec?.rotation_violation === false && num(e2back[0]?.cartons_remaining) === 100 && num(e2back[1]?.cartons_remaining) === 50,
     `rec=${JSON.stringify(okRec)} tồn=${JSON.stringify(e2back)}`)
+
+  // ── [2g] [2e] [2l] — mã RIÊNG QA63RM2 trên mẻ BR (trả lại hết rồi huỷ mẻ): không đụng số của các phép sau ──
+  await restWrite('Material', 'POST', null, [MAT(M_RM2, 'QA63RM2', 'QA63 NVL sữa bột', 'KG')])
+  const X = (id, pallet, qty, nsx, exp, lot) => ({ ...E(id, pallet, qty, WC, nsx, exp), material_id: M_RM2, batch: lot })
+  await restWrite('InventoryEntry', 'POST', null, [
+    X('QA63_X1', 'QA63_X1', 30, '2025-01-01', '2025-06-01', null),    // tem HẾT HẠN
+    X('QA63_X2', 'QA63_X2', 20, '2026-10-01', '2027-10-01', null),    // hai tem cùng HSD, cùng (không) vị trí ⇒ một nhóm
+    X('QA63_X3', 'QA63_X3', 10, '2026-10-01', '2027-10-01', null),
+    X('QA63_X4', 'QA63RM2', 15, '2025-02-01', '2025-07-01', 'L1'),    // lô KHÔNG tem hết hạn
+    X('QA63_X5', 'QA63RM2', 25, '2026-10-05', '2027-10-05', 'L2'),    // lô không tem còn hạn — HSD muộn hơn tem X2/X3
+  ])
+  const pg2 = await api(`/wms/production/batches/${BR.id}/pick-list?material_id=${M_RM2}`)
+  const tg2 = pg2.j?.data?.tem_groups ?? [], lg2 = pg2.j?.data?.lot_groups ?? []
+  const okTem = tg2.find(g => g.state === 'OK'), expTem = tg2.find(g => g.state === 'EXPIRED')
+  const lotL1 = lg2.find(g => g.batch_lot === 'L1'), lotL2 = lg2.find(g => g.batch_lot === 'L2')
+  check('2g1. Gom theo date: hai tem cùng HSD cùng vị trí (X2, X3) là MỘT nhóm hạng 1 (2 tem · 30 KG); tem hết hạn (X1) KHÔNG xếp hạng — FEFO không bắt lấy hàng hết hạn trước',
+    pg2.s === 200 && okTem?.rank === 1 && okTem?.count === 2 && num(okTem?.available) === 30 && JSON.stringify(ids(okTem).sort()) === '["QA63_X2","QA63_X3"]'
+      && expTem?.rank === null && expTem?.expired === true && ids(expTem).join() === 'QA63_X1' && pg2.j?.data?.best?.kind === 'TEM' && pg2.j?.data?.best?.pallet_code === 'QA63_X2',
+    `http=${pg2.s} tem=${JSON.stringify(tg2.map(g => [ids(g), g.rank, g.state, g.count]))} best=${JSON.stringify(pg2.j?.data?.best ?? null)}`)
+  check('2g2. Hàng không tem gom theo LÔ: lô L2 cấp được nhưng SAI thứ tự (còn tem HSD sớm hơn); lô L1 hết hạn chưa duyệt — không xếp hạng',
+    lotL2?.state === 'OK' && lotL2?.violation === true && typeof lotL2?.rank === 'number' && lotL1?.state === 'EXPIRED' && lotL1?.rank === null && lotL1?.expired === true,
+    `lot=${JSON.stringify(lg2.map(g => [g.batch_lot, g.state, g.rank, g.violation]))}`)
+  const sx1 = await api(`/wms/production/batches/${BR.id}/scan-check?code=QA63_X1`)
+  const sx2 = await api(`/wms/production/batches/${BR.id}/scan-check?code=QA63_X2`)
+  check('2e1. Quét tem hết hạn ⇒ tra được, báo hết hạn + HSD, chưa có duyệt; quét tem còn hạn sớm nhất ⇒ ĐÚNG thứ tự (tem hết hạn không là "phải dùng trước")',
+    sx1.s === 200 && sx1.j?.data?.expiry?.expired === true && sx1.j?.data?.expiry?.expiry_date === '2025-06-01' && sx1.j?.data?.expiry?.approval === null
+      && sx2.s === 200 && sx2.j?.data?.rotation?.violation === false && sx2.j?.data?.expiry?.expired === false,
+    `x1=${JSON.stringify(sx1.j?.data?.expiry ?? sx1.j?.error ?? null)} x2=${JSON.stringify(sx2.j?.data?.rotation ?? null)}`)
+  const consX1 = () => api(`/wms/production/batches/${BR.id}/consume-scan`, 'POST', { entry_id: 'QA63_X1', qty: 5, qty_semantics: 'base' })
+  const reqX = (entry_id) => api(`/wms/production/batches/${BR.id}/expiry-approvals`, 'POST', { entry_id })
+  const decX = (body) => api(`/wms/production/batches/${BR.id}/expiry-approvals/decide`, 'POST', body)
+  const cx1 = await consX1()
+  const rqX1 = await reqX('QA63_X1')
+  const cx2 = await consX1()
+  const rqOk = await reqX('QA63_X2')
+  check('2e2. Cấp tem hết hạn chưa duyệt ⇒ 422 MES_EXPIRED; gửi QA duyệt ⇒ CHỜ, vẫn 422; gửi duyệt tem CÒN hạn ⇒ 422 MES_NOT_EXPIRED',
+    cx1.s === 422 && cx1.j?.error?.code === 'MES_EXPIRED' && rqX1.s === 200 && rqX1.j?.data?.status === 'PENDING'
+      && cx2.s === 422 && cx2.j?.error?.code === 'MES_EXPIRED' && rqOk.s === 422 && rqOk.j?.error?.code === 'MES_NOT_EXPIRED',
+    `http=${cx1.s}/${rqX1.s}/${cx2.s}/${rqOk.s} ${cx1.j?.error?.code} ${rqX1.j?.data?.status} ${rqOk.j?.error?.code}`)
+  const dNo = await decX({ entry_id: 'QA63_X1', decision: 'APPROVED' })
+  const dRej = await decX({ entry_id: 'QA63_X1', decision: 'REJECTED', note: 'QA63 vi sinh không đạt' })
+  const cxRej = await consX1()
+  const rq2 = await reqX('QA63_X1')
+  const dOk = await decX({ entry_id: 'QA63_X1', decision: 'APPROVED', note: 'QA63 kiểm lại đạt' })
+  const cx4 = await consX1()
+  const cx4row = cx4.j?.data?.rows?.[0]?.id ? (await restAll('batch_consumption', `select=expiry_approval_id&id=eq.${cx4.j.data.rows[0].id}`))[0] : null
+  check('2e3. QA duyệt thiếu căn cứ ⇒ 400; từ chối ⇒ cấp 422 MES_EXPIRED_REJECTED; gửi lại ⇒ chờ; QA duyệt ⇒ cấp được, dòng cấp mang id dòng duyệt',
+    dNo.s === 400 && dRej.s === 200 && dRej.j?.data?.status === 'REJECTED' && cxRej.s === 422 && cxRej.j?.error?.code === 'MES_EXPIRED_REJECTED'
+      && rq2.j?.data?.status === 'PENDING' && dOk.s === 200 && dOk.j?.data?.status === 'APPROVED' && cx4.s === 200 && !!cx4row?.expiry_approval_id && cx4row.expiry_approval_id === dOk.j?.data?.id,
+    `http=${dNo.s}/${dRej.s}/${cxRej.s}/${dOk.s}/${cx4.s} ${cxRej.j?.error?.code} row=${JSON.stringify(cx4row)}`)
+  const bdx = await api(`/wms/production/batches/${BR.id}`)
+  const pg3 = await api(`/wms/production/batches/${BR.id}/pick-list?material_id=${M_RM2}`)
+  const x1g = (pg3.j?.data?.tem_groups ?? []).find(g => ids(g).includes('QA63_X1'))
+  check('2e4. Trang mẻ có dòng duyệt (đã duyệt · căn cứ); tem đã được duyệt vào lại thứ tự — hạng 1 (HSD sớm nhất), vẫn ghi "hết hạn"',
+    (bdx.j?.data?.expiry_approvals ?? []).some(a => a.entry_id === 'QA63_X1' && a.status === 'APPROVED' && a.note === 'QA63 kiểm lại đạt' && !!a.decided_by_name)
+      && x1g?.state === 'OK' && x1g?.rank === 1 && x1g?.expired === true,
+    `appr=${JSON.stringify((bdx.j?.data?.expiry_approvals ?? []).map(a => [a.entry_id, a.status]))} x1=${JSON.stringify(x1g && [x1g.state, x1g.rank, x1g.expired])}`)
+  const consL = (lot, nsx, extra = {}) => api(`/wms/production/batches/${BR.id}/consume-lot`, 'POST', { material_id: M_RM2, production_date: nsx, batch_lot: lot, qty: 5, qty_semantics: 'base', ...extra })
+  const el1 = await consL('L1', '2025-02-01')
+  const dl1 = await decX({ material_id: M_RM2, production_date: '2025-02-01', batch_lot: 'L1', decision: 'APPROVED', note: 'QA63 lô kiểm đạt' })
+  const el2 = await consL('L1', '2025-02-01')
+  const el2row = el2.j?.data?.rows?.[0]?.id ? (await restAll('batch_consumption', `select=expiry_approval_id,source&id=eq.${el2.j.data.rows[0].id}`))[0] : null
+  check('2e5. Lô KHÔNG tem hết hạn ⇒ cấp 422 MES_EXPIRED; QA duyệt thẳng lô (chưa có yêu cầu) ⇒ cấp được, dòng cấp mang id dòng duyệt',
+    el1.s === 422 && el1.j?.error?.code === 'MES_EXPIRED' && dl1.s === 200 && dl1.j?.data?.status === 'APPROVED' && dl1.j?.data?.entry_id === null
+      && el2.s === 200 && el2row?.source === 'LOT' && el2row?.expiry_approval_id === dl1.j?.data?.id,
+    `http=${el1.s}/${dl1.s}/${el2.s} ${el1.j?.error?.code} row=${JSON.stringify(el2row)}`)
+  await restWrite('Warehouse', 'PATCH', `id=eq.${WC}`, { rotation_required: true, updated_at: ts() })
+  const ll1 = await consL('L2', '2026-10-05')
+  const ll2 = await consL('L2', '2026-10-05', { rotation_override_reason: 'BLOCKED' })
+  await restWrite('Warehouse', 'PATCH', `id=eq.${WC}`, { rotation_required: false, updated_at: ts() })
+  const llRow = ll2.j?.data?.rows?.[0]?.id ? (await restAll('batch_consumption', `select=rotation_violation,rotation_principle,rotation_override_reason,source&id=eq.${ll2.j.data.rows[0].id}`))[0] : null
+  check('2l1. Cửa "Không có tem" CÙNG luật luân chuyển với cửa quét: kho bắt buộc + lô sai thứ tự ⇒ thiếu lý do 422 ROTATION_REASON_REQUIRED; có lý do ⇒ cấp được, dòng LOT ghi vết sai thứ tự + lý do',
+    ll1.s === 422 && ll1.j?.error?.code === 'ROTATION_REASON_REQUIRED' && ll2.s === 200
+      && llRow?.source === 'LOT' && llRow?.rotation_violation === true && llRow?.rotation_principle === 'FEFO' && llRow?.rotation_override_reason === 'BLOCKED',
+    `http=${ll1.s}/${ll2.s} ${ll1.j?.error?.code} row=${JSON.stringify(llRow)}`)
+  for (const c of await restAll('batch_consumption', `select=id&batch_id=eq.${BR.id}&reversed_at=is.null`))
+    await api(`/wms/production/consumption/${c.id}/reverse`, 'POST', { reason: 'QA63 trả lại phép 2e' })
+  const xBack = await restAll('InventoryEntry', `select=id,cartons_remaining&material_id=eq.${M_RM2}&order=id`)
+  check('2e6. Trả lại mọi dòng cấp ⇒ tồn mã QA63RM2 về đúng như nạp (30 · 20 · 10 · 15 · 25)',
+    JSON.stringify(xBack.map(r => num(r.cartons_remaining))) === '[30,20,10,15,25]', `tồn=${JSON.stringify(xBack)}`)
 
   if (BR?.id) await api(`/wms/production/batches/${BR.id}/cancel`, 'POST', {})
 
@@ -804,6 +890,9 @@ try {
     const putAs = async (tk, p, body) => (await fetch(`${BASE}/api${p}`, { method: 'PUT', headers: { Authorization: `Bearer ${tk}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body) })).status
     const sEdit = tkOpen ? await putAs(tkOpen, `/wms/production/batches/${BW?.id ?? 'x'}/requirements`, { items: [], reason: 'QA63' }) : 0
     check('14b. Chức danh mở mẻ được nhưng KHÔNG có quyền "Sửa định mức của mẻ" ⇒ 403 (17/11 — chỉ người được phân quyền, vd trưởng ca)', sEdit === 403, `http=${sEdit}`)
+    const postAs = async (tk, p, body) => (await fetch(`${BASE}/api${p}`, { method: 'POST', headers: { Authorization: `Bearer ${tk}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body) })).status
+    const sDec = tkOpen ? await postAs(tkOpen, `/wms/production/batches/${BR?.id ?? 'x'}/expiry-approvals/decide`, { entry_id: 'QA63_X1', decision: 'APPROVED', note: 'QA63' }) : 0
+    check('14c. Chức danh cấp NVL được nhưng KHÔNG có quyền QA duyệt hàng hết hạn ⇒ 403 (17/11)', sDec === 403, `http=${sDec}`)
   }
 
   // ── [15] CỜ "BÁN THÀNH PHẨM" Ở MÃ HÀNG (16/11, C117 — ô "Mã bán thành phẩm" từng chỉ liệt kê nguyên liệu) ──

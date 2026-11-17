@@ -5,7 +5,10 @@
 import { useEffect, useState } from 'react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import type { AxiosError } from 'axios'
-import { ArrowLeft, Plus, Pencil, Lock, Unlock, XCircle, ShieldCheck, Container, Undo2, Copy, AlertTriangle, ListChecks, Check, Printer, Timer, FileText, ArrowDownToLine, RotateCcw } from 'lucide-react'
+import { ArrowLeft, Plus, Pencil, Lock, Unlock, XCircle, ShieldCheck, Container, Undo2, Copy, AlertTriangle, ListChecks, Check, Printer, Timer, FileText, ArrowDownToLine, RotateCcw, Search } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { MesStockDialog } from '@/components/wms/production/MesStockGroups'
 import { TableBody, TableCell, TableRow } from '@/components/ui/table'
 import { ResizableTable, type RtColDef } from '@/components/shared/ResizableTable'
 import { TableEmptyRow } from '@/components/shared/TableEmptyRow'
@@ -29,7 +32,7 @@ import { can, type ModulePermissions } from '@/config/permissions'
 import { rowText, statusText } from '@/lib/rowStatus'
 import {
   useProductionBatch, useBatchStatus, useApproveBatch, useStampLog, useReverseConsumption, BATCH_STATUS_VI, BATCH_QA_VI, TANK_MOVE_VI,
-  useProcessForms, useSetBatchForms,
+  useProcessForms, useSetBatchForms, useExpiryDecide, type BatchDetail, type ExpiryApproval,
 } from '@/api/productionHooks'
 import { BATCH_STATUS_TONE, BATCH_QA_TONE, batchRowKey } from './ProductionBatches'
 import { qtyNum, qtyCode, matUnitCode, unitCode } from '@/utils/unitCode'
@@ -102,6 +105,8 @@ function ProductionBatchDetail() {
   const [pourOpen, setPourOpen] = useState(false)
   const [editOpen, setEditOpen] = useState(false)
   const [cloneOpen, setCloneOpen] = useState(false)
+  // kính lúp cột Tồn kho (như cột Kho của Xuất kho): tồn của một mã trong kho chế biến gom theo %Date
+  const [stockMat, setStockMat] = useState<string | null>(null)
   const [err, setErr] = useState('')
 
   if (q.isLoading) return <div className="p-6 text-sm text-slate-500">Đang tải mẻ…</div>
@@ -307,6 +312,7 @@ function ProductionBatchDetail() {
             <span className="h-3.5 w-1 rounded-full bg-sky-500" />
             <h2 className="text-xs font-semibold uppercase tracking-wide text-slate-600">Nguyên liệu của mẻ</h2>
           </div>
+          <ExpiryApprovalsBlock b={b} canDecide={open && can(perms, 'production', 'approve_expired')} />
           {/* ĐIỆN THOẠI: bảng thu nhỏ — nhãn cột in một lần, mỗi dòng mã · tên · ĐVT rồi chỉ CON SỐ (user 17/11 "hạn chế văn viết");
               nút Cấp thấy ngay, không phải cuộn ngang. Trạng thái bằng màu số: thiếu cam · đủ ✓ xanh · ngoài mức lệch đỏ. */}
           <div className="sm:hidden">
@@ -341,7 +347,8 @@ function ProductionBatchDetail() {
                         : st.state === 'ok' ? <Check className="inline h-3.5 w-3.5 text-green-600" aria-label="Đủ" />
                         : st.state === 'over' ? <span className="text-red-600" title={r.tol_pct != null ? `Mức lệch cho phép ±${nfq(r.tol_pct)}%` : 'Vượt yêu cầu'}>{r.tol_pct != null ? devLabel(st.devPct) : `+${qtyNum(Number(r.consumed) - Number(r.required), r)}`}</span>
                         : <span className={st.outOfTol ? 'text-red-600' : 'text-amber-700'}>{qtyNum(st.need, r)}</span>,
-                      r.removed ? dash : <span className={short ? 'text-red-600' : 'font-normal text-slate-500'} title={short ? 'Tồn ở kho chế biến không đủ phần còn thiếu' : undefined}>{qtyNum(Math.max(Number(r.available), 0), r)}</span>,
+                      r.removed ? dash : <button type="button" onClick={() => setStockMat(r.material_id)} aria-label={`Xem tồn ${r.material_code} theo %Date`}
+                        className={`touch-target underline decoration-dotted underline-offset-2 ${short ? 'text-red-600' : 'font-normal text-slate-500'}`} title={short ? 'Tồn ở kho chế biến không đủ phần còn thiếu — bấm xem tồn theo %Date' : 'Xem tồn theo %Date'}>{qtyNum(Math.max(Number(r.available), 0), r)}</button>,
                     ]}
                     aside={canConsume && !r.removed ? (
                       <button type="button" onClick={() => openConsume(r.material_id, noStock)} aria-label={`Cấp ${r.material_code}`}
@@ -376,7 +383,12 @@ function ProductionBatchDetail() {
                     <TableCell className={NUM} title={changeTip(r)}>{r.removed ? reqNote(r) : extra ? <span className="text-slate-300 font-normal">—</span> : <>{qtyNum(Number(r.required), r)}{reqNote(r)}</>}</TableCell>
                     <TableCell className={`${NUM} ${st.outOfTol ? 'text-red-600' : ''}`}>{started ? qtyNum(Number(r.consumed), r) : <span className="text-slate-300 font-normal">—</span>}</TableCell>
                     <TableCell className={`${NUM} ${need > 0 ? 'text-amber-700' : ''}`}>{need > 0 ? qtyNum(need, r) : <span className="text-slate-300 font-normal">—</span>}</TableCell>
-                    <TableCell className={`${NUM} ${!done && need > Number(r.available) ? 'text-red-600' : ''}`} title={!done && need > Number(r.available) ? 'Tồn ở kho chế biến không đủ phần còn thiếu — chuyển thêm hàng sang kho chế biến' : undefined}>{qtyNum(Math.max(Number(r.available), 0), r)}</TableCell>
+                    <TableCell className={`${NUM} ${!done && need > Number(r.available) ? 'text-red-600' : ''}`} title={!done && need > Number(r.available) ? 'Tồn ở kho chế biến không đủ phần còn thiếu — chuyển thêm hàng sang kho chế biến' : undefined}>
+                      <button type="button" onClick={() => setStockMat(r.material_id)} aria-label={`Xem tồn ${r.material_code} theo %Date`} title="Xem tồn theo %Date — vị trí, HSD, từng tem"
+                        className="inline-flex items-center gap-1 rounded px-1 -mr-1 hover:bg-blue-50 hover:text-blue-700">
+                        <Search className="h-3 w-3 text-slate-400" />{qtyNum(Math.max(Number(r.available), 0), r)}
+                      </button>
+                    </TableCell>
                     <TableCell className={TD}>{noStock ? <span className="text-slate-300">—</span> : byScan ? <StatusBadge tone="sky">Quét tem</StatusBadge> : <StatusBadge tone="purple">Chọn lô</StatusBadge>}</TableCell>
                     <TableCell className={TD}>{statusBadge(r)}</TableCell>
                     <TableCell className={`${TD} sticky right-0 z-10 bg-white text-right`}>
@@ -476,6 +488,7 @@ function ProductionBatchDetail() {
                     <TableCell className={`${TD} font-mono`}>{c.batch_lot ?? <span className="text-slate-300">—</span>}</TableCell>
                     <TableCell className={TD}>{gone ? <StatusBadge tone="slate">Đã huỷ</StatusBadge> : <StatusBadge tone={c.source === 'SCAN' ? 'sky' : 'purple'}>{c.source === 'SCAN' ? 'Quét tem' : 'Theo lô'}</StatusBadge>}
                       {/* lấy khác thứ tự luân chuyển (17/11) — như cột "Thứ tự lấy" của Lịch sử quét xuất */}
+                      {!gone && c.expiry_approval_id && <span className="ml-1"><StatusBadge tone="red" title="Nguyên liệu quá HSD — QA đã duyệt cho dùng vào mẻ này (xem mục NVL hết hạn)">Hết hạn · QA duyệt</StatusBadge></span>}
                       {!gone && c.rotation_violation && <span className="ml-1"><StatusBadge tone="amber" title={`Còn ${c.rotation_principle ?? ''} ${c.rotation_best_date ? formatDate(c.rotation_best_date) : ''} phải dùng trước${c.rotation_override_reason ? ` · lý do: ${rotationReasonLabel(c.rotation_override_reason)}` : ''}`}>Sai thứ tự</StatusBadge></span>}
                     </TableCell>
                     <TableCell className={`${TD} tabular-nums`}>{formatDateTime(c.created_at)}</TableCell>
@@ -542,6 +555,11 @@ function ProductionBatchDetail() {
         </div>
       </div>
       {open && <ConsumeSheet open={consumeOpen} onClose={() => setConsumeOpen(false)} batch={b} focusId={focusId} />}
+      {stockMat && (() => {
+        const r = board.find(x => x.material_id === stockMat)
+        return <MesStockDialog batchId={b.id} materialId={stockMat} mat={r ?? null}
+          title={`${r?.material_code ?? ''} · ${r?.material_name ?? ''}`} onClose={() => setStockMat(null)} />
+      })()}
       {open && <RequirementSheet open={reqOpen} onClose={() => setReqOpen(false)} batch={b} />}
       {logForm && processForms.some(d => d.code === logForm) && <ProcessLogSheet open onClose={() => setLogForm(null)} batch={b} def={processForms.find(d => d.code === logForm)!}
         canWrite={can(perms, 'production', 'process_log')} canConfirm={can(perms, 'production', 'qa_release')} canExport={can(perms, 'production', 'export')} />}
@@ -555,6 +573,53 @@ function ProductionBatchDetail() {
       <BatchFormSheet open={cloneOpen} onClose={() => setCloneOpen(false)} template={b}
         onSaved={nid => navigate(`/wms/production/${nid}`, { state: { consume: true } })} />
       {confirmNode}
+    </div>
+  )
+}
+
+// ── NVL HẾT HẠN của mẻ (user chốt 17/11 "chặn và cho qua khi QA duyệt"): yêu cầu người cấp gửi + quyết định của QA ──
+// QA (quyền production.approve_expired) duyệt / từ chối kèm căn cứ ngay tại đây; người cấp thấy kết quả tức thì trong form cấp (realtime).
+function ExpiryApprovalsBlock({ b, canDecide }: { b: BatchDetail; canDecide: boolean }) {
+  const decide = useExpiryDecide()
+  const [notes, setNotes] = useState<Record<string, string>>({})
+  const [err, setErr] = useState('')
+  const list = [...(b.expiry_approvals ?? [])].sort((x, y) => Number(y.status === 'PENDING') - Number(x.status === 'PENDING'))
+  if (!list.length) return null
+  const pending = list.filter(a => a.status === 'PENDING').length
+  async function go(a: ExpiryApproval, decision: 'APPROVED' | 'REJECTED') {
+    setErr('')
+    const subject = a.entry_id ? { entry_id: a.entry_id } : { material_id: a.material_id, production_date: a.production_date, batch_lot: a.batch_lot }
+    try { await decide.mutateAsync({ batchId: b.id, subject, decision, note: (notes[a.id] ?? '').trim() }) } catch (e) { setErr(apiMsg(e)) }
+  }
+  return (
+    <div className="mx-3 my-2 sm:mx-4 rounded-lg border border-red-200 bg-red-50/60 px-3 py-2 space-y-1.5 text-xs" data-testid="expiry-approvals">
+      <p className="font-semibold text-red-800">NVL hết hạn — QA duyệt cho mẻ này{pending ? <span className="font-normal"> · {pending} chờ duyệt</span> : null}</p>
+      {list.map(a => {
+        const note = (notes[a.id] ?? '').trim()
+        return (
+          <div key={a.id} className="rounded bg-white border border-red-100 px-2 py-1.5 space-y-1" data-approval={a.id} data-status={a.status}>
+            <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
+              <StatusBadge tone={a.status === 'APPROVED' ? 'green' : a.status === 'PENDING' ? 'amber' : 'red'}>{a.status === 'APPROVED' ? 'Đã duyệt' : a.status === 'PENDING' ? 'Chờ QA' : 'Từ chối'}</StatusBadge>
+              <span className="font-mono font-semibold">{a.material?.material_code ?? ''}</span>
+              <span className="font-mono break-all">{a.pallet_code ?? `lô ${a.batch_lot ?? '—'}${a.production_date ? ` · NSX ${formatDate(a.production_date)}` : ''}`}</span>
+              <span className="text-red-700 whitespace-nowrap">HSD {a.expiry_date ? formatDate(a.expiry_date) : '—'}</span>
+            </div>
+            <div className="text-[10px] text-slate-500">
+              {a.requested_by_name ? `Gửi: ${a.requested_by_name}${a.requested_at ? ` · ${formatDateTime(a.requested_at)}` : ''}` : ''}
+              {a.decided_by_name ? ` · QA: ${a.decided_by_name}${a.note ? ` — ${a.note}` : ''}` : ''}
+            </div>
+            {canDecide && a.status === 'PENDING' && (
+              <div className="flex flex-wrap gap-1.5">
+                <Input className="h-8 text-xs flex-1 min-w-[10rem] bg-white" maxLength={500} placeholder="Căn cứ duyệt / lý do từ chối" value={notes[a.id] ?? ''}
+                  onChange={e => setNotes(n => ({ ...n, [a.id]: e.target.value }))} data-testid="expiry-decide-note" />
+                <Button size="sm" className="h-8 bg-green-600 hover:bg-green-700" disabled={!note || decide.isPending} onClick={() => void go(a, 'APPROVED')}>Duyệt cho dùng</Button>
+                <Button size="sm" variant="outline" className="h-8 border-red-300 text-red-700" disabled={!note || decide.isPending} onClick={() => void go(a, 'REJECTED')}>Từ chối</Button>
+              </div>
+            )}
+          </div>
+        )
+      })}
+      {err && <div className="rounded bg-red-100 border border-red-200 px-2 py-1 text-red-700">{err}</div>}
     </div>
   )
 }

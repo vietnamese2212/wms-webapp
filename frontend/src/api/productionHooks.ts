@@ -74,6 +74,8 @@ export interface ConsumptionRow {
   reversed_at: string | null; reversed_by_name: string | null; reverse_reason: string | null
   /** vết luân chuyển lúc cấp (17/11 — cùng bộ cột sổ quét xuất) */
   rotation_violation?: boolean | null; rotation_principle?: string | null; rotation_best_date?: string | null; rotation_override_reason?: string | null
+  /** cấp hàng HẾT HẠN đã được QA duyệt cho mẻ (17/11) — id dòng duyệt */
+  expiry_approval_id?: string | null
   material: ({ material_code: string; short_name: string | null } & MatUnits) | null
   entry: { cartons_remaining: number | null; expiry_date: string | null; location: { location_code: string } | null } | null
 }
@@ -113,6 +115,15 @@ export interface BatchGate {
   fill_blockers: string[]
 }
 export interface BatchLabel { pallet_no: number; qr: string }
+/** NVL HẾT HẠN (17/11 — "chặn và cho qua khi QA duyệt"): yêu cầu / quyết định QA cho MỘT tem (entry_id) hoặc MỘT lô không tem, của MỘT mẻ */
+export interface ExpiryApproval {
+  id: string; entry_id: string | null; material_id: string; pallet_code?: string | null; production_date: string | null; batch_lot: string | null
+  expiry_date?: string | null; status: 'PENDING' | 'APPROVED' | 'REJECTED'
+  requested_by_name: string | null; requested_at: string | null; decided_by_name: string | null; decided_at: string | null; note: string | null
+  material?: ({ material_code: string; short_name: string | null } & MatUnits) | null
+}
+/** Tình trạng hạn của tem / lô với mẻ: hết hạn chưa · HSD hiệu lực · dòng QA duyệt */
+export interface MesExpiry { expired: boolean; expiry_date: string | null; approval: ExpiryApproval | null }
 export interface PourScan { pallet_no: number; scanned_by_name: string | null; created_at: string }
 export interface BatchDetail {
   cycle: string | null; board: BoardRow[]; process_logs: ProcessLog[]
@@ -129,14 +140,16 @@ export interface BatchDetail {
   material: ({ id: string; material_code: string; short_name: string | null; category: string | null; tank_hold_hours: number | null } & MatUnits) | null
   warehouse: { id: string; code: string; name: string; parent_warehouse_id: string | null } | null
   consumption: ConsumptionRow[]; movements: TankMoveRow[]; lots: BatchLot[]
+  /** NVL hết hạn: yêu cầu / quyết định QA của mẻ (17/11) */
+  expiry_approvals?: ExpiryApproval[]
 }
 export interface ScanEntry {
   id: string; pallet_code: string; material_id: string; cartons_remaining: number | null; cartons_imported: number | null; cartons_reserved: number | null
   production_date: string | null; expiry_date: string | null; batch: string | null
   qa_status_id?: string | null; qa_status: { code: string; name: string } | null; location: { location_code: string } | null
   material: ({ material_code: string; short_name: string | null } & MatUnits) | null
-  /** 17/11: %Date + luân chuyển của tem (như quét xuất) */
-  pct_date?: number | null; rotation?: MesRotation
+  /** 17/11: %Date + luân chuyển của tem (như quét xuất) · hạn + QA duyệt của mẻ */
+  pct_date?: number | null; rotation?: MesRotation; expiry?: MesExpiry
 }
 export interface StockMaterial extends MatUnits { material_id: string; material_code: string; material_name: string | null; available: number; available_no_tem?: number; lots: number }
 export interface StockLot { production_date: string | null; batch_lot: string | null; expiry_date: string | null; available: number; available_no_tem?: number; tem_pallets?: number; pallets: number }
@@ -223,13 +236,30 @@ export function useGenealogy(kind: 'BATCH' | 'FG_PALLET' | 'RM_PALLET', value: s
 export interface MesRotation {
   principle: 'FEFO' | 'FIFO' | 'LIFO'; required: boolean; source: 'WAREHOUSE' | 'TYPE'; date_label: string
   scanned_date: string | null; violation: boolean; best_date: string | null; best_pallet_code: string | null; best_location_code: string | null
+  /** hàng nên lấy trước là hàng KHÔNG tem (chọn ở "Không có tem") — lô / NSX của nó */
+  best_no_tem?: boolean; best_lot?: string | null; best_production_date?: string | null
 }
-/** "Lấy ở đâu": tem của mã trong kho chế biến theo thứ tự luân chuyển (rank 1 = nên lấy trước; null = QA giữ) */
-export interface PickListRow {
-  entry_id: string; pallet_code: string | null; batch: string | null; location_code: string | null; production_date: string | null
-  rot_date: string | null; pct_date: number | null; available: number; qa_hold: boolean; qa_name: string | null; rank: number | null
+/** Một tem (nhóm có tem) hoặc một dòng tồn (lô không tem) trong nhóm của "Lấy ở đâu" */
+export interface PickItem {
+  entry_id: string; pallet_code: string | null; batch: string | null; location_code: string | null; available: number
+  import_date: string | null; expired: boolean; approval: ExpiryApproval | null
 }
-export interface PickList { principle: 'FEFO' | 'FIFO' | 'LIFO'; required: boolean; source: 'WAREHOUSE' | 'TYPE'; date_label: string; total: number; rows: PickListRow[] }
+/** "Lấy ở đâu" GOM THEO DATE (17/11 — như "Tồn kho theo %Date" của Xuất kho): có tem gom theo (ngày · ô · tình trạng), không tem gom theo
+ *  LÔ. state: OK = cấp được · EXPIRED = hết hạn chưa QA duyệt · QA = QA giữ. rank 1 = nên lấy trước (chung cả có tem lẫn không tem). */
+export interface PickGroup {
+  key: string; kind: 'TEM' | 'LOT'; state: 'OK' | 'EXPIRED' | 'QA'; rank: number | null
+  rot_date: string | null; pct_date: number | null; expiry_date: string | null; production_date: string | null; batch_lot: string | null
+  location_code: string | null; locations: string[]; available: number; count: number; qa_name: string | null
+  /** nhóm có hàng quá HSD (đã được QA duyệt cho mẻ thì state vẫn là OK) */
+  expired: boolean
+  /** lấy nhóm này là SAI thứ tự luân chuyển (server chấm) */
+  violation: boolean; approval: ExpiryApproval | null; items: PickItem[]
+}
+export interface PickList {
+  principle: 'FEFO' | 'FIFO' | 'LIFO'; required: boolean; source: 'WAREHOUSE' | 'TYPE'; date_label: string; today: string; total: number; truncated: boolean
+  best: { kind: 'TEM' | 'LOT'; pallet_code: string | null; location_code: string | null; rot_date: string | null; batch_lot: string | null; production_date: string | null } | null
+  tem_groups: PickGroup[]; lot_groups: PickGroup[]
+}
 export function usePickList(batchId: string | undefined, materialId: string | undefined) {
   return useQuery({
     // dưới tiền tố prod-stock ⇒ cấp xong / realtime batch_consumption tự tải lại
@@ -408,8 +438,17 @@ export const useBatchStatus = () => useProdMutation(({ id, action }: { id: strin
 export const useConsumeScan = () => useProdMutation(({ batchId, entry_id, qty, rotation_override_reason }: { batchId: string; entry_id: string; qty: number; rotation_override_reason?: string }) =>
   post<{ rows: { pallet_code: string; qty: number; remaining: number; rotation_violation?: boolean | null }[] }>(`/wms/production/batches/${batchId}/consume-scan`,
     { entry_id, qty, ...(rotation_override_reason ? { rotation_override_reason } : {}) }))
-export const useConsumeLot = () => useProdMutation(({ batchId, ...b }: { batchId: string; material_id: string; production_date: string | null; batch_lot: string | null; qty: number }) =>
-  post<{ rows: { pallet_code: string; qty: number; remaining: number }[] }>(`/wms/production/batches/${batchId}/consume-lot`, b))
+export const useConsumeLot = () => useProdMutation(({ batchId, rotation_override_reason, ...b }: { batchId: string; material_id: string; production_date: string | null; batch_lot: string | null; qty: number; rotation_override_reason?: string }) =>
+  post<{ rows: { pallet_code: string; qty: number; remaining: number; rotation_violation?: boolean | null }[] }>(`/wms/production/batches/${batchId}/consume-lot`,
+    { ...b, ...(rotation_override_reason ? { rotation_override_reason } : {}) }))
+/** Đối tượng xin / duyệt dùng hàng HẾT HẠN: một tem, hoặc một lô không tem (mã + NSX + mã lô) */
+export type ExpirySubject = { entry_id: string } | { material_id: string; production_date: string | null; batch_lot: string | null }
+/** người cấp gửi QA duyệt (đã từ chối thì gửi lại) */
+export const useExpiryRequest = () => useProdMutation(({ batchId, subject, note }: { batchId: string; subject: ExpirySubject; note?: string }) =>
+  post<ExpiryApproval>(`/wms/production/batches/${batchId}/expiry-approvals`, { ...subject, ...(note ? { note } : {}) }))
+/** QA duyệt / từ chối (kèm căn cứ) — quyền production.approve_expired */
+export const useExpiryDecide = () => useProdMutation(({ batchId, subject, decision, note }: { batchId: string; subject: ExpirySubject; decision: 'APPROVED' | 'REJECTED'; note: string }) =>
+  post<ExpiryApproval>(`/wms/production/batches/${batchId}/expiry-approvals/decide`, { ...subject, decision, note }))
 export const useReverseConsumption = () => useProdMutation(({ id, reason }: { id: string; reason: string }) => post(`/wms/production/consumption/${id}/reverse`, { reason }))
 
 export interface TankInput { warehouse_id: string; code: string; name?: string; capacity: number; unit: 'L' | 'KG'; note?: string }

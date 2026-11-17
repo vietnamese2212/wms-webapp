@@ -24,9 +24,10 @@ import { qaHoldIds } from '../../services/qaStatus'
 import { fetchAllRowsParallel } from '../../utils/pagination'
 import { computePctDate, type MaterialShelfInfo } from '../../utils/shelfLife'
 import {
-  rotationSortKey, rotationDateOf, isRotationViolation, isPickEligible, isRotationReason, ROTATION_DATE_LABEL, ROTATION_LABEL,
+  rotationSortKey, rotationDateOf, isRotationViolation, isPickEligible, isRotationReason, availableOf, ROTATION_DATE_LABEL, ROTATION_LABEL,
   type RotationEntry, type RotationPrinciple,
 } from '../../utils/rotation'
+import { vnDayOf } from '../../utils/dates'
 
 const nowIso = () => new Date().toISOString()
 const scopeOf = (req: Request): string[] | null => (req.user?.warehouse_scope === 'NATIONAL' ? null : (req.user?.warehouse_ids ?? []))
@@ -65,7 +66,8 @@ function mesFail(res: Response, e: unknown): Response {
   const m = MES_RE.exec(msg)
   if (!m) return failAny(res, e)
   const [, code, text] = m
-  const status = code === 'NOT_FOUND' ? 404 : ['QTY', 'REASON', 'UNIT', 'KIND', 'SAME_TANK', 'DUPLICATE', 'SELF', 'NAME', 'MISMATCH', 'RECIPE_MISMATCH', 'RECIPE_INACTIVE', 'CYCLE', 'BATCH_NO', 'TANK', 'NO_PLANT', 'FORM_INVALID'].includes(code) ? 422 : 409
+  const status = code === 'NOT_FOUND' ? 404 : ['QTY', 'REASON', 'UNIT', 'KIND', 'SAME_TANK', 'DUPLICATE', 'SELF', 'NAME', 'MISMATCH', 'RECIPE_MISMATCH', 'RECIPE_INACTIVE', 'CYCLE', 'BATCH_NO', 'TANK', 'NO_PLANT', 'FORM_INVALID',
+    'EXPIRED', 'EXPIRED_REJECTED', 'NOT_EXPIRED', 'DECISION', 'SUBJECT'].includes(code) ? 422 : 409
   return fail(res, status, `MES_${code}`, text.trim())
 }
 
@@ -167,7 +169,7 @@ export async function getBatch(req: Request, res: Response) {
     if (error) return fail(res, error)
     if (!b) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy mẻ')
     if (!(await inScope(req, b.warehouse_id))) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
-    const [{ data: cons }, { data: moves }, { data: lots }, { data: board }, { data: plogs }, { data: gate }, { data: scans }] = await Promise.all([
+    const [{ data: cons }, { data: moves }, { data: lots }, { data: board }, { data: plogs }, { data: gate }, { data: scans }, { data: expiry }] = await Promise.all([
       db.from('batch_consumption')
         .select('*, material:Material!batch_consumption_material_id_fkey(material_code, short_name, base_unit, entry_unit, units_per_carton), entry:InventoryEntry!batch_consumption_entry_id_fkey(cartons_remaining, expiry_date, location:Location(location_code))')
         .eq('batch_id', b.id).order('created_at').limit(2000),
@@ -179,12 +181,15 @@ export async function getBatch(req: Request, res: Response) {
       db.from('batch_process_log').select('id, form, data, blocks, stamps, created_by_name, updated_by_name, confirmed_at, confirmed_by_name, updated_at').eq('batch_id', b.id).limit(10),
       db.rpc('mes_batch_gate', { p_batch_id: b.id }),
       db.from('batch_pour_scan').select('pallet_no, scanned_by_name, created_at').eq('batch_id', b.id).eq('label_ver', b.label_ver).order('pallet_no').limit(100),
+      // NVL hết hạn: yêu cầu / quyết định QA của mẻ (17/11)
+      db.from('mes_expiry_approval').select('id, entry_id, material_id, pallet_code, production_date, batch_lot, expiry_date, status, requested_by_name, requested_at, decided_by_name, decided_at, note, material:Material!mes_expiry_approval_material_id_fkey(material_code, short_name, base_unit, entry_unit, units_per_carton)')
+        .eq('batch_id', b.id).order('created_at').limit(500),
     ])
     // tem pallet của mẻ đang hiệu lực (in lại không cần gọi thêm)
     const labels = b.label_at && b.label_count
       ? Array.from({ length: b.label_count }, (_, i) => ({ pallet_no: i + 1, qr: batchLabelQr(b.batch_code, i + 1, b.label_count as number, b.label_ver) })) : []
     return ok(res, { ...b, consumption: cons ?? [], movements: moves ?? [], lots: lots ?? [], board: board ?? [], process_logs: plogs ?? [],
-      gate: gate ?? null, pour_scans: scans ?? [], labels })
+      gate: gate ?? null, pour_scans: scans ?? [], labels, expiry_approvals: expiry ?? [] })
   } catch (e) { return failAny(res, e) }
 }
 
@@ -692,10 +697,11 @@ export async function scanCheck(req: Request, res: Response) {
     }
     if (rows.length > 1)
       return fail(res, 409, 'POOLED_CODE', `Mã ${code} là tồn gộp nhiều lô — dùng "Không có tem" để chọn đúng lô`)
-    // như quét xuất: %Date + đúng / sai thứ tự luân chuyển (17/11)
-    const ctx = await mesPickContext(b.warehouse_id, rows[0].material_id)
+    // như quét xuất: %Date + đúng / sai thứ tự luân chuyển (17/11) · HẠN + dòng QA duyệt của mẻ (hàng hết hạn chỉ cấp khi QA duyệt)
+    const ctx = await mesPickContext(b.warehouse_id, rows[0].material_id, b.id)
     const e0 = rows[0] as unknown as PickRow
-    return ok(res, { ...rows[0], pct_date: computePctDate(e0, ctx.material), rotation: mesRotationCheck(ctx, e0) })
+    return ok(res, { ...rows[0], pct_date: computePctDate(e0, ctx.material), rotation: mesRotationCheck(ctx, e0),
+      expiry: expiryView(ctx.ranked.find(r => r.row.id === e0.id)) })
   } catch (e) { return failAny(res, e) }
 }
 
@@ -721,18 +727,12 @@ export async function consumeScan(req: Request, res: Response) {
     if (intErr) return fail(res, 422, 'QTY_NOT_INTEGER', intErr)
     // LUÂN CHUYỂN — cùng luật cửa quét xuất (outboundController.scanItem): kho / loại kho bật "bắt buộc" ⇒ sai thứ tự
     // phải có người có quyền duyệt + lý do trong danh sách; không bật ⇒ chỉ ghi vết (màn hình nhắc trước khi bấm).
-    const rot = mesRotationCheck(await mesPickContext(b.warehouse_id, e.material_id), e as unknown as PickRow)
-    let override: string | null = null
-    if (rot.required && rot.violation) {
-      const raw = String(body.rotation_override_reason ?? '').trim()
-      if (!canRotationOverride(req))
-        return fail(res, 422, 'ROTATION_VIOLATION', `${mesRotationMessage(rot)} Cần người có quyền duyệt lấy khác thứ tự.`)
-      if (!isRotationReason(raw.split(':')[0].trim()))
-        return fail(res, 422, 'ROTATION_REASON_REQUIRED', `${mesRotationMessage(rot)} Chọn lý do để tiếp tục.`)
-      override = raw.slice(0, 200)
-    }
+    // HẾT HẠN: cửa ghi mes_consume_scan tự chặn (expiry_calc + sổ duyệt của mẻ, một giao dịch với phép trừ tồn).
+    const rot = mesRotationCheck(await mesPickContext(b.warehouse_id, e.material_id, b.id), e as unknown as PickRow)
+    const gate = rotationGate(req, rot, body.rotation_override_reason)
+    if (gate.error) return fail(res, 422, gate.error[0], gate.error[1])
     const { data, error } = await db.rpc('mes_consume_scan', { p: { batch_id: b.id, entry_id: body.entry_id, qty: body.qty, ...actor(req),
-      rotation: { violation: rot.violation, principle: rot.principle, best_date: rot.best_date, override_reason: override } } })
+      rotation: { violation: rot.violation, principle: rot.principle, best_date: rot.best_date, override_reason: gate.override } } })
     if (error) return mesFail(res, error)
     return ok(res, data)
   } catch (e) { return failAny(res, e) }
@@ -746,62 +746,162 @@ export async function consumeScan(req: Request, res: Response) {
 // Khác DUY NHẤT là TẬP SO SÁNH: tồn của KHO CHẾ BIẾN theo cột warehouse_id, trạng thái IN_STOCK / PARTIAL (đúng tập mà
 // mes_consume_scan cho rút) — pallet ở kho chế biến thường chưa xếp ô, tập của cửa xuất (lọc theo kho của Ô) sẽ bỏ sót.
 type PickRow = RotationEntry & { id: string; pallet_code: string | null; batch?: string | null; material_id?: string
-  qa_status?: { code: string; name: string } | null; location?: { location_code: string | null } | null }
-type PickCtx = { principle: RotationPrinciple; required: boolean; source: 'WAREHOUSE' | 'TYPE'; material: MaterialShelfInfo | null
-  ranked: { row: PickRow; key: number | null; eligible: boolean }[] }
-async function mesPickContext(warehouseId: string, materialId: string): Promise<PickCtx> {
-  const [{ data: mat }, resolver, qaHold] = await Promise.all([
-    db.from('Material').select('category, shelf_life_days, supplier_shelf_life_overrides').eq('id', materialId).maybeSingle(),
+  qa_status?: { code: string; name: string } | null; location?: { location_code: string | null } | null
+  /** HSD hiệu lực do trigger DB tính (inventory_expiry_calc) — CÙNG cột mà cửa ghi mes_consume_* dùng để chặn hàng hết hạn */
+  expiry_calc?: string | null; import_date?: string | null }
+type ExpiryApproval = { id: string; entry_id: string | null; material_id: string; production_date: string | null; batch_lot: string | null
+  status: 'PENDING' | 'APPROVED' | 'REJECTED'; requested_by_name: string | null; requested_at: string | null
+  decided_by_name: string | null; decided_at: string | null; note: string | null }
+type Ranked = { row: PickRow; key: number | null; eligible: boolean; noTem: boolean; qaHeld: boolean; expired: boolean; approval: ExpiryApproval | null }
+type PickCtx = { principle: RotationPrinciple; required: boolean; source: 'WAREHOUSE' | 'TYPE'; material: MaterialShelfInfo | null; ranked: Ranked[] }
+const dayOf = (v: unknown): string | null => (v ? String(v).slice(0, 10) : null)
+const lotOf = (v: unknown): string | null => String(v ?? '').trim() || null
+/** NVL HẾT HẠN (user chốt 17/11 "chặn và cho qua khi QA duyệt"): HSD hiệu lực < hôm nay giờ VN — khớp `expiry_calc < mes_vn_today()`
+ *  ở cửa ghi (migration 20261117e). Ngày HSD còn dùng được; không biết HSD ⇒ không chặn. */
+const isExpiredDay = (expiryCalc: unknown, today: string): boolean => { const d = dayOf(expiryCalc); return !!d && d < today }
+/** Dòng duyệt của một TEM (entry) hay một LÔ không tem (mã + NSX + mã lô) — so theo cột của sổ duyệt, không ghép chuỗi khoá */
+function approvalOf(list: ExpiryApproval[], row: PickRow, noTem: boolean): ExpiryApproval | null {
+  return list.find(a => noTem
+    ? !a.entry_id && a.material_id === row.material_id && dayOf(a.production_date) === dayOf(row.production_date) && lotOf(a.batch_lot) === lotOf(row.batch)
+    : a.entry_id === row.id) ?? null
+}
+/** Tập so sánh luân chuyển của một mã trong kho chế biến. `batchId` có ⇒ đọc thêm sổ duyệt hàng hết hạn của mẻ: tem / lô hết hạn
+ *  CHƯA được QA duyệt cho mẻ này KHÔNG được xếp hạng (không bắt người cấp "lấy hàng hết hạn trước") và đứng cuối như hàng QA giữ. */
+async function mesPickContext(warehouseId: string, materialId: string, batchId?: string): Promise<PickCtx> {
+  const [{ data: mat }, resolver, qaHold, appr] = await Promise.all([
+    db.from('Material').select('material_code, category, shelf_life_days, supplier_shelf_life_overrides').eq('id', materialId).maybeSingle(),
     rotationConfigOf([warehouseId]), qaHoldIds(),
+    batchId
+      ? db.from('mes_expiry_approval').select('id, entry_id, material_id, production_date, batch_lot, status, requested_by_name, requested_at, decided_by_name, decided_at, note')
+          .eq('batch_id', batchId).eq('material_id', materialId).limit(1000)
+      : Promise.resolve({ data: [] as ExpiryApproval[] }),
   ])
   const cfg = resolver.of(warehouseId, mat?.category ?? null)
   const material = (mat ?? null) as unknown as MaterialShelfInfo | null
+  const code = String(mat?.material_code ?? '').toUpperCase()
+  const approvals = (appr.data ?? []) as ExpiryApproval[]
+  const today = vnDayOf(new Date()) as string
   const rows = await fetchAllRowsParallel(() => db.from('InventoryEntry')
-    .select('id, pallet_code, batch, material_id, qa_status_id, qa_status:QAStatus(code, name), cartons_remaining, cartons_imported, cartons_reserved, production_date, expiry_date, ncc_id, shelf_life_days, location:Location(location_code)')
+    .select('id, pallet_code, batch, material_id, qa_status_id, qa_status:QAStatus(code, name), cartons_remaining, cartons_imported, cartons_reserved, production_date, expiry_date, expiry_calc, import_date, ncc_id, shelf_life_days, location:Location(location_code)')
     .eq('warehouse_id', warehouseId).eq('material_id', materialId).in('status', ['IN_STOCK', 'PARTIAL']).gt('cartons_remaining', 0).order('id')) as PickRow[]
-  const ranked = rows.map(row => ({ row, key: rotationSortKey(row, material, cfg.principle), eligible: isPickEligible(row, qaHold) }))
-    .sort((a, b) => (Number(b.eligible) - Number(a.eligible)) || ((a.key ?? Infinity) - (b.key ?? Infinity))
+  const order = (r: Ranked) => (r.eligible ? 0 : r.qaHeld ? 2 : 1)   // cấp được → hết hạn chưa duyệt → QA giữ
+  const ranked: Ranked[] = rows.map(row => {
+    const noTem = String(row.pallet_code ?? '').toUpperCase() === code
+    const expired = isExpiredDay(row.expiry_calc, today)
+    const approval = approvalOf(approvals, row, noTem)
+    const qaHeld = !!row.qa_status_id && qaHold.has(row.qa_status_id)
+    const eligible = isPickEligible(row, qaHold) && (!expired || approval?.status === 'APPROVED')
+    return { row, key: rotationSortKey(row, material, cfg.principle), eligible, noTem, qaHeld, expired, approval }
+  }).sort((a, b) => (order(a) - order(b)) || ((a.key ?? Infinity) - (b.key ?? Infinity))
       || (a.row.pallet_code ?? '').localeCompare(b.row.pallet_code ?? ''))
   return { principle: cfg.principle, required: cfg.required, source: cfg.source, material, ranked }
 }
-function mesRotationCheck(ctx: PickCtx, entry: PickRow) {
-  const best = ctx.ranked.find(r => r.eligible && r.key != null) ?? null
-  const scannedKey = rotationSortKey(entry, ctx.material, ctx.principle)
+/** Hàng nên lấy trước (cả có tem lẫn không tem) — null khi chưa có hàng nào cấp được có ngày */
+const bestOf = (ctx: PickCtx) => ctx.ranked.find(r => r.eligible && r.key != null) ?? null
+/** Chấm luân chuyển cho một khoá xếp (một tem vừa quét, hoặc một lô không tem đã chọn) — CÙNG luật cửa quét xuất */
+function mesRotationVerdict(ctx: PickCtx, scannedKey: number | null, scannedDate: string | null, isBest: (r: Ranked) => boolean) {
+  const best = bestOf(ctx)
   return {
     principle: ctx.principle, required: ctx.required, source: ctx.source, date_label: ROTATION_DATE_LABEL[ctx.principle],
-    scanned_date: rotationDateOf(entry, ctx.material, ctx.principle),
-    violation: !!best && best.row.id !== entry.id && isRotationViolation(scannedKey, best.key),
+    scanned_date: scannedDate,
+    violation: !!best && !isBest(best) && isRotationViolation(scannedKey, best.key),
     best_date: best ? rotationDateOf(best.row, ctx.material, ctx.principle) : null,
-    best_pallet_code: best?.row.pallet_code ?? null, best_location_code: best?.row.location?.location_code ?? null,
+    best_pallet_code: best && !best.noTem ? best.row.pallet_code : null, best_location_code: best?.row.location?.location_code ?? null,
+    /** hàng nên lấy trước là hàng KHÔNG tem (chọn ở "Không có tem") — kèm lô / NSX để người cấp tìm */
+    best_no_tem: !!best?.noTem, best_lot: best?.noTem ? lotOf(best.row.batch) : null,
+    best_production_date: best?.noTem ? dayOf(best.row.production_date) : null,
   }
 }
+function mesRotationCheck(ctx: PickCtx, entry: PickRow) {
+  return mesRotationVerdict(ctx, rotationSortKey(entry, ctx.material, ctx.principle), rotationDateOf(entry, ctx.material, ctx.principle),
+    r => r.row.id === entry.id)
+}
 function mesRotationMessage(r: ReturnType<typeof mesRotationCheck>): string {
-  const what = r.best_pallet_code ? ` (tem ${r.best_pallet_code})` : ''
+  const what = r.best_no_tem ? ` (hàng không tem${r.best_lot ? `, lô ${r.best_lot}` : ''})` : r.best_pallet_code ? ` (tem ${r.best_pallet_code})` : ''
   const where = r.best_location_code ? ` tại ${r.best_location_code}` : ''
   return `Kho yêu cầu lấy đúng ${ROTATION_LABEL[r.principle]}. Còn hàng ${r.date_label} ${r.best_date ?? '—'}${what}${where} phải dùng trước.`
 }
+/** Chặn lấy khác thứ tự khi kho / loại kho bật "bắt buộc" — một hàm cho hai cửa cấp (quét tem · chọn lô) */
+function rotationGate(req: Request, rot: ReturnType<typeof mesRotationCheck>, rawReason: string | undefined): { error?: [string, string]; override: string | null } {
+  if (!(rot.required && rot.violation)) return { override: null }
+  const raw = String(rawReason ?? '').trim()
+  if (!canRotationOverride(req)) return { error: ['ROTATION_VIOLATION', `${mesRotationMessage(rot)} Cần người có quyền duyệt lấy khác thứ tự.`], override: null }
+  if (!isRotationReason(raw.split(':')[0].trim())) return { error: ['ROTATION_REASON_REQUIRED', `${mesRotationMessage(rot)} Chọn lý do để tiếp tục.`], override: null }
+  return { override: raw.slice(0, 200) }
+}
+/** Tình trạng HẠN của một tem / lô với mẻ: hết hạn chưa · HSD · dòng QA duyệt (nếu có) */
+const expiryView = (r: Ranked | undefined | null) => r
+  ? { expired: r.expired, expiry_date: dayOf(r.row.expiry_calc), approval: r.approval }
+  : { expired: false, expiry_date: null, approval: null }
 const canRotationOverride = (req: Request): boolean =>
   req.user?.is_superadmin === true || (req.user?.module_permissions ?? {})['outbound']?.includes('rotation_override') === true
 
-// GET /wms/production/batches/:id/pick-list?material_id= — "LẤY Ở ĐÂU": tem của mã trong kho chế biến theo thứ tự luân
-// chuyển (như cột Vị trí lấy của Xuất kho): ô · NSX · HSD · %Date · còn cấp được · QA giữ. Thứ 1 = nên lấy trước.
+// GET /wms/production/batches/:id/pick-list?material_id= — "LẤY Ở ĐÂU" GOM THEO DATE như "Tồn kho theo %Date" của Xuất kho (user
+// 17/11: "1 mã có 200 pallet thì có 200 dòng ư?"). Hàng CÓ TEM gom theo (ngày luân chuyển · ô · tình trạng); hàng KHÔNG TEM gom theo
+// LÔ (NSX + mã lô — đơn vị chọn của cửa "Không có tem"); mỗi nhóm mở ra thấy từng tem / dòng tồn. Xếp như cửa cấp: cấp được (theo
+// ngày, nhóm ít hàng trước — dọn hàng lẻ) → hết hạn chưa QA duyệt → QA giữ. Hạng 1 = nên lấy trước, tính CHUNG cả có tem lẫn không tem.
 export const zPickListQuery = z.object({ material_id: zText(1, 64) })
+type PickItem = { entry_id: string; pallet_code: string | null; batch: string | null; location_code: string | null; available: number
+  import_date: string | null; expired: boolean; approval: ExpiryApproval | null }
+type PickGroup = { key: string; kind: 'TEM' | 'LOT'; state: 'OK' | 'EXPIRED' | 'QA'; rank: number | null
+  rot_date: string | null; pct_date: number | null; expiry_date: string | null; production_date: string | null; batch_lot: string | null
+  location_code: string | null; locations: string[]; available: number; count: number; qa_name: string | null
+  /** nhóm có hàng quá HSD (kể cả đã được QA duyệt cho mẻ — khi đó state = OK) */
+  expired: boolean; violation: boolean; approval: ExpiryApproval | null; items: PickItem[] }
+const PICK_ITEM_CAP = 3000   // kho chế biến chỉ giữ hàng vài ngày — chặn trần phòng dữ liệu lạ, nhóm vẫn cộng đủ
 export async function pickList(req: Request, res: Response) {
   try {
     const b = await loadBatch(req.params.id)
     if (!b) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy mẻ')
     if (!(await inScope(req, b.warehouse_id))) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
-    const ctx = await mesPickContext(b.warehouse_id, (req.query as unknown as z.infer<typeof zPickListQuery>).material_id)
+    const ctx = await mesPickContext(b.warehouse_id, (req.query as unknown as z.infer<typeof zPickListQuery>).material_id, b.id)
+    const best = bestOf(ctx)
+    const groups = new Map<string, PickGroup & { minKey: number | null }>()
+    let nItems = 0
+    for (const r of ctx.ranked) {
+      const row = r.row
+      const avail = availableOf(row)
+      if (avail <= 0) continue
+      const state: PickGroup['state'] = r.qaHeld ? 'QA' : r.expired && r.approval?.status !== 'APPROVED' ? 'EXPIRED' : 'OK'
+      const rotDate = rotationDateOf(row, ctx.material, ctx.principle)
+      const loc = row.location?.location_code ?? null
+      const pd = dayOf(row.production_date), lot = lotOf(row.batch)
+      const pct = computePctDate(row, ctx.material)
+      const gk = r.noTem ? `L|${pd ?? ''}|${lot ?? ''}|${state}` : `T|${rotDate ?? ''}|${loc ?? ''}|${state}`
+      let g = groups.get(gk)
+      if (!g) {
+        g = { key: gk, kind: r.noTem ? 'LOT' : 'TEM', state, rank: null, rot_date: rotDate, pct_date: pct, expiry_date: dayOf(row.expiry_calc),
+          production_date: pd, batch_lot: r.noTem ? lot : null, location_code: r.noTem ? null : loc, locations: [], available: 0, count: 0,
+          qa_name: r.qaHeld ? (row.qa_status?.name ?? row.qa_status?.code ?? null) : null, expired: false, violation: false,
+          approval: r.noTem ? r.approval : null, items: [], minKey: r.key }
+        groups.set(gk, g)
+      }
+      g.available += avail; g.count++
+      if (r.expired) g.expired = true
+      if (loc && !g.locations.includes(loc)) g.locations.push(loc)
+      if (pct != null && (g.pct_date == null || pct < g.pct_date)) g.pct_date = pct   // FIFO / LIFO gom theo NSX — HSD trên tem có thể khác nhau
+      if (r.key != null && (g.minKey == null || r.key < g.minKey)) g.minKey = r.key
+      if (nItems < PICK_ITEM_CAP) {
+        g.items.push({ entry_id: row.id, pallet_code: row.pallet_code, batch: row.batch ?? null, location_code: loc, available: avail,
+          import_date: dayOf(row.import_date), expired: r.expired, approval: r.noTem ? null : r.approval })
+        nItems++
+      }
+    }
+    const stateOrder = { OK: 0, EXPIRED: 1, QA: 2 } as const
+    const sorted = [...groups.values()].sort((a, b) => (stateOrder[a.state] - stateOrder[b.state])
+      || ((a.minKey ?? Infinity) - (b.minKey ?? Infinity)) || (a.available - b.available) || a.key.localeCompare(b.key))
     let rank = 0
-    const rows = ctx.ranked.slice(0, 200).map(({ row, eligible }) => ({
-      entry_id: row.id, pallet_code: row.pallet_code, batch: row.batch ?? null, location_code: row.location?.location_code ?? null,
-      production_date: row.production_date ? String(row.production_date).slice(0, 10) : null,
-      rot_date: rotationDateOf(row, ctx.material, ctx.principle), pct_date: computePctDate(row, ctx.material),
-      available: Math.max(Number(row.cartons_remaining ?? row.cartons_imported ?? 0) - Number(row.cartons_reserved ?? 0), 0),
-      qa_hold: !eligible, qa_name: row.qa_status?.name ?? row.qa_status?.code ?? null, rank: eligible ? ++rank : null,
-    }))
-    return ok(res, { principle: ctx.principle, required: ctx.required, source: ctx.source, date_label: ROTATION_DATE_LABEL[ctx.principle],
-      total: ctx.ranked.length, rows })
+    const out: PickGroup[] = sorted.map(({ minKey, ...g }) => ({ ...g,
+      rank: g.state === 'OK' ? ++rank : null,
+      violation: g.state === 'OK' && !!best && isRotationViolation(minKey, best.key) }))
+    return ok(res, {
+      principle: ctx.principle, required: ctx.required, source: ctx.source, date_label: ROTATION_DATE_LABEL[ctx.principle],
+      today: vnDayOf(new Date()), total: ctx.ranked.length, truncated: nItems >= PICK_ITEM_CAP,
+      best: best ? { kind: best.noTem ? 'LOT' : 'TEM', pallet_code: best.noTem ? null : best.row.pallet_code, location_code: best.row.location?.location_code ?? null,
+        rot_date: rotationDateOf(best.row, ctx.material, ctx.principle), batch_lot: best.noTem ? lotOf(best.row.batch) : null,
+        production_date: best.noTem ? dayOf(best.row.production_date) : null } : null,
+      tem_groups: out.filter(g => g.kind === 'TEM'), lot_groups: out.filter(g => g.kind === 'LOT'),
+    })
   } catch (e) { return failAny(res, e) }
 }
 
@@ -809,6 +909,8 @@ export async function pickList(req: Request, res: Response) {
 export const zConsumeLot = z.object({
   material_id: zText(1, 64), production_date: zDay.nullable(), batch_lot: zText(1, 60).nullable().optional(),
   qty: z.number().positive().max(10_000_000), qty_semantics: z.literal('base'),
+  // 17/11 — đồng bộ cửa quét tem: lấy khác thứ tự khi kho bật "bắt buộc" (mã lý do ROTATION_REASONS, quyền outbound.rotation_override)
+  rotation_override_reason: zText(1, 200).optional(),
 })
 export async function consumeLot(req: Request, res: Response) {
   try {
@@ -822,14 +924,57 @@ export async function consumeLot(req: Request, res: Response) {
     if (!m) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy mã nguyên liệu')
     const intErr = qtyIntegerError(body.qty, m)
     if (intErr) return fail(res, 422, 'QTY_NOT_INTEGER', intErr)
+    // LUÂN CHUYỂN — ĐỒNG BỘ cửa quét tem (17/11 "đồng bộ luôn phần không có tem"): lô đã chọn chấm như một tem — khoá xếp
+    // của lô = sớm nhất trong các dòng không tem của lô; so với hàng nên lấy trước của CẢ mã (có tem lẫn không tem).
+    const ctx = await mesPickContext(b.warehouse_id, body.material_id, b.id)
+    const lot = lotOf(body.batch_lot)
+    const inLot = (r: Ranked) => r.noTem && !r.qaHeld && dayOf(r.row.production_date) === body.production_date && lotOf(r.row.batch) === lot
+    const mine = ctx.ranked.filter(inLot)
+    const lotKey = mine.reduce<number | null>((k, r) => (r.key == null ? k : k == null ? r.key : Math.min(k, r.key)), null)
+    const head = mine.find(r => r.key === lotKey) ?? mine[0]
+    const rot = mesRotationVerdict(ctx, lotKey, head ? rotationDateOf(head.row, ctx.material, ctx.principle) : null, inLot)
+    const gate = rotationGate(req, rot, body.rotation_override_reason)
+    if (gate.error) return fail(res, 422, gate.error[0], gate.error[1])
+    // HẾT HẠN: cửa ghi mes_consume_lot tự chặn lô quá HSD chưa có QA duyệt cho mẻ này
     const { data, error } = await db.rpc('mes_consume_lot', { p: {
       batch_id: b.id, material_id: body.material_id, production_date: body.production_date, batch_lot: body.batch_lot ?? null,
       qty: body.qty, ...actor(req),
+      rotation: { violation: rot.violation, principle: rot.principle, best_date: rot.best_date, override_reason: gate.override },
     } })
     if (error) return mesFail(res, error)
     return ok(res, data)
   } catch (e) { return failAny(res, e) }
 }
+
+// ── NVL HẾT HẠN (user chốt 17/11 "chặn và cho qua khi QA duyệt") — duyệt TỪNG TEM hoặc TỪNG LÔ không tem, cho TỪNG MẺ ──
+//   POST /batches/:id/expiry-approvals         (consume)         người cấp gửi QA duyệt  → PENDING (đã REJECTED thì gửi lại)
+//   POST /batches/:id/expiry-approvals/decide  (approve_expired) QA duyệt / từ chối, kèm căn cứ — chưa có yêu cầu vẫn duyệt thẳng được
+// Cả hai đi hàm DB (mes_expiry_request / mes_expiry_decide): mẻ phải đang mở, đối tượng phải ở kho của mẻ và ĐANG hết hạn
+// (cùng định nghĩa `expiry_calc < hôm nay` với cửa cấp).
+const zExpirySubject = {
+  entry_id: zText(1, 100).optional(), material_id: zText(1, 64).optional(),
+  production_date: zDay.nullable().optional(), batch_lot: zText(1, 60).nullable().optional(),
+}
+export const zExpiryRequest = z.object({ ...zExpirySubject, note: zText(0, 500).optional() })
+export const zExpiryDecide = z.object({ ...zExpirySubject, decision: z.enum(['APPROVED', 'REJECTED']), note: zText(1, 500) })
+async function expiryCall(req: Request, res: Response, fn: 'mes_expiry_request' | 'mes_expiry_decide', extra: Record<string, unknown>) {
+  try {
+    const body = req.body as z.infer<typeof zExpiryRequest>
+    if (!body.entry_id && !body.material_id) return fail(res, 422, 'MES_SUBJECT', 'Chọn tem hoặc lô cần duyệt')
+    const b = await loadBatch(req.params.id)
+    if (!b) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy mẻ')
+    if (!(await inScope(req, b.warehouse_id))) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
+    const { data, error } = await db.rpc(fn, { p: {
+      batch_id: b.id, entry_id: body.entry_id ?? null, material_id: body.entry_id ? null : (body.material_id ?? null),
+      production_date: body.production_date ?? null, batch_lot: body.batch_lot ?? null, note: body.note ?? null, ...extra, ...actor(req),
+    } })
+    if (error) return mesFail(res, error)
+    return ok(res, data)
+  } catch (e) { return failAny(res, e) }
+}
+export const expiryRequest = (req: Request, res: Response) => expiryCall(req, res, 'mes_expiry_request', {})
+export const expiryDecide = (req: Request, res: Response) =>
+  expiryCall(req, res, 'mes_expiry_decide', { decision: (req.body as z.infer<typeof zExpiryDecide>).decision })
 
 // POST /wms/production/consumption/:id/reverse — huỷ dòng rút ghi nhầm (hoàn tồn, giữ vết)
 export const zReverse = z.object({ reason: zText(1, 500) })

@@ -375,6 +375,7 @@ export const MODULES = {
       approve_qa:   'QA duyệt / bỏ duyệt phiếu của mẻ (bước 2 — duyệt xong phiếu khoá, mới cấp nguyên liệu)',
       print_label:  'In TEM PALLET của mẻ (QR 1/n … n/n) để dán lên pallet nguyên liệu đã cấp',
       pour:         'ĐỔ BỒN: khai chu kỳ · số mẻ · bồn rồi quét tem pallet của mẻ',
+      approve_expired: 'QA DUYỆT / TỪ CHỐI cấp NGUYÊN LIỆU HẾT HẠN vào mẻ (từng tem / lô, từng mẻ, kèm căn cứ)',
       process_log: 'Ghi PHIẾU THEO DÕI của mẻ (và sửa riêng cấu trúc phiếu cho lần đó tại bàn) — QA xác nhận phiếu dùng quyền "QA giữ / thả / loại"',
     },
   },

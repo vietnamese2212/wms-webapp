@@ -1,5 +1,5 @@
 // FILE SINH TỰ ĐỘNG — `node scripts/gen-db-types.mjs` (từ information_schema STAGING). KHÔNG sửa tay.
-// Sinh lúc 2026-11-17T12:17:42.443Z · 124 bảng/view · 250 hàm · 0 enum
+// Sinh lúc 2026-11-17T13:18:30.135Z · 125 bảng/view · 255 hàm · 0 enum
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[]
 
 export type Database = {
@@ -3224,6 +3224,7 @@ export type Database = {
           rotation_principle: string | null
           rotation_best_date: string | null
           rotation_override_reason: string | null
+          expiry_approval_id: string | null
         }
         Insert: {
           id: string
@@ -3248,6 +3249,7 @@ export type Database = {
           rotation_principle?: string | null
           rotation_best_date?: string | null
           rotation_override_reason?: string | null
+          expiry_approval_id?: string | null
         }
         Update: {
           id?: string
@@ -3272,6 +3274,7 @@ export type Database = {
           rotation_principle?: string | null
           rotation_best_date?: string | null
           rotation_override_reason?: string | null
+          expiry_approval_id?: string | null
         }
         Relationships: []
       }
@@ -5129,6 +5132,72 @@ export type Database = {
           vehicle_model_id?: string | null
           extra_vehicle_model_ids?: string[]
           stop_seq?: number | null
+        }
+        Relationships: []
+      }
+      mes_expiry_approval: {
+        Row: {
+          id: string
+          batch_id: string
+          subject_key: string
+          entry_id: string | null
+          material_id: string
+          pallet_code: string | null
+          production_date: string | null
+          batch_lot: string | null
+          expiry_date: string | null
+          status: string
+          requested_by: string | null
+          requested_by_name: string | null
+          requested_at: string | null
+          decided_by: string | null
+          decided_by_name: string | null
+          decided_at: string | null
+          note: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id: string
+          batch_id: string
+          subject_key: string
+          entry_id?: string | null
+          material_id: string
+          pallet_code?: string | null
+          production_date?: string | null
+          batch_lot?: string | null
+          expiry_date?: string | null
+          status: string
+          requested_by?: string | null
+          requested_by_name?: string | null
+          requested_at?: string | null
+          decided_by?: string | null
+          decided_by_name?: string | null
+          decided_at?: string | null
+          note?: string | null
+          created_at?: string
+          updated_at: string
+        }
+        Update: {
+          id?: string
+          batch_id?: string
+          subject_key?: string
+          entry_id?: string | null
+          material_id?: string
+          pallet_code?: string | null
+          production_date?: string | null
+          batch_lot?: string | null
+          expiry_date?: string | null
+          status?: string
+          requested_by?: string | null
+          requested_by_name?: string | null
+          requested_at?: string | null
+          decided_by?: string | null
+          decided_by_name?: string | null
+          decided_at?: string | null
+          note?: string | null
+          created_at?: string
+          updated_at?: string
         }
         Relationships: []
       }
@@ -7362,6 +7431,18 @@ export type Database = {
         Args: { p_remaining: number | null; p_imported: number | null }
         Returns: string
       }
+      mes_expiry_decide: {
+        Args: { p: Json | null }
+        Returns: Json
+      }
+      mes_expiry_request: {
+        Args: { p: Json | null }
+        Returns: Json
+      }
+      mes_expiry_subject: {
+        Args: { p: Json | null; p_wh: string | null }
+        Returns: Json
+      }
       mes_genealogy: {
         Args: { p_kind: string | null; p_value: string | null; p_wh_ids?: unknown | null; p_limit?: number | null }
         Returns: Json
@@ -7369,6 +7450,10 @@ export type Database = {
       mes_log_stamp: {
         Args: { p: Json | null }
         Returns: Json
+      }
+      mes_lot_subject: {
+        Args: { p_material: string | null; p_date: string | null; p_lot: string | null }
+        Returns: string
       }
       mes_open_batch_wh: {
         Args: { p_batch_id: string | null }
@@ -7433,6 +7518,10 @@ export type Database = {
       mes_tank_transfer: {
         Args: { p: Json | null }
         Returns: Json
+      }
+      mes_vn_today: {
+        Args: Record<PropertyKey, never>
+        Returns: string
       }
       mes_wh_cum_in: {
         Args: { p_wh: string | null }

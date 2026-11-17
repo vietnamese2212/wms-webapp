@@ -120,6 +120,8 @@ const TABLE_QUERY_MAP: Record<string, string[][]> = {
   // Sản xuất — MES gđ1 (14/11): mẻ · sổ tiêu hao (rút NVL trừ InventoryEntry — bảng đó tự bắn tín hiệu tồn) · bồn · tồn trong bồn · sổ bồn
   production_batch:         [['prod-batches'], ['prod-batch'], ['prod-tanks'], ['prod-genealogy']],
   batch_consumption:        [['prod-batches'], ['prod-batch'], ['prod-stock'], ['prod-genealogy'], ['pallet-ledger'], ['prod-shift-report']],
+  // NVL hết hạn chờ QA duyệt (17/11) — trang mẻ (mục chờ duyệt) + form cấp ("Lấy ở đâu" nằm dưới prod-stock) đổi ngay khi QA bấm
+  mes_expiry_approval:      [['prod-batch'], ['prod-stock']],
   production_tank:          [['prod-tanks'], ['prod-tanks-for-run']],
   tank_lot:                 [['prod-tanks'], ['prod-batch'], ['prod-batches']],
   batch_requirement:        [['prod-batch']],

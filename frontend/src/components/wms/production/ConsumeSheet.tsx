@@ -1,9 +1,14 @@
 // CẤP NGUYÊN LIỆU CHO MẺ — form của BÀN LÀM VIỆC CỦA MẺ (MES 14/11; user: "nếu có QR code thì phải quét QR code và điền số lượng").
 //   • Quét tem: súng PDA / camera / gõ mã ⇒ tra tem trong KHO CỦA MẺ ⇒ nhập lượng ⇒ trừ đúng dòng tồn đó.
-//   • Không có tem: CHỈ cho hàng không có tem QR (tồn gộp theo NSX) — chọn mã ⇒ chọn lô ⇒ nhập lượng. Lô còn hàng trên tem ⇒ phải quét.
+//   • Không có tem: CHỈ cho hàng không có tem QR (tồn gộp) — chọn mã ⇒ chọn LÔ ⇒ nhập lượng. Lô còn hàng trên tem ⇒ phải quét.
+// Hai cửa CÙNG một khuôn (17/11 — "đồng bộ luôn phần không có tem … thông tin tương tự nhau, có nút expand"):
+//   • bảng "Lấy ở đâu" GOM THEO DATE như "Tồn kho theo %Date" của Xuất kho (MesStockGroups) — không còn mỗi pallet một dòng;
+//   • đúng / sai thứ tự luân chuyển do server chấm (cùng luật quét xuất), kho bật "bắt buộc" ⇒ lý do + quyền duyệt — cả hai cửa;
+//   • hàng HẾT HẠN bị chặn, chỉ cấp khi QA duyệt cho mẻ này (user chốt 17/11) — gửi QA duyệt ngay tại form; QA đứng tại bàn duyệt luôn.
 // Mở từ một dòng của bàn (`focusId`) ⇒ form biết đang cấp mã nào: tem khác mã bị từ chối, lượng điền sẵn = phần còn thiếu.
 // Sheet giữ mở sau mỗi lần cấp để quét liên tục; kết quả lần vừa cấp hiện ngay trên đầu.
 import { useEffect, useRef, useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import type { AxiosError } from 'axios'
 import { FormSheet } from '@/components/shared/FormSheet'
 import { SingleSelect } from '@/components/shared/SingleSelect'
@@ -11,12 +16,16 @@ import { QtyInput } from '@/components/shared/QtyInput'
 import { QRScanDialog } from '@/components/shared/QRScanDialog'
 import { ScanIcon } from '@/components/shared/ScanIcon'
 import { StatusBadge } from '@/components/shared/StatusBadge'
+import { PalletDetailDialog } from '@/components/shared/PalletDetailDialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { useDebouncedValue } from '@/hooks/useDebouncedValue'
 import { useWedgeScanner } from '@/hooks/useWedgeScanner'
-import { scanCheck, useConsumeScan, useConsumeLot, useProductionStock, usePickList, type BatchDetail, type ScanEntry, type StockLot, type PickList } from '@/api/productionHooks'
+import {
+  scanCheck, useConsumeScan, useConsumeLot, useProductionStock, usePickList, useExpiryRequest, useExpiryDecide,
+  type BatchDetail, type ScanEntry, type PickList, type PickGroup, type MesExpiry, type MesRotation, type ExpirySubject,
+} from '@/api/productionHooks'
 import { usePctBands } from '@/api/hooks'
 import { pctDateCls } from '@/utils/pctDateBands'
 import { ROTATION_REASONS } from '@/utils/rotation'
@@ -28,16 +37,31 @@ import { reqLineState } from '@/utils/reqTolerance'
 import { Check } from 'lucide-react'
 import { normalizeQR } from '@/utils/qr'
 import { formatDate } from '@/utils/formatters'
+import { MesStockGroups, pickSummary } from './MesStockGroups'
 
 const apiMsg = (e: unknown) => (e as AxiosError<{ error?: { message?: string } }>)?.response?.data?.error?.message ?? 'Lỗi không xác định'
 const avail = (e: ScanEntry) => Number(e.cartons_remaining ?? e.cartons_imported ?? 0) - Number(e.cartons_reserved ?? 0)
-const dayOf = (s: string | null | undefined) => (s ? String(s).slice(0, 10) : null)
 /** cùng luật qa_is_hold (BE): có trạng thái QA mà không phải OK = đang giữ */
 const qaHold = (e: ScanEntry) => !!(e.qa_status_id || e.qa_status) && e.qa_status?.code !== 'OK'
 /** lượng điền sẵn = phần còn thiếu, không vượt `cap`; mã có đơn vị nhập (bao / thùng) phải số nguyên đơn vị gốc ⇒ làm tròn LÊN
  *  (định mức × kế hoạch hay ra số lẻ — điền số lẻ là form mở ra đã báo lỗi, nút Xác nhận tắt) */
 const prefill = (need: number, cap: number, mat: MatUnits | null | undefined) =>
   need <= 0 ? 0 : Math.min(qtyIntegerError(need, mat ?? null) ? Math.ceil(need - 1e-9) : need, cap)
+/** khoá LÔ ổn định khi lô đổi tình trạng (vd QA vừa duyệt lô hết hạn ⇒ nhóm đổi từ "Hết hạn" sang "cấp được") */
+const lotIdOf = (g: PickGroup) => `${g.production_date ?? ''}|${g.batch_lot ?? ''}`
+const NO_GROUPS: PickGroup[] = []
+/** tem vừa quét trong danh sách "Lấy ở đâu" (tình trạng SỐNG: QA duyệt ở máy khác ⇒ realtime đổi ngay) */
+function findTem(list: PickList, entryId: string) {
+  for (const g of list.tem_groups) { const item = g.items.find(i => i.entry_id === entryId); if (item) return { group: g, item } }
+  return null
+}
+/** kết luận luân chuyển của một LÔ đã chọn — server đã chấm `violation` cho từng nhóm (cùng hàm với cửa consume-lot) */
+const rotationOfGroup = (list: PickList, g: PickGroup): MesRotation => ({
+  principle: list.principle, required: list.required, source: list.source, date_label: list.date_label,
+  scanned_date: g.rot_date, violation: g.violation,
+  best_date: list.best?.rot_date ?? null, best_pallet_code: list.best?.pallet_code ?? null, best_location_code: list.best?.location_code ?? null,
+  best_no_tem: list.best?.kind === 'LOT', best_lot: list.best?.batch_lot ?? null, best_production_date: list.best?.production_date ?? null,
+})
 
 export function ConsumeSheet({ open, onClose, batch, focusId }: {
   open: boolean; onClose: () => void; batch: BatchDetail
@@ -54,17 +78,22 @@ export function ConsumeSheet({ open, onClose, batch, focusId }: {
   const [done, setDone] = useState<string | null>(null)
   // lấy khác thứ tự khi kho bật "bắt buộc" (như quét xuất): lý do trong danh sách cố định + quyền outbound.rotation_override
   const [rotReason, setRotReason] = useState('')
-  const [showAllPick, setShowAllPick] = useState(false)
+  const [detailId, setDetailId] = useState<string | null>(null)
+  const [scanAt, setScanAt] = useState(0)
+  const qc = useQueryClient()
   const perms = useAuthStore(s => s.user?.module_permissions) as ModulePermissions | null | undefined
   const canRotOverride = can(perms ?? null, 'outbound', 'rotation_override')
+  const canApproveExpired = can(perms ?? null, 'production', 'approve_expired')
   const pctBands = usePctBands()
   // đường "Không có tem"
   const [matTerm, setMatTerm] = useState('')
   const [matId, setMatId] = useState('')
-  const [lotKey, setLotKey] = useState('')
+  const [lotSel, setLotSel] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
   const consumeScan = useConsumeScan()
   const consumeLot = useConsumeLot()
+  const expReq = useExpiryRequest()
+  const expDec = useExpiryDecide()
 
   const focus = focusId ? batch.board.find(r => r.material_id === focusId) ?? null : null
   const boardMat = (materialId: string | undefined) => batch.board.find(x => x.material_id === materialId) ?? null
@@ -76,7 +105,7 @@ export function ConsumeSheet({ open, onClose, batch, focusId }: {
 
   useEffect(() => {
     if (!open) return
-    reset(); setDone(null); setMatTerm(''); setLotKey('')
+    reset(); setDone(null); setMatTerm(''); setLotSel('')
     // dòng có hàng KHÔNG tem và không còn tem nào ⇒ vào thẳng "Không có tem"; còn lại luôn bắt đầu bằng quét
     const lotFirst = !!focus && Number(focus.tem_pallets) === 0 && Number(focus.available_no_tem) > 0
     setMode(lotFirst ? 'LOT' : 'SCAN'); setMatId(lotFirst ? focus.material_id : '')
@@ -86,89 +115,117 @@ export function ConsumeSheet({ open, onClose, batch, focusId }: {
   async function lookup(raw: string) {
     const c = normalizeQR(raw)
     if (!c) return
-    setCode(c); setErr(''); setEntry(null); setLooking(true)
+    setCode(c); setErr(''); setEntry(null); setRotReason(''); setLooking(true)
     try {
       const e = await scanCheck(batch.id, c)
       if (focus && e.material_id !== focus.material_id) {
         setErr(`Tem này là mã ${e.material?.material_code ?? ''} — đang cấp ${focus.material_code}. Quét đúng tem, hoặc đóng form rồi bấm "Quét cấp NVL" ở đầu bàn để cấp mã khác.`)
         return
       }
-      setEntry(e)
+      setEntry(e); setScanAt(Date.now())
       setQty(qaHold(e) ? 0 : prefill(needOf(e.material_id), avail(e), e.material ?? boardMat(e.material_id)))   // điền sẵn phần còn thiếu (không vượt lượng trên tem)
+      // quét lại = muốn tình trạng MỚI NHẤT: tải lại "Lấy ở đâu" để bảng và tem vừa quét nói cùng một chuyện (vd QA vừa duyệt)
+      void qc.invalidateQueries({ queryKey: ['prod-stock', 'pick-list', batch.id] })
     }
     catch (e) { setErr(apiMsg(e)) }
     finally { setLooking(false) }
   }
-  // Súng PDA nghe suốt lúc ở chế độ quét, KỂ CẢ khi đang hiện một tem: thấy nhắc "còn lô HSD sớm hơn" thì bắn ngay tem đúng là thay.
+  // Súng PDA nghe suốt lúc ở chế độ quét, KỂ CẢ khi đang hiện một tem: thấy nhắc "sai thứ tự" thì bắn ngay tem đúng là thay.
   // Bắn trúng lúc con trỏ ở ô lượng: máy đọc trả lại số trong ô rồi mới phát mã (useWedgeScanner) — số đang nhập không bị chuỗi tem phá.
   useWedgeScanner(c => { void lookup(c) }, open && mode === 'SCAN' && !camOpen && !consumeScan.isPending, { exclusive: true })
 
-  // LUÂN CHUYỂN (17/11 — "bản chất nó cũng là 1 loại xuất hàng"): server chấm bằng CÙNG luật cửa quét xuất — nguyên tắc
-  // FEFO / FIFO / LIFO + "bắt buộc" theo cấu hình Kho → Loại kho. Không bắt buộc ⇒ chỉ nhắc (user chốt 14/11 "nhắc thôi");
-  // bắt buộc ⇒ sai thứ tự phải có quyền duyệt + lý do. Màn hình KHÔNG tự so ngày (bản tự so cũ chỉ biết HSD ghi trên tem).
-  const rot = entry?.rotation ?? null
-  const rotBlocked = mode === 'SCAN' && !!rot?.violation && rot.required && (!canRotOverride || !rotReason)
-  // "Lấy ở đâu": tem của mã đang cấp theo thứ tự luân chuyển — như cột Vị trí lấy của Xuất kho
-  const pickMatId = mode === 'SCAN' ? (entry?.material_id ?? focus?.material_id) : undefined
+  // "LẤY Ở ĐÂU" gom theo date — SCAN: mã của tem vừa quét / dòng đang cấp · LOT: mã đã chọn. Server gom + xếp + chấm.
+  const pickMatId = mode === 'SCAN' ? (entry?.material_id ?? focus?.material_id) : (matId || undefined)
   const pick = usePickList(open ? batch.id : undefined, pickMatId)
+  const list = pick.data ?? null
+
+  // ── Quét tem ──
+  // tình trạng hạn của tem vừa quét: lấy bản MỚI HƠN giữa kết quả tra tem và danh sách "Lấy ở đâu" (danh sách đổi theo realtime khi
+  // QA duyệt ở máy khác; quét lại thì kết quả tra là mới nhất — bản cũ của danh sách không được đè lên nó)
+  const live = entry && list ? findTem(list, entry.id) : null
+  const liveExp: MesExpiry | null = live ? { expired: live.item.expired, expiry_date: live.group.expiry_date, approval: live.item.approval } : null
+  const scanExp: MesExpiry | null = entry ? (liveExp && pick.dataUpdatedAt >= scanAt ? liveExp : entry.expiry ?? liveExp) : null
   const offPlan = !!entry && batch.board.some(r => r.required != null) && !batch.board.some(r => r.required != null && r.material_id === entry.material_id)
 
+  // ── Không có tem ──
   const term = useDebouncedValue(matTerm, 250)
   const mats = useProductionStock(open && mode === 'LOT' ? batch.warehouse_id : undefined, undefined, term)
   // chỉ mã còn hàng KHÔNG tem mới chọn lô bằng tay
   const matList = (mats.data?.materials ?? []).filter(m => Number(m.available_no_tem ?? 0) > 0)
-  const lotsQ = useProductionStock(matId ? batch.warehouse_id : undefined, matId || undefined)
-  const lots = lotsQ.data?.lots ?? []
-  const keyOf = (l: StockLot) => `${dayOf(l.production_date) ?? ''}|${l.batch_lot ?? ''}`
-  const free = (l: StockLot) => Number(l.available_no_tem ?? 0)
-  const lot = lots.find(l => keyOf(l) === lotKey) ?? null
   const selMat = matList.find(m => m.material_id === matId)
   const [matMemo, setMatMemo] = useState<(MatUnits & { material_code: string; material_name: string | null }) | null>(null)
   useEffect(() => { if (selMat) setMatMemo(selMat) }, [selMat])
   const focusMat = focus && focus.material_id === matId ? focus : null
   const lotMat: (MatUnits & { material_code: string }) | null = selMat ?? focusMat ?? matMemo
-  useEffect(() => { setLotKey(''); setQty(0) }, [matId])
-  // chọn sẵn lô HSD sớm nhất còn cấp được — chạy lại cả khi lô đang chọn bị bỏ (mở lại form cùng mã: danh sách lô không đổi tham chiếu)
+  const lotGroups = mode === 'LOT' ? (list?.lot_groups ?? NO_GROUPS) : NO_GROUPS
+  const lotG = lotGroups.find(g => lotIdOf(g) === lotSel && g.state !== 'QA') ?? null
+  useEffect(() => { setLotSel(''); setQty(0) }, [matId])
+  // chọn sẵn lô nên lấy trước (hạng nhỏ nhất) — chạy lại khi lô đang chọn hết hàng / biến mất
   useEffect(() => {
-    if (!lots.length || lots.some(l => keyOf(l) === lotKey && free(l) > 0)) return
-    const first = lots.find(l => free(l) > 0)
-    if (first) { setLotKey(keyOf(first)); setQty(prefill(needOf(matId), free(first), boardMat(matId) ?? lotMat)) }
-  }, [lots, lotKey]) // eslint-disable-line react-hooks/exhaustive-deps
-  const firstFree = lots.find(l => free(l) > 0)
-  const lotNotFirst = !!lot && !!firstFree && keyOf(lot) !== keyOf(firstFree)
+    if (mode !== 'LOT' || !lotGroups.length || lotGroups.some(g => lotIdOf(g) === lotSel && g.state !== 'QA')) return
+    const first = lotGroups.find(g => g.state === 'OK')
+    if (first) { setLotSel(lotIdOf(first)); setQty(prefill(needOf(matId), first.available, boardMat(matId) ?? lotMat)) }
+  }, [lotGroups, lotSel, mode]) // eslint-disable-line react-hooks/exhaustive-deps
+  const lotExp: MesExpiry | null = lotG ? { expired: lotG.expired, expiry_date: lotG.expiry_date, approval: lotG.approval } : null
+
+  // ── chung hai cửa: luân chuyển (server chấm) · hạn (QA duyệt) ──
+  const rot: MesRotation | null = mode === 'SCAN' ? (entry?.rotation ?? null) : (lotG && list ? rotationOfGroup(list, lotG) : null)
+  const exp = mode === 'SCAN' ? scanExp : lotExp
+  const expBlocked = !!exp?.expired && exp.approval?.status !== 'APPROVED'
+  const rotBlocked = !!rot?.violation && rot.required && (!canRotOverride || !rotReason)
+  const subject: ExpirySubject | null = mode === 'SCAN'
+    ? (entry ? { entry_id: entry.id } : null)
+    : (lotG && matId ? { material_id: matId, production_date: lotG.production_date, batch_lot: lotG.batch_lot } : null)
 
   const mat: MatUnits | null = mode === 'SCAN' ? (entry?.material ?? null) : lotMat
-  const max = mode === 'SCAN' ? (entry ? avail(entry) : 0) : (lot ? free(lot) : 0)
+  const max = mode === 'SCAN' ? (entry ? avail(entry) : 0) : (lotG ? lotG.available : 0)
   const intErr = qty > 0 ? qtyIntegerError(qty, mat) : null
   const over = qty > max + 1e-9
   const saving = consumeScan.isPending || consumeLot.isPending
   const held = mode === 'SCAN' && !!entry && qaHold(entry)
-  const canSave = qty > 0 && !over && !intErr && !saving && !held && !rotBlocked && (mode === 'SCAN' ? !!entry : !!lot && free(lot) > 0)
+  const canSave = qty > 0 && !over && !intErr && !saving && !held && !rotBlocked && !expBlocked && (mode === 'SCAN' ? !!entry : !!lotG && lotG.available > 0)
   const unitText = (n: number) => qtyCode(n, mat)
+  const overrideReason = rot?.violation && rot.required && rotReason ? rotReason : undefined
 
   async function submit() {
     setErr('')
     try {
       if (mode === 'SCAN' && entry) {
-        const r = await consumeScan.mutateAsync({ batchId: batch.id, entry_id: entry.id, qty,
-          rotation_override_reason: rot?.violation && rot.required && rotReason ? rotReason : undefined })
+        const r = await consumeScan.mutateAsync({ batchId: batch.id, entry_id: entry.id, qty, rotation_override_reason: overrideReason })
         const row = r.rows[0]
         setDone(`Đã cấp ${unitText(qty)} từ tem ${entry.pallet_code} — tem còn ${unitText(Number(row?.remaining ?? 0))}${row?.rotation_violation ? ' · ghi nhận lấy khác thứ tự' : ''}`)
         reset()
         setTimeout(() => inputRef.current?.focus(), 50)
-      } else if (lot && matId) {
-        const r = await consumeLot.mutateAsync({ batchId: batch.id, material_id: matId, production_date: dayOf(lot.production_date), batch_lot: lot.batch_lot?.trim() || null, qty })
-        setDone(`Đã cấp ${unitText(qty)} ${lotMat?.material_code ?? ''} theo lô ${lot.batch_lot ?? formatDate(dayOf(lot.production_date) ?? '')} — trừ ${r.rows.length} dòng tồn (HSD sớm trước)`)
-        setQty(0)
+      } else if (lotG && matId) {
+        const r = await consumeLot.mutateAsync({ batchId: batch.id, material_id: matId, production_date: lotG.production_date, batch_lot: lotG.batch_lot, qty,
+          rotation_override_reason: overrideReason })
+        setDone(`Đã cấp ${unitText(qty)} ${lotMat?.material_code ?? ''} theo lô ${lotG.batch_lot ?? formatDate(lotG.production_date ?? '')} — trừ ${r.rows.length} dòng tồn${r.rows[0]?.rotation_violation ? ' · ghi nhận lấy khác thứ tự' : ''}`)
+        setQty(0); setRotReason('')
       }
     } catch (e) { setErr(apiMsg(e)) }
   }
+  async function requestQa() {
+    if (!subject) return
+    setErr('')
+    try { await expReq.mutateAsync({ batchId: batch.id, subject }) } catch (e) { setErr(apiMsg(e)) }
+  }
+  async function decideQa(decision: 'APPROVED' | 'REJECTED', note: string) {
+    if (!subject) return
+    setErr('')
+    try { await expDec.mutateAsync({ batchId: batch.id, subject, decision, note }) } catch (e) { setErr(apiMsg(e)) }
+  }
   const focusNeed = focus ? needOf(focus.material_id) : 0
+  const pickMat: MatUnits | null = (mode === 'SCAN' ? entry?.material : lotMat) ?? focus ?? null
+  const temGroups = list?.tem_groups ?? NO_GROUPS
+  const expiryLine = exp?.expired ? (
+    <ExpiryLine exp={exp} what={mode === 'SCAN' ? 'Tem này' : 'Lô này'} today={list?.today ?? null} canApprove={canApproveExpired}
+      busy={expReq.isPending || expDec.isPending} onRequest={() => void requestQa()} onDecide={(d, n) => void decideQa(d, n)} />
+  ) : null
 
   return (
     <FormSheet open={open} onClose={onClose} widthClass="sm:max-w-xl"
       title={focus ? `Cấp ${focus.material_code} cho mẻ ${batch.batch_code}` : `Cấp nguyên liệu cho mẻ ${batch.batch_code}`}
-      description={`Chỉ cấp được hàng đang nằm ở kho chế biến ${batch.warehouse?.name ?? ''}, không bị QA giữ. Hàng có tem QR phải quét tem.`}
+      description={`Chỉ cấp hàng đang ở kho chế biến ${batch.warehouse?.name ?? ''}, không bị QA giữ; hàng hết hạn cần QA duyệt. Hàng có tem QR phải quét tem.`}
       footer={<>
         <Button variant="outline" size="sm" className="h-8" onClick={onClose}>Xong</Button>
         <Button size="sm" className="h-8" disabled={!canSave} onClick={() => void submit()}>{saving ? 'Đang ghi…' : 'Xác nhận cấp'}</Button>
@@ -220,22 +277,30 @@ export function ConsumeSheet({ open, onClose, batch, focusId }: {
               <div className="flex items-center gap-1.5 flex-wrap">
                 <span className="font-mono font-semibold break-all">{entry.pallet_code}</span>
                 {qaHold(entry) && <StatusBadge tone="red">QA giữ</StatusBadge>}
+                {scanExp?.expired && <StatusBadge tone="red">Hết hạn</StatusBadge>}
               </div>
               <div><span className="font-mono font-semibold">{entry.material?.material_code}</span> {entry.material?.short_name ?? ''}</div>
               <div className="text-slate-600">NSX {entry.production_date ? formatDate(String(entry.production_date).slice(0, 10)) : '—'}
-                {' · '}HSD {entry.expiry_date ? formatDate(String(entry.expiry_date).slice(0, 10)) : '—'}
+                {' · '}HSD {scanExp?.expiry_date ? formatDate(scanExp.expiry_date) : entry.expiry_date ? formatDate(String(entry.expiry_date).slice(0, 10)) : '—'}
                 {entry.batch ? ` · lô ${entry.batch}` : ''}{entry.location ? ` · ô ${entry.location.location_code}` : ''}
                 {entry.pct_date != null && <> · %Date <b className={`tabular-nums ${pctDateCls(entry.pct_date, pctBands)}`}>{Math.floor(entry.pct_date)}%</b></>}</div>
               <div>Trên tem còn: <span className="font-semibold tabular-nums">{unitText(avail(entry))}</span>
                 {!focus && needOf(entry.material_id) > 0 && <> · mẻ còn thiếu <span className="font-semibold tabular-nums text-amber-700">{unitText(needOf(entry.material_id))}</span></>}</div>
               {offPlan && <div className="rounded bg-amber-50 border border-amber-200 px-2 py-1 text-amber-800">Mã này không có trong yêu cầu của mẻ — vẫn cấp được, sẽ hiện là "ngoài yêu cầu".</div>}
               {held && <div className="rounded bg-red-50 border border-red-200 px-2 py-1 text-red-700">Tem đang bị QA giữ ({entry.qa_status?.name ?? entry.qa_status?.code ?? 'chưa duyệt'}) — không cấp được. Quét tem khác, hoặc nhờ QA đổi trạng thái.</div>}
-              {rot && !held && <RotationLine rot={rot} reason={rotReason} onReason={setRotReason} canOverride={canRotOverride} />}
+              {!held && expiryLine}
+              {rot && !held && !expBlocked && <RotationLine rot={rot} what="tem" reason={rotReason} onReason={setRotReason} canOverride={canRotOverride} />}
             </div>
           )}
-          {pick.data && pick.data.rows.length > 0 && (
-            <PickTable list={pick.data} scannedId={entry?.id ?? null} unit={(n: number) => qtyCode(n, entry?.material ?? focus ?? null)}
-              bands={pctBands} showAll={showAllPick} onShowAll={() => setShowAllPick(true)} />
+          {list && temGroups.length > 0 && (
+            <div>
+              <p className="text-[11px] font-semibold text-slate-600 mb-0.5">Lấy ở đâu <span className="font-normal text-slate-500">· {pickSummary(list, temGroups, 'tem')}</span></p>
+              <MesStockGroups groups={temGroups} dateLabel={list.date_label} mat={pickMat} bands={pctBands}
+                highlightEntryId={entry?.id ?? null} onOpenPallet={setDetailId} testId="pick-list" />
+            </div>
+          )}
+          {list && list.best?.kind === 'LOT' && (
+            <p className="text-amber-700">Hàng nên lấy trước là hàng KHÔNG tem{list.best.batch_lot ? ` (lô ${list.best.batch_lot})` : ''} — cấp ở "Không có tem".</p>
           )}
         </>)}
 
@@ -251,43 +316,27 @@ export function ConsumeSheet({ open, onClose, batch, focusId }: {
           )}
           {matId && (
             <div>
-              <Label className="text-xs">Lô <span className="text-red-500">*</span></Label>
-              <div className="mt-0.5 overflow-auto border rounded-lg">
-                <table className="w-full">
-                  <thead><tr className="bg-slate-50 text-[9px] text-slate-500">
-                    <th className="px-2 py-1 text-left whitespace-nowrap" />
-                    <th className="px-2 py-1 text-left whitespace-nowrap">NSX</th><th className="px-2 py-1 text-left whitespace-nowrap">Mã lô</th>
-                    <th className="px-2 py-1 text-left whitespace-nowrap">HSD</th><th className="px-2 py-1 text-right whitespace-nowrap">Cấp được{lotMat ? ` (${matUnitCode(lotMat)})` : ''}</th>
-                  </tr></thead>
-                  <tbody>
-                    {!lots.length && <tr><td colSpan={5} className="px-2 py-1.5 text-slate-400 whitespace-nowrap">{lotsQ.isLoading ? 'Đang tải…' : 'Không còn lô nào cấp được'}</td></tr>}
-                    {lots.map(l => {
-                      const k = keyOf(l)
-                      const f = free(l)
-                      return (
-                        <tr key={k} className={`border-t border-slate-100 ${f > 0 ? 'cursor-pointer' : 'text-slate-400'} ${k === lotKey ? 'bg-sky-50' : ''}`}
-                          onClick={() => { if (f > 0) { setLotKey(k); setQty(prefill(needOf(matId), f, boardMat(matId) ?? lotMat)) } }}>
-                          <td className="px-2 py-1.5"><input type="radio" readOnly disabled={f <= 0} checked={k === lotKey} className="h-3.5 w-3.5" /></td>
-                          <td className="px-2 py-1.5 whitespace-nowrap tabular-nums">{l.production_date ? formatDate(dayOf(l.production_date)!) : '—'}</td>
-                          <td className="px-2 py-1.5 whitespace-nowrap font-mono">{l.batch_lot ?? <span className="text-slate-300">—</span>}</td>
-                          <td className="px-2 py-1.5 whitespace-nowrap tabular-nums">{l.expiry_date ? formatDate(l.expiry_date) : '—'}</td>
-                          <td className="px-2 py-1.5 whitespace-nowrap text-right font-semibold tabular-nums">
-                            {f > 0 ? qtyNum(f, lotMat) : <span className="font-normal">có tem — quét</span>}
-                            {f > 0 && Number(l.tem_pallets ?? 0) > 0 && <span className="ml-1 font-normal text-slate-400">+ {l.tem_pallets} tem</span>}
-                          </td>
-                        </tr>
-                      )
-                    })}
-                  </tbody>
-                </table>
+              <Label className="text-xs">Lô <span className="text-red-500">*</span>
+                {list && lotGroups.length > 0 && <span className="font-normal text-slate-500"> · {pickSummary(list, lotGroups, 'dòng')}</span>}</Label>
+              <div className="mt-0.5">
+                {pick.isLoading ? <p className="text-slate-400">Đang tải…</p>
+                  : lotGroups.length > 0 && list ? (
+                    <MesStockGroups groups={lotGroups} dateLabel={list.date_label} mat={pickMat} bands={pctBands}
+                      selectedId={lotSel} idOf={lotIdOf} onSelect={g => { setLotSel(lotIdOf(g)); setRotReason(''); setQty(prefill(needOf(matId), g.available, boardMat(matId) ?? lotMat)) }}
+                      testId="lot-list" />
+                  ) : <p className="text-slate-500">{temGroups.length ? 'Mã này chỉ còn hàng trên pallet / bao có tem — bấm "Quét tem" để cấp.' : 'Không còn lô nào cấp được.'}</p>}
               </div>
-              {lots.length > 0 && !firstFree && <p className="mt-1 text-amber-700">Mã này chỉ còn hàng trên pallet / bao có tem — bấm "Quét tem" để cấp.</p>}
-              {lotNotFirst && <p className="mt-1 text-amber-700">Lô này không phải lô HSD sớm nhất — kiểm lại trước khi cấp.</p>}
+              {lotG && (expiryLine || rot) && (
+                <div className="mt-1.5 space-y-1">
+                  {expiryLine}
+                  {rot && !expBlocked && <RotationLine rot={rot} what="lô" reason={rotReason} onReason={setRotReason} canOverride={canRotOverride} />}
+                </div>
+              )}
             </div>
           )}
         </>)}
 
-        {(mode === 'SCAN' ? !!entry && !held : !!lot && free(lot) > 0) && (
+        {(mode === 'SCAN' ? !!entry && !held : !!lotG && lotG.available > 0) && (
           // Enter ở ô lượng = Xác nhận cấp (vòng PDA: bắn tem → Enter). Enter của súng bị máy đọc chặn trước khi tới đây.
           <div onKeyDown={e => { if (e.key === 'Enter' && canSave) { e.preventDefault(); void submit() } }}>
             <div className="flex items-center justify-between gap-2">
@@ -301,15 +350,16 @@ export function ConsumeSheet({ open, onClose, batch, focusId }: {
         )}
         {err && <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-red-700">{err}</div>}
       </div>
+      {detailId && <PalletDetailDialog entryId={detailId} onClose={() => setDetailId(null)} />}
       <QRScanDialog open={camOpen} onClose={() => setCamOpen(false)} warehouseId={batch.warehouse_id}
         title="Quét tem nguyên liệu" onScan={t => { setCamOpen(false); void lookup(t) }} />
     </FormSheet>
   )
 }
 
-// ── Kết quả luân chuyển của tem vừa quét (server chấm — cùng luật quét xuất) ──
-function RotationLine({ rot, reason, onReason, canOverride }: {
-  rot: NonNullable<ScanEntry['rotation']>; reason: string; onReason: (v: string) => void; canOverride: boolean
+// ── Kết quả luân chuyển của tem / lô đang chọn (server chấm — cùng luật quét xuất) ──
+function RotationLine({ rot, what, reason, onReason, canOverride }: {
+  rot: MesRotation; what: 'tem' | 'lô'; reason: string; onReason: (v: string) => void; canOverride: boolean
 }) {
   const rule = `${rot.principle}${rot.source === 'TYPE' ? ' (theo Loại kho)' : ''}`
   if (!rot.violation) {
@@ -317,9 +367,14 @@ function RotationLine({ rot, reason, onReason, canOverride }: {
       ? <div className="rounded bg-green-50 border border-green-200 px-2 py-1 text-green-800" data-testid="rotation-ok">Đúng thứ tự {rule}{rot.scanned_date ? ` · ${rot.date_label} ${formatDate(rot.scanned_date)}` : ''}</div>
       : null
   }
-  const where = `Còn tem ${rot.best_pallet_code ?? ''} (${rot.date_label} ${rot.best_date ? formatDate(rot.best_date) : '—'})${rot.best_location_code ? ` ở ô ${rot.best_location_code}` : ''} phải dùng trước.`
+  const when = `${rot.date_label} ${rot.best_date ? formatDate(rot.best_date) : '—'}`
+  const where = rot.best_no_tem
+    ? `Còn hàng không tem${rot.best_lot ? ` lô ${rot.best_lot}` : ''} (${when}) phải dùng trước.`
+    : `Còn tem ${rot.best_pallet_code ?? ''} (${when})${rot.best_location_code ? ` ở ô ${rot.best_location_code}` : ''} phải dùng trước.`
+  // cách sửa tuỳ đang ở cửa nào và hàng đúng là có tem hay không tem
+  const fix = rot.best_no_tem ? (what === 'lô' ? 'Chọn lô đó là thay' : 'Cấp ở "Không có tem"') : (what === 'tem' ? 'Bắn tem đó là thay' : 'Quét tem đó ở "Quét tem"')
   if (!rot.required) {
-    return <div className="rounded bg-amber-50 border border-amber-200 px-2 py-1 text-amber-800" data-testid="rotation-warn">Sai thứ tự {rule}: {where} Bắn tem đó là thay — vẫn cấp tem này được.</div>
+    return <div className="rounded bg-amber-50 border border-amber-200 px-2 py-1 text-amber-800" data-testid="rotation-warn">Sai thứ tự {rule}: {where} {fix} — vẫn cấp {what} này được.</div>
   }
   return (
     <div className="rounded bg-red-50 border border-red-200 px-2 py-1.5 text-red-700 space-y-1.5" data-testid="rotation-block">
@@ -336,41 +391,39 @@ function RotationLine({ rot, reason, onReason, canOverride }: {
   )
 }
 
-// ── "Lấy ở đâu": tem của mã theo thứ tự luân chuyển (như cột Vị trí lấy của Xuất kho) ──
-function PickTable({ list, scannedId, unit, bands, showAll, onShowAll }: {
-  list: PickList; scannedId: string | null; unit: (n: number) => string
-  bands: ReturnType<typeof usePctBands>; showAll: boolean; onShowAll: () => void
+// ── Hàng HẾT HẠN (user chốt 17/11 "chặn và cho qua khi QA duyệt"): gửi QA duyệt · QA đứng tại bàn duyệt / từ chối luôn ──
+function ExpiryLine({ exp, what, today, canApprove, busy, onRequest, onDecide }: {
+  exp: MesExpiry; what: string; today: string | null; canApprove: boolean; busy: boolean
+  onRequest: () => void; onDecide: (d: 'APPROVED' | 'REJECTED', note: string) => void
 }) {
-  const rows = showAll ? list.rows : list.rows.slice(0, 6)
+  const [note, setNote] = useState('')
+  const a = exp.approval
+  const hsd = exp.expiry_date ? formatDate(exp.expiry_date) : '—'
+  const over = today && exp.expiry_date ? Math.round((Date.parse(today) - Date.parse(exp.expiry_date)) / 86_400_000) : null
+  if (a?.status === 'APPROVED') {
+    return <div className="rounded bg-green-50 border border-green-200 px-2 py-1 text-green-800" data-testid="expiry-approved">
+      Hết hạn (HSD {hsd}) — QA {a.decided_by_name ?? ''} đã duyệt cho mẻ này{a.note ? `: ${a.note}` : ''}.</div>
+  }
   return (
-    <div data-testid="pick-list">
-      <p className="text-[11px] font-semibold text-slate-600 mb-0.5">Lấy ở đâu <span className="font-normal text-slate-500">· {list.principle}{list.required ? ' bắt buộc' : ''} · {list.total} tem</span></p>
-      <div className="overflow-auto border rounded-lg">
-        <table className="w-full">
-          <thead><tr className="bg-slate-50 text-[9px] text-slate-500">
-            <th className="px-2 py-1 text-left whitespace-nowrap">#</th>
-            <th className="px-2 py-1 text-left whitespace-nowrap">Tem</th>
-            <th className="px-2 py-1 text-left whitespace-nowrap">Ô</th>
-            <th className="px-2 py-1 text-left whitespace-nowrap">{list.date_label}</th>
-            <th className="px-2 py-1 text-right whitespace-nowrap">%Date</th>
-            <th className="px-2 py-1 text-right whitespace-nowrap">Còn</th>
-          </tr></thead>
-          <tbody>
-            {rows.map(r => (
-              <tr key={r.entry_id} className={`border-t border-slate-100 ${r.entry_id === scannedId ? 'bg-sky-50' : ''} ${r.qa_hold ? 'text-slate-400' : ''}`}>
-                <td className="px-2 py-1 whitespace-nowrap tabular-nums">{r.qa_hold ? <StatusBadge tone="red">QA giữ</StatusBadge> : r.rank === 1 ? <b className="text-green-700">1 ★</b> : r.rank}</td>
-                <td className="px-2 py-1 whitespace-nowrap font-mono max-w-[7.5rem] sm:max-w-[11rem] truncate" title={r.pallet_code ?? ''}>{r.pallet_code}</td>
-                <td className="px-2 py-1 whitespace-nowrap font-mono">{r.location_code ?? <span className="text-slate-300">—</span>}</td>
-                <td className="px-2 py-1 whitespace-nowrap tabular-nums">{r.rot_date ? formatDate(r.rot_date) : '—'}</td>
-                <td className={`px-2 py-1 whitespace-nowrap text-right tabular-nums font-semibold ${pctDateCls(r.pct_date, bands)}`}>{r.pct_date != null ? `${Math.floor(r.pct_date)}%` : '—'}</td>
-                <td className="px-2 py-1 whitespace-nowrap text-right tabular-nums">{unit(r.available)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      {!showAll && list.rows.length > rows.length && (
-        <button type="button" onClick={onShowAll} className="mt-0.5 text-[11px] text-blue-600 hover:underline touch-target">Xem cả {list.rows.length} tem</button>
+    <div className="rounded bg-red-50 border border-red-200 px-2 py-1.5 text-red-700 space-y-1.5" data-testid="expiry-block">
+      <p><b>{what} đã hết hạn</b> (HSD {hsd}{over != null && over > 0 ? `, quá ${over} ngày` : ''}) — chỉ cấp vào mẻ khi QA duyệt.</p>
+      {a?.status === 'PENDING' && <p className="text-amber-800" data-testid="expiry-pending">Đã gửi QA duyệt{a.requested_by_name ? ` (${a.requested_by_name})` : ''} — chờ QA. QA duyệt xong form tự mở khoá.</p>}
+      {a?.status === 'REJECTED' && <p data-testid="expiry-rejected">QA {a.decided_by_name ?? ''} từ chối{a.note ? `: ${a.note}` : ''}. Dùng tem / lô khác.</p>}
+      {(!a || a.status === 'REJECTED') && (
+        <button type="button" disabled={busy} onClick={onRequest} data-testid="expiry-request"
+          className="touch-target rounded-md border border-red-300 bg-white px-2.5 py-1 text-[11px] font-medium text-red-700 disabled:opacity-50">{a ? 'Gửi lại QA duyệt' : 'Gửi QA duyệt'}</button>
+      )}
+      {canApprove && (
+        <div className="pt-1 border-t border-red-200 space-y-1">
+          <Input value={note} onChange={e => setNote(e.target.value)} maxLength={500} placeholder="QA ghi căn cứ duyệt / lý do từ chối"
+            className="h-8 text-xs bg-white" data-testid="expiry-note" />
+          <div className="flex gap-1.5">
+            <button type="button" disabled={busy || !note.trim()} onClick={() => onDecide('APPROVED', note.trim())} data-testid="expiry-approve"
+              className="touch-target flex-1 rounded-md bg-green-600 px-2 py-1 text-[11px] font-medium text-white disabled:opacity-50">QA duyệt cho dùng</button>
+            <button type="button" disabled={busy || !note.trim()} onClick={() => onDecide('REJECTED', note.trim())} data-testid="expiry-reject"
+              className="touch-target flex-1 rounded-md border border-red-300 bg-white px-2 py-1 text-[11px] font-medium text-red-700 disabled:opacity-50">Từ chối</button>
+          </div>
+        </div>
       )}
     </div>
   )

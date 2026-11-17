@@ -5,7 +5,7 @@
 
 **Trang:** Mẻ chế biến (bàn làm việc của mẻ) · Bồn · Báo cáo NVL · Định mức · Cài đặt MES — nhóm menu CẤP 1 "Sản xuất (MES)" đứng TRÊN Kho (WMS) (user chốt 14/11 tối: "cho MES lên phía trên của WMS") (user chốt 14/11 "tách MES riêng": chỉ tách menu, vẫn chung app + chung DB; Sổ đóng gói giữ ở Kho (WMS) → Nhập hàng; đường dẫn `/wms/production…` không đổi)
 
-**Quyền (BE `ALL_PERMISSIONS`):** view · open_batch · consume · reverse · qa_release · manage_tank · tank_ops · export · configure · manage_recipe · shift_report · process_log · edit_requirement · approve_lead · approve_qa · print_label · pour
+**Quyền (BE `ALL_PERMISSIONS`):** view · open_batch · consume · reverse · qa_release · manage_tank · tank_ops · export · configure · manage_recipe · shift_report · process_log · edit_requirement · approve_lead · approve_qa · print_label · pour · approve_expired
 
 ## Giao thoa với
 <!-- giao-thoa:start -->
@@ -86,15 +86,40 @@ User: *"Khi quét tem trong Mẻ thì cũng phải có các chức năng như b�
 
 | Tình huống | Kết quả |
 |---|---|
-| Mở cấp một nguyên liệu (nút "Cấp …" trên bàn của mẻ) | Bảng **Lấy ở đâu** (`GET /batches/:id/pick-list?material_id=`): tem theo thứ tự luân chuyển — # (1 ★ = lấy trước) · tem · ô · HSD / NSX theo nguyên tắc · %Date · còn cấp được; tem QA giữ xuống cuối, không xếp hạng |
+| Mở cấp một nguyên liệu (nút "Cấp …" trên bàn của mẻ) | Bảng **Lấy ở đâu** (`GET /batches/:id/pick-list?material_id=`) **GOM THEO DATE** như "Tồn kho theo %Date" của Xuất kho (sửa 17/11 khuya — user: "1 mã có 200 pallet thì có 200 dòng ư?"): mỗi dòng một nhóm = ngày luân chuyển · vị trí · tình trạng; cột # · {HSD / NSX} (hạng gộp vào ô ngày) · %Date · Vị trí · Còn (ĐVT in một lần ở nhãn cột) · ▸; bấm ▸ thấy từng tem, bấm mã tem mở chi tiết pallet. Hạng 1★ = lấy trước, tính CHUNG cả có tem lẫn không tem; nhóm hết hạn chưa duyệt và nhóm QA giữ xuống cuối, không xếp hạng |
+| Kính lúp cột Tồn kho trên bàn của mẻ | Hộp "Tồn kho chế biến theo %Date" — cùng bảng nhóm, hai phần Có tem / Không có tem (như kính lúp cột Kho của Xuất kho) |
 | Quét tem | Dòng tem thêm %Date; băng **Đúng thứ tự** (xanh) hoặc **Sai thứ tự** chỉ đúng tem phải dùng trước + ô của nó |
 | Sai thứ tự, kho / loại kho KHÔNG bắt buộc (Chế biến Ba Vì hôm nay: FEFO, không bắt buộc) | Băng vàng, vẫn cấp được — đúng quyết định 14/11 "nhắc thôi"; dòng cấp ghi `rotation_violation = true`, nhật ký cấp NVL hiện nhãn "Sai thứ tự" |
 | Sai thứ tự, kho BẮT BUỘC, người có quyền `outbound.rotation_override` | Chọn lý do trong danh sách (pallet bị chắn / hỏng / …) rồi mới cấp; lý do lưu ở `rotation_override_reason` |
 | Sai thứ tự, kho BẮT BUỘC, người KHÔNG có quyền | Băng đỏ "Cần người có quyền duyệt lấy khác thứ tự", nút Xác nhận khoá; gọi thẳng API ⇒ 422 `ROTATION_VIOLATION` |
 | Thiếu lý do khi kho bắt buộc | 422 `ROTATION_REASON_REQUIRED` |
-| Hàng hết hạn | Như quét xuất: KHÔNG chặn (FEFO tự đưa lô hết hạn lên đầu, %Date đỏ) — *chưa hỏi user riêng cho nguyên liệu vào sản xuất* |
+| Hàng hết hạn | **CHẶN, cho qua khi QA duyệt** (user chốt 17/11) — xem mục dưới |
+| "Không có tem" (chọn lô) | **CÙNG khuôn và CÙNG luật** với quét tem (17/11 — user: "đồng bộ luôn phần không có tem"): bảng lô gom theo LÔ (NSX + mã lô) có hạng · HSD · %Date · Vị trí · Còn · ▸ (mở thấy từng dòng tồn: vị trí · ngày nhập); chọn sẵn lô hạng nhỏ nhất; chọn lô sai thứ tự ⇒ băng vàng / đỏ như quét tem; kho bắt buộc ⇒ lý do + quyền, dòng cấp LOT ghi đủ vết luân chuyển. Trước đó cửa này chỉ có câu nhắc tự so ở màn hình — hai cửa cùng một sổ khác luật (C20 LẶP) |
 
-Sổ cấp: `batch_consumption` + `rotation_violation` · `rotation_principle` · `rotation_best_date` · `rotation_override_reason` (cùng bộ cột `OutboundScanEntry`). Đường "Không có tem" (chọn lô) giữ như cũ (FEFO trong lô do `mes_consume_lot`). Gói QA 63 mục [2r1–2r4].
+Sổ cấp: `batch_consumption` + `rotation_violation` · `rotation_principle` · `rotation_best_date` · `rotation_override_reason` (cùng bộ cột `OutboundScanEntry`) — CẢ hai cửa `mes_consume_scan` / `mes_consume_lot`. Chặn "bắt buộc" một hàm `rotationGate` cho cả hai cửa. Hàng nên lấy trước là hàng KHÔNG tem ⇒ form quét tem nhắc "cấp ở 'Không có tem'". Gói QA 63 mục [2r1–2r4] · [2g1–2g2] · [2l1].
+
+## NVL HẾT HẠN — CHẶN, CHO QUA KHI QA DUYỆT (17/11 khuya — migration `20261117e_mes_expiry_qa`)
+
+User chốt: *"Chặn và cho qua khi QA duyệt"*. Chỉ áp ở HAI cửa cấp NVL vào mẻ. **Xuất kho không đổi** (user chốt 20/09 cho xuất hàng hết hạn — xuất huỷ), kể cả "xuất tiêu hao" ở kho chế biến.
+
+- **Hết hạn** = HSD hiệu lực `InventoryEntry.expiry_calc` (trigger `inventory_expiry_calc`: HSD trên tem → NSX + hạn dùng của lô / NCC / mã) **< hôm nay giờ VN** (`mes_vn_today()`). Ngày HSD còn dùng được. Không biết HSD ⇒ không chặn.
+- **Duyệt theo TỪNG MẺ, TỪNG TEM (entry) hoặc TỪNG LÔ không tem** — sổ `mes_expiry_approval`, một dòng / (mẻ, đối tượng) — khoá `E:<entry>` hoặc `L:<mã>|<NSX>|<mã lô>` (`mes_lot_subject`).
+- Cửa ghi `mes_consume_scan` / `mes_consume_lot` tự kiểm trong CÙNG giao dịch trừ tồn, ghi id dòng duyệt lên `batch_consumption.expiry_approval_id`.
+- Quyền `production.approve_expired` — cấp cho mọi chức danh đang có `approve_qa` (migration): Nhân viên QA NVL · Nhân viên QA TP · QA Manager · QA chế biến · Quản lý kho NPP / site / toàn quốc.
+
+| Tình huống | Kết quả |
+|---|---|
+| Quét tem / chọn lô HẾT HẠN, chưa có QA duyệt cho mẻ này | Băng đỏ "Tem / Lô này đã hết hạn (HSD …, quá N ngày) — chỉ cấp vào mẻ khi QA duyệt" + nút **Gửi QA duyệt**; nút Xác nhận cấp khoá; gọi thẳng API ⇒ 422 `MES_EXPIRED` |
+| Bấm "Gửi QA duyệt" (`POST /batches/:id/expiry-approvals`, quyền consume) | Dòng duyệt CHỜ; băng đổi "Đã gửi QA duyệt — chờ QA"; vẫn 422 `MES_EXPIRED` tới khi duyệt |
+| QA mở trang mẻ | Mục **"NVL hết hạn — QA duyệt cho mẻ này · n chờ duyệt"** dưới tiêu đề Nguyên liệu: tem / lô · HSD · người gửi · lúc gửi; ô căn cứ + **Duyệt cho dùng** / **Từ chối** (`POST /batches/:id/expiry-approvals/decide`, quyền `approve_expired`, căn cứ BẮT BUỘC) |
+| QA duyệt | Form của người cấp (đang mở) tự mở khoá (realtime `mes_expiry_approval`) — băng xanh "QA … đã duyệt cho mẻ này: <căn cứ>"; hàng đó vào lại thứ tự (FEFO ⇒ thường hạng 1); dòng cấp mang nhãn **"Hết hạn · QA duyệt"** trong nhật ký |
+| QA từ chối | Cấp ⇒ 422 `MES_EXPIRED_REJECTED`; người cấp gửi lại được (về CHỜ) |
+| QA đứng tại bàn (người có cả consume lẫn approve_expired) | Ô căn cứ + nút "QA duyệt cho dùng" / "Từ chối" ngay trong form cấp — chưa có yêu cầu vẫn duyệt thẳng được |
+| Người không có quyền gọi API duyệt | 403 |
+| Gửi / duyệt hàng CÒN hạn | 422 `MES_NOT_EXPIRED` |
+| "Lấy ở đâu" | Nhóm hết hạn chưa duyệt nhãn đỏ "Hết hạn", KHÔNG xếp hạng (FEFO không bắt lấy hàng hết hạn trước); đã duyệt ⇒ vào lại thứ tự, ghi "hết hạn · QA đã duyệt" |
+
+Code: migration `20261117e` (`mes_expiry_subject` · `mes_expiry_request` · `mes_expiry_decide` · cổng trong `mes_consume_scan` / `mes_consume_lot`); `productionController.ts` (`mesPickContext` đọc sổ duyệt của mẻ · `expiryView` · `expiryRequest` / `expiryDecide`); FE `ConsumeSheet` (`ExpiryLine`) · `ProductionBatchDetail` (`ExpiryApprovalsBlock`) · `MesStockGroups`. Gói QA 63 [2e1–2e6] · [14c]. Chưa có: thông báo đẩy cho QA khi có yêu cầu mới (QA thấy ở trang mẻ).
 
 ## Trang / nghiệp vụ
 
@@ -176,13 +201,13 @@ User 16–17/11: "mẻ chọn SC CĐ Long Thành ⇒ ra NVL và định mức th
 
 ## Actions
 
-**approve_lead** = trưởng ca duyệt / bỏ duyệt phiếu · **approve_qa** = QA duyệt / bỏ duyệt phiếu · **print_label** = in tem pallet của mẻ · **pour** = quét tem đổ bồn (cấp theo năng lực, migration `20261117b`: open_batch ⇒ approve_lead · qa_release ⇒ approve_qa + print_label · tank_ops ⇒ pour) · **qa_release** nay = QA đạt / không đạt ở BỒN + xác nhận phiếu.
+**approve_expired** = QA duyệt / từ chối cấp NVL HẾT HẠN vào mẻ (từng tem / lô, kèm căn cứ — cấp cho chức danh đang có approve_qa, migration `20261117e`) · **approve_lead** = trưởng ca duyệt / bỏ duyệt phiếu · **approve_qa** = QA duyệt / bỏ duyệt phiếu · **print_label** = in tem pallet của mẻ · **pour** = quét tem đổ bồn (cấp theo năng lực, migration `20261117b`: open_batch ⇒ approve_lead · qa_release ⇒ approve_qa + print_label · tank_ops ⇒ pour) · **qa_release** nay = QA đạt / không đạt ở BỒN + xác nhận phiếu.
 
 view · **configure** = sửa Cài đặt MES (cấp theo năng lực: `wms_settings.manage_warehouse` + `production.view`, migration `20261114e`) · **open_batch** = mở / sửa / đóng / mở lại / huỷ mẻ · **consume** = rút NVL vào mẻ · **reverse** = huỷ dòng rút · **qa_release** = QA giữ / thả / loại lô BTP · **manage_tank** = danh mục bồn · **tank_ops** = nạp / chuyển / điều chỉnh / xả bồn · **export** = Xuất Excel danh sách mẻ (FE) · **edit_requirement** = sửa định mức trên phiếu của mẻ (thêm / bỏ / sửa / đổi mã / đổi công thức, bắt buộc lý do) — vd trưởng ca; không tự cấp cho chức danh nào. Cấp quyền theo năng lực (migration `20261114`): `packing.open_run` ⇒ view/open_batch/consume/tank_ops · `packing.record` ⇒ view/consume · `inventory.qa_update` ⇒ view/qa_release · `wms_settings.manage_machine` ⇒ view/manage_tank.
 
 ## Gói QA
 
-`scripts/qa/63-production.mjs` (131 phép — thêm [16] luồng của mẻ 17/11: mã lô tự ghép · bồn thiếu chỗ / khác mã · nạp sai bồn · hai duyệt chặn cả hai cửa cấp · tem pallet · đổ bồn sai bồn / sai tem / tem cũ · đổi bồn đổi mã lô · ô bắt buộc · bấm mốc giờ · QA ở bồn; thêm [10] bàn làm việc của mẻ / định mức / có tem phải quét · [11] báo cáo ca · [12] phiếu theo dõi · [13] mẫu phiếu cấu hình + sửa riêng tại bàn): mẻ ở kho phụ · mã lô gợi ý · tra tem · rút theo tem / theo lô · 5 người cùng rút một tem · bất biến nhập − còn = Σ rút sống · bồn (sức chứa, trộn, cặp id chéo kho, sửa bồn còn hàng) · trang sổ khai rút + công tắc QA · điều chỉnh / chuyển / xả · sửa / khai bù lượng rút của trang đã đóng (tăng · về 0 · trang mở · quá bồn · gia phả) · Cài đặt MES (đọc · ghi một lần · kho không phải chế biến · cửa Loại kho của Cài đặt WMS không đè) · lô QA loại chặn rút + nạp · đúng mã lô · dòng tồn không còn trong kho · gia phả ba chiều · sổ pallet · vòng đời mẻ.
+`scripts/qa/63-production.mjs` (148 phép — thêm [2g] gom theo date · [2e] NVL hết hạn chờ QA duyệt · [2l] cửa Không có tem cùng luật luân chuyển · [14c] quyền duyệt hàng hết hạn (17/11 khuya); thêm [16] luồng của mẻ 17/11: mã lô tự ghép · bồn thiếu chỗ / khác mã · nạp sai bồn · hai duyệt chặn cả hai cửa cấp · tem pallet · đổ bồn sai bồn / sai tem / tem cũ · đổi bồn đổi mã lô · ô bắt buộc · bấm mốc giờ · QA ở bồn; thêm [10] bàn làm việc của mẻ / định mức / có tem phải quét · [11] báo cáo ca · [12] phiếu theo dõi · [13] mẫu phiếu cấu hình + sửa riêng tại bàn): mẻ ở kho phụ · mã lô gợi ý · tra tem · rút theo tem / theo lô · 5 người cùng rút một tem · bất biến nhập − còn = Σ rút sống · bồn (sức chứa, trộn, cặp id chéo kho, sửa bồn còn hàng) · trang sổ khai rút + công tắc QA · điều chỉnh / chuyển / xả · sửa / khai bù lượng rút của trang đã đóng (tăng · về 0 · trang mở · quá bồn · gia phả) · Cài đặt MES (đọc · ghi một lần · kho không phải chế biến · cửa Loại kho của Cài đặt WMS không đè) · lô QA loại chặn rút + nạp · đúng mã lô · dòng tồn không còn trong kho · gia phả ba chiều · sổ pallet · vòng đời mẻ.
 
 ## Ngoài giai đoạn 1
 

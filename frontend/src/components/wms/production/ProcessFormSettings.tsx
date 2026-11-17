@@ -3,7 +3,7 @@
 // Sửa mẫu áp cho phiếu MỚI và phiếu chưa sửa riêng; phiếu đã sửa riêng tại bàn hoặc QA đã xác nhận giữ cấu trúc của nó.
 import { useEffect, useMemo, useState } from 'react'
 import type { AxiosError } from 'axios'
-import { Save, Plus, Eye, Pencil } from 'lucide-react'
+import { Save, Plus, Eye, Pencil, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
@@ -12,12 +12,53 @@ import { useConfirmDialog } from '@/components/shared/ConfirmDialog'
 import { ProcessFormEditor } from './ProcessFormEditor'
 import { ProcessLogBody } from './ProcessLogSheet'
 import { blockCellCount, blockKeys, blocksError, slugKey, type FormBlock } from '@/config/processForms'
-import { useProcessForms, useSaveProcessForm, type ProcessFormDef } from '@/api/productionHooks'
+import { useProcessForms, useSaveProcessForm, useSemiFinishedSearch, SEMI_FINISHED_PLACEHOLDER, type ProcessFormDef } from '@/api/productionHooks'
+import { useMaterialsByIds } from '@/api/hooks'
+import { SingleSelect } from '@/components/shared/SingleSelect'
+import { useDebouncedValue } from '@/hooks/useDebouncedValue'
 import { formatDateTime } from '@/utils/formatters'
 
 const apiMsg = (e: unknown) => (e as AxiosError<{ error?: { message?: string } }>)?.response?.data?.error?.message ?? 'Không lưu được — thử lại'
-type Draft = { code: string; title: string; short: string; is_active: boolean; blocks: FormBlock[]; isNew: boolean }
-const toDraft = (d: ProcessFormDef): Draft => ({ code: d.code, title: d.title, short: d.short, is_active: d.is_active, blocks: structuredClone(d.blocks), isNew: false })
+type Draft = { code: string; title: string; short: string; is_active: boolean; optional: boolean; material_ids: string[]; blocks: FormBlock[]; isNew: boolean }
+const toDraft = (d: ProcessFormDef): Draft => ({ code: d.code, title: d.title, short: d.short, is_active: d.is_active, optional: !!d.optional, material_ids: [...(d.material_ids ?? [])], blocks: structuredClone(d.blocks), isNew: false })
+
+/** PHIẾU BỔ SUNG (17/11): công tắc + mã BTP mặc định có phiếu này (mở mẻ mã đó ⇒ tick sẵn). Tìm mã trên server. */
+function ExtraFormScope({ draft, setDraft, disabled }: { draft: Draft; setDraft: (d: Draft) => void; disabled: boolean }) {
+  const [term, setTerm] = useState('')
+  const t = useDebouncedValue(term, 250)
+  const { found, isFetching } = useSemiFinishedSearch(t, draft.optional && !disabled)
+  const { data: picked = [] } = useMaterialsByIds(draft.material_ids, draft.material_ids.length > 0)
+  const opts = found.filter(m => !draft.material_ids.includes(m.id)).map(m => ({ value: m.id, label: m.material_code, sub: m.short_name ?? undefined }))
+  return (
+    <div className="rounded-md border border-slate-200 bg-slate-50 px-2.5 py-2 space-y-1.5" data-testid="extra-form-scope">
+      <label className="flex items-center gap-1.5 text-[11px] text-slate-700">
+        <Switch checked={draft.optional} disabled={disabled} onCheckedChange={c => setDraft({ ...draft, optional: c })} />
+        <span className="font-semibold">Phiếu bổ sung</span><span className="text-slate-500">— chỉ có ở mẻ được chọn; tắt = mẻ nào cũng có</span>
+      </label>
+      {draft.optional && (<>
+        <p className="text-[10px] text-slate-500">Mã bán thành phẩm có sẵn phiếu này khi mở mẻ (trưởng ca / QA vẫn thêm, bớt được trên từng mẻ):</p>
+        <div className="flex flex-wrap items-center gap-1.5">
+          {draft.material_ids.map(id => {
+            const m = picked.find(x => x.id === id)
+            return (
+              <span key={id} className="inline-flex items-center gap-1 rounded-md border border-sky-200 bg-white px-2 py-1 text-[11px]" title={m?.short_name ?? undefined}>
+                <span className="font-mono font-semibold">{m?.material_code ?? '…'}</span>
+                {!disabled && <button type="button" aria-label="Bỏ mã" onClick={() => setDraft({ ...draft, material_ids: draft.material_ids.filter(x => x !== id) })} className="text-slate-400 hover:text-red-600"><X className="h-3 w-3" /></button>}
+              </span>
+            )
+          })}
+          {!draft.material_ids.length && <span className="text-[11px] text-slate-400">Chưa có mã nào — mẻ không tự có phiếu này.</span>}
+          {!disabled && (
+            <div className="w-56 max-w-full">
+              <SingleSelect value="" onChange={v => { if (v) setDraft({ ...draft, material_ids: [...draft.material_ids, v] }) }} selectedLabel={undefined} serverSearch onSearchChange={setTerm} loading={isFetching}
+                placeholder={SEMI_FINISHED_PLACEHOLDER} triggerClassName="h-8 text-xs" options={opts} />
+            </div>
+          )}
+        </div>
+      </>)}
+    </div>
+  )
+}
 
 export function ProcessFormSettings({ canConfigure }: { canConfigure: boolean }) {
   const { data: forms = [], isLoading, isError, error } = useProcessForms()
@@ -53,18 +94,19 @@ export function ProcessFormSettings({ canConfigure }: { canConfigure: boolean })
     const raw = slugKey(title.replace(/^phiếu (theo dõi )?/i, ''), used, 18).toUpperCase().replace(/^[^A-Z]+/, 'P')
     const code = raw.length < 2 ? `${raw}_2` : raw   // BE: chữ IN HOA đầu, 2–20 ký tự
     setPick(code); setView('edit')
-    setDraft({ code, title: title.trim(), short: title.trim().replace(/^phiếu theo dõi\s*/i, '').slice(0, 30) || code, is_active: true, isNew: true,
+    setDraft({ code, title: title.trim(), short: title.trim().replace(/^phiếu theo dõi\s*/i, '').slice(0, 30) || code, is_active: true, optional: false, material_ids: [], isNew: true,
       blocks: [{ type: 'fields', title: 'Thông số', fields: [{ key: 'o', label: '', kind: 'num' }] }] })
   }
   function onSave() {
     if (!draft || invalid) return
     setErr('')
     save.mutate({ code: draft.code, title: draft.title.trim(), short: draft.short.trim(), is_active: draft.is_active, blocks: draft.blocks,
+      optional: draft.optional, material_ids: draft.optional ? draft.material_ids : [],
       ...(draft.isNew ? { sort_order: (forms.reduce((m, f) => Math.max(m, f.sort_order), 0) + 10) } : {}) },
       { onSuccess: d => { setDraft(toDraft(d)); setPick(d.code) }, onError: e => setErr(apiMsg(e)) })
   }
 
-  const list = draft?.isNew ? [...forms, { code: draft.code, title: draft.title, short: draft.short, blocks: draft.blocks, is_active: true, sort_order: 0, updated_by_name: null, updated_at: '' } as ProcessFormDef] : forms
+  const list = draft?.isNew ? [...forms, { code: draft.code, title: draft.title, short: draft.short, blocks: draft.blocks, is_active: true, optional: draft.optional, material_ids: draft.material_ids, sort_order: 0, updated_by_name: null, updated_at: '' } as ProcessFormDef] : forms
   return (
     <div className="grid grid-cols-1 lg:grid-cols-[15rem_minmax(0,1fr)] gap-3">
       {/* danh sách mẫu */}
@@ -78,6 +120,7 @@ export function ProcessFormSettings({ canConfigure }: { canConfigure: boolean })
                 className={`touch-target shrink-0 text-left rounded-lg border px-2.5 py-1.5 min-w-[11rem] lg:min-w-0 transition-colors ${on ? 'border-sky-400 bg-sky-50' : 'border-slate-200 bg-white hover:bg-slate-50'}`}>
                 <div className="flex items-center gap-1.5">
                   <span className={`text-xs font-semibold truncate flex-1 min-w-0 ${on ? 'text-sky-900' : 'text-slate-800'}`}>{on && draft ? draft.short || '—' : f.short}</span>
+                  {(on && draft ? draft.optional : f.optional) && <StatusBadge tone="sky">Bổ sung</StatusBadge>}
                   {!(on && draft ? draft.is_active : f.is_active) && <StatusBadge tone="slate">Ngưng</StatusBadge>}
                 </div>
                 <p className="text-[10px] text-slate-500 truncate">{blockCellCount(on && draft ? draft.blocks : f.blocks)} ô{on && dirty ? ' · chưa lưu' : ''}</p>
@@ -122,6 +165,7 @@ export function ProcessFormSettings({ canConfigure }: { canConfigure: boolean })
                 </Button>
               )}
             </div>
+            <ExtraFormScope draft={draft} setDraft={setDraft} disabled={!canConfigure} />
             {invalid && dirty && <p className="text-[11px] text-amber-700">{invalid}</p>}
             <p className="text-[10px] text-slate-500">Sửa mẫu áp cho phiếu mới và phiếu chưa sửa riêng. Phiếu đã sửa riêng tại bàn hoặc đã được QA xác nhận giữ nguyên cấu trúc của nó; giá trị đã ghi không bao giờ mất.</p>
           </div>

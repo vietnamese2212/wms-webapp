@@ -11,7 +11,8 @@ import { Label } from '@/components/ui/label'
 import { useDebouncedValue } from '@/hooks/useDebouncedValue'
 import { useGlobalScopeStore } from '@/stores/globalScopeStore'
 import { useMaterialsByIds, useMachines } from '@/api/hooks'
-import { useProductionTanks, useProductionWarehouses, useNextBatchCode, useCreateBatch, useUpdateBatch, useShiftNames, defaultKitchen, useSemiFinishedSearch, useRecipes, SEMI_FINISHED_PLACEHOLDER, type BatchDetail } from '@/api/productionHooks'
+import { defaultExtraForms } from '@/config/processForms'
+import { useProductionTanks, useProductionWarehouses, useNextBatchCode, useCreateBatch, useUpdateBatch, useProcessForms, useSetBatchForms, useShiftNames, defaultKitchen, useSemiFinishedSearch, useRecipes, SEMI_FINISHED_PLACEHOLDER, type BatchDetail } from '@/api/productionHooks'
 import { NoSemiFinishedHint } from './NoSemiFinishedHint'
 import { unitCode } from '@/utils/unitCode'
 import { parseVnNumber, vnNumberInput } from '@/utils/vnNumber'
@@ -43,6 +44,11 @@ export function BatchFormSheet({ open, onClose, batch, template, onSaved }: {
   const [note, setNote] = useState('')
   // CÔNG THỨC (17/11): một mã có nhiều công thức — chọn sẵn công thức mặc định (Mở mẻ giống: công thức của mẻ gốc)
   const [recipeId, setRecipeId] = useState('')
+  // PHIẾU BỔ SUNG (17/11): tick sẵn theo mã BTP (Cài đặt MES → Mẫu phiếu), người mở chỉnh được; phiếu đã ghi không bỏ được
+  const { data: processForms = [] } = useProcessForms()
+  const [extras, setExtras] = useState<string[]>([])
+  const [extrasTouched, setExtrasTouched] = useState(false)
+  const setForms = useSetBatchForms()
   const [err, setErr] = useState('')
   const create = useCreateBatch()
   const shiftNames = useShiftNames(shift || null)
@@ -50,7 +56,8 @@ export function BatchFormSheet({ open, onClose, batch, template, onSaved }: {
 
   useEffect(() => {
     if (!open) return
-    setErr(''); setNoTouched(editing)
+    setErr(''); setNoTouched(editing); setExtrasTouched(false)
+    setExtras(batch?.extra_forms ?? [])
     if (batch) {
       setWh(batch.warehouse_id); setMat(batch.material_id); setDate(batch.prod_date); setMachine(batch.machine_code ?? '')
       setShift(batch.shift ?? ''); setCycle(batch.cycle ?? ''); setPlanned(vnNumberInput(batch.planned_qty)); setBatchNo(batch.batch_no ? String(batch.batch_no) : ''); setTank(batch.tank_id ?? ''); setNote(batch.note ?? '')
@@ -82,6 +89,16 @@ export function BatchFormSheet({ open, onClose, batch, template, onSaved }: {
     if (!recipes.some(r => r.id === recipeId)) setRecipeId(recipes.find(r => r.is_default)?.id ?? recipes[0]?.id ?? '')
   }, [mat, recipes, recipesLoading, editing]) // eslint-disable-line react-hooks/exhaustive-deps
   const selRecipe = recipes.find(r => r.id === recipeId)
+  const logged = useMemo(() => (batch?.process_logs ?? []).map(l => l.form), [batch?.process_logs])
+  const optForms = processForms.filter(f => f.optional && (f.is_active || extras.includes(f.code)))
+  // đổi mã BTP (chưa tự tick tay) ⇒ phiếu bổ sung theo mã mới; giữ phiếu đã ghi
+  useEffect(() => {
+    if (!open || extrasTouched || !mat || !processForms.length) return
+    if (editing && mat === batch?.material_id) return
+    setExtras([...new Set([...defaultExtraForms(processForms, mat), ...logged.filter(c => processForms.some(f => f.code === c && f.optional))])])
+  }, [mat, processForms, open]) // eslint-disable-line react-hooks/exhaustive-deps
+  const baseForms = processForms.filter(f => f.is_active && !f.optional).map(f => f.short).join(', ')
+  const toggleExtra = (code: string) => { setExtrasTouched(true); setExtras(x => x.includes(code) ? x.filter(c => c !== code) : [...x, code]) }
   const { data: machines = [] } = useMachines(wh || undefined)
   const activeMachines = machines.filter(m => m.is_active !== false)
   // BỒN của kho chế biến: chỉ bồn cùng đơn vị với mã BTP; chỗ trống = sức chứa − đang chứa − phần mẻ KHÁC đã đặt
@@ -103,7 +120,7 @@ export function BatchFormSheet({ open, onClose, batch, template, onSaved }: {
   const codePreview = filled ? batch?.batch_code : next.data?.code
   const codeChanges = editing && !filled && !!codePreview && codePreview !== batch?.batch_code
 
-  const saving = create.isPending || update.isPending
+  const saving = create.isPending || update.isPending || setForms.isPending
   const plannedNum = planned.trim() ? parseVnNumber(planned) : null
   const plannedBad = !planned.trim() || plannedNum == null || plannedNum <= 0
   const overRoom = !!selTank && plannedNum != null && plannedNum > selTank.free + 0.0005 && !filled
@@ -117,11 +134,14 @@ export function BatchFormSheet({ open, onClose, batch, template, onSaved }: {
           planned_qty: plannedNum, note: note || null,
           ...(filled ? {} : { ...(cycleNorm !== batch.cycle ? { cycle: cycleNorm } : {}), ...(noNum !== batch.batch_no ? { batch_no: noNum ?? undefined } : {}), ...(tank !== batch.tank_id ? { tank_id: tank } : {}) }),
           ...(mat !== batch.material_id ? { material_id: mat } : {}) })
+        const same = (a: string[], b: string[]) => a.length === b.length && a.every(c => b.includes(c))
+        if (batch.status === 'OPEN' && (mat !== batch.material_id || !same(extras, batch.extra_forms ?? [])))
+          await setForms.mutateAsync({ id: batch.id, forms: extras })
         onSaved?.(r.id); onClose()
       } else {
         const r = await create.mutateAsync({ warehouse_id: wh, material_id: mat, prod_date: date, cycle: cycleNorm, batch_no: noNum ?? undefined, tank_id: tank,
           machine_code: machine || undefined, shift: shift || undefined, planned_qty: plannedNum, note: note || undefined,
-          recipe_id: recipeId || undefined })
+          recipe_id: recipeId || undefined, extra_forms: extras })
         onSaved?.(r.id); onClose()
       }
     } catch (e) { setErr(apiMsg(e)) }
@@ -209,6 +229,26 @@ export function BatchFormSheet({ open, onClose, batch, template, onSaved }: {
               : <Input value={machine} onChange={e => setMachine(e.target.value.toUpperCase())} maxLength={20} placeholder="Tuỳ chọn" className="h-9 sm:h-8 text-xs mt-0.5" />}
           </div>
         </div>
+        {optForms.length > 0 && (!editing || batch?.status === 'OPEN') && (
+          <div>
+            <Label className="text-xs">Phiếu theo dõi bổ sung</Label>
+            <div className="mt-1 flex flex-wrap gap-1.5" data-testid="batch-extra-forms">
+              {optForms.map(f => {
+                const on = extras.includes(f.code)
+                const locked = logged.includes(f.code)
+                return (
+                  <button key={f.code} type="button" disabled={locked} onClick={() => toggleExtra(f.code)} aria-pressed={on} data-form={f.code}
+                    title={locked ? 'Phiếu đã ghi — không bỏ khỏi mẻ được' : f.title}
+                    className={`touch-target inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs ${on ? 'border-sky-400 bg-sky-50 text-sky-900 font-semibold' : 'border-slate-200 text-slate-600 hover:bg-slate-50'} disabled:opacity-70`}>
+                    <span className={`h-3.5 w-3.5 rounded-sm border flex items-center justify-center text-[10px] leading-none ${on ? 'bg-sky-600 border-sky-600 text-white' : 'border-slate-300'}`}>{on ? '✓' : ''}</span>
+                    {f.short}{locked ? ' · đã ghi' : ''}
+                  </button>
+                )
+              })}
+            </div>
+            <p className="text-[11px] text-slate-500 mt-0.5">Tick sẵn theo mã bán thành phẩm.{baseForms ? ` Mẻ nào cũng có: ${baseForms}.` : ''}</p>
+          </div>
+        )}
         <div>
           <Label className="text-xs">Ghi chú</Label>
           <Input value={note} onChange={e => setNote(e.target.value)} maxLength={500} placeholder="Tuỳ chọn" className="h-8 text-xs mt-0.5" />

@@ -119,3 +119,13 @@ export function formProgress(blocks: FormBlock[], data?: Record<string, string> 
   const any = !!data && Object.values(data).some(v => String(v ?? '').trim())
   return { actions, done: actions.filter(f => has(f.key)).length, next, requiredMissing, state: !any ? 'none' : !next && !requiredMissing.length ? 'done' : 'progress' }
 }
+
+// ── PHIẾU BỔ SUNG (17/11) — phiếu thường mẻ nào cũng có; phiếu bổ sung (optional) chỉ có ở mẻ được chọn ──
+type FormLite = { code: string; is_active: boolean; optional?: boolean; material_ids?: string[] }
+/** phiếu bổ sung tick sẵn khi mở mẻ mã này (BE: hàm mes_default_forms — cùng luật) */
+export const defaultExtraForms = (forms: FormLite[], materialId: string) =>
+  forms.filter(f => f.optional && f.is_active && (f.material_ids ?? []).includes(materialId)).map(f => f.code)
+/** phiếu hiện trên mẻ: phiếu thường đang dùng + phiếu bổ sung của mẻ + phiếu đã ghi (kể cả mẫu đã ngưng) */
+export function formsOfBatch<T extends FormLite>(forms: T[], extra: string[], logged: string[]): T[] {
+  return forms.filter(f => logged.includes(f.code) || (f.is_active && (!f.optional || extra.includes(f.code))))
+}

@@ -405,6 +405,7 @@ router.get('/production/batches/next-code',        P('open_batch'), validate({ q
 router.get('/production/batches/:id',              P('view'),       production.getBatch)
 router.post('/production/batches',                 P('open_batch'), validate({ body: production.zBatchCreate }), production.createBatch)
 router.patch('/production/batches/:id',            P('open_batch'), validate({ body: production.zBatchUpdate }), production.updateBatch)
+router.put('/production/batches/:id/forms',       requireAnyPerm(['production', 'open_batch'], ['production', 'approve_lead'], ['production', 'approve_qa']), validate({ body: production.zBatchForms }), production.setBatchForms)
 router.post('/production/batches/:id/close',       P('open_batch'), validate({ body: z.object({}) }), production.closeBatch)
 router.post('/production/batches/:id/reopen',      P('open_batch'), validate({ body: z.object({}) }), production.reopenBatch)
 router.post('/production/batches/:id/cancel',      P('open_batch'), validate({ body: z.object({}) }), production.cancelBatch)

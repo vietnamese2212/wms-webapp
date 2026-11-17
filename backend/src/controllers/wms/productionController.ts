@@ -57,7 +57,7 @@ function mesFail(res: Response, e: unknown): Response {
   const m = MES_RE.exec(msg)
   if (!m) return failAny(res, e)
   const [, code, text] = m
-  const status = code === 'NOT_FOUND' ? 404 : ['QTY', 'REASON', 'UNIT', 'KIND', 'SAME_TANK', 'DUPLICATE', 'SELF', 'NAME', 'MISMATCH', 'RECIPE_MISMATCH', 'RECIPE_INACTIVE', 'CYCLE', 'BATCH_NO', 'TANK', 'NO_PLANT'].includes(code) ? 422 : 409
+  const status = code === 'NOT_FOUND' ? 404 : ['QTY', 'REASON', 'UNIT', 'KIND', 'SAME_TANK', 'DUPLICATE', 'SELF', 'NAME', 'MISMATCH', 'RECIPE_MISMATCH', 'RECIPE_INACTIVE', 'CYCLE', 'BATCH_NO', 'TANK', 'NO_PLANT', 'FORM_INVALID'].includes(code) ? 422 : 409
   return fail(res, status, `MES_${code}`, text.trim())
 }
 
@@ -188,6 +188,7 @@ export const zBatchCreate = z.object({
   machine_code: zText(0, 20).optional(), shift: zText(0, 40).optional(),
   planned_qty: z.number().positive().max(10_000_000).nullable().optional(), note: zText(0, 500).optional(),
   recipe_id: zText(1, 64).optional(),   // công thức chọn lúc mở (trống = công thức mặc định của mã)
+  extra_forms: z.array(zText(1, 20)).max(20).optional(),   // phiếu bổ sung của mẻ (vắng = mặc định theo mã BTP)
 })
 export async function createBatch(req: Request, res: Response) {
   try {
@@ -219,6 +220,8 @@ export async function createBatch(req: Request, res: Response) {
         // bàn làm việc: chép ĐỊNH MỨC của mã BTP thành yêu cầu nguyên liệu của mẻ (không có định mức ⇒ bàn trống, người mở tự khai)
         const { data: ap, error: apErr } = await db.rpc('mes_batch_apply_recipe', { p: { batch_id: row.id, recipe_id: body.recipe_id ?? null, actor_name: a.actor_name } })
         if (apErr) console.error('[production] apply recipe', apErr.message)
+        const { error: fErr } = await db.rpc('mes_batch_set_forms', { p: { batch_id: row.id, ...(body.extra_forms ? { forms: body.extra_forms } : {}) } })
+        if (fErr) console.error('[production] set forms', fErr.message)
         return ok(res, { ...row, requirement_count: (ap as { count?: number } | null)?.count ?? 0 }, 201)
       }
       if (error.code !== '23505') return mesFail(res, error)
@@ -297,9 +300,26 @@ export async function updateBatch(req: Request, res: Response) {
     // bàn làm việc theo kịp mẻ (C114): đổi mã BTP ⇒ chép định mức mã mới; đổi kế hoạch ⇒ yêu cầu nhân theo tỷ lệ kế hoạch mới / cũ
     if (matChanged || planChanged) {
       const { error: rErr } = await db.rpc('mes_batch_requirements_refresh', { p: { batch_id: b.id, reset: matChanged, old_planned: b.planned_qty, actor_name: actor(req).actor_name } })
+      if (matChanged) {   // phiếu bổ sung theo mã mới (phiếu đã ghi giữ nguyên)
+        const { error: fErr } = await db.rpc('mes_batch_set_forms', { p: { batch_id: b.id } })
+        if (fErr) console.error('[production] set forms', fErr.message)
+      }
       if (rErr) return fail(res, 409, 'MES_REQUIREMENTS_STALE', 'Đã lưu mẻ nhưng chưa tính lại được nguyên liệu yêu cầu — bấm "Chép lại theo định mức" trên bàn của mẻ')
     }
     return ok(res, { ...data[0], ...(ident.batch_code ? { batch_code: ident.batch_code } : {}), relabel: ident.relabel === true })
+  } catch (e) { return failAny(res, e) }
+}
+
+// PUT /wms/production/batches/:id/forms — PHIẾU BỔ SUNG của mẻ (trưởng ca · QA thêm / bớt khi mẻ còn mở). Phiếu đã ghi không bỏ được.
+export const zBatchForms = z.object({ forms: z.array(zText(1, 20)).max(20) })
+export async function setBatchForms(req: Request, res: Response) {
+  try {
+    const b = await loadBatch(req.params.id)
+    if (!b) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy mẻ')
+    if (!(await inScope(req, b.warehouse_id))) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
+    const { data, error } = await db.rpc('mes_batch_set_forms', { p: { batch_id: b.id, forms: (req.body as z.infer<typeof zBatchForms>).forms } })
+    if (error) return mesFail(res, error)
+    return ok(res, data)
   } catch (e) { return failAny(res, e) }
 }
 
@@ -402,13 +422,15 @@ const zBlocks = z.array(z.discriminatedUnion('type', [zFieldsBlock, zGridBlock])
 export const zProcessFormParams = z.object({ code: zFormCode })
 export const zProcessFormPut = z.object({
   title: zText(1, 120), short: zText(1, 30), is_active: z.boolean(), sort_order: z.number().int().min(0).max(9999).optional(), blocks: zBlocks,
+  // phiếu BỔ SUNG (17/11): chỉ có ở mẻ được chọn · material_ids = mã BTP mặc định có phiếu này
+  optional: z.boolean().optional(), material_ids: z.array(zText(1, 64)).max(200).optional(),
 })
 /** luật hình dạng chung với FE `blocksError` — utils/processBlocks.ts (mirror test) */
 export { processBlocksError }
 // GET /wms/production/process-forms — mọi mẫu phiếu (kể cả đã ngưng dùng — trang mẻ tự lọc)
 export async function listProcessForms(_req: Request, res: Response) {
   try {
-    const { data, error } = await db.from('production_process_form').select('code, title, short, blocks, sort_order, is_active, updated_by_name, updated_at')
+    const { data, error } = await db.from('production_process_form').select('code, title, short, blocks, sort_order, is_active, optional, material_ids, updated_by_name, updated_at')
       .order('sort_order').order('code').limit(100)
     if (error) return fail(res, error)
     return ok(res, data ?? [])
@@ -421,8 +443,13 @@ export async function putProcessForm(req: Request, res: Response) {
     const b = req.body as z.infer<typeof zProcessFormPut>
     const bad = processBlocksError(b.blocks)
     if (bad) return fail(res, 422, 'PROCESS_FORM_INVALID', bad)
+    const mids = b.material_ids ? [...new Set(b.material_ids)] : undefined
+    if (mids?.length) {
+      const { data: ms } = await db.from('Material').select('id').in('id', mids).eq('is_semi_finished', true).limit(200)
+      if ((ms?.length ?? 0) !== mids.length) return fail(res, 422, 'PROCESS_FORM_INVALID', 'Danh sách mã mặc định có mã không phải bán thành phẩm')
+    }
     const row = { title: b.title, short: b.short, blocks: b.blocks, is_active: b.is_active, updated_by_name: actor(req).actor_name, updated_at: nowIso(),
-      ...(b.sort_order != null ? { sort_order: b.sort_order } : {}) }
+      ...(b.sort_order != null ? { sort_order: b.sort_order } : {}), ...(b.optional !== undefined ? { optional: b.optional } : {}), ...(mids ? { material_ids: mids } : {}) }
     const { data: cur } = await db.from('production_process_form').select('code').eq('code', code).maybeSingle()
     if (cur) {
       const { data, error } = await db.from('production_process_form').update(row).eq('code', code).select('*')
@@ -461,10 +488,9 @@ export async function putProcessLog(req: Request, res: Response) {
     for (let attempt = 0; attempt < 2; attempt++) {
       const { data: cur } = await db.from('batch_process_log').select('id, confirmed_at, data, stamps').eq('batch_id', b.id).eq('form', form).maybeSingle()
       if (cur?.confirmed_at) return fail(res, 409, 'PROCESS_LOG_CONFIRMED', 'Phiếu đã được QA xác nhận — bỏ xác nhận rồi mới sửa được')
-      if (!cur) {   // phiếu MỚI chỉ mở theo mẫu đang dùng; phiếu đã có vẫn sửa được dù mẫu đã ngưng
-        const { data: pf } = await db.from('production_process_form').select('is_active').eq('code', form).maybeSingle()
-        if (!pf) return fail(res, 404, 'NOT_FOUND', 'Không có mẫu phiếu này')
-        if (!pf.is_active) return fail(res, 409, 'PROCESS_FORM_INACTIVE', 'Mẫu phiếu này đã ngưng dùng — bật lại ở Cài đặt MES')
+      if (!cur) {   // phiếu MỚI: mẫu đang dùng + phiếu có trên mẻ (phiếu bổ sung) — một luật với bấm giờ (mes_batch_form_error)
+        const { data: why } = await db.rpc('mes_batch_form_error', { p_batch_id: b.id, p_form: form })
+        if (why) { const [code, msg] = String(why).split('|'); return fail(res, code === 'NOT_FOUND' ? 404 : 409, code === 'NOT_FOUND' ? code : code === 'PROCESS_FORM_INACTIVE' ? code : `MES_${code}`, msg) }
       }
       if (cur) {
         // mốc giờ đã BẤM (stamps) mà nay sửa tay / xoá ⇒ ghi thêm người sửa + lúc sửa (lưu vết, user chốt 17/11)

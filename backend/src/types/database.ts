@@ -1,5 +1,5 @@
 // FILE SINH TỰ ĐỘNG — `node scripts/gen-db-types.mjs` (từ information_schema STAGING). KHÔNG sửa tay.
-// Sinh lúc 2026-11-17T09:33:16.758Z · 124 bảng/view · 247 hàm · 0 enum
+// Sinh lúc 2026-11-17T11:43:47.090Z · 124 bảng/view · 250 hàm · 0 enum
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[]
 
 export type Database = {
@@ -5440,6 +5440,7 @@ export type Database = {
           label_ver: number
           label_at: string | null
           label_by_name: string | null
+          extra_forms: string[]
         }
         Insert: {
           id: string
@@ -5478,6 +5479,7 @@ export type Database = {
           label_ver?: number
           label_at?: string | null
           label_by_name?: string | null
+          extra_forms?: string[]
         }
         Update: {
           id?: string
@@ -5516,6 +5518,7 @@ export type Database = {
           label_ver?: number
           label_at?: string | null
           label_by_name?: string | null
+          extra_forms?: string[]
         }
         Relationships: []
       }
@@ -5530,6 +5533,8 @@ export type Database = {
           updated_by_name: string | null
           created_at: string
           updated_at: string
+          optional: boolean
+          material_ids: string[]
         }
         Insert: {
           code: string
@@ -5541,6 +5546,8 @@ export type Database = {
           updated_by_name?: string | null
           created_at?: string
           updated_at: string
+          optional?: boolean
+          material_ids?: string[]
         }
         Update: {
           code?: string
@@ -5552,6 +5559,8 @@ export type Database = {
           updated_by_name?: string | null
           created_at?: string
           updated_at?: string
+          optional?: boolean
+          material_ids?: string[]
         }
         Relationships: []
       }
@@ -7285,6 +7294,10 @@ export type Database = {
         Args: { p: Json | null }
         Returns: Json
       }
+      mes_batch_form_error: {
+        Args: { p_batch_id: string | null; p_form: string | null }
+        Returns: string
+      }
       mes_batch_gate: {
         Args: { p_batch_id: string | null }
         Returns: Json
@@ -7302,6 +7315,10 @@ export type Database = {
         Returns: Json
       }
       mes_batch_requirements_refresh: {
+        Args: { p: Json | null }
+        Returns: Json
+      }
+      mes_batch_set_forms: {
         Args: { p: Json | null }
         Returns: Json
       }
@@ -7324,6 +7341,10 @@ export type Database = {
       mes_consume_scan: {
         Args: { p: Json | null }
         Returns: Json
+      }
+      mes_default_forms: {
+        Args: { p_material: string | null }
+        Returns: unknown
       }
       mes_entry_status: {
         Args: { p_remaining: number | null; p_imported: number | null }
@@ -7662,7 +7683,7 @@ export type Database = {
         Returns: boolean
       }
       unaccent: {
-        Args: { arg1: string | null } | { arg1: unknown | null; arg2: string | null }
+        Args: { arg1: unknown | null; arg2: string | null } | { arg1: string | null }
         Returns: string
       }
       unaccent_init: {

@@ -18,7 +18,7 @@ import { BatchFormSheet } from '@/components/wms/production/BatchFormSheet'
 import { ConsumeSheet } from '@/components/wms/production/ConsumeSheet'
 import { RequirementSheet } from '@/components/wms/production/RequirementSheet'
 import { ProcessLogSheet } from '@/components/wms/production/ProcessLogSheet'
-import { formProgress, type ProcessField } from '@/config/processForms'
+import { formProgress, formsOfBatch, type ProcessField } from '@/config/processForms'
 import { FlowStrip, BatchLabelSheet, PourSheet, type FlowStep } from '@/components/wms/production/BatchFlow'
 import { ScanIcon } from '@/components/shared/ScanIcon'
 import { BatchFillSheet, nfQty } from '@/components/wms/production/TankSheets'
@@ -29,7 +29,7 @@ import { can, type ModulePermissions } from '@/config/permissions'
 import { rowText, statusText } from '@/lib/rowStatus'
 import {
   useProductionBatch, useBatchStatus, useApproveBatch, useStampLog, useReverseConsumption, BATCH_STATUS_VI, BATCH_QA_VI, TANK_MOVE_VI,
-  useProcessForms,
+  useProcessForms, useSetBatchForms,
 } from '@/api/productionHooks'
 import { BATCH_STATUS_TONE, BATCH_QA_TONE, batchRowKey } from './ProductionBatches'
 import { qtyNum, qtyCode, matUnitCode, unitCode } from '@/utils/unitCode'
@@ -81,6 +81,7 @@ function ProductionBatchDetail() {
   const setStatus = useBatchStatus()
   const approve = useApproveBatch()
   const stamp = useStampLog()
+  const setForms = useSetBatchForms()
   const reverse = useReverseConsumption()
   const [ask, confirmNode] = useConfirmDialog()
   const canSeeTanks = useCanSeePath()('/wms/production/tanks')
@@ -153,6 +154,12 @@ function ProductionBatchDetail() {
     await run(() => approve.mutateAsync({ id: b!.id, step, approve: ok }))
   }
   // bấm một mốc của phiếu = ghi giờ máy chủ + người bấm (bấm nhầm thì mở phiếu sửa giờ — có lưu vết)
+  // PHIẾU BỔ SUNG của mẻ (17/11): trưởng ca / QA thêm, bớt — phiếu đã ghi không bỏ được (BE chặn)
+  const doForms = (forms: string[]) => run(() => setForms.mutateAsync({ id: b!.id, forms }))
+  async function dropForm(code: string, title: string) {
+    if (await ask({ title: `Bỏ phiếu "${title}" khỏi mẻ?`, body: 'Phiếu chưa ghi gì. Thêm lại được khi cần.', confirmLabel: 'Bỏ phiếu', danger: true }) === null) return
+    await doForms((b!.extra_forms ?? []).filter(c => c !== code))
+  }
   const doStamp = (form: string, f: ProcessField) => run(() => stamp.mutateAsync({ batchId: b!.id, form, key: f.key }))
   async function doStatus(action: 'close' | 'reopen' | 'cancel') {
     const label = action === 'close' ? 'Đóng mẻ' : action === 'reopen' ? 'Mở lại mẻ' : 'Huỷ mẻ'
@@ -197,7 +204,11 @@ function ProductionBatchDetail() {
   const canConsume = open && P('consume') && (g?.can_consume ?? true)
   const canFill = b.status !== 'CANCELLED' && b.qa_status !== 'REJECTED' && P('tank_ops')
   const canEditTank = open && P('open_batch') && !b.movements.length
-  const firstForm = g?.missing[0]?.form ?? processForms.find(d => d.is_active)?.code ?? null
+  const logged = (b.process_logs ?? []).map(l => l.form)
+  const batchForms = formsOfBatch(processForms, b.extra_forms ?? [], logged)
+  const canEditForms = open && (P('open_batch') || P('approve_lead') || P('approve_qa'))
+  const addableForms = processForms.filter(d => d.optional && d.is_active && !(b.extra_forms ?? []).includes(d.code) && !logged.includes(d.code))
+  const firstForm = g?.missing[0]?.form ?? batchForms.find(d => !logged.includes(d.code))?.code ?? batchForms[0]?.code ?? null
   const actions: ActionItem[] = []
   if (open && !b.lead_ok_at && P('approve_lead'))
     actions.push({ key: 'ok-lead', icon: ShieldCheck, label: 'Duyệt phiếu', tip: 'Trưởng ca duyệt phiếu nguyên liệu của mẻ (bước 1)', primary: strict, variant: strict ? 'default' : undefined, onClick: () => void doApprove('lead', true), disabled: busy })
@@ -390,7 +401,7 @@ function ProductionBatchDetail() {
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 p-3">
             {!processForms.length && <p className="text-[11px] text-slate-400">Chưa có mẫu phiếu — khai ở Cài đặt MES → Mẫu phiếu theo dõi.</p>}
-            {processForms.filter(d => d.is_active || (b.process_logs ?? []).some(l => l.form === d.code)).map(d => {
+            {batchForms.map(d => {
               const k = d.code
               const lg = (b.process_logs ?? []).find(l => l.form === k)
               const pr = formProgress(lg?.blocks ?? d.blocks, lg?.data)
@@ -424,11 +435,24 @@ function ProductionBatchDetail() {
                     <button type="button" onClick={() => setLogForm(k)} className="touch-target inline-flex items-center gap-1 rounded-md border border-slate-200 px-2.5 py-1.5 text-xs text-slate-700 hover:bg-slate-50 shrink-0">
                       <FileText className="h-3.5 w-3.5" />Mở phiếu
                     </button>
-                    <span className="ml-auto shrink-0 text-[10px] text-slate-400 tabular-nums">{pr.actions.length ? `${pr.done}/${pr.actions.length} mốc` : ''}{pr.requiredMissing.length ? ` · còn ${pr.requiredMissing.length} ô bắt buộc` : ''}{lg?.blocks ? ' · sửa riêng' : ''}</span>
+                    {d.optional && !lg && canEditForms && (
+                      <button type="button" disabled={setForms.isPending} onClick={() => void dropForm(k, d.short)} title="Bỏ phiếu bổ sung này khỏi mẻ"
+                        className="touch-target inline-flex items-center gap-1 rounded-md px-2 py-1.5 text-xs text-slate-500 hover:bg-red-50 hover:text-red-600 shrink-0 disabled:opacity-60">
+                        <XCircle className="h-3.5 w-3.5" />Bỏ
+                      </button>
+                    )}
+                    <span className="ml-auto shrink-0 text-[10px] text-slate-400 tabular-nums">{d.optional ? 'bổ sung · ' : ''}{pr.actions.length ? `${pr.done}/${pr.actions.length} mốc` : ''}{pr.requiredMissing.length ? ` · còn ${pr.requiredMissing.length} ô bắt buộc` : ''}{lg?.blocks ? ' · sửa riêng' : ''}</span>
                   </div>
                 </div>
               )
             })}
+            {canEditForms && addableForms.map(d => (
+              <button key={d.code} type="button" disabled={setForms.isPending} onClick={() => void doForms([...(b.extra_forms ?? []), d.code])} data-add-form={d.code}
+                title={`Thêm phiếu bổ sung "${d.title}" cho mẻ này`}
+                className="touch-target rounded-lg border border-dashed border-slate-300 px-3 py-2 text-xs text-slate-600 hover:bg-slate-50 inline-flex items-center gap-1.5 disabled:opacity-60">
+                <Plus className="h-3.5 w-3.5 shrink-0" /><span className="truncate">Thêm phiếu {d.short}</span>
+              </button>
+            ))}
           </div>
 
           <div className="px-3 py-1.5 sm:px-4 sm:py-2 bg-slate-100 border-y border-slate-200 flex items-center gap-1.5">

@@ -114,6 +114,8 @@ export interface BatchLabel { pallet_no: number; qr: string }
 export interface PourScan { pallet_no: number; scanned_by_name: string | null; created_at: string }
 export interface BatchDetail {
   cycle: string | null; board: BoardRow[]; process_logs: ProcessLog[]
+  /** phiếu bổ sung của mẻ (mã mẫu phiếu) — 17/11 */
+  extra_forms: string[]
   batch_no: number | null; tank_id: string | null; tank: { id: string; code: string; name: string | null; capacity: number; unit: string } | null
   lead_ok_at: string | null; lead_ok_by_name: string | null; qa_ok_at: string | null; qa_ok_by_name: string | null
   label_count: number | null; label_ver: number; label_at: string | null; label_by_name: string | null
@@ -258,9 +260,11 @@ export function useSaveProductionSettings() {
   })
 }
 
-export interface BatchInput { warehouse_id: string; material_id: string; prod_date: string; cycle: string; batch_no?: number; tank_id: string; machine_code?: string; shift?: string; planned_qty?: number | null; note?: string; recipe_id?: string }
+export interface BatchInput { warehouse_id: string; material_id: string; prod_date: string; cycle: string; batch_no?: number; tank_id: string; machine_code?: string; shift?: string; planned_qty?: number | null; note?: string; recipe_id?: string; extra_forms?: string[] }
 export const useCreateBatch = () => useProdMutation((b: BatchInput) => post<BatchDetail>('/wms/production/batches', b))
 export const useUpdateBatch = () => useProdMutation(({ id, ...b }: { id: string } & Partial<Omit<BatchInput, 'warehouse_id' | 'machine_code' | 'shift' | 'note' | 'recipe_id'>> & { machine_code?: string | null; shift?: string | null; note?: string | null }) => patch<BatchDetail & { relabel?: boolean }>(`/wms/production/batches/${id}`, b))
+/** đặt phiếu bổ sung của mẻ (trưởng ca · QA) — phiếu đã ghi không bỏ được */
+export const useSetBatchForms = () => useProdMutation(({ id, forms }: { id: string; forms: string[] }) => apiClient.put(`/wms/production/batches/${id}/forms`, { forms }).then(r => r.data.data as { extra_forms: string[] }))
 // ── Luồng của mẻ (17/11): hai bước duyệt · tem pallet · bấm ghi giờ · đổ bồn · QA ở bồn ──
 export const useApproveBatch = () => useProdMutation(({ id, step, approve }: { id: string; step: 'lead' | 'qa'; approve: boolean }) => post(`/wms/production/batches/${id}/approve-${step}`, { approve }))
 export const useBatchLabels = () => useProdMutation(({ id, count }: { id: string; count: number }) =>
@@ -323,7 +327,8 @@ export const useSaveProcessLog = () => useProdMutation(({ batchId, form, data, b
 export const useConfirmProcessLog = () => useProdMutation(({ batchId, form, confirm }: { batchId: string; form: string; confirm: boolean }) =>
   post<ProcessLog>(`/wms/production/batches/${batchId}/process-log/${form}/confirm`, { confirm }))
 // ── Mẫu phiếu theo dõi (cấu hình ở Cài đặt MES) ──
-export interface ProcessFormDef { code: string; title: string; short: string; blocks: FormBlock[]; sort_order: number; is_active: boolean; updated_by_name: string | null; updated_at: string }
+/** optional = phiếu BỔ SUNG (chỉ có ở mẻ được chọn) · material_ids = mã BTP mặc định có phiếu này (17/11) */
+export interface ProcessFormDef { code: string; title: string; short: string; blocks: FormBlock[]; sort_order: number; is_active: boolean; optional: boolean; material_ids: string[]; updated_by_name: string | null; updated_at: string }
 export function useProcessForms() {
   return useQuery({ queryKey: ['prod-process-forms'], staleTime: 60_000,
     queryFn: async () => (await apiClient.get('/wms/production/process-forms')).data.data as ProcessFormDef[] })
@@ -331,7 +336,7 @@ export function useProcessForms() {
 export function useSaveProcessForm() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: async ({ code, ...b }: { code: string; title: string; short: string; is_active: boolean; sort_order?: number; blocks: FormBlock[] }) =>
+    mutationFn: async ({ code, ...b }: { code: string; title: string; short: string; is_active: boolean; sort_order?: number; blocks: FormBlock[]; optional?: boolean; material_ids?: string[] }) =>
       (await apiClient.put(`/wms/production/process-forms/${code}`, b)).data.data as ProcessFormDef,
     onSettled: () => { void qc.invalidateQueries({ queryKey: ['prod-process-forms'] }) },
   })

@@ -582,6 +582,17 @@ try {
   check('13c. Phiếu theo mẫu mới ghi được; mẫu NGƯNG ⇒ mẻ khác không mở phiếu mới (409), phiếu đã có vẫn sửa được',
     plF1.s === 201 && pfOff.s === 200 && plF2.s === 409 && plF2.j?.error?.code === 'PROCESS_FORM_INACTIVE' && plF3.s === 200,
     `http=${plF1.s}/${pfOff.s}/${plF2.s}/${plF3.s}`)
+  // ── [13x] PHIẾU BỔ SUNG theo mã BTP (17/11): JELLY chỉ có ở mẻ được chọn ──
+  const jOpt = pfJelly?.optional === true
+  const plJ0 = await api(`/wms/production/batches/${B1.id}/process-log/JELLY`, 'PUT', { data: { nuoc_bu: '1' } })
+  const stJ0 = await api(`/wms/production/batches/${B1.id}/process-log/JELLY/stamp`, 'POST', { key: 'abc' })
+  const fBad = await api(`/wms/production/batches/${B1.id}/forms`, 'PUT', { forms: ['MIX'] })
+  const fAdd = await api(`/wms/production/batches/${B1.id}/forms`, 'PUT', { forms: ['JELLY'] })
+  const b1Forms = (await api(`/wms/production/batches/${B1.id}`)).j?.data?.extra_forms
+  check('13x1. JELLY là phiếu bổ sung; mẻ chưa có phiếu ⇒ ghi / bấm giờ đều 409 FORM_NOT_ON_BATCH; thêm phiếu thường (MIX) ⇒ 422; thêm JELLY ⇒ mẻ có phiếu',
+    jOpt && plJ0.s === 409 && plJ0.j?.error?.code === 'MES_FORM_NOT_ON_BATCH' && stJ0.s === 409 && stJ0.j?.error?.code === 'MES_FORM_NOT_ON_BATCH'
+      && fBad.s === 422 && fBad.j?.error?.code === 'MES_FORM_INVALID' && fAdd.s === 200 && Array.isArray(b1Forms) && b1Forms.includes('JELLY'),
+    `opt=${jOpt} http=${plJ0.s}/${stJ0.s}/${fBad.s}/${fAdd.s} ${plJ0.j?.error?.code}/${stJ0.j?.error?.code}/${fBad.j?.error?.code} forms=${JSON.stringify(b1Forms)}`)
   // sửa riêng cho lần này: bảng rửa thạch thêm lần 9 + một ô mới — mẫu chung không đổi
   const custom = structuredClone(pfJelly?.blocks ?? [])
   for (const b of custom) if (b.type === 'grid' && b.key === 'wash') b.rows = 9
@@ -598,6 +609,24 @@ try {
       && (pfJ2?.blocks ?? []).some(b => b.key === 'wash' && b.rows === 8)
       && plC4.s === 200 && plC4.j?.data?.blocks === null && plC4.j?.data?.data?.wash_9_s1_t === '10:30',
     `http=${plC1.s}/${plC2.s}/${plC3.s}/${plC4.s} c4blocks=${JSON.stringify(plC4.j?.data?.blocks)}`)
+  const fDrop = await api(`/wms/production/batches/${B1.id}/forms`, 'PUT', { forms: [] })
+  check('13x2. Bỏ phiếu bổ sung ĐÃ GHI khỏi mẻ ⇒ 409 FORM_HAS_LOG', fDrop.s === 409 && fDrop.j?.error?.code === 'MES_FORM_HAS_LOG', `http=${fDrop.s} ${fDrop.j?.error?.code}`)
+  // mặc định theo mã: mẫu bổ sung QA63X gắn M_BTP2 ⇒ mở mẻ M_BTP2 tự có; gửi extra_forms [] ⇒ không có; mã khác ⇒ không có
+  const pfX = await api('/wms/production/process-forms/QA63X', 'PUT', { title: 'QA63 phiếu bổ sung', short: 'QA63X', is_active: true, optional: true, material_ids: [M_BTP2],
+    blocks: [{ type: 'fields', title: 'A', fields: [{ key: 'x', label: 'X', kind: 'num' }] }] })
+  const pfXbad = await api('/wms/production/process-forms/QA63X', 'PUT', { title: 'QA63 phiếu bổ sung', short: 'QA63X', is_active: true, optional: true, material_ids: [M_RM],
+    blocks: [{ type: 'fields', title: 'A', fields: [{ key: 'x', label: 'X', kind: 'num' }] }] })
+  const bx1 = await api('/wms/production/batches', 'POST', NEW({ cycle: 'QX', material_id: M_BTP2, tank_id: T4.id, planned_qty: 10 }))
+  const bx2 = await api('/wms/production/batches', 'POST', NEW({ cycle: 'QX', material_id: M_BTP2, tank_id: T4.id, planned_qty: 10, extra_forms: [] }))
+  const fx1 = (await api(`/wms/production/batches/${bx1.j?.data?.id}`)).j?.data?.extra_forms
+  const fx2 = (await api(`/wms/production/batches/${bx2.j?.data?.id}`)).j?.data?.extra_forms
+  const fb2 = (await api(`/wms/production/batches/${B2.id}`)).j?.data?.extra_forms
+  check('13x3. Mẫu bổ sung gắn mã BTP: mở mẻ mã đó ⇒ tick sẵn; mở mẻ gửi danh sách rỗng ⇒ không có; mẻ mã khác ⇒ không có; mã không phải BTP ⇒ 422',
+    pfX.s === 201 && pfX.j?.data?.optional === true && pfXbad.s === 422 && bx1.s === 201 && bx2.s === 201
+      && JSON.stringify(fx1) === '["QA63X"]' && JSON.stringify(fx2) === '[]' && JSON.stringify(fb2) === '[]',
+    `http=${pfX.s}/${pfXbad.s}/${bx1.s}/${bx2.s} ${JSON.stringify(bx1.j?.error ?? null)} fx1=${JSON.stringify(fx1)} fx2=${JSON.stringify(fx2)} b2=${JSON.stringify(fb2)}`)
+  for (const x of [bx1, bx2]) if (x.j?.data?.id) await api(`/wms/production/batches/${x.j.data.id}/cancel`, 'POST', {})
+  await api('/wms/production/process-forms/QA63X', 'PUT', { title: 'QA63 phiếu bổ sung', short: 'QA63X', is_active: false, blocks: [{ type: 'fields', title: 'A', fields: [{ key: 'x', label: 'X', kind: 'num' }] }] })
 
   check('9a. Huỷ mẻ còn dòng rút ⇒ 409 BATCH_HAS_CONSUMPTION', cx.s === 409 && cx.j?.error?.code === 'BATCH_HAS_CONSUMPTION', `http=${cx.s}`)
   const clB = await api(`/wms/production/batches/${B1.id}/close`, 'POST', {})

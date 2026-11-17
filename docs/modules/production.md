@@ -55,6 +55,29 @@ Một hàm `mes_batch_gate(batch_id)` cho cả màn hình (`getBatch` trả `gat
 
 **Staging (17/11):** dữ liệu cũ của Chế biến Ba Vì đã xoá theo lệnh user; kho chuyển sang chế độ QR + bật cờ; 20 pallet tồn thử đều có tem (dạng `ddmmyy_mãhàng_1_N_stt_B`, ghi chú "Demo MES — tồn thử có tem QR (17/11)"); bốn chức danh thử `jt-mes-lead` · `jt-mes-qa` · `jt-mes-mixer` · `jt-mes-pour`.
 
+## PHIẾU BỔ SUNG theo mã bán thành phẩm (17/11 — migration `20261117c_mes_extra_forms`)
+
+User: *"BTP dịch thạch chính là 1 phiếu bổ sung thêm của các BTP có tính chất liên quan tới thạch, nếu không có thì bỏ đi. Khi tạo mẻ cũng có thể chỉnh … có thể thêm vào bởi trưởng ca, QA trong chức năng sửa."*
+
+- `production_process_form.optional` = phiếu **bổ sung** (chỉ có ở mẻ được chọn); tắt = phiếu thường, mẻ nào cũng có (MIX). JELLY bật sẵn.
+- `production_process_form.material_ids` = mã BTP **mặc định** có phiếu bổ sung đó (Cài đặt MES → Mẫu phiếu → công tắc "Phiếu bổ sung" + chọn mã; chỉ nhận mã có cờ Bán thành phẩm).
+- `production_batch.extra_forms` = phiếu bổ sung của MẺ. Một hàm đặt: `mes_batch_set_forms` (mở mẻ · đổi mã BTP · thêm / bớt). Một hàm cho mọi cửa ghi phiếu: `mes_batch_form_error` (PUT phiếu + bấm giờ `mes_log_stamp`). Cổng nạp bồn chỉ đòi phiếu CỦA MẺ. FE: `formsOfBatch` / `defaultExtraForms` (`config/processForms.ts`, cùng luật với `mes_default_forms`).
+
+| Tình huống | Kết quả |
+|---|---|
+| Mở mẻ mã BTP có trong danh sách mặc định của phiếu bổ sung | Phiếu tick sẵn ở form; mẻ có phiếu đó |
+| Mở mẻ mã BTP KHÔNG có trong danh sách | Phiếu không tick; trang mẻ không hiện thẻ phiếu đó |
+| Người mở tick / bỏ tick ở form | Theo lựa chọn (gửi `extra_forms`; vắng = mặc định theo mã) |
+| Trưởng ca / QA thêm phiếu trên trang mẻ | Nút "Thêm phiếu …" dưới các thẻ phiếu — `PUT /batches/:id/forms` (quyền `open_batch` hoặc `approve_lead` hoặc `approve_qa`); trưởng ca còn chỉnh được trong form Sửa mẻ |
+| Bỏ phiếu bổ sung chưa ghi | Được (nút "Bỏ" trên thẻ, hỏi xác nhận) |
+| Bỏ phiếu bổ sung ĐÃ ghi | 409 `MES_FORM_HAS_LOG` — dữ liệu của lô; ô tick trong form Sửa mẻ khoá |
+| Ghi / bấm giờ phiếu bổ sung mà mẻ chưa có | 409 `MES_FORM_NOT_ON_BATCH` |
+| Thêm phiếu thường (MIX) hoặc phiếu lạ vào danh sách bổ sung | 422 `MES_FORM_INVALID` |
+| Đổi mã BTP của mẻ | Phiếu bổ sung về mặc định của mã mới; phiếu đã ghi giữ nguyên |
+| Mẻ không còn mở | 409 `MES_BATCH_STATUS` — không đổi phiếu |
+
+Gói QA 63 mục [13x1–13x3]. Mẻ cũ có phiếu bổ sung đã ghi được migration giữ phiếu đó trên mẻ.
+
 ## Trang / nghiệp vụ
 
 Nhà máy sữa: NVL → **mẻ chế biến** → bán thành phẩm (BTP) trong **bồn** → **Sổ đóng gói** → pallet thành phẩm. User chốt 14/11: thiết kế trước khi có kết quả phiếu khảo sát; giai đoạn 1 = nối lô + tồn theo bồn; rút NVL = quét tem HOẶC chọn lô + số lượng; mẻ tạo tay trong app; mã lô tự ghép từ chu kỳ + số mẻ + bồn (17/11 — xem mục Luồng làm việc của mẻ); bồn chưa QA thả = cho rót, chỉ cảnh báo (công tắc); quá hạn lưu bồn = chỉ cảnh báo; lượng rút khai khi đóng trang sổ.

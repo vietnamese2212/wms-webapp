@@ -85,6 +85,11 @@ export interface BatchLot { id: string; tank_id: string; qty_in: number; qty_rem
 export interface BoardRow extends MatUnits {
   material_id: string; material_code: string; material_name: string | null
   required: number | null; note: string | null; sort_order: number
+  /** ĐỊNH MỨC GỐC = công thức × kế hoạch (17/11) — null = dòng tự thêm trên mẻ · tol_pct = mức lệch cho phép (%) */
+  standard: number | null; tol_pct: number | null
+  /** dòng của công thức đã bị bỏ trên mẻ (required = null) · dấu sửa gần nhất · đổi mã */
+  removed: boolean; change_reason: string | null; changed_by_name: string | null; changed_at: string | null
+  replaces_code: string | null; replaced_by_code: string | null
   consumed: number; lines: number
   /** tồn cấp được ở kho chế biến (không QA giữ, sau giữ chỗ) · phần KHÔNG có tem · số pallet / bao CÓ tem */
   available: number; available_no_tem: number; tem_pallets: number
@@ -96,6 +101,7 @@ export interface ProcessLog {
 }
 export interface BatchDetail {
   cycle: string | null; board: BoardRow[]; process_logs: ProcessLog[]
+  recipe_id: string | null; recipe: { id: string; name: string; base_qty: number; is_active: boolean } | null
   id: string; warehouse_id: string; batch_code: string; material_id: string; machine_code: string | null; shift: string | null
   prod_date: string; planned_qty: number | null; status: BatchStatus; qa_status: BatchQa; qa_by_name: string | null; qa_at: string | null; qa_note: string | null
   note: string | null; opened_by_name: string | null; created_at: string; closed_at: string | null; closed_by_name: string | null
@@ -229,28 +235,46 @@ export function useSaveProductionSettings() {
   })
 }
 
-export interface BatchInput { warehouse_id: string; material_id: string; prod_date: string; batch_code?: string; machine_code?: string; shift?: string; cycle?: string; planned_qty?: number | null; note?: string }
+export interface BatchInput { warehouse_id: string; material_id: string; prod_date: string; batch_code?: string; machine_code?: string; shift?: string; cycle?: string; planned_qty?: number | null; note?: string; recipe_id?: string }
 export const useCreateBatch = () => useProdMutation((b: BatchInput) => post<BatchDetail>('/wms/production/batches', b))
-export const useUpdateBatch = () => useProdMutation(({ id, ...b }: { id: string } & Partial<Omit<BatchInput, 'warehouse_id' | 'machine_code' | 'shift' | 'cycle' | 'note'>> & { machine_code?: string | null; shift?: string | null; cycle?: string | null; note?: string | null }) => patch<BatchDetail>(`/wms/production/batches/${id}`, b))
+export const useUpdateBatch = () => useProdMutation(({ id, ...b }: { id: string } & Partial<Omit<BatchInput, 'warehouse_id' | 'machine_code' | 'shift' | 'cycle' | 'note' | 'recipe_id'>> & { machine_code?: string | null; shift?: string | null; cycle?: string | null; note?: string | null }) => patch<BatchDetail>(`/wms/production/batches/${id}`, b))
 // ── Bàn làm việc của mẻ: yêu cầu nguyên liệu + định mức ──
-export const useSetRequirements = () => useProdMutation(({ batchId, items }: { batchId: string; items: { material_id: string; qty: number }[] }) =>
-  (async () => (await apiClient.put(`/wms/production/batches/${batchId}/requirements`, { items })).data.data as { count: number })())
-export const useApplyRecipe = () => useProdMutation(({ batchId, replace }: { batchId: string; replace?: boolean }) =>
-  post<{ count: number }>(`/wms/production/batches/${batchId}/apply-recipe`, { replace }))
+/** Sửa phiếu của mẻ (quyền edit_requirement, 17/11): có thay đổi thì BẮT BUỘC lý do · `replaces` = đổi mã (dòng mới thay cho mã cũ) */
+export const useSetRequirements = () => useProdMutation(({ batchId, items, reason }: { batchId: string; items: { material_id: string; qty: number; replaces?: string }[]; reason?: string }) =>
+  (async () => (await apiClient.put(`/wms/production/batches/${batchId}/requirements`, { items, reason })).data.data as { count: number; changed: number })())
+/** Chép công thức vào mẻ — recipe_id trống = công thức của mẻ / mặc định; replace = bỏ hết phiếu cũ trước ("đổi công thức") */
+export const useApplyRecipe = () => useProdMutation(({ batchId, replace, recipe_id }: { batchId: string; replace?: boolean; recipe_id?: string }) =>
+  post<{ count: number; recipe_id?: string; recipe_name?: string }>(`/wms/production/batches/${batchId}/apply-recipe`, { replace, recipe_id }))
 type RecipeMat = ({ id: string; material_code: string; short_name: string | null; category: string | null } & MatUnits) | null
-export interface RecipeRow { id: string; material_id: string; base_qty: number; note: string | null; is_active: boolean; updated_at: string; updated_by: string | null; material: RecipeMat }
-export interface RecipeDetail extends RecipeRow { lines: { id: string; material_id: string; qty: number; sort_order: number; note: string | null; material: RecipeMat }[] }
-export function useRecipes() {
-  return useQuery({ queryKey: ['prod-recipes'], staleTime: 30_000, queryFn: async () => (await apiClient.get('/wms/production/recipes')).data.data as RecipeRow[] })
+/** Một CÔNG THỨC của mã bán thành phẩm (17/11: một mã có nhiều công thức, đúng một công thức mặc định) */
+export interface RecipeRow {
+  id: string; material_id: string; name: string; base_qty: number; note: string | null; is_active: boolean; is_default: boolean
+  updated_at: string; updated_by: string | null; material: RecipeMat; line_count?: number
 }
-export function useRecipe(materialId: string | undefined) {
+export interface RecipeLine { id: string; material_id: string; qty: number; tol_pct: number | null; sort_order: number; note: string | null; material: RecipeMat }
+export interface RecipeDetail extends RecipeRow { lines: RecipeLine[] }
+/** materialId = chỉ công thức của mã đó (form Mở mẻ, Đổi công thức) · activeOnly = bỏ công thức đã ngừng */
+export function useRecipes(materialId?: string, activeOnly = false, enabled = true) {
   return useQuery({
-    queryKey: ['prod-recipe', materialId], enabled: !!materialId, staleTime: 10_000,
-    queryFn: async () => (await apiClient.get(`/wms/production/recipes/${materialId}`)).data.data as RecipeDetail | null,
+    queryKey: ['prod-recipes', materialId ?? 'all', activeOnly], enabled, staleTime: 30_000,
+    queryFn: async () => (await apiClient.get('/wms/production/recipes', { params: { material_id: materialId, active: activeOnly ? '1' : undefined } })).data.data as RecipeRow[],
   })
 }
-export const useSaveRecipe = () => useProdMutation(({ materialId, ...b }: { materialId: string; base_qty: number; note: string | null; is_active: boolean; lines: { material_id: string; qty: number }[] }) =>
-  (async () => (await apiClient.put(`/wms/production/recipes/${materialId}`, b)).data.data as { id: string; lines: number })())
+export function useRecipe(id: string | undefined) {
+  return useQuery({
+    queryKey: ['prod-recipe', id], enabled: !!id, staleTime: 10_000,
+    queryFn: async () => (await apiClient.get(`/wms/production/recipes/${id}`)).data.data as RecipeDetail,
+  })
+}
+export interface RecipeInput {
+  id?: string; material_id: string; name: string; base_qty: number; note: string | null; is_active: boolean; is_default: boolean
+  lines: { material_id: string; qty: number; tol_pct: number | null }[]
+}
+/** id có ⇒ sửa công thức đó; trống ⇒ tạo công thức MỚI cho mã */
+export const useSaveRecipe = () => useProdMutation(({ id, material_id, ...b }: RecipeInput) =>
+  (async () => (id
+    ? await apiClient.put(`/wms/production/recipes/${id}`, b)
+    : await apiClient.post('/wms/production/recipes', { material_id, ...b })).data.data as { id: string; lines: number; is_default: boolean })())
 /** blocks: mảng = lưu bản sửa riêng · null = về theo mẫu chung · bỏ trống = giữ nguyên */
 export const useSaveProcessLog = () => useProdMutation(({ batchId, form, data, blocks }: { batchId: string; form: string; data: Record<string, string>; blocks?: FormBlock[] | null }) =>
   (async () => (await apiClient.put(`/wms/production/batches/${batchId}/process-log/${form}`, { data, ...(blocks !== undefined ? { blocks } : {}) })).data.data as ProcessLog)())

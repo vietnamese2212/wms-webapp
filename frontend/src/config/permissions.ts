@@ -370,6 +370,7 @@ export const MODULES = {
       configure:   'Cài đặt MES (rút bồn còn lô chờ QA · hạn lưu bồn theo mã · mẫu phiếu theo dõi)',
       manage_recipe: 'Khai ĐỊNH MỨC nguyên liệu của mã bán thành phẩm (trang Định mức)',
       shift_report: 'Mở / chốt BÁO CÁO SỬ DỤNG NVL theo ca (nhập tồn cuối thực tế)',
+      edit_requirement: 'Sửa ĐỊNH MỨC trên phiếu của mẻ (thêm / bỏ / sửa / đổi nguyên liệu, đổi công thức — bắt buộc lý do; giữ định mức gốc) — vd trưởng ca',
       process_log: 'Ghi PHIẾU THEO DÕI của mẻ (và sửa riêng cấu trúc phiếu cho lần đó tại bàn) — QA xác nhận phiếu dùng quyền "QA giữ / thả / loại"',
     },
   },

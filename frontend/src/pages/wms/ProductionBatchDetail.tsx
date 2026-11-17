@@ -31,6 +31,7 @@ import {
 import { BATCH_STATUS_TONE, BATCH_QA_TONE, batchRowKey } from './ProductionBatches'
 import { qtyLabel, unitLabel } from '@/utils/qtyUnits'
 import { formatDate, formatDateTime } from '@/utils/formatters'
+import { reqLineState, devLabel, type ReqLineResult } from '@/utils/reqTolerance'
 
 const TD = 'px-2 py-1 text-[10px] whitespace-nowrap'
 const NUM = `${TD} text-right font-semibold tabular-nums`
@@ -104,12 +105,32 @@ function ProductionBatchDetail() {
   const live = b.consumption.filter(c => !c.reversed_at)
   const filled = b.movements.filter(m => m.kind === 'FILL').reduce((s, m) => s + Number(m.qty), 0)
   const inTank = b.lots.filter(l => l.status === 'ACTIVE').reduce((s, l) => s + Number(l.qty_remaining), 0)
-  const drawn = -b.movements.filter(m => m.kind === 'DRAW').reduce((s, m) => s + Number(m.qty), 0)
+  // 0 − tổng (không phải −tổng): chưa rút lần nào thì tổng = 0 và −0 in ra "-0"
+  const drawn = 0 - b.movements.filter(m => m.kind === 'DRAW').reduce((s, m) => s + Number(m.qty), 0)
   const rmMats = new Set(live.map(c => c.material_id)).size
   const board = b.board ?? []
-  const reqRows = board.filter(r => r.required != null)
-  const needOf = (r: (typeof board)[number]) => (r.required != null ? Math.max(Math.round((Number(r.required) - Number(r.consumed)) * 1000) / 1000, 0) : 0)
-  const reqDone = reqRows.filter(r => needOf(r) <= 0).length
+  const reqRows = board.filter(r => !r.removed && r.required != null)
+  // trạng thái một dòng theo MỨC LỆCH cho phép (17/11) — một luật cho bảng máy tính, danh sách điện thoại và ô "NVL đã đủ"
+  const stOf = (r: (typeof board)[number]): ReqLineResult => reqLineState(r, b.status === 'CLOSED')
+  const reqDone = reqRows.filter(r => ['ok', 'over'].includes(stOf(r).state)).length
+  const offTol = reqRows.filter(r => stOf(r).outOfTol).length
+  const nfq = (n: number) => Number(n).toLocaleString('vi-VN', { maximumFractionDigits: 3 })
+  // ô Yêu cầu: số đang hiệu lực + dấu sửa (gốc / thêm / thay cho) — tooltip ghi lý do, người, giờ
+  const changeTip = (r: (typeof board)[number]) => r.changed_at ? `${r.change_reason ?? ''} — ${r.changed_by_name ?? ''} · ${formatDateTime(r.changed_at)}` : undefined
+  const statusBadge = (r: (typeof board)[number]) => {
+    const st = stOf(r)
+    if (st.state === 'removed') return <StatusBadge tone="slate" title={changeTip(r)}>Đã bỏ{r.replaced_by_code ? ` → ${r.replaced_by_code}` : ''}</StatusBadge>
+    if (st.state === 'extra') return <StatusBadge tone="slate">Ngoài phiếu</StatusBadge>
+    if (st.state === 'over') return <StatusBadge tone="red" title={r.tol_pct != null ? `Mức lệch cho phép ±${nfq(r.tol_pct)}%` : undefined}>{r.tol_pct != null ? `Lệch ${devLabel(st.devPct)}` : 'Vượt yêu cầu'}</StatusBadge>
+    if (st.state === 'under') return <StatusBadge tone="red">Thiếu {devLabel(st.devPct) || 'chưa cấp'}</StatusBadge>
+    if (st.state === 'ok') return <StatusBadge tone="green" title={st.devPct ? `Lệch ${devLabel(st.devPct)} — trong mức cho phép` : undefined}>Đủ</StatusBadge>
+    if (st.state === 'progress') return <StatusBadge tone="amber">Đang cấp</StatusBadge>
+    return <StatusBadge tone="slate">Chưa cấp</StatusBadge>
+  }
+  const reqNote = (r: (typeof board)[number]) => r.removed
+    ? <span className="text-slate-400 font-normal">gốc {r.standard != null ? nfq(r.standard) : '—'}</span>
+    : r.standard == null ? <span className="ml-1 text-[9px] font-normal text-blue-700" title={changeTip(r)}>{r.replaces_code ? `thay ${r.replaces_code}` : 'thêm'}</span>
+    : Math.abs(Number(r.required) - Number(r.standard)) > 0.0005 ? <span className="ml-1 text-[9px] font-normal text-amber-700" title={changeTip(r)}>gốc {nfq(r.standard)}</span> : null
 
   async function run(fn: () => Promise<unknown>) { setErr(''); try { await fn() } catch (e) { setErr(apiMsg(e)) } }
   async function doQa(next: BatchQa) {
@@ -150,8 +171,9 @@ function ProductionBatchDetail() {
     if (b.qa_status !== 'HOLD') actions.push({ key: 'qa-hold', icon: ShieldAlert, label: 'Giữ QA', tip: 'Đưa lô về trạng thái chờ QA', onClick: () => void doQa('HOLD'), disabled: busy })
     if (b.qa_status !== 'REJECTED') actions.push({ key: 'qa-no', icon: ShieldX, label: 'QA loại', tip: 'Loại lô (bắt buộc lý do)', danger: true, onClick: () => void doQa('REJECTED'), disabled: busy })
   }
+  if (open && can(perms, 'production', 'edit_requirement'))
+    actions.push({ key: 'req', icon: ListChecks, label: 'Sửa định mức', tip: 'Sửa định mức của riêng mẻ này: sửa số · thêm · bỏ · đổi mã · đổi công thức (bắt buộc lý do, giữ định mức gốc)', onClick: () => setReqOpen(true) })
   if (can(perms, 'production', 'open_batch')) {
-    if (open) actions.push({ key: 'req', icon: ListChecks, label: 'Sửa yêu cầu', tip: 'Sửa yêu cầu nguyên liệu của riêng mẻ này (đổi số, thêm / bỏ nguyên liệu, chép lại định mức)', onClick: () => setReqOpen(true) })
     if (b.status !== 'CANCELLED') actions.push({ key: 'edit', icon: Pencil, label: 'Sửa', tip: 'Sửa ngày / máy / ca / kế hoạch / ghi chú (mã lô và mã BTP chỉ đổi khi chưa rút, chưa nạp)', onClick: () => setEditOpen(true) })
     if (open) actions.push({ key: 'close', icon: Lock, label: 'Đóng mẻ', tip: 'Đóng mẻ — không rút thêm nguyên liệu', onClick: () => void doStatus('close'), disabled: busy })
     if (b.status === 'CLOSED') actions.push({ key: 'reopen', icon: Unlock, label: 'Mở lại', tip: 'Mở lại mẻ để rút thêm / huỷ dòng rút', onClick: () => void doStatus('reopen'), disabled: busy })
@@ -177,6 +199,7 @@ function ProductionBatchDetail() {
           </div>
           <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 sm:gap-x-4 text-xs text-slate-600">
             <span><span className="text-slate-400 text-[10px]">Bán thành phẩm:</span> <span className="font-mono font-semibold">{b.material?.material_code}</span> {b.material?.short_name ?? ''}</span>
+            {b.recipe && <span><span className="text-slate-400 text-[10px]">Công thức:</span> <span className="font-semibold">{b.recipe.name}</span></span>}
             <span><span className="text-slate-400 text-[10px]">Ngày SX:</span> {formatDate(b.prod_date)}</span>
             <span><span className="text-slate-400 text-[10px]">Kho:</span> {b.warehouse?.name ?? '—'}</span>
             {(b.machine_code || b.shift || b.cycle) && <span><span className="text-slate-400 text-[10px]">Máy · Ca · Chu kỳ:</span> {[b.machine_code, b.shift, b.cycle ? `CK ${b.cycle}` : null].filter(Boolean).join(' · ')}</span>}
@@ -196,7 +219,8 @@ function ProductionBatchDetail() {
         </div>
         <SummaryBand tiles={[
           { label: 'NVL đã đủ', value: reqRows.length ? `${reqDone}/${reqRows.length}` : '—', accent: reqRows.length > 0 && reqDone < reqRows.length,
-            tip: reqRows.length ? 'Số nguyên liệu đã cấp đủ theo yêu cầu của mẻ / tổng số nguyên liệu mẻ yêu cầu' : 'Mẻ chưa có yêu cầu nguyên liệu (mã bán thành phẩm chưa khai định mức)' },
+            tip: reqRows.length ? 'Số nguyên liệu đã cấp đủ (trong mức lệch cho phép) / tổng số nguyên liệu trên phiếu của mẻ' : 'Mẻ chưa có phiếu nguyên liệu (mã bán thành phẩm chưa có công thức)' },
+          ...(offTol ? [{ label: 'Lệch mức', value: offTol.toLocaleString('vi-VN'), accent: true, tip: 'Số nguyên liệu cấp ngoài mức lệch cho phép (tô đỏ — vẫn cho cấp)' }] : []),
           { label: 'Lần cấp', value: live.length.toLocaleString('vi-VN'), tip: `${rmMats} mã nguyên liệu đã cấp vào mẻ (không tính dòng đã huỷ)` },
           { label: `Kế hoạch (${u})`, value: b.planned_qty != null ? nfQty(b.planned_qty) : '—' },
           { label: `Đã nạp (${u})`, value: nfQty(filled) },
@@ -211,27 +235,32 @@ function ProductionBatchDetail() {
           </div>
           {/* ĐIỆN THOẠI: mỗi nguyên liệu một dòng gọn — số yêu cầu / đã cấp / còn thiếu và nút Cấp thấy ngay, không phải cuộn ngang bảng */}
           <div className="sm:hidden divide-y divide-slate-100">
-            {!board.length && <p className="px-3 py-3 text-xs text-slate-400">{open ? <>Mẻ chưa có yêu cầu nguyên liệu — mã {b.material?.material_code} chưa khai định mức. Bấm ⋮ → "Sửa yêu cầu" để thêm, hoặc "Quét cấp NVL" để cấp luôn.</> : 'Mẻ không có nguyên liệu nào.'}</p>}
+            {!board.length && <p className="px-3 py-3 text-xs text-slate-400">{open ? <>Mẻ chưa có phiếu nguyên liệu — mã {b.material?.material_code} chưa có công thức. Bấm ⋮ → "Sửa định mức" để thêm, hoặc "Quét cấp NVL" để cấp luôn.</> : 'Mẻ không có nguyên liệu nào.'}</p>}
             {board.map(r => {
-              const need = needOf(r)
-              const extra = r.required == null
-              const done = !extra && need <= 0
+              const st = stOf(r)
+              const need = st.need
+              const extra = st.state === 'extra' || st.state === 'removed'
+              const done = st.state === 'ok' || st.state === 'over'
               const noStock = Number(r.available) <= 0
               const byScan = Number(r.tem_pallets) > 0
               return (
-                <div key={r.material_id} className="flex items-center gap-2 px-3 py-2">
+                <div key={r.material_id} className={`flex items-center gap-2 px-3 py-2 ${r.removed ? 'opacity-60' : ''}`}>
                   <div className="flex-1 min-w-0">
-                    <p className="text-xs truncate"><span className="font-mono font-semibold">{r.material_code}</span> <span className="text-slate-600">{r.material_name ?? ''}</span></p>
+                    <p className={`text-xs truncate ${r.removed ? 'line-through' : ''}`}><span className="font-mono font-semibold">{r.material_code}</span> <span className="text-slate-600">{r.material_name ?? ''}</span></p>
                     <p className="text-[11px] text-slate-500 tabular-nums">
-                      {extra ? <>Ngoài yêu cầu · đã cấp <b className="text-slate-700">{qtyLabel(Number(r.consumed), r)}</b></>
-                        : <>Cần <b className="text-slate-700">{qtyLabel(Number(r.required), r)}</b> · đã cấp <b className="text-slate-700">{qtyLabel(Number(r.consumed), r)}</b></>}
+                      {r.removed ? <>Đã bỏ khỏi phiếu{r.standard != null ? ` (gốc ${nfq(r.standard)})` : ''}{r.replaced_by_code ? ` → ${r.replaced_by_code}` : ''}{r.change_reason ? ` · ${r.change_reason}` : ''}</>
+                        : extra ? <>Ngoài phiếu · đã cấp <b className="text-slate-700">{qtyLabel(Number(r.consumed), r)}</b></>
+                        : <>Cần <b className="text-slate-700">{qtyLabel(Number(r.required), r)}</b>{reqNote(r)} · đã cấp <b className="text-slate-700">{qtyLabel(Number(r.consumed), r)}</b></>}
                     </p>
+                    {!r.removed && (
                     <p className="text-[11px] tabular-nums">
-                      {done ? <span className="text-green-700 font-semibold">Đủ</span> : need > 0 ? <span className="text-amber-700 font-semibold">Thiếu {qtyLabel(need, r)}</span> : null}
-                      <span className={`${done || need > 0 ? 'ml-1.5 ' : ''}${!done && need > Number(r.available) ? 'text-red-600' : 'text-slate-400'}`}>{noStock ? 'kho hết' : `kho còn ${qtyLabel(Number(r.available), r)}`}</span>
+                      {st.outOfTol ? <span className="text-red-600 font-semibold">{st.state === 'over' ? (r.tol_pct != null ? `Lệch ${devLabel(st.devPct)}` : 'Vượt yêu cầu') : `Thiếu ${devLabel(st.devPct) || 'chưa cấp'}`}</span>
+                        : done ? <span className="text-green-700 font-semibold">Đủ</span> : need > 0 ? <span className="text-amber-700 font-semibold">Thiếu {qtyLabel(need, r)}</span> : null}
+                      <span className={`${done || need > 0 || st.outOfTol ? 'ml-1.5 ' : ''}${!done && need > Number(r.available) ? 'text-red-600' : 'text-slate-400'}`}>{noStock ? 'kho hết' : `kho còn ${qtyLabel(Number(r.available), r)}`}</span>
                     </p>
+                    )}
                   </div>
-                  {canConsume && (
+                  {canConsume && !r.removed && (
                     <button type="button" onClick={() => openConsume(r.material_id, noStock)}
                       className={`touch-target shrink-0 inline-flex items-center gap-1 rounded border border-blue-200 bg-blue-50 px-2.5 py-1.5 text-xs text-blue-700 ${noStock ? 'opacity-60' : ''}`}>
                       {byScan ? <ScanIcon className="h-4 w-4" /> : <Plus className="h-4 w-4" />}Cấp
@@ -246,28 +275,28 @@ function ProductionBatchDetail() {
             <TableBody>
               {!board.length && (
                 <TableEmptyRow colSpan={BOARD_COLS.length}>
-                  {open ? <>Mẻ chưa có yêu cầu nguyên liệu — mã {b.material?.material_code} chưa khai định mức. Bấm "Sửa yêu cầu" để thêm nguyên liệu, hoặc "Quét cấp NVL" để cấp luôn.</> : 'Mẻ không có nguyên liệu nào.'}
+                  {open ? <>Mẻ chưa có phiếu nguyên liệu — mã {b.material?.material_code} chưa có công thức. Bấm "Sửa định mức" để thêm nguyên liệu, hoặc "Quét cấp NVL" để cấp luôn.</> : 'Mẻ không có nguyên liệu nào.'}
                 </TableEmptyRow>
               )}
               {board.map(r => {
-                const need = needOf(r)
-                const extra = r.required == null
-                const over = !extra && Number(r.consumed) > Number(r.required) + 0.0005
-                const done = !extra && need <= 0
+                const st = stOf(r)
+                const need = st.need
+                const extra = st.state === 'extra' || st.state === 'removed'
+                const done = st.state === 'ok' || st.state === 'over'
                 const started = Number(r.consumed) > 0
                 const noStock = Number(r.available) <= 0
                 const byScan = Number(r.tem_pallets) > 0
                 return (
-                  <TableRow key={r.material_id} className={done ? rowText('full') : started ? rowText('inProgress') : ''}>
-                    <TableCell className={`${TD} sticky left-0 z-10 bg-white truncate`} title={[r.material_name, r.note].filter(Boolean).join(' · ')}><span className="font-mono font-semibold">{r.material_code}</span> {r.material_name ?? ''}</TableCell>
-                    <TableCell className={NUM}>{extra ? <span className="text-slate-300 font-normal">—</span> : qtyLabel(Number(r.required), r)}</TableCell>
-                    <TableCell className={NUM}>{started ? qtyLabel(Number(r.consumed), r) : <span className="text-slate-300 font-normal">—</span>}</TableCell>
+                  <TableRow key={r.material_id} className={r.removed ? 'text-slate-400' : done ? rowText('full') : started ? rowText('inProgress') : ''}>
+                    <TableCell className={`${TD} sticky left-0 z-10 bg-white truncate ${r.removed ? 'line-through' : ''}`} title={[r.material_name, r.note, r.replaces_code ? `thay cho ${r.replaces_code}` : null].filter(Boolean).join(' · ')}><span className="font-mono font-semibold">{r.material_code}</span> {r.material_name ?? ''}</TableCell>
+                    <TableCell className={NUM} title={changeTip(r)}>{r.removed ? reqNote(r) : extra ? <span className="text-slate-300 font-normal">—</span> : <>{qtyLabel(Number(r.required), r)}{reqNote(r)}</>}</TableCell>
+                    <TableCell className={`${NUM} ${st.outOfTol ? 'text-red-600' : ''}`}>{started ? qtyLabel(Number(r.consumed), r) : <span className="text-slate-300 font-normal">—</span>}</TableCell>
                     <TableCell className={`${NUM} ${need > 0 ? 'text-amber-700' : ''}`}>{need > 0 ? qtyLabel(need, r) : <span className="text-slate-300 font-normal">—</span>}</TableCell>
                     <TableCell className={`${NUM} ${!done && need > Number(r.available) ? 'text-red-600' : ''}`} title={!done && need > Number(r.available) ? 'Tồn ở kho chế biến không đủ phần còn thiếu — chuyển thêm hàng sang kho chế biến' : undefined}>{noStock ? <span className="font-normal">hết</span> : qtyLabel(Number(r.available), r)}</TableCell>
                     <TableCell className={TD}>{noStock ? <span className="text-slate-300">—</span> : byScan ? <StatusBadge tone="sky">Quét tem</StatusBadge> : <StatusBadge tone="purple">Chọn lô</StatusBadge>}</TableCell>
-                    <TableCell className={TD}>{extra ? <StatusBadge tone="slate">Ngoài yêu cầu</StatusBadge> : over ? <StatusBadge tone="red">Vượt yêu cầu</StatusBadge> : done ? <StatusBadge tone="green">Đủ</StatusBadge> : started ? <StatusBadge tone="amber">Đang cấp</StatusBadge> : <StatusBadge tone="slate">Chưa cấp</StatusBadge>}</TableCell>
+                    <TableCell className={TD}>{statusBadge(r)}</TableCell>
                     <TableCell className={`${TD} sticky right-0 z-10 bg-white text-right`}>
-                      {canConsume && (
+                      {canConsume && !r.removed && (
                         <button type="button" onClick={() => openConsume(r.material_id, noStock)}
                           className={`touch-target inline-flex items-center gap-1 rounded border border-blue-200 bg-blue-50 px-2 py-1 text-blue-700 hover:bg-blue-100 ${noStock ? 'opacity-60' : ''}`}
                           title={noStock ? 'Lần tải trước kho chế biến hết mã này — bấm để kiểm lại (hàng vừa chuyển sang vẫn cấp được)' : byScan ? 'Quét tem để cấp nguyên liệu này' : 'Chọn lô để cấp nguyên liệu này (hàng không có tem)'}>

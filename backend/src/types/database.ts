@@ -1,5 +1,5 @@
 // FILE SINH TỰ ĐỘNG — `node scripts/gen-db-types.mjs` (từ information_schema STAGING). KHÔNG sửa tay.
-// Sinh lúc 2026-11-16T15:30:20.288Z · 123 bảng/view · 237 hàm · 0 enum
+// Sinh lúc 2026-11-17T02:47:20.768Z · 123 bảng/view · 237 hàm · 0 enum
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[]
 
 export type Database = {
@@ -3316,6 +3316,13 @@ export type Database = {
           created_at: string
           updated_at: string
           updated_by: string | null
+          qty_standard: number | null
+          tol_pct: number | null
+          removed_at: string | null
+          replaces_material_id: string | null
+          change_reason: string | null
+          changed_by_name: string | null
+          changed_at: string | null
         }
         Insert: {
           id: string
@@ -3327,6 +3334,13 @@ export type Database = {
           created_at?: string
           updated_at: string
           updated_by?: string | null
+          qty_standard?: number | null
+          tol_pct?: number | null
+          removed_at?: string | null
+          replaces_material_id?: string | null
+          change_reason?: string | null
+          changed_by_name?: string | null
+          changed_at?: string | null
         }
         Update: {
           id?: string
@@ -3338,6 +3352,13 @@ export type Database = {
           created_at?: string
           updated_at?: string
           updated_by?: string | null
+          qty_standard?: number | null
+          tol_pct?: number | null
+          removed_at?: string | null
+          replaces_material_id?: string | null
+          change_reason?: string | null
+          changed_by_name?: string | null
+          changed_at?: string | null
         }
         Relationships: []
       }
@@ -5364,6 +5385,7 @@ export type Database = {
           created_at: string
           updated_at: string
           cycle: string | null
+          recipe_id: string | null
         }
         Insert: {
           id: string
@@ -5389,6 +5411,7 @@ export type Database = {
           created_at?: string
           updated_at: string
           cycle?: string | null
+          recipe_id?: string | null
         }
         Update: {
           id?: string
@@ -5414,6 +5437,7 @@ export type Database = {
           created_at?: string
           updated_at?: string
           cycle?: string | null
+          recipe_id?: string | null
         }
         Relationships: []
       }
@@ -5463,6 +5487,8 @@ export type Database = {
           created_at: string
           updated_at: string
           updated_by: string | null
+          name: string
+          is_default: boolean
         }
         Insert: {
           id: string
@@ -5473,6 +5499,8 @@ export type Database = {
           created_at?: string
           updated_at: string
           updated_by?: string | null
+          name: string
+          is_default?: boolean
         }
         Update: {
           id?: string
@@ -5483,6 +5511,8 @@ export type Database = {
           created_at?: string
           updated_at?: string
           updated_by?: string | null
+          name?: string
+          is_default?: boolean
         }
         Relationships: []
       }
@@ -5496,6 +5526,7 @@ export type Database = {
           note: string | null
           created_at: string
           updated_at: string
+          tol_pct: number | null
         }
         Insert: {
           id: string
@@ -5506,6 +5537,7 @@ export type Database = {
           note?: string | null
           created_at?: string
           updated_at: string
+          tol_pct?: number | null
         }
         Update: {
           id?: string
@@ -5516,6 +5548,7 @@ export type Database = {
           note?: string | null
           created_at?: string
           updated_at?: string
+          tol_pct?: number | null
         }
         Relationships: []
       }

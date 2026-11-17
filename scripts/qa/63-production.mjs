@@ -51,14 +51,14 @@ async function cleanup() {
   await restWrite('production_process_form', 'DELETE', 'code=like.QA63*')
   if (batches.length) await restWrite('batch_requirement', 'DELETE', `batch_id=in.(${batches.map(b => b.id).join(',')})`)
   await restWrite('production_shift_report', 'DELETE', `warehouse_id=in.(${whs.join(',')})`)
-  // đủ CẢ BỐN mã: bản lỗi C117 cho khai định mức với mã NVL ⇒ dòng định mức đó giữ khoá ngoại, mã hàng + kho thử không xoá được
-  await restWrite('production_recipe', 'DELETE', `material_id=in.(${[M_RM, M_BTP, M_BTP2, M_EA].join(',')})`)
-  await restWrite('Material', 'DELETE', 'material_code=eq.QA63BTPX')
   if (runs.length) {
     await restWrite('packing_logs', 'DELETE', `run_id=in.(${runs.map(r => r.id).join(',')})`)
     await restWrite('packing_runs', 'DELETE', `id=in.(${runs.map(r => r.id).join(',')})`)
   }
   if (batches.length) await restWrite('production_batch', 'DELETE', `id=in.(${batches.map(b => b.id).join(',')})`)
+  // SAU mẻ (production_batch.recipe_id trỏ tới công thức, 17/11) · đủ CẢ BỐN mã: bản lỗi C117 cho khai công thức với mã NVL
+  await restWrite('production_recipe', 'DELETE', `material_id=in.(${[M_RM, M_BTP, M_BTP2, M_EA].join(',')})`)
+  await restWrite('Material', 'DELETE', 'material_code=eq.QA63BTPX')
   if (tanks.length) await restWrite('production_tank', 'DELETE', `id=in.(${tanks.map(t => t.id).join(',')})`)
   await restWrite('InventoryEntry', 'DELETE', `warehouse_id=in.(${whs.join(',')})`)
   await restWrite('warehouse_type_configs', 'DELETE', `warehouse_id=in.(${whs.join(',')})`)
@@ -359,16 +359,18 @@ try {
   // ── [9] vòng đời mẻ ──
   const cx = await api(`/wms/production/batches/${B1.id}/cancel`, 'POST', {})
   // ── [10] BÀN LÀM VIỆC CỦA MẺ: định mức → yêu cầu → cấp ──
-  const rcBad = await api(`/wms/production/recipes/${M_BTP2}`, 'PUT', { base_qty: 100, lines: [{ material_id: M_BTP2, qty: 1 }] })
-  const rcEa = await api(`/wms/production/recipes/${M_EA}`, 'PUT', { base_qty: 100, lines: [{ material_id: M_RM, qty: 1 }] })
-  const rcRm = await api(`/wms/production/recipes/${M_RM}`, 'PUT', { base_qty: 100, lines: [{ material_id: M_EA, qty: 1 }] })
+  const RC = (material_id, name, lines, extra = {}) => api('/wms/production/recipes', 'POST', { material_id, name, base_qty: 100, lines, ...extra })
+  const rcBad = await RC(M_BTP2, 'QA63 tự chứa', [{ material_id: M_BTP2, qty: 1 }])
+  const rcEa = await RC(M_EA, 'QA63 EA', [{ material_id: M_RM, qty: 1 }])
+  const rcRm = await RC(M_RM, 'QA63 NVL', [{ material_id: M_EA, qty: 1 }])
   check('10a. Định mức chứa chính mã BTP ⇒ 422; mã EA ⇒ 422; mã NGUYÊN LIỆU tính KG ⇒ 422 NOT_SEMI_FINISHED (C117)',
     rcBad.s === 422 && rcEa.s === 422 && rcRm.s === 422 && rcRm.j?.error?.code === 'NOT_SEMI_FINISHED', `http=${rcBad.s}/${rcEa.s}/${rcRm.s} ${rcRm.j?.error?.code}`)
-  const rcOk = await api(`/wms/production/recipes/${M_BTP2}`, 'PUT', { base_qty: 100, note: 'QA63', lines: [{ material_id: M_RM, qty: 5 }, { material_id: M_EA, qty: 2 }] })
-  const rcGet = await api(`/wms/production/recipes/${M_BTP2}`)
+  const rcOk = await RC(M_BTP2, 'Chuẩn', [{ material_id: M_RM, qty: 5 }, { material_id: M_EA, qty: 2 }], { note: 'QA63' })
+  const RCP1 = rcOk.j?.data?.id
+  const rcGet = await api(`/wms/production/recipes/${RCP1}`)
   const rcList = await api('/wms/production/recipes')
   check('10b. Lưu định mức 2 dòng; đọc lại đủ dòng; có trong danh sách',
-    rcOk.s === 200 && rcGet.s === 200 && (rcGet.j?.data?.lines ?? []).length === 2 && num(rcGet.j?.data?.base_qty) === 100 && (rcList.j?.data ?? []).some(r => r.material_id === M_BTP2),
+    rcOk.s === 201 && rcOk.j?.data?.is_default === true && rcGet.s === 200 && (rcGet.j?.data?.lines ?? []).length === 2 && num(rcGet.j?.data?.base_qty) === 100 && (rcList.j?.data ?? []).some(r => r.material_id === M_BTP2),
     `http=${rcOk.s}/${rcGet.s}/${rcList.s} ${JSON.stringify(rcOk.j?.error ?? null)}`)
   const bw = await api('/wms/production/batches', 'POST', { warehouse_id: WC, material_id: M_BTP2, prod_date: todayVN, planned_qty: 300, cycle: 'C63' })
   const BW = bw.j?.data
@@ -382,7 +384,7 @@ try {
   const wScan = await api(`/wms/production/batches/${BW.id}/consume-scan`, 'POST', { entry_id: 'QA63_E2', qty: 6, qty_semantics: 'base' })
   const board1 = (await api(`/wms/production/batches/${BW.id}`)).j?.data?.board ?? []
   check('10d. Cấp 6 bằng quét tem ⇒ bàn: đã cấp 6 / yêu cầu 15', wScan.s === 200 && num(board1.find(r => r.material_id === M_RM)?.consumed) === 6, `http=${wScan.s}`)
-  const rq1 = await api(`/wms/production/batches/${BW.id}/requirements`, 'PUT', { items: [{ material_id: M_EA, qty: 4 }] })
+  const rq1 = await api(`/wms/production/batches/${BW.id}/requirements`, 'PUT', { reason: 'QA63 bỏ NVL đang cấp dở', items: [{ material_id: M_EA, qty: 4 }] })
   const board2 = (await api(`/wms/production/batches/${BW.id}`)).j?.data?.board ?? []
   const rm2 = board2.find(r => r.material_id === M_RM), ea2 = board2.find(r => r.material_id === M_EA)
   check('10e. Sửa yêu cầu (bỏ NVL đã cấp dở) ⇒ dòng đó còn trên bàn là NGOÀI yêu cầu, phần đã cấp giữ nguyên',
@@ -396,6 +398,49 @@ try {
   check('10g. Chép lại định mức ⇒ yêu cầu về 15 / 6; mã chưa khai định mức ⇒ 409 MES_NO_RECIPE',
     apOk.s === 200 && num(board3.find(r => r.material_id === M_RM)?.required) === 15 && num(board3.find(r => r.material_id === M_EA)?.required) === 6 && apNone.s === 409 && apNone.j?.error?.code === 'MES_NO_RECIPE',
     `http=${apOk.s}/${apNone.s} ${apNone.j?.error?.code}`)
+  // ── [10k] NHIỀU CÔNG THỨC / mã + PHIẾU CỦA MẺ GIỮ ĐỊNH MỨC GỐC (17/11 — phiếu chế biến giấy SC CĐ Long Thành) ──
+  const rc2 = await RC(M_BTP2, 'QA63 bản 2', [{ material_id: M_RM, qty: 8, tol_pct: 2 }], { is_default: true })
+  const RCP2 = rc2.j?.data?.id
+  const rcDupName = await RC(M_BTP2, 'qa63 BẢN 2', [{ material_id: M_RM, qty: 1 }])
+  const rl = await api(`/wms/production/recipes?material_id=${M_BTP2}`)
+  const defs = (rl.j?.data ?? []).filter(r => r.is_default).map(r => r.id)
+  check('10k. Một mã BTP có 2 công thức; đặt mặc định công thức mới ⇒ đúng MỘT mặc định; trùng tên (khác hoa thường) ⇒ 409 MES_DUPLICATE_NAME',
+    rc2.s === 201 && (rl.j?.data ?? []).length === 2 && defs.length === 1 && defs[0] === RCP2 && rcDupName.s === 409 && rcDupName.j?.error?.code === 'MES_DUPLICATE_NAME',
+    `http=${rc2.s}/${rl.s}/${rcDupName.s} defs=${JSON.stringify(defs)} ${rcDupName.j?.error?.code}`)
+  const bv = await api('/wms/production/batches', 'POST', { warehouse_id: WC, material_id: M_BTP2, prod_date: todayVN, planned_qty: 200, recipe_id: RCP1 })
+  const BV = bv.j?.data
+  const bvGet = (await api(`/wms/production/batches/${BV?.id}`)).j?.data
+  const bvRm = (bvGet?.board ?? []).find(r => r.material_id === M_RM)
+  const bvMis = await api('/wms/production/batches', 'POST', { warehouse_id: WC, material_id: M_BTP, prod_date: todayVN, recipe_id: RCP1 })
+  check('10l. Mở mẻ chọn công thức KHÔNG mặc định ⇒ phiếu theo đúng công thức đó (× 2), gốc = yêu cầu; công thức của mã khác ⇒ 422 MES_RECIPE_MISMATCH',
+    bv.s === 201 && bvGet?.recipe?.id === RCP1 && num(bvRm?.required) === 10 && num(bvRm?.standard) === 10 && bvMis.s === 422 && bvMis.j?.error?.code === 'MES_RECIPE_MISMATCH',
+    `http=${bv.s}/${bvMis.s} recipe=${bvGet?.recipe?.name} rm=${JSON.stringify(bvRm ?? null)}`)
+  const bvNoReason = await api(`/wms/production/batches/${BV?.id}/requirements`, 'PUT', { items: [{ material_id: M_RM, qty: 11 }, { material_id: M_EA, qty: 4 }] })
+  const bvEdit = await api(`/wms/production/batches/${BV?.id}/requirements`, 'PUT', { reason: 'QA63 đường ẩm', items: [{ material_id: M_RM, qty: 11 }] })
+  const bvB = (await api(`/wms/production/batches/${BV?.id}`)).j?.data?.board ?? []
+  const vRm = bvB.find(r => r.material_id === M_RM), vEa = bvB.find(r => r.material_id === M_EA)
+  check('10m. Sửa định mức của mẻ: thiếu lý do ⇒ 422 MES_REASON; có lý do ⇒ yêu cầu 11 mà GỐC vẫn 10 + lý do; bỏ dòng công thức ⇒ còn "đã bỏ" giữ gốc 4',
+    bvNoReason.s === 422 && bvNoReason.j?.error?.code === 'MES_REASON' && bvEdit.s === 200 && num(vRm?.required) === 11 && num(vRm?.standard) === 10
+      && vRm?.change_reason === 'QA63 đường ẩm' && vEa?.removed === true && vEa?.required == null && num(vEa?.standard) === 4,
+    `http=${bvNoReason.s}/${bvEdit.s} rm=${JSON.stringify(vRm ?? null)} ea=${JSON.stringify(vEa ?? null)}`)
+  const bvSwap = await api(`/wms/production/batches/${BV?.id}/requirements`, 'PUT', { reason: 'QA63 hết mã cũ, đổi', items: [{ material_id: M_BTP, qty: 11, replaces: M_RM }] })
+  const bvS = (await api(`/wms/production/batches/${BV?.id}`)).j?.data?.board ?? []
+  const sNew = bvS.find(r => r.material_id === M_BTP), sOld = bvS.find(r => r.material_id === M_RM)
+  check('10n. Đổi mã ⇒ dòng mới ghi "thay cho" mã cũ (gốc trống), dòng cũ "đã bỏ → mã mới" vẫn giữ gốc 10',
+    bvSwap.s === 200 && sNew?.replaces_code === 'QA63RM1' && sNew?.standard == null && num(sNew?.required) === 11 && sOld?.removed === true && sOld?.replaced_by_code === 'QA63BTP1' && num(sOld?.standard) === 10,
+    `http=${bvSwap.s} new=${JSON.stringify(sNew ?? null)} old=${JSON.stringify(sOld ?? null)}`)
+  const bvSw = await api(`/wms/production/batches/${BV?.id}/apply-recipe`, 'POST', { replace: true, recipe_id: RCP2 })
+  const bvR = (await api(`/wms/production/batches/${BV?.id}`)).j?.data
+  const r2Rm = (bvR?.board ?? []).find(r => r.material_id === M_RM)
+  check('10o. Đổi công thức trên mẻ ⇒ phiếu theo công thức mới (8 × 2 = 16, mức lệch ±2%), mẻ ghi công thức mới',
+    bvSw.s === 200 && bvR?.recipe?.id === RCP2 && (bvR?.board ?? []).length === 1 && num(r2Rm?.required) === 16 && num(r2Rm?.standard) === 16 && num(r2Rm?.tol_pct) === 2,
+    `http=${bvSw.s} recipe=${bvR?.recipe?.name} board=${JSON.stringify(bvR?.board ?? null)}`)
+  if (BV?.id) await api(`/wms/production/batches/${BV.id}/cancel`, 'POST', {})
+  // các phép sau (10i, 10j) chép công thức MẶC ĐỊNH ⇒ trả mặc định về công thức 1
+  const back = await api(`/wms/production/recipes/${RCP1}`, 'PUT', { name: 'Chuẩn', base_qty: 100, note: 'QA63', is_default: true, lines: [{ material_id: M_RM, qty: 5 }, { material_id: M_EA, qty: 2 }] })
+  const r2Now = (await api(`/wms/production/recipes/${RCP2}`)).j?.data
+  check('10p. Đặt lại mặc định cho công thức 1 ⇒ công thức 2 thôi mặc định', back.s === 200 && back.j?.data?.is_default === true && r2Now?.is_default === false,
+    `http=${back.s} ${JSON.stringify(back.j?.error ?? null)} r2=${r2Now?.is_default}`)
   // sửa mẻ ⇒ bàn tính lại yêu cầu (C114, 16/11)
   const upPlan = await api(`/wms/production/batches/${BW.id}`, 'PATCH', { planned_qty: 600 })
   const board4 = (await api(`/wms/production/batches/${BW.id}`)).j?.data?.board ?? []
@@ -570,6 +615,9 @@ try {
     const sOpen = tkOpen ? await st(tkOpen, q) : 0, sView = tkView ? await st(tkView, q) : 0
     check('14a. Chức danh chỉ có quyền Sản xuất được mở mẻ ⇒ tìm được mã hàng (200); chức danh chỉ xem ⇒ 403',
       !!tkOpen && !!tkView && sOpen === 200 && sView === 403, `open=${sOpen} view=${sView}`)
+    const putAs = async (tk, p, body) => (await fetch(`${BASE}/api${p}`, { method: 'PUT', headers: { Authorization: `Bearer ${tk}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body) })).status
+    const sEdit = tkOpen ? await putAs(tkOpen, `/wms/production/batches/${BW?.id ?? 'x'}/requirements`, { items: [], reason: 'QA63' }) : 0
+    check('14b. Chức danh mở mẻ được nhưng KHÔNG có quyền "Sửa định mức của mẻ" ⇒ 403 (17/11 — chỉ người được phân quyền, vd trưởng ca)', sEdit === 403, `http=${sEdit}`)
   }
 
   // ── [15] CỜ "BÁN THÀNH PHẨM" Ở MÃ HÀNG (16/11, C117 — ô "Mã bán thành phẩm" từng chỉ liệt kê nguyên liệu) ──

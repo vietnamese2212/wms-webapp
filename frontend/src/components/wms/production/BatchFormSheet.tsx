@@ -10,7 +10,7 @@ import { Label } from '@/components/ui/label'
 import { useDebouncedValue } from '@/hooks/useDebouncedValue'
 import { useGlobalScopeStore } from '@/stores/globalScopeStore'
 import { useMaterialsByIds, useMachines } from '@/api/hooks'
-import { useProductionWarehouses, useNextBatchCode, useCreateBatch, useUpdateBatch, useShiftNames, defaultKitchen, useSemiFinishedSearch, SEMI_FINISHED_PLACEHOLDER, type BatchDetail } from '@/api/productionHooks'
+import { useProductionWarehouses, useNextBatchCode, useCreateBatch, useUpdateBatch, useShiftNames, defaultKitchen, useSemiFinishedSearch, useRecipes, SEMI_FINISHED_PLACEHOLDER, type BatchDetail } from '@/api/productionHooks'
 import { NoSemiFinishedHint } from './NoSemiFinishedHint'
 import { unitLabel } from '@/utils/qtyUnits'
 import { parseVnNumber, vnNumberInput } from '@/utils/vnNumber'
@@ -23,7 +23,7 @@ export function BatchFormSheet({ open, onClose, batch, template, onSaved }: {
   /** có = sửa mẻ này; không = mở mẻ mới */
   batch?: BatchDetail | null
   /** mở mẻ MỚI điền sẵn theo một mẻ có trước (kho · mã BTP · máy · ca · kế hoạch) — ngày = hôm nay, mã lô gợi ý lại */
-  template?: { warehouse_id: string; material_id: string; machine_code: string | null; shift: string | null; cycle?: string | null; planned_qty: number | null } | null
+  template?: { warehouse_id: string; material_id: string; machine_code: string | null; shift: string | null; cycle?: string | null; planned_qty: number | null; recipe_id?: string | null } | null
   onSaved?: (id: string) => void
 }) {
   const editing = !!batch
@@ -39,6 +39,8 @@ export function BatchFormSheet({ open, onClose, batch, template, onSaved }: {
   const [code, setCode] = useState('')
   const [codeTouched, setCodeTouched] = useState(false)
   const [note, setNote] = useState('')
+  // CÔNG THỨC (17/11): một mã có nhiều công thức — chọn sẵn công thức mặc định (Mở mẻ giống: công thức của mẻ gốc)
+  const [recipeId, setRecipeId] = useState('')
   const [err, setErr] = useState('')
   const create = useCreateBatch()
   const shiftNames = useShiftNames(shift || null)
@@ -53,10 +55,11 @@ export function BatchFormSheet({ open, onClose, batch, template, onSaved }: {
     } else if (template) {
       setWh(template.warehouse_id); setMat(template.material_id); setDate(todayVN()); setMachine(template.machine_code ?? '')
       setShift(template.shift ?? ''); setCycle(template.cycle ?? ''); setPlanned(vnNumberInput(template.planned_qty)); setCode(''); setNote('')
+      setRecipeId(template.recipe_id ?? '')
     } else {
       // bối cảnh Kho toàn cục: là kho chế biến thì lấy luôn; là kho nhà máy có đúng MỘT kho chế biến thì lấy kho đó
       setWh(defaultKitchen(kitchens, useGlobalScopeStore.getState().warehouseId, true))
-      setMat(''); setDate(todayVN()); setMachine(''); setShift(''); setCycle(''); setPlanned(''); setCode(''); setNote('')
+      setMat(''); setDate(todayVN()); setMachine(''); setShift(''); setCycle(''); setPlanned(''); setCode(''); setNote(''); setRecipeId('')
     }
   }, [open]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -70,6 +73,13 @@ export function BatchFormSheet({ open, onClose, batch, template, onSaved }: {
       .map(m => ({ value: m.id, label: m.material_code, sub: `${m.short_name ?? m.material_description ?? ''} · ${unitLabel(m.base_unit)}` }))
   }, [picked, found])
   const selMat = picked.find(m => m.id === mat) ?? found.find(m => m.id === mat)
+  const { data: recipes = [], isFetching: recipesLoading } = useRecipes(mat || undefined, true, open && !editing && !!mat)
+  // công thức đang chọn không thuộc mã hiện tại (vừa đổi mã) ⇒ chọn lại công thức mặc định của mã mới
+  useEffect(() => {
+    if (editing || !mat || recipesLoading) return
+    if (!recipes.some(r => r.id === recipeId)) setRecipeId(recipes.find(r => r.is_default)?.id ?? recipes[0]?.id ?? '')
+  }, [mat, recipes, recipesLoading, editing]) // eslint-disable-line react-hooks/exhaustive-deps
+  const selRecipe = recipes.find(r => r.id === recipeId)
   const { data: machines = [] } = useMachines(wh || undefined)
   const activeMachines = machines.filter(m => m.is_active !== false)
   const next = useNextBatchCode({ warehouse_id: editing ? undefined : wh || undefined, material_id: mat || undefined, prod_date: date || undefined, machine_code: machine || undefined })
@@ -90,7 +100,8 @@ export function BatchFormSheet({ open, onClose, batch, template, onSaved }: {
         onSaved?.(r.id); onClose()
       } else {
         const r = await create.mutateAsync({ warehouse_id: wh, material_id: mat, prod_date: date, batch_code: code.trim() || undefined,
-          machine_code: machine || undefined, shift: shift || undefined, cycle: cycle.trim() || undefined, planned_qty: plannedNum, note: note || undefined })
+          machine_code: machine || undefined, shift: shift || undefined, cycle: cycle.trim() || undefined, planned_qty: plannedNum, note: note || undefined,
+          recipe_id: recipeId || undefined })
         onSaved?.(r.id); onClose()
       }
     } catch (e) { setErr(apiMsg(e)) }
@@ -117,6 +128,18 @@ export function BatchFormSheet({ open, onClose, batch, template, onSaved }: {
             selectedLabel={selMat ? selMat.material_code : undefined} placeholder={SEMI_FINISHED_PLACEHOLDER} options={matOpts} />
           {noBtp && !mat && <NoSemiFinishedHint />}
         </div>
+        {!editing && !!mat && (
+          <div>
+            <Label className="text-xs">Công thức</Label>
+            {recipes.length ? (
+              <SingleSelect value={recipeId} onChange={setRecipeId} searchable={recipes.length > 6} triggerClassName="h-8 text-xs mt-0.5"
+                options={recipes.map(r => ({ value: r.id, label: r.name, sub: `cỡ chuẩn ${Number(r.base_qty).toLocaleString('vi-VN', { maximumFractionDigits: 3 })} ${unitLabel(r.material?.base_unit)}${r.is_default ? ' · mặc định' : ''}` }))} />
+            ) : (
+              <p className="text-[11px] text-amber-700 mt-0.5">{recipesLoading ? 'Đang tải công thức…' : 'Mã này chưa có công thức đang dùng — phiếu của mẻ sẽ trống (khai ở Sản xuất (MES) → Định mức, hoặc thêm tay trên mẻ).'}</p>
+            )}
+            {selRecipe && <p className="text-[11px] text-slate-500 mt-0.5">{selRecipe.line_count ?? 0} nguyên liệu · nhân theo lượng kế hoạch / cỡ chuẩn{selRecipe.note ? ` · ${selRecipe.note}` : ''}</p>}
+          </div>
+        )}
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
           <div className="col-span-2 sm:col-span-1">
             <Label className="text-xs">Ngày sản xuất <span className="text-red-500">*</span></Label>

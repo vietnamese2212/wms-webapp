@@ -2,13 +2,16 @@
 // 17/11 — LUỒNG CỦA MẺ: dải bước dưới header; kho bật "chặn theo từng bước" thì NÚT CHÍNH là đúng bước đang tới (bước trước xong mới tới bước sau).
 // Khối NGUYÊN LIỆU ĐÃ RÚT (sổ tiêu hao: tem · NSX · lượng · cách ghi · huỷ dòng hoàn tồn) · khối RA BỒN (lô của mẻ trong từng bồn +
 // sổ nạp / rút). Số lượng NVL in CON SỐ TRẦN + cột ĐVT bằng mã danh mục (utils/unitCode — user 17/11 "hạn chế văn viết"), số bồn in theo đơn vị bồn.
-import { useEffect, useState } from 'react'
+import { Fragment, useEffect, useState } from 'react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import type { AxiosError } from 'axios'
-import { ArrowLeft, Plus, Pencil, Lock, Unlock, XCircle, ShieldCheck, Container, Undo2, Copy, AlertTriangle, ListChecks, Check, Printer, Timer, FileText, ArrowDownToLine, RotateCcw, Search } from 'lucide-react'
+import { ArrowLeft, Plus, Pencil, Lock, Unlock, XCircle, ShieldCheck, Container, Undo2, Copy, AlertTriangle, ListChecks, Check, Printer, Timer, FileText, ArrowDownToLine, RotateCcw, Search, ChevronDown, ChevronRight } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { MesStockDialog } from '@/components/wms/production/MesStockGroups'
+import { ConsumedTems, consumedNoun } from '@/components/wms/production/ConsumedTems'
+import { usePctBands } from '@/api/hooks'
+import type { ConsumptionRow } from '@/api/productionHooks'
 import { TableBody, TableCell, TableRow } from '@/components/ui/table'
 import { ResizableTable, type RtColDef } from '@/components/shared/ResizableTable'
 import { TableEmptyRow } from '@/components/shared/TableEmptyRow'
@@ -107,6 +110,10 @@ function ProductionBatchDetail() {
   const [cloneOpen, setCloneOpen] = useState(false)
   // kính lúp cột Tồn kho (như cột Kho của Xuất kho): tồn của một mã trong kho chế biến gom theo %Date
   const [stockMat, setStockMat] = useState<string | null>(null)
+  // dòng của bàn đang MỞ RỘNG (xem từng tem / lô đã cấp — như "pallet đã quét" của Xuất kho, user 18/11)
+  const [openMats, setOpenMats] = useState<Set<string>>(new Set())
+  const toggleMat = (m: string) => setOpenMats(prev => { const n = new Set(prev); if (n.has(m)) n.delete(m); else n.add(m); return n })
+  const bands = usePctBands()
   const [err, setErr] = useState('')
 
   if (q.isLoading) return <div className="p-6 text-sm text-slate-500">Đang tải mẻ…</div>
@@ -127,6 +134,9 @@ function ProductionBatchDetail() {
   // 0 − tổng (không phải −tổng): chưa rút lần nào thì tổng = 0 và −0 in ra "-0"
   const drawn = 0 - b.movements.filter(m => m.kind === 'DRAW').reduce((s, m) => s + Number(m.qty), 0)
   const rmMats = new Set(live.map(c => c.material_id)).size
+  // tem / lô đã cấp (dòng còn hiệu lực) theo nguyên liệu — nuôi dòng mở rộng của bàn
+  const consByMat = new Map<string, ConsumptionRow[]>()
+  for (const c of live) { const a = consByMat.get(c.material_id); if (a) a.push(c); else consByMat.set(c.material_id, [c]) }
   const board = b.board ?? []
   const reqRows = board.filter(r => !r.removed && r.required != null)
   // trạng thái một dòng theo MỨC LỆCH cho phép (17/11) — một luật cho bảng máy tính, danh sách điện thoại và ô "NVL đã đủ"
@@ -204,7 +214,13 @@ function ProductionBatchDetail() {
   ]
   const cur = stepDefs.findIndex(s => !s.done)
   const curKey = cur >= 0 ? stepDefs[cur].key : null
-  const steps: FlowStep[] = stepDefs.map((s, i) => ({ key: s.key, label: s.label, detail: s.detail, state: s.bad ? 'bad' : s.done ? 'done' : i === cur ? 'now' : 'todo' }))
+  // bước nào là VIỆC CỦA NGƯỜI ĐANG XEM (quyền của chức danh — cùng quyền gác nút của bước đó): bước đang tới không phải việc của mình
+  // ⇒ dải in "chờ" (user 18/11 "các user tương tác theo quyền hạn của nó … có nên cho họ thấy không")
+  const mineOf: Record<string, boolean> = {
+    lead: P('approve_lead'), qa: P('approve_qa'), rm: P('consume'), log: P('process_log'),
+    label: P('print_label'), pour: P('pour') || P('tank_ops'), fill: P('tank_ops'), tankqa: P('qa_release'),
+  }
+  const steps: FlowStep[] = stepDefs.map((s, i) => ({ key: s.key, label: s.label, detail: s.detail, mine: mineOf[s.key], state: s.bad ? 'bad' : s.done ? 'done' : i === cur ? 'now' : 'todo' }))
   // luồng chặt: chỉ BƯỚC ĐANG TỚI là nút chính (bước trước xong mới tới bước sau); không chặt: như trước (Cấp NVL + Nạp bồn)
   const prim = (k: string) => (strict ? curKey === k : k === 'rm' || k === 'fill')
   const canConsume = open && P('consume') && (g?.can_consume ?? true)
@@ -228,10 +244,14 @@ function ProductionBatchDetail() {
     actions.push({ key: 'label', icon: Printer, label: labelsOk ? 'In lại tem' : 'In tem pallet', tip: 'In tem pallet của mẻ (QR 1/n … n/n) để dán lên pallet nguyên liệu đã cấp', primary: strict && curKey === 'label', variant: strict && curKey === 'label' ? 'default' : undefined, onClick: () => setLabelOpen(true) })
   if (open && labelsOk && !hasFill && (P('pour') || P('tank_ops')))
     actions.push({ key: 'pour', icon: ArrowDownToLine, label: 'Đổ bồn', tip: `Quét tem pallet của mẻ tại bồn ${b.tank?.code ?? ''} — khớp mới đổ`, primary: strict && curKey === 'pour', variant: strict && curKey === 'pour' ? 'default' : undefined, onClick: () => setPourOpen(true) })
-  // Nạp bồn là bước kế ⇒ nút có CHỮ (không chỉ icon)
+  // Nạp bồn là bước kế ⇒ nút có CHỮ (không chỉ icon). Cổng của mẻ chưa cho nạp (mes_batch_gate.fill_blockers — vd chưa đổ đủ
+  // tem pallet) ⇒ nút KHOÁ, lý do ở chú thích (18/11: không bấm được bước chưa tới; trước đây mở được form rồi mới thấy bị chặn)
+  const fillBlock = g?.fill_blockers ?? []
   if (canFill)
-    actions.push({ key: 'fill', icon: Container, label: 'Nạp bồn', tip: 'Nạp bán thành phẩm của mẻ vào bồn đã chọn', primary: prim('fill'), variant: strict && curKey === 'fill' ? 'default' : undefined, onClick: () => setFillOpen(true) })
-  if (strict && curKey === 'tankqa' && canSeeTanks)
+    actions.push({ key: 'fill', icon: Container, label: 'Nạp bồn', tip: fillBlock.length ? `Chưa nạp được: ${fillBlock.join(' · ')}` : 'Nạp bán thành phẩm của mẻ vào bồn đã chọn',
+      primary: prim('fill'), variant: strict && curKey === 'fill' ? 'default' : undefined, disabled: fillBlock.length > 0, onClick: () => setFillOpen(true) })
+  // QA kết luận ở Bồn — nút chỉ cho người có quyền QA bồn (qa_release); người khác thấy bước "QA bồn · chờ" trên dải
+  if (strict && curKey === 'tankqa' && canSeeTanks && P('qa_release'))
     actions.push({ key: 'tankqa', icon: ShieldCheck, label: `Tới bồn ${b.tank?.code ?? ''}`, tip: 'QA kết luận đạt / không đạt ở trang Bồn (áp cho mọi mẻ đang trong bồn)', primary: true, onClick: () => navigate('/wms/production/tanks') })
   if (open && !!b.qa_ok_at && !hasFill && P('approve_qa'))
     actions.push({ key: 'no-qa', icon: RotateCcw, label: 'Bỏ duyệt QA', tip: 'QA bỏ duyệt để sửa phiếu của mẻ', onClick: () => void doApprove('qa', false), disabled: busy })
@@ -328,14 +348,23 @@ function ProductionBatchDetail() {
                 const byScan = Number(r.tem_pallets) > 0
                 const dash = <span className="font-normal text-slate-300">—</span>
                 const changed = !outside && r.standard != null && Math.abs(Number(r.required) - Number(r.standard)) > 0.0005
+                const consRows = consByMat.get(r.material_id) ?? []
+                const exp = openMats.has(r.material_id) && consRows.length > 0
                 return (
-                  <MobileNumRow key={r.material_id} className={r.removed ? 'opacity-60' : ''} asideClass={canConsume ? 'w-16' : undefined}
+                  <div key={r.material_id} data-board-row={r.material_id}>
+                  <MobileNumRow className={r.removed ? 'opacity-60' : ''} asideClass={canConsume ? 'w-16' : undefined}
                     head={<>
                       <span className={`font-mono font-semibold shrink-0 ${r.removed ? 'line-through' : ''}`}>{r.material_code}</span>
                       <span className={`truncate text-slate-600 ${r.removed ? 'line-through' : ''}`} title={r.change_reason ?? undefined}>{r.material_name ?? ''}</span>
                       {r.removed && <span className="shrink-0"><StatusBadge tone="slate" title={changeTip(r)}>Đã bỏ{r.replaced_by_code ? ` → ${r.replaced_by_code}` : ''}</StatusBadge></span>}
                       {st.state === 'extra' && <span className="shrink-0"><StatusBadge tone="slate">Ngoài phiếu</StatusBadge></span>}
                       {!outside && r.standard == null && <span className="shrink-0 text-[9px] text-blue-700" title={changeTip(r)}>{r.replaces_code ? `thay ${r.replaces_code}` : 'thêm'}</span>}
+                      {consRows.length > 0 && (
+                        <button type="button" onClick={() => toggleMat(r.material_id)} aria-expanded={exp} aria-label={`${exp ? 'Thu gọn' : 'Xem'} tem đã cấp ${r.material_code}`}
+                          className="shrink-0 inline-flex items-center gap-0.5 rounded border border-slate-200 bg-white px-1 min-h-[1.5rem] text-[10px] text-slate-600">
+                          {exp ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}{consumedNoun(consRows)}
+                        </button>
+                      )}
                       <span className="ml-auto shrink-0 font-mono text-[10px] text-slate-400">{matUnitCode(r)}</span>
                     </>}
                     cells={[
@@ -356,6 +385,8 @@ function ProductionBatchDetail() {
                         {byScan ? <ScanIcon className="h-4 w-4" /> : <Plus className="h-4 w-4" />}Cấp
                       </button>
                     ) : null} />
+                  {exp && <div className="px-3 pb-2"><ConsumedTems rows={consRows} mat={r} bands={bands} /></div>}
+                  </div>
                 )
               })}
             </div>
@@ -376,9 +407,20 @@ function ProductionBatchDetail() {
                 const started = Number(r.consumed) > 0
                 const noStock = Number(r.available) <= 0
                 const byScan = Number(r.tem_pallets) > 0
+                const consRows = consByMat.get(r.material_id) ?? []
+                const exp = openMats.has(r.material_id) && consRows.length > 0
                 return (
-                  <TableRow key={r.material_id} className={r.removed ? 'text-slate-400' : done ? rowText('full') : started ? rowText('inProgress') : ''}>
-                    <TableCell className={`${TD} sticky left-0 z-10 bg-white truncate ${r.removed ? 'line-through' : ''}`} title={[r.material_name, r.note, r.replaces_code ? `thay cho ${r.replaces_code}` : null].filter(Boolean).join(' · ')}><span className="font-mono font-semibold">{r.material_code}</span> {r.material_name ?? ''}</TableCell>
+                  <Fragment key={r.material_id}>
+                  <TableRow data-board-row={r.material_id} className={r.removed ? 'text-slate-400' : done ? rowText('full') : started ? rowText('inProgress') : ''}>
+                    <TableCell className={`${TD} sticky left-0 z-10 bg-white truncate ${r.removed ? 'line-through' : ''}`} title={[r.material_name, r.note, r.replaces_code ? `thay cho ${r.replaces_code}` : null].filter(Boolean).join(' · ')}>
+                      <div className="truncate"><span className="font-mono font-semibold">{r.material_code}</span> {r.material_name ?? ''}</div>
+                      {consRows.length > 0 && (
+                        <button type="button" onClick={() => toggleMat(r.material_id)} aria-expanded={exp} aria-label={`${exp ? 'Thu gọn' : 'Xem'} tem đã cấp ${r.material_code}`}
+                          className="mt-0.5 inline-flex items-center gap-0.5 rounded px-0.5 -ml-0.5 text-[9px] text-slate-500 hover:bg-blue-50 hover:text-blue-700">
+                          {exp ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}{consumedNoun(consRows)}
+                        </button>
+                      )}
+                    </TableCell>
                     <TableCell className={`${TD} font-mono text-slate-500`}>{matUnitCode(r)}</TableCell>
                     <TableCell className={NUM} title={changeTip(r)}>{r.removed ? reqNote(r) : extra ? <span className="text-slate-300 font-normal">—</span> : <>{qtyNum(Number(r.required), r)}{reqNote(r)}</>}</TableCell>
                     <TableCell className={`${NUM} ${st.outOfTol ? 'text-red-600' : ''}`}>{started ? qtyNum(Number(r.consumed), r) : <span className="text-slate-300 font-normal">—</span>}</TableCell>
@@ -401,6 +443,14 @@ function ProductionBatchDetail() {
                       )}
                     </TableCell>
                   </TableRow>
+                  {exp && (
+                    <TableRow className="hover:bg-transparent" data-board-expand={r.material_id}>
+                      <TableCell colSpan={BOARD_COLS.length} className="p-0 border-b border-slate-100">
+                        <div className="sticky left-0 w-fit ml-3 my-1 pl-3 pr-3 py-1 border-l-2 border-slate-200"><ConsumedTems rows={consRows} mat={r} bands={bands} /></div>
+                      </TableCell>
+                    </TableRow>
+                  )}
+                  </Fragment>
                 )
               })}
             </TableBody>

@@ -11,7 +11,7 @@ import { ok, fail, failAny } from '../../utils/response'
 import { resolveActorId, resolveActorName } from '../../utils/actor'
 import { normalizeQR } from '../../utils/qrParser'
 import { qtyIntegerError } from '../../utils/qtyUnits'
-import type { TablesUpdate } from '../../types/database'
+import type { Tables, TablesUpdate } from '../../types/database'
 import { normalizeBatchCode } from '../../utils/batchCode'
 import { normalizeCycle, CYCLE_RE, parseBatchLabel, batchLabelQr } from '../../utils/batchLabel'
 import { processBlocksError } from '../../utils/processBlocks'
@@ -27,7 +27,7 @@ import {
   rotationSortKey, rotationDateOf, isRotationViolation, isPickEligible, isRotationReason, availableOf, ROTATION_DATE_LABEL, ROTATION_LABEL,
   type RotationEntry, type RotationPrinciple,
 } from '../../utils/rotation'
-import { vnDayOf } from '../../utils/dates'
+import { vnDayOf, utcMs } from '../../utils/dates'
 
 const nowIso = () => new Date().toISOString()
 const scopeOf = (req: Request): string[] | null => (req.user?.warehouse_scope === 'NATIONAL' ? null : (req.user?.warehouse_ids ?? []))
@@ -160,6 +160,13 @@ export async function nextCode(req: Request, res: Response) {
   } catch (e) { return failAny(res, e) }
 }
 
+/** Dòng cấp của mẻ kèm mã + tem (join theo khoá ngoại — kiểu sinh không có quan hệ nên khai tay) */
+type ConsJoin = Tables<'batch_consumption'> & {
+  material: { material_code: string; short_name: string | null; base_unit: string | null; entry_unit: string | null; units_per_carton: number | null
+    shelf_life_days: number | null; supplier_shelf_life_overrides: unknown } | null
+  entry: { cartons_remaining: number | null; production_date: string | null; expiry_date: string | null; expiry_calc: string | null
+    shelf_life_days: number | null; ncc_id: string | null; location: { location_code: string | null } | null } | null
+}
 // GET /wms/production/batches/:id — đầu mẻ + NVL đã rút + bồn đã nạp + lần rút cho trang sổ
 export async function getBatch(req: Request, res: Response) {
   try {
@@ -171,7 +178,7 @@ export async function getBatch(req: Request, res: Response) {
     if (!(await inScope(req, b.warehouse_id))) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
     const [{ data: cons }, { data: moves }, { data: lots }, { data: board }, { data: plogs }, { data: gate }, { data: scans }, { data: expiry }] = await Promise.all([
       db.from('batch_consumption')
-        .select('*, material:Material!batch_consumption_material_id_fkey(material_code, short_name, base_unit, entry_unit, units_per_carton), entry:InventoryEntry!batch_consumption_entry_id_fkey(cartons_remaining, expiry_date, location:Location(location_code))')
+        .select('*, material:Material!batch_consumption_material_id_fkey(material_code, short_name, base_unit, entry_unit, units_per_carton, shelf_life_days, supplier_shelf_life_overrides), entry:InventoryEntry!batch_consumption_entry_id_fkey(cartons_remaining, production_date, expiry_date, expiry_calc, shelf_life_days, ncc_id, location:Location(location_code))')
         .eq('batch_id', b.id).order('created_at').limit(2000),
       db.from('tank_movement').select('id, tank_id, kind, qty, packing_run_id, reason, warning, created_by_name, created_at, tank:production_tank!tank_movement_tank_id_fkey(code)')
         .eq('batch_id', b.id).order('created_at').limit(2000),
@@ -188,7 +195,20 @@ export async function getBatch(req: Request, res: Response) {
     // tem pallet của mẻ đang hiệu lực (in lại không cần gọi thêm)
     const labels = b.label_at && b.label_count
       ? Array.from({ length: b.label_count }, (_, i) => ({ pallet_no: i + 1, qr: batchLabelQr(b.batch_code, i + 1, b.label_count as number, b.label_ver) })) : []
-    return ok(res, { ...b, consumption: cons ?? [], movements: moves ?? [], lots: lots ?? [], board: board ?? [], process_logs: plogs ?? [],
+    // DÒNG MỞ RỘNG của bàn (18/11 — user: "expand sau khi quét xong tương tự bên xuất"): mỗi dòng cấp kèm %Date LÚC CẤP (giờ ghi
+    // dòng, cùng computePctDate của "Lấy ở đâu" ⇒ khớp số người cấp thấy khi quét; như pct_date khoá lúc quét của Xuất kho) và
+    // HSD hiệu lực (cột expiry_calc — cùng cột cửa cấp dùng chặn hàng hết hạn). Hạn dùng của mã chỉ để tính, không trả về.
+    const consumption = ((cons ?? []) as unknown as ConsJoin[]).map(({ material, entry, ...c }) => {
+      const shelf = material ? ({ shelf_life_days: material.shelf_life_days, supplier_shelf_life_overrides: material.supplier_shelf_life_overrides } as unknown as MaterialShelfInfo) : null
+      const at = utcMs(c.created_at)
+      const pct = computePctDate({ production_date: c.production_date ?? entry?.production_date ?? null, expiry_date: entry?.expiry_date ?? null,
+        shelf_life_days: entry?.shelf_life_days ?? null, ncc_id: entry?.ncc_id ?? c.ncc_id ?? null }, shelf, Number.isFinite(at) ? at : Date.now())
+      return { ...c,
+        material: material ? { material_code: material.material_code, short_name: material.short_name, base_unit: material.base_unit, entry_unit: material.entry_unit, units_per_carton: material.units_per_carton } : null,
+        entry: entry ? { cartons_remaining: entry.cartons_remaining, expiry_date: entry.expiry_date, location: entry.location } : null,
+        pct_date: pct, expiry_date: dayOf(entry?.expiry_calc) }
+    })
+    return ok(res, { ...b, consumption, movements: moves ?? [], lots: lots ?? [], board: board ?? [], process_logs: plogs ?? [],
       gate: gate ?? null, pour_scans: scans ?? [], labels, expiry_approvals: expiry ?? [] })
   } catch (e) { return failAny(res, e) }
 }

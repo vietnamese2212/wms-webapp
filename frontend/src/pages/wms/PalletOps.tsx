@@ -15,10 +15,12 @@ import { LocationScanButton } from '@/components/wms/LocationScanButton'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { useColumnResize } from '@/components/shared/useColumnResize'
 import { PagerNav, ListFooter } from '@/components/shared/ListPager'
-import { PalletPrintArea, PALLET_PRINT_CSS, qrToLabel, type LabelData } from '@/components/shared/palletLabel'
+import { PalletPrintArea, PALLET_PRINT_CSS, qrToLabel, parseCodeFields, type LabelData } from '@/components/shared/palletLabel'
+import { printWhenReady } from '@/components/shared/PrintArea'
+import { useIsNccAt } from '@/hooks/useWhTypeMeta'
 import {
   useInventoryEntries, useMergePallets, useUngroupPallets, useSplitPallet, useLogPalletPrints,
-  usePalletOps, usePalletOpsPaged, useUndoPalletOp, useMaterials, useMaterialsByCodes, useWarehouses, useLocationsReal, useLocationsByIds, type LocationLite, type PalletOpRow, type MaterialLite,
+  usePalletOps, usePalletOpsPaged, useUndoPalletOp, useMaterials, useMaterialsByCodes, useWarehouses, useLocationsReal, useLocationsByIds, useTransportCompanies, type LocationLite, type PalletOpRow, type MaterialLite,
 } from '@/api/hooks'
 import { useScopedWhTypes } from '@/hooks/useUserScope'
 import { useDebouncedValue } from '@/hooks/useDebouncedValue'
@@ -185,10 +187,22 @@ export default function PalletOps() {
   )], [ops])
   const { data: allMats = [] } = useMaterialsByCodes(histCodes, tab === 'history')
   const matByCode = useMemo(() => { const m = new Map<string, MaterialLite>(); for (const x of allMats) m.set(x.material_code, x); return m }, [allMats])
+  // Hàng NCC (cờ is_ncc_goods của Loại kho tại kho đang thao tác, vd RM01): tem in "Lot" · "NCC" thay "Chu kỳ" · "Máy" (user 18/11);
+  // ô NCC in TÊN NCC theo mã ở đoạn 4 của tem (như trang In tem pallet)
+  const isNccAt = useIsNccAt()
+  const { data: nccCompanies = [] } = useTransportCompanies(true, 'NCC')
+  const nccNameByCode = useMemo(() => new Map((nccCompanies as { code: string; name: string }[]).map(c => [c.code, c.name])), [nccCompanies])
+  const nccOf = (category: string | null | undefined, code: string) => {
+    const isNcc = isNccAt(opWh || null, category)
+    return { isNcc, nccName: isNcc ? (nccNameByCode.get(parseCodeFields(code).machine) ?? '') : '' }
+  }
   function printOp(o: PalletOpRow) {
     const qtyByCode = new Map<string, number>()
     for (const c of (o.detail?.children ?? []) as { code: string; qty: number }[]) qtyByCode.set(c.code, c.qty)
-    const labels = (o.target_codes ?? []).map(code => qrToLabel(code, matByCode.get(materialCodeOf(code)), qtyByCode.get(code) ?? null))
+    const labels = (o.target_codes ?? []).map(code => {
+      const mat = matByCode.get(materialCodeOf(code))
+      return qrToLabel(code, mat, qtyByCode.get(code) ?? null, nccOf(mat?.category, code))
+    })
     printTems(labels, 'REPRINT')
   }
   async function doUndo(o: PalletOpRow) {
@@ -205,7 +219,7 @@ export default function PalletOps() {
       labels: labels.map(l => ({ qr_code: l.qr, material_code: l.materialCode, material_id: l.materialId ?? null, category: l.category, cycle: l.cycle, machine: l.machine, seq: l.seq, nmsx: l.nmsx, qty: l.qty === '' ? null : l.qty })),
     })
     setPrintLabels(labels)
-    setTimeout(() => window.print(), 150)
+    printWhenReady(labels.length)   // chờ ảnh QR vẽ xong (canh 150 ms là cuộc đua)
   }
   async function doSplit() {
     setMsg(null); setSplitDone(null)
@@ -213,7 +227,7 @@ export default function PalletOps() {
     const children = splitQtys.map(q => Number(q) || 0).filter(q => q > 0).map(qty => ({ qty }))
     try {
       const res = await split.mutateAsync({ source_pallet_code: srcQ, children, warehouse_id: opWh, location_id: splitLoc || undefined })
-      const labels = res.children.map((c: any) => qrToLabel(c.pallet_code, srcEntry?.material, c.cartons_remaining))
+      const labels = res.children.map((c: any) => qrToLabel(c.pallet_code, srcEntry?.material, c.cartons_remaining, nccOf(srcEntry?.material?.category, c.pallet_code)))
       setSplitDone(labels)   // KHÔNG tự in — chờ người dùng bấm "In tem" (hoặc in sau ở tab Lịch sử)
       setMsg({ ok: true, text: `Đã tách ${labels.length} pallet con (gốc còn ${qtyLabel(Number(res.source_remaining), srcEntry?.material)}). Bấm "In tem" để in ngay, hoặc vào tab Lịch sử in sau.${(res as { putaway_warning?: string | null }).putaway_warning ? ` — ⚠ ${(res as { putaway_warning?: string | null }).putaway_warning}` : ''}` })
       setSplitQtys([''])

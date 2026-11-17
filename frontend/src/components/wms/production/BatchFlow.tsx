@@ -3,12 +3,13 @@
 // → QA kết luận ở BỒN. File này: dải bước + form in tem + form đổ bồn + form QA bồn.
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { AxiosError } from 'axios'
-import { Check, Printer, AlertTriangle, ShieldCheck, ShieldX, ShieldAlert } from 'lucide-react'
+import { Check, Printer, AlertTriangle, ShieldCheck, ShieldX, ShieldAlert, Hourglass } from 'lucide-react'
 import { FormSheet } from '@/components/shared/FormSheet'
 import { SingleSelect } from '@/components/shared/SingleSelect'
 import { QRScanDialog } from '@/components/shared/QRScanDialog'
 import { ScanIcon } from '@/components/shared/ScanIcon'
 import { QRImg, PALLET_PRINT_CSS } from '@/components/shared/palletLabel'
+import { PrintArea, printWhenReady } from '@/components/shared/PrintArea'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -27,22 +28,32 @@ const no4 = (n: number | null | undefined) => (n ? String(n).padStart(4, '0') : 
 
 // ─── DẢI BƯỚC ──────────────────────────────────────────────────────────────────────────────────────────────────
 export type FlowState = 'done' | 'now' | 'todo' | 'bad'
-export interface FlowStep { key: string; label: string; state: FlowState; detail?: string }
-/** Một hàng: bước xong ✓ xanh · bước đang tới viền xanh đậm (luôn in tên) · bước sau xám. Điện thoại chỉ in tên bước đang tới. */
+/** "Cấp nguyên liệu" → "cấp nguyên liệu"; giữ chữ viết tắt in hoa ("QA duyệt") */
+const lowerFirst = (s: string) => (s.length > 1 && s[1] === s[1].toLowerCase() ? s[0].toLowerCase() + s.slice(1) : s)
+export interface FlowStep { key: string; label: string; state: FlowState; detail?: string
+  /** bước này là VIỆC CỦA NGƯỜI ĐANG XEM (chức danh có quyền làm) — false ⇒ bước đang tới in "chờ" (user 18/11) */
+  mine?: boolean }
+/** Một hàng: bước xong ✓ xanh · bước đang tới nền xanh đậm (luôn in tên) · bước sau xám. Điện thoại chỉ in tên bước đang tới.
+ *  Bước đang tới KHÔNG phải việc của mình (thiếu quyền) ⇒ nền nhạt + đồng hồ cát + "chờ": người xem biết đang đợi người khác,
+ *  không đi tìm nút. Dải chỉ để XEM — mọi thao tác nằm ở nút đầu trang, nút chỉ hiện cho người có quyền. */
 export function FlowStrip({ steps }: { steps: FlowStep[] }) {
   return (
     <ol className="flex items-center gap-1 min-w-0 overflow-hidden" aria-label="Các bước của mẻ">
       {steps.map((s, i) => {
         const now = s.state === 'now'
+        const wait = now && s.mine === false
         return (
-          <li key={s.key} data-step={s.key} data-state={s.state} title={`${i + 1}. ${s.label}${s.detail ? ` — ${s.detail}` : ''}`}
+          <li key={s.key} data-step={s.key} data-state={s.state} data-mine={s.mine === undefined ? undefined : s.mine ? '1' : '0'}
+            title={`${i + 1}. ${s.label}${s.detail ? ` — ${s.detail}` : ''}${wait ? ' — đang chờ người phụ trách bước này (không phải việc của bạn)' : ''}`}
             className={`flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] leading-none whitespace-nowrap ${now ? 'min-w-0 shrink' : 'shrink-0'} ${
               s.state === 'done' ? 'border-green-200 bg-green-50 text-green-700' : s.state === 'bad' ? 'border-red-200 bg-red-50 text-red-700'
+              : wait ? 'border-blue-300 bg-blue-50 text-blue-700 font-semibold'
               : now ? 'border-blue-500 bg-blue-600 text-white font-semibold' : 'border-slate-200 bg-white text-slate-400'}`}>
             <span className="inline-flex h-3.5 w-3.5 items-center justify-center shrink-0 tabular-nums">
-              {s.state === 'done' ? <Check className="h-3 w-3" /> : s.state === 'bad' ? <AlertTriangle className="h-3 w-3" /> : i + 1}
+              {s.state === 'done' ? <Check className="h-3 w-3" /> : s.state === 'bad' ? <AlertTriangle className="h-3 w-3" /> : wait ? <Hourglass className="h-3 w-3" /> : i + 1}
             </span>
-            <span className={`truncate ${now ? '' : 'hidden lg:inline'}`}>{s.label}{s.detail && (now || s.state === 'bad') ? ` · ${s.detail}` : ''}</span>
+            {/* đang chờ người khác: chữ "Chờ" đứng ĐẦU ("Chờ in tem pallet") — điện thoại cắt đuôi nhãn, chữ quan trọng không được nằm cuối */}
+            <span className={`truncate ${now ? '' : 'hidden lg:inline'}`}>{wait ? `Chờ ${lowerFirst(s.label)}` : s.label}{s.detail && (now || s.state === 'bad') ? ` · ${s.detail}` : ''}</span>
           </li>
         )
       })}
@@ -96,7 +107,7 @@ export function BatchLabelSheet({ open, onClose, batch }: { open: boolean; onClo
     try {
       const r = await make.mutateAsync({ id: batch.id, count: n })
       setLabels(r.labels)
-      setTimeout(() => window.print(), 600)   // chờ ảnh QR dựng xong
+      printWhenReady(r.labels.length)   // chờ ảnh QR trong vùng in vẽ xong (không canh giờ)
     } catch (e) { setErr(apiMsg(e)) }
   }
   return (
@@ -132,13 +143,14 @@ export function BatchLabelSheet({ open, onClose, batch }: { open: boolean; onClo
         )}
         {err && <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700">{err}</div>}
       </div>
-      <div className="pl-print-area" aria-hidden>
+      {/* vùng in vẽ thẳng vào <body> (PrintArea): đặt trong khung trượt thì bản in lệch phải + cắt cột tem bên phải (user 18/11, C120) */}
+      <PrintArea>
         {sheets.map((sh, si) => (
           <div key={si} className="pl-sheet grid grid-cols-2 grid-rows-2 overflow-hidden bg-white" style={{ width: '210mm', height: '297mm' }}>
             {sh.map(l => <BatchPalletLabel key={l.pallet_no} l={l} info={info} />)}
           </div>
         ))}
-      </div>
+      </PrintArea>
     </FormSheet>
   )
 }

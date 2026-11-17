@@ -14,7 +14,8 @@ import { QRScanDialog } from '@/components/shared/QRScanDialog'
 import { SearchInput } from '@/components/shared/SearchInput'
 import { useColumnResize } from '@/components/shared/useColumnResize'
 import { SummaryBand } from '@/components/shared/SummaryBand'
-import { isNccCategory, batchCharOf } from '@/utils/cargoCategory'
+import { isNccCategory, batchCharOf, temSegLabels } from '@/utils/cargoCategory'
+import { PrintArea, printWhenReady } from '@/components/shared/PrintArea'
 import { useWhTypeMetaMapFor, useIsNccAt } from '@/hooks/useWhTypeMeta'
 import { parseCodeFields, batchNoOptions } from '@/components/shared/palletLabel'
 import { normalizeQR } from '@/utils/qr'
@@ -172,7 +173,7 @@ function PalletLabel({ d }: { d: LabelData }) {
       ) : (
       <div className="mt-[1.5mm] grid grid-cols-3 shrink-0 border-t-2 border-black text-center">
         <div className="border-r border-black flex flex-col">
-          <div className="text-[8pt] font-semibold leading-tight">Chu kỳ</div>
+          <div className="text-[8pt] font-semibold leading-tight">{temSegLabels(d.isNcc).cycle}</div>
           <div className="h-[9mm] flex items-center justify-center overflow-hidden text-[24pt] font-bold leading-none">{d.cycle || '—'}</div>
         </div>
         {d.isNcc ? (
@@ -706,7 +707,7 @@ export default function PalletLabels() {
       })),
     })
     setPrintLabels(items)
-    setTimeout(() => window.print(), 150)
+    printWhenReady(items.length)   // chờ ảnh QR vẽ xong — canh 150 ms là cuộc đua, nhiều tem thì in ra ô trống
   }
   function handlePrint() { doPrint(tab === 'reprint' ? 'REPRINT' : 'GENERATE', labels) }
 
@@ -893,7 +894,7 @@ export default function PalletLabels() {
         .pl-label { width: 105mm; height: 148.5mm; box-sizing: border-box; }
         .pl-sheet { box-sizing: border-box; }
         /* Vùng in ẩn off-screen khi xem màn hình; @media print kéo về (0,0) */
-        .pl-print-area { position: absolute; left: -99999px; top: 0; }
+        .pl-print-area { position: fixed; left: -99999px; top: 0; }   /* fixed: giấu ngoài màn mà không làm trang dài ra (vùng in ở <body>, C120) */
         @media print {
           html, body { margin: 0 !important; padding: 0 !important; }
           body * { visibility: hidden !important; }
@@ -1135,10 +1136,11 @@ export default function PalletLabels() {
                 )}
               </div>
               {genIsNcc ? (
-                /* Hàng NCC: Chu kỳ + NCC mỗi ô 1 hàng full-width → dropdown NCC (rộng) không tràn cột hẹp gây xê dịch panel */
+                /* Hàng NCC: Lot + NCC mỗi ô 1 hàng full-width → dropdown NCC (rộng) không tràn cột hẹp gây xê dịch panel.
+                   Đoạn 3 của tem hàng NCC là LOT (user 17–18/11 — temSegLabels), dữ liệu vẫn ở cột cycle */
                 <>
                   <div className="space-y-1">
-                    <Label className="text-xs">Chu kỳ <span className="text-red-500">*</span></Label>
+                    <Label className="text-xs">{temSegLabels(true).cycle} <span className="text-red-500">*</span></Label>
                     <Input className="h-8 text-sm" placeholder="C05" value={cycle} onChange={e => setCycle(e.target.value)} />
                   </div>
                   <div className="space-y-1">
@@ -1196,7 +1198,7 @@ export default function PalletLabels() {
                   <Input type="number" min={0} className="h-8 text-sm" value={qty} onChange={e => setQty(e.target.value)} />
                 </div>
               </div>
-              {!genReady && <p className="flex items-start gap-1 text-[11px] text-amber-600"><AlertTriangle className="h-3.5 w-3.5 shrink-0" /> Chọn đủ Mã hàng, Chu kỳ, {genIsNcc ? 'NCC' : 'Máy'}, NMSX để sinh tem.</p>}
+              {!genReady && <p className="flex items-start gap-1 text-[11px] text-amber-600"><AlertTriangle className="h-3.5 w-3.5 shrink-0" /> Chọn đủ Mã hàng, {temSegLabels(genIsNcc).cycle}, {temSegLabels(genIsNcc).machine}, NMSX để sinh tem.</p>}
               {genReady && genDupes.length > 0 && (
                 <div className="flex items-start gap-1.5 rounded-md border border-amber-300 bg-amber-50 px-2 py-1.5 text-[11px] text-amber-800">
                   <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
@@ -1513,14 +1515,14 @@ export default function PalletLabels() {
       </div>
      </div>
 
-      {/* Vùng IN thật — ẩn off-screen, chỉ hiện khi @media print (mọi tab, kể cả In lại từ Lịch sử) */}
-      <div className="pl-print-area" aria-hidden>
+      {/* Vùng IN thật — ẩn off-screen, chỉ hiện khi @media print (mọi tab, kể cả In lại từ Lịch sử). PrintArea = portal vào <body> (C120) */}
+      <PrintArea>
         {printSheets.map((sheet, si) => (
           <div key={si} className="pl-sheet grid grid-cols-2 grid-rows-2 overflow-hidden bg-white" style={{ width: '210mm', height: '297mm' }}>
             {sheet.map(d => <PalletLabel key={d.key} d={d} />)}
           </div>
         ))}
-      </div>
+      </PrintArea>
     </div>
   )
 }

@@ -11,6 +11,7 @@
 // đang dựa vào `setTimeout(150ms)` chờ QR vẽ xong — với 100+ tem thì canh giờ kiểu đó là in ra ô
 // trống. Ở đây không có cuộc đua nào.
 import QRCode from 'qrcode'
+import { PrintArea } from '@/components/shared/PrintArea'
 
 export interface LocLabelData {
   key: string
@@ -53,7 +54,7 @@ function codeSize(code: string): string {
 export const LOC_PRINT_CSS = `
   .lc-label { width: 105mm; height: 74.25mm; box-sizing: border-box; }
   .lc-sheet { box-sizing: border-box; }
-  .lc-print-area { position: absolute; left: -99999px; top: 0; }
+  .lc-print-area { position: fixed; left: -99999px; top: 0; }   /* fixed: giấu ngoài màn mà không làm trang dài ra (vùng in ở <body>, C120) */
   @media print {
     html, body { margin: 0 !important; padding: 0 !important; }
     body * { visibility: hidden !important; }
@@ -84,18 +85,18 @@ function LocationLabel({ d }: { d: LocLabelData }) {
   )
 }
 
-/** Vùng in ẩn off-screen — đổ `labels` rồi window.print(). */
+/** Vùng in ẩn off-screen — đổ `labels` rồi window.print(). Vẽ qua PrintArea (portal vào <body>, C120). */
 export function LocationPrintArea({ labels }: { labels: LocLabelData[] }) {
   const sheets: LocLabelData[][] = []
   for (let i = 0; i < labels.length; i += 8) sheets.push(labels.slice(i, i + 8))
   return (
-    <div className="lc-print-area" aria-hidden>
+    <PrintArea className="lc-print-area">
       {sheets.map((sheet, si) => (
         <div key={si} className="lc-sheet grid grid-cols-2 grid-rows-4 overflow-hidden bg-white"
           style={{ width: '210mm', height: '297mm' }}>
           {sheet.map(d => <LocationLabel key={d.key} d={d} />)}
         </div>
       ))}
-    </div>
+    </PrintArea>
   )
 }

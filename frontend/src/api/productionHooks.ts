@@ -76,6 +76,8 @@ export interface ConsumptionRow {
   rotation_violation?: boolean | null; rotation_principle?: string | null; rotation_best_date?: string | null; rotation_override_reason?: string | null
   /** cấp hàng HẾT HẠN đã được QA duyệt cho mẻ (17/11) — id dòng duyệt */
   expiry_approval_id?: string | null
+  /** 18/11 — %Date LÚC CẤP (chưa làm tròn, cùng hàm "Lấy ở đâu") + HSD hiệu lực của tem / lô (server tính ở GET mẻ) */
+  pct_date?: number | null; expiry_date?: string | null
   material: ({ material_code: string; short_name: string | null } & MatUnits) | null
   entry: { cartons_remaining: number | null; expiry_date: string | null; location: { location_code: string } | null } | null
 }

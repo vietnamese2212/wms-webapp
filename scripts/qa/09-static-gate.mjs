@@ -522,6 +522,16 @@ const RULES = [
       (line, f) => !/TableEmptyRow\.tsx$/.test(f) && !/^\s*(\/\/|\*|\/\*|\{\/\*)/.test(line)
         && /<(TableCell|td)\b[^>]*colSpan=\{[^}]+\}[^>]*\btext-center\b/.test(line), s),
   },
+  {
+    key: 'print_area_outside_portal',
+    label: 'vùng in tem (.pl-print-area / .lc-print-area) viết tay — đặt trong khung trượt / hộp thoại thì bản in lệch phải và mất cột tem; dùng <PrintArea> (portal vào <body>)',
+    // Lớp C120 (18/11): tem pallet của mẻ in từ khung trượt bên phải — CSS in đặt vùng in ở "left:0; top:0" của khối chứa gần
+    // nhất, mà khung trượt (fixed + transform + overflow) LÀ khối chứa ⇒ bản in bắt đầu ở mép trái khung (giữa trang) và cột tem
+    // bên phải bị cắt. components/shared/PrintArea.tsx vẽ vùng in thẳng vào <body> dù màn gọi in ở đâu. Baseline 0.
+    count: (s) => countMatches(['frontend/src'], ['.tsx'],
+      (line, f) => !/PrintArea\.tsx$/.test(f) && !/^\s*(\/\/|\*|\/\*|\{\/\*)/.test(line)
+        && /<(?!PrintArea\b)\w+\b[^>]*className=[^>]*\b(pl|lc)-print-area\b/.test(line), s),
+  },
   // ── ĐỒNG BỘ GIAO DIỆN module MỚI (25/09, user: "các module mới giao diện chưa đồng bộ, nút action khác các
   //    giao diện khác — xem skill có chưa, chưa có thì đồng bộ lại cả skill để từ nay không mắc"). Skill
   //    table-format ĐÃ có luật ActionCluster/StatusBadge/SettingsGroup mà Điều vận · Cước (23–24/09) vẫn lệch ⇒

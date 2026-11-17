@@ -16,6 +16,8 @@
 
 Dồn / Tách pallet
 
+- In tem pallet con (sau Tách / từ Lịch sử): hàng NCC (cờ Loại kho tại kho đang thao tác) in ô **Lot · NCC (tên NCC)** như trang In tem pallet (18/11); hộp in mở khi ảnh QR vẽ xong (`printWhenReady`).
+
 ## Actions
 
 view, merge, ungroup, split 

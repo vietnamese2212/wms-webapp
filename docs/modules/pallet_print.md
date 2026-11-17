@@ -16,6 +16,9 @@
 
 In tem pallet
 
+- **Hàng NCC** (cờ "Hàng NCC" của Loại kho tại kho giữ pallet, vd RM01): tem in ô lớn **Lot · NCC (tên NCC) · Số pallet** thay "Chu kỳ · Máy" (user 18/11 "Lot/ NCC"); ô nhập khi sinh tem cũng ghi "Lot". Nhãn lấy ở `temSegLabels` (`utils/cargoCategory.ts`), dữ liệu vẫn ở cột `cycle` / đoạn 4 của QR. Cùng luật cho tem in lại sau Dồn / Tách (`components/shared/palletLabel.tsx`).
+- **Vùng in** (`.pl-print-area`) luôn vẽ qua `components/shared/PrintArea.tsx` — portal vào `<body>`, giấu ngoài màn bằng `position:fixed`; hộp in mở khi ảnh QR đã vẽ xong (`printWhenReady`, thay canh giờ 150 ms). Ratchet `print_area_outside_portal` (C120).
+
 ## Actions
 
 view, **mỗi tab 1 quyền (02/07)**: generate=tab Sinh tem mới, reprint=tab In lại từ tồn kho + nút In lại trong Lịch sử, history=tab Lịch sử in, audit=tab Truy cứu 

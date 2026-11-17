@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import QRCode from 'qrcode'
+import { temSegLabels } from '@/utils/cargoCategory'
+import { PrintArea } from '@/components/shared/PrintArea'
 
 // ─── Dữ liệu 1 tem ────────────────────────────────────────────
 export type LabelData = {
@@ -18,6 +20,10 @@ export type LabelData = {
   seq: string
   batch?: string          // tem V2 (`;`): mã lô (khớp kế toán); rỗng với V1
   expiryDisplay?: string  // tem V2: HSD dd/MM/yyyy; rỗng với V1
+  /** hàng NCC (cờ is_ncc_goods của Loại kho tại kho giữ pallet, vd RM01): ô lớn in "Lot" · "NCC" thay "Chu kỳ" · "Máy" (user 18/11).
+   *  Chỗ dựng dữ liệu tự tra cờ theo kho (useIsNccAt) — component tem không biết kho. */
+  isNcc?: boolean
+  nccName?: string        // tên NCC để HIỂN THỊ (QR vẫn mang mã NCC ở đoạn 4)
 }
 
 export function toDdmmyy(iso: string): string {
@@ -114,9 +120,12 @@ export function parseCodeFields(code: string): CodeFields {
 }
 
 // Dựng LabelData từ 1 mã pallet (QR) + tra cứu tên/loại nếu có
-export function qrToLabel(qr: string, mat?: { id?: string; material_description?: string | null; short_name?: string | null; category?: string | null } | null, qty?: number | null): LabelData {
+export function qrToLabel(qr: string, mat?: { id?: string; material_description?: string | null; short_name?: string | null; category?: string | null } | null, qty?: number | null,
+  ncc?: { isNcc: boolean; nccName?: string }): LabelData {
   const f = parseCodeFields(qr)
   return {
+    isNcc: ncc?.isNcc ?? false,
+    nccName: ncc?.nccName ?? '',
     key: qr, qr,
     dateDisplay: f.dateDisplay || '—',
     materialCode: f.materialCode,
@@ -195,13 +204,22 @@ export function PalletLabel({ d }: { d: LabelData }) {
       ) : (
         <div className="mt-[1.5mm] grid grid-cols-3 shrink-0 border-t-2 border-black text-center">
           <div className="border-r border-black">
-            <div className="text-[8pt] font-semibold leading-tight">Chu kỳ</div>
+            <div className="text-[8pt] font-semibold leading-tight">{temSegLabels(!!d.isNcc).cycle}</div>
             <div className="text-[24pt] font-bold leading-none">{d.cycle || '—'}</div>
           </div>
-          <div className="border-r border-black">
-            <div className="text-[8pt] font-semibold leading-tight">Máy</div>
-            <div className="text-[24pt] font-bold leading-none">{d.machine || '—'}</div>
-          </div>
+          {d.isNcc ? (
+            <div className="border-r border-black flex flex-col">
+              <div className="text-[8pt] font-semibold leading-tight">{temSegLabels(true).machine}</div>
+              <div className="h-[9mm] flex items-center justify-center overflow-hidden px-0.5">
+                <span className="text-[11pt] font-bold leading-[1.05] line-clamp-2">{d.nccName || d.machine || '—'}</span>
+              </div>
+            </div>
+          ) : (
+            <div className="border-r border-black">
+              <div className="text-[8pt] font-semibold leading-tight">Máy</div>
+              <div className="text-[24pt] font-bold leading-none">{d.machine || '—'}</div>
+            </div>
+          )}
           <div>
             <div className="text-[8pt] font-semibold leading-tight">Số pallet</div>
             <div className="text-[24pt] font-bold leading-none">{Number(d.seq) || d.seq}</div>
@@ -216,7 +234,7 @@ export function PalletLabel({ d }: { d: LabelData }) {
 export const PALLET_PRINT_CSS = `
   .pl-label { width: 105mm; height: 148.5mm; box-sizing: border-box; }
   .pl-sheet { box-sizing: border-box; }
-  .pl-print-area { position: absolute; left: -99999px; top: 0; }
+  .pl-print-area { position: fixed; left: -99999px; top: 0; }   /* fixed: giấu ngoài màn mà không làm trang dài ra (vùng in ở <body>, C120) */
   @media print {
     html, body { margin: 0 !important; padding: 0 !important; }
     body * { visibility: hidden !important; }
@@ -230,7 +248,7 @@ export const PALLET_PRINT_CSS = `
   }
 `
 
-// Vùng IN ẩn off-screen — đặt 1 lần trong trang, đổ `labels` rồi window.print()
+// Vùng IN ẩn off-screen — đặt 1 lần trong trang, đổ `labels` rồi printWhenReady(labels.length). Vẽ qua PrintArea (portal vào <body>, C120).
 export function PalletPrintArea({ labels }: { labels: LabelData[] }) {
   const sheets = useMemo(() => {
     const s: LabelData[][] = []
@@ -238,12 +256,12 @@ export function PalletPrintArea({ labels }: { labels: LabelData[] }) {
     return s
   }, [labels])
   return (
-    <div className="pl-print-area" aria-hidden>
+    <PrintArea>
       {sheets.map((sheet, si) => (
         <div key={si} className="pl-sheet grid grid-cols-2 grid-rows-2 overflow-hidden bg-white" style={{ width: '210mm', height: '297mm' }}>
           {sheet.map(d => <PalletLabel key={d.key} d={d} />)}
         </div>
       ))}
-    </div>
+    </PrintArea>
   )
 }

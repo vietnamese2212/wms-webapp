@@ -95,5 +95,6 @@
   "scan_input_disabled_drops_focus": 0,
   "upload_without_preflight": 0,
   "password_rule_hand_rolled": 0,
-  "upload_without_merge_expand": 0
+  "upload_without_merge_expand": 0,
+  "print_area_outside_portal": 0
 }

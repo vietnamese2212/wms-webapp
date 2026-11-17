@@ -27,6 +27,8 @@
 //   [2g] "Lấy ở đâu" GOM THEO DATE (17/11): tem cùng HSD cùng vị trí = một nhóm; hàng không tem gom theo lô; hàng hết hạn chưa duyệt không xếp hạng
 //   [2e] NVL HẾT HẠN (17/11 — user chốt "chặn và cho qua khi QA duyệt"): cấp ⇒ 422; gửi QA ⇒ chờ; từ chối / gửi lại / duyệt; lô không tem cùng luật
 //   [2l] cửa "Không có tem" CÙNG luật luân chuyển với cửa quét (kho bắt buộc ⇒ lý do + quyền, dòng cấp ghi vết)
+//   [2x] DÒNG MỞ RỘNG của bàn (18/11): mỗi dòng cấp kèm %Date LÚC CẤP + HSD hiệu lực (như "pallet đã quét" của Xuất kho)
+//   [2e7] quyền duyệt NVL hết hạn chỉ ở chức danh QA (18/11 — gỡ ở Quản lý kho NPP / site / toàn quốc)
 // Fixture QA63: kho cha QA63_PARENT + kho phụ QA63_CB (+ QA63_CB2 để thử chéo kho) · mã NVL/BTP QA63* · tem QA63_* — dọn bằng PostgREST.
 import { randomUUID } from 'crypto'
 import { login, api, rawFetch, restAll, restWrite, check, finish, BASE } from './lib.mjs'
@@ -258,6 +260,29 @@ try {
     ll1.s === 422 && ll1.j?.error?.code === 'ROTATION_REASON_REQUIRED' && ll2.s === 200
       && llRow?.source === 'LOT' && llRow?.rotation_violation === true && llRow?.rotation_principle === 'FEFO' && llRow?.rotation_override_reason === 'BLOCKED',
     `http=${ll1.s}/${ll2.s} ${ll1.j?.error?.code} row=${JSON.stringify(llRow)}`)
+  // ── [2x] DÒNG MỞ RỘNG CỦA BÀN (18/11 — user: "expand sau khi quét xong tương tự bên xuất"): %Date LÚC CẤP + HSD hiệu lực ──
+  const gx = await api(`/wms/production/batches/${BR.id}`)
+  const crow = id => (gx.j?.data?.consumption ?? []).find(c => c.id === id)
+  const cX1 = crow(cx4.j?.data?.rows?.[0]?.id), cL1 = crow(el2.j?.data?.rows?.[0]?.id), cL2 = crow(ll2.j?.data?.rows?.[0]?.id)
+  const atMs = c => Date.parse(/(?:Z|[+-]\d{2}:?\d{2})$/.test(c?.created_at ?? '') ? c.created_at : `${c?.created_at}Z`)
+  // ORACLE tự tính lại: HSD tường minh ⇒ %Date = (HSD − lúc cấp) / (HSD − NSX), không âm. NSX lưu không múi giờ ⇒ máy chạy BE ở +07
+  // lệch tối đa 7 giờ trên mẫu số 365 ngày ⇒ dung sai 1 điểm
+  const wantPct = (c, nsx, hsd) => Math.max(0, (Date.parse(`${hsd}T00:00:00Z`) - atMs(c)) / (Date.parse(`${hsd}T00:00:00Z`) - Date.parse(`${nsx}T00:00:00Z`)) * 100)
+  check('2x1. Trang mẻ: dòng cấp kèm %Date LÚC CẤP (khớp tự tính lại) + HSD hiệu lực — tem / lô hết hạn đã duyệt %Date 0; lô sai thứ tự giữ ngày hàng nên lấy trước (tem hết hạn đã duyệt X1); không trả hạn dùng của mã',
+    gx.s === 200 && cX1?.pct_date === 0 && cX1?.expiry_date === '2025-06-01' && !!cX1?.expiry_approval_id
+      && cL1?.pct_date === 0 && cL1?.expiry_date === '2025-07-01' && !!cL1?.expiry_approval_id
+      && typeof cL2?.pct_date === 'number' && Math.abs(cL2.pct_date - wantPct(cL2, '2026-10-05', '2027-10-05')) < 1 && cL2?.expiry_date === '2027-10-05'
+      && cL2?.rotation_violation === true && cL2?.rotation_best_date === '2025-06-01'
+      && !('supplier_shelf_life_overrides' in (cL2?.material ?? {})) && !('shelf_life_days' in (cL2?.material ?? {})),
+    `http=${gx.s} x1=${JSON.stringify(cX1 && [cX1.pct_date, cX1.expiry_date])} l1=${JSON.stringify(cL1 && [cL1.pct_date, cL1.expiry_date])} l2=${JSON.stringify(cL2 && [cL2.pct_date, wantPct(cL2, '2026-10-05', '2027-10-05').toFixed(2), cL2.expiry_date, cL2.rotation_best_date])}`)
+  // ── [2e7] quyền duyệt NVL hết hạn: chỉ chức danh QA (18/11 "Bỏ" ở ba chức danh quản lý kho — migration 20261118) ──
+  const jts = await restAll('JobTitle', 'select=name,module_permissions')
+  const prodPerms = j => (Array.isArray(j.module_permissions?.production) ? j.module_permissions.production : [])
+  const withExp = jts.filter(j => prodPerms(j).includes('approve_expired'))
+  const MGR = ['Quản lý kho NPP', 'Quản lý kho site', 'Quản lý kho toàn quốc']
+  check('2e7. Quyền duyệt NVL hết hạn chỉ ở chức danh QA: không chức danh quản lý kho nào có; mọi chức danh có quyền đều là chức danh QA duyệt phiếu',
+    withExp.length > 0 && !withExp.some(j => MGR.includes(j.name)) && withExp.every(j => prodPerms(j).includes('approve_qa')),
+    `có quyền: ${withExp.map(j => j.name).join(', ')}`)
   for (const c of await restAll('batch_consumption', `select=id&batch_id=eq.${BR.id}&reversed_at=is.null`))
     await api(`/wms/production/consumption/${c.id}/reverse`, 'POST', { reason: 'QA63 trả lại phép 2e' })
   const xBack = await restAll('InventoryEntry', `select=id,cartons_remaining&material_id=eq.${M_RM2}&order=id`)

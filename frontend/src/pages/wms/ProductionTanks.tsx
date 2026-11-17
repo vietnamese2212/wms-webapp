@@ -75,7 +75,7 @@ export default function ProductionTanks() {
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="text-xs">
         {canQa && <DropdownMenuItem disabled={!t.lots.length} onSelect={() => setQaTank(t)}><ShieldCheck className="h-3.5 w-3.5 mr-2" />QA đạt / không đạt</DropdownMenuItem>}
-        {(canPour || canOps) && t.is_active && <DropdownMenuItem onSelect={() => setPourTank(t)}><ScanIcon className="h-3.5 w-3.5 mr-2" />Đổ bồn (quét tem của mẻ)</DropdownMenuItem>}
+        {(canPour || canOps) && t.is_active && <DropdownMenuItem onSelect={() => setPourTank(t)}><ScanIcon className="h-3.5 w-3.5 mr-2" />Check trước khi đổ bồn (quét tem của mẻ)</DropdownMenuItem>}
         {canOps && t.is_active && <DropdownMenuItem onSelect={() => setOp({ tank: t, op: 'FILL' })}><ArrowDownToLine className="h-3.5 w-3.5 mr-2" />Nạp từ mẻ</DropdownMenuItem>}
         {canOps && <DropdownMenuItem disabled={!Number(t.content)} onSelect={() => setOp({ tank: t, op: 'TRANSFER' })}><ArrowLeftRight className="h-3.5 w-3.5 mr-2" />Chuyển sang bồn khác</DropdownMenuItem>}
         {canOps && <DropdownMenuItem disabled={!t.lots.length} onSelect={() => setOp({ tank: t, op: 'ADJUST' })}><Gauge className="h-3.5 w-3.5 mr-2" />Điều chỉnh mức (khớp đồng hồ)</DropdownMenuItem>}
@@ -92,7 +92,7 @@ export default function ProductionTanks() {
     if (!pour && !qa) return null
     return (
       <div className="flex gap-1.5">
-        {pour && <button type="button" onClick={() => setPourTank(t)} className="touch-target flex-1 inline-flex items-center justify-center gap-1 rounded-md border border-blue-200 bg-blue-50 px-2 py-1.5 text-xs font-semibold text-blue-700 hover:bg-blue-100"><ScanIcon className="h-3.5 w-3.5" />Đổ bồn</button>}
+        {pour && <button type="button" onClick={() => setPourTank(t)} className="touch-target flex-1 inline-flex items-center justify-center gap-1 rounded-md border border-blue-200 bg-blue-50 px-2 py-1.5 text-xs font-semibold text-blue-700 hover:bg-blue-100"><ScanIcon className="h-3.5 w-3.5" />Check trước khi đổ bồn</button>}
         {qa && <button type="button" onClick={() => setQaTank(t)} className="touch-target flex-1 inline-flex items-center justify-center gap-1 rounded-md border border-amber-200 bg-amber-50 px-2 py-1.5 text-xs font-semibold text-amber-800 hover:bg-amber-100"><ShieldCheck className="h-3.5 w-3.5" />QA</button>}
       </div>
     )

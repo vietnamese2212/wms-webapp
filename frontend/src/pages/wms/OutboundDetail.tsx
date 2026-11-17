@@ -24,6 +24,7 @@ import { tripInert } from '@/utils/outboundInert'
 import { TripHistoryDialog } from '@/components/shared/TripHistoryDialog'
 import { ResizableTable, type RtColDef } from '@/components/shared/ResizableTable'
 import { SummaryBand } from '@/components/shared/SummaryBand'
+import { PinnedTabsBar, PinnedTab } from '@/components/shared/PinnedTabs'
 import { FormSheet } from '@/components/shared/FormSheet'
 import { SingleSelect } from '@/components/shared/SingleSelect'
 import { usePopoverAnchor } from '@/components/shared/usePopoverAnchor'
@@ -1477,24 +1478,13 @@ function PinnedVehicleBtn({ v, isCurrent, onUnpin, onNavigate }: {
 
   if (isGone) return null
 
+  // khuôn tab dùng chung với "mẻ đang làm" của Sản xuất (components/shared/PinnedTabs, 18/11)
   return (
-    <button
-      onClick={() => onNavigate(v.id)}
-      className={[
-        'flex items-center gap-1 px-3 py-1.5 text-[10px] border-b-2 transition-colors shrink-0',
-        isCurrent
-          ? 'border-amber-500 bg-amber-100 text-amber-800 font-semibold cursor-default'
-          : 'border-transparent text-slate-500 hover:text-slate-700 hover:bg-amber-50 cursor-pointer',
-      ].join(' ')}
-    >
-      <span className={`h-1.5 w-1.5 rounded-full shrink-0 mr-0.5 ${
-        v.status === 'IN_PROGRESS' ? 'bg-amber-500'
+    <PinnedTab label={v.group_code} current={isCurrent} onClick={() => onNavigate(v.id)}
+      dot={v.status === 'IN_PROGRESS' ? 'bg-amber-500'
         : v.status === 'COMPLETED'  ? 'bg-green-500'
         : v.status === 'PAUSED'     ? 'bg-red-500'
-        : 'bg-slate-300'
-      }`} />
-      {v.group_code}
-    </button>
+        : 'bg-slate-300'} />
   )
 }
 
@@ -2446,8 +2436,7 @@ export default function OutboundDetail() {
 
         {/* Quick-switch bar — nằm ngoài header để không gây scroll */}
         {vehicles.length > 0 && (
-          <div className="flex overflow-x-auto shrink-0 border-b bg-amber-50/60 gap-0 scrollbar-none">
-            <span className="text-[9px] text-amber-600 font-medium px-2 py-1.5 shrink-0 border-r border-amber-200">Đang làm:</span>
+          <PinnedTabsBar>
             {vehicles.map(v => (
               <PinnedVehicleBtn
                 key={v.id}
@@ -2457,7 +2446,7 @@ export default function OutboundDetail() {
                 onNavigate={id => navigate(`/wms/outbound/${id}`)}
               />
             ))}
-          </div>
+          </PinnedTabsBar>
         )}
 
         {/* Dải tile tổng hợp — LUÔN hiện (cả mobile) ngay trên bảng; tự compact trên màn nhỏ */}

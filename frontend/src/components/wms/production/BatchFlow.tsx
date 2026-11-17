@@ -209,11 +209,11 @@ export function PourSheet({ open, onClose, warehouseId, preset, canScan, canFill
   }
   const tank = tanks.find(t => t.id === tankId)
   return (
-    <FormSheet open={open} onClose={onClose} title="Đổ bồn" description="Khai bồn đang đứng, chu kỳ và số mẻ. Quét tem pallet của mẻ: khớp mới đổ."
+    <FormSheet open={open} onClose={onClose} title="Check trước khi đổ bồn" description="Khai bồn đang đứng, chu kỳ và số mẻ. Quét tem pallet của mẻ: khớp mới đổ."
       footer={<>
         <Button variant="outline" size="sm" className="h-8" onClick={onClose}>Đóng</Button>
         {!view && <Button size="sm" className="h-8" disabled={!ready || busy} onClick={() => void check()}>{busy ? 'Đang kiểm…' : 'Kiểm mẻ'}</Button>}
-        {view && canFill && <Button size="sm" className="h-8" disabled={blockers.length > 0 || !qtyN || qtyN <= 0 || fill.isPending} onClick={() => void doFill()}>{fill.isPending ? 'Đang nạp…' : 'Nạp bồn'}</Button>}
+        {view && canFill && <Button size="sm" className="h-8" disabled={blockers.length > 0 || !qtyN || qtyN <= 0 || fill.isPending} onClick={() => void doFill()}>{fill.isPending ? 'Đang nạp…' : 'Nạp BTP vào bồn'}</Button>}
       </>}>
       <div className="space-y-3 text-xs">
         <div className="grid grid-cols-3 gap-2">

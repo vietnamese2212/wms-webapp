@@ -243,7 +243,7 @@ export function BatchFillSheet({ open, onClose, batchId, batchCode, warehouseId,
     try { await fill.mutateAsync({ tankId: tank.id, batch_id: batchId, qty: qtyN }); onClose() } catch (e) { setErr(apiMsg(e)) }
   }
   return (
-    <FormSheet open={open} onClose={onClose} title={`Nạp mẻ ${batchCode} vào bồn`}
+    <FormSheet open={open} onClose={onClose} title={`Nạp BTP vào bồn — mẻ ${batchCode}`}
       description="Một bồn chỉ chứa một mã bán thành phẩm; nhiều mẻ cùng mã được nạp chung một bồn."
       footer={<>
         <Button variant="outline" size="sm" className="h-8" onClick={onClose}>Huỷ</Button>

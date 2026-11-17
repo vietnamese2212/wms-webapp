@@ -15,7 +15,13 @@ export interface BandTile {
   tip?: string       // giải thích ý nghĩa con số khi nhãn ngắn dễ hiểu sai (vd "thùng quy đổi")
 }
 
-export function SummaryBand({ tiles, className, compact, inline }: { tiles: BandTile[]; className?: string; compact?: boolean; inline?: boolean }) {
+export function SummaryBand({ tiles, className, compact, inline, mobilePairs }: {
+  tiles: BandTile[]; className?: string; compact?: boolean; inline?: boolean
+  /** ĐIỆN THOẠI gọn nhất: mỗi ô thành "NHÃN số" nối nhau, tự xuống dòng — đủ mọi ô, cao ~2 dòng chữ thay vì lưới ô 2–3 hàng.
+   *  Cho màn LÀM VIỆC cần chỗ cho nội dung bên dưới (trang mẻ — user 18/11: "xanh dương làm nhỏ lại lấy không gian cho nội dung
+   *  phía dưới"). Máy tính giữ dải như cũ. */
+  mobilePairs?: boolean
+}) {
   // INLINE (14/10, bàn ghép xe): dải đứng CHUNG HÀNG với cụm nút đầu trang — một hàng ở MỌI cỡ màn (không lưới điện thoại), bo góc.
   // Mỗi ô rộng ĐÚNG theo nhãn / con số của nó (`flex-auto`), phần thừa chia đều — màn 24" ô rộng ra, 1280 có sidebar vừa khít, KHÔNG chữ
   // nào bị cắt (user 14/10: "màn 24 inch hiển thị khác, phải đồng bộ với các loại màn hình"). Hết chỗ thật (hàng còn ô chọn kế hoạch +
@@ -54,7 +60,7 @@ export function SummaryBand({ tiles, className, compact, inline }: { tiles: Band
   // Từ 3 hàng trở lên (7–9 ô) dải ăn hơn 100 px của màn điện thoại — bóp đệm dọc lại để bảng còn
   // chỗ thở (Nhập kho 7 ô: dòng dữ liệu đầu tiên từ y=382 xuống còn ~343).
   const tight = tiles.length > cols * 2
-  return (
+  const band = (
     // overflow-hidden ở điện thoại (14/11, đo chi tiết mẻ 390 px): nút ⓘ có vùng chạm 44 px lề âm — ở ô SÁT MÉP PHẢI nó thò ra
     // và đẩy CẢ TRANG trượt ngang 4 px (cùng lớp V10 bên app Vận tải). Cắt ở dải thì vùng chạm chỉ hụt phần ngoài màn; ⓘ mở tấm đáy qua portal nên không bị cắt.
     <div className={`grid ${mCols} [&>div:last-child]:border-r-0 sm:flex sm:divide-x sm:divide-white/15 bg-sky-800 text-white overflow-hidden sm:overflow-x-auto no-scrollbar shrink-0 ${className ?? ''}`}>
@@ -83,5 +89,26 @@ export function SummaryBand({ tiles, className, compact, inline }: { tiles: Band
         </div>
       ))}
     </div>
+  )
+  if (!mobilePairs) return band
+  return (
+    <>
+      {/* điện thoại: "NHÃN số" nối nhau (ⓘ vẫn bấm được), overflow-hidden giữ vùng chạm 44 px của ⓘ không đẩy trang trượt ngang */}
+      <div data-testid="summary-pairs" className={`sm:hidden flex flex-wrap items-baseline gap-x-3 gap-y-0.5 px-3 py-1 bg-sky-800 text-white overflow-hidden shrink-0 ${className ?? ''}`}>
+        {tiles.map((t, i) => (
+          <span key={i} className="inline-flex items-baseline gap-1 whitespace-nowrap leading-tight">
+            <span className="text-[9px] font-medium uppercase tracking-wide text-sky-200/90">{t.label}</span>
+            <span className={`text-xs font-semibold tabular-nums ${t.danger ? 'text-red-300' : t.accent ? 'text-amber-300' : 'text-white'}`}>{t.value}</span>
+            {/* inline-flex + leading-none: không có "dòng chữ ngầm" cỡ chữ mặc định quanh nút ⓘ (làm mỗi dòng cao thêm ~6 px — đo 18/11) */}
+            {t.tip && (
+              <span className="self-center shrink-0 inline-flex leading-none [&_button]:text-sky-200/70 [&_svg]:h-3 [&_svg]:w-3" onClick={e => e.stopPropagation()}>
+                <InfoTip tip={t.tip} />
+              </span>
+            )}
+          </span>
+        ))}
+      </div>
+      <div className="hidden sm:contents">{band}</div>
+    </>
   )
 }

@@ -5,7 +5,8 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import type { AxiosError } from 'axios'
 import * as XLSX from 'xlsx'
-import { Plus, FileDown, AlignJustify, Rows3, Container } from 'lucide-react'
+import { Plus, FileDown, AlignJustify, Rows3, Container, Bookmark } from 'lucide-react'
+import { useActiveBatchesStore } from '@/stores/activeBatchesStore'
 import { SavedViews } from '@/components/shared/SavedViews'
 import { useSavedViewsStore } from '@/stores/savedViewsStore'
 import { rowText, type RowStatusKey } from '@/lib/rowStatus'
@@ -47,6 +48,7 @@ export const batchRowKey = (b: { status: BatchStatus }): RowStatusKey => (b.stat
 
 export default function ProductionBatches() {
   const navigate = useNavigate()
+  const { pin: pinBatch, unpin: unpinBatch, isPinned: isBatchPinned } = useActiveBatchesStore()
   const canSeePath = useCanSeePath()
   const f = useWmsFilterStore(s => s.production)
   const setF = useWmsFilterStore(s => s.setProduction)
@@ -136,10 +138,19 @@ export default function ProductionBatches() {
               {!q.isError && !q.isLoading && !rows.length && <TableEmptyRow colSpan={COLS.length}>{kitchens.length ? 'Không có mẻ nào trong khoảng đang lọc.' : 'Chưa có kho chế biến trong phạm vi — khai kho phụ nội bộ ở Cài đặt WMS → Kho.'}</TableEmptyRow>}
               {rows.map(r => {
                 const u = unitCode(r.base_unit)
+                const pinned = isBatchPinned(r.id)
                 return (
                   <TableRow key={r.id} className={`cursor-pointer ${rowText(batchRowKey(r))} ${dense ? '' : '[&_td]:py-2.5'}`}
                     onClick={() => navigate(`/wms/production/${r.id}`)} title="Mở mẻ">
-                    <TableCell className={`${TD} sticky left-0 z-10 bg-white font-mono font-semibold`}>{r.batch_code}</TableCell>
+                    <TableCell className={`${TD} sticky left-0 z-10 bg-white font-mono font-semibold`}>
+                      {/* 🔖 = đánh dấu ĐANG LÀM ⇒ tab "Đang làm:" trên trang mẻ (như danh sách Xuất kho) */}
+                      <button type="button" onClick={e => { e.stopPropagation(); if (pinned) unpinBatch(r.id); else pinBatch({ id: r.id, code: r.batch_code, status: r.status }) }}
+                        className={`p-1 -my-1 -ml-1 mr-0.5 rounded align-middle transition-colors ${pinned ? 'text-amber-500' : 'text-slate-300 hover:text-slate-500'}`}
+                        title={pinned ? 'Bỏ đánh dấu đang làm' : 'Đánh dấu đang làm'} aria-label={`${pinned ? 'Bỏ đánh dấu' : 'Đánh dấu'} đang làm ${r.batch_code}`} aria-pressed={pinned}>
+                        <Bookmark className="h-3 w-3" fill={pinned ? 'currentColor' : 'none'} />
+                      </button>
+                      {r.batch_code}
+                    </TableCell>
                     <TableCell className={`${TD} font-mono`}>{r.cycle || r.batch_no ? `${r.cycle ?? '—'} · ${r.batch_no ? String(r.batch_no).padStart(4, '0') : '—'}` : <span className="text-slate-300">—</span>}</TableCell>
                     <TableCell className={`${TD} font-mono font-semibold`}>{r.tank_code ?? <span className="text-slate-300 font-normal">—</span>}</TableCell>
                     <TableCell className={`${TD} tabular-nums`}>{formatDate(r.prod_date)}</TableCell>

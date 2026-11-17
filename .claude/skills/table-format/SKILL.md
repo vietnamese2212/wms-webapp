@@ -42,6 +42,7 @@ Hàng 2: `<FilterBar defs={...} />` bọc `hidden sm:flex`. Mobile: FilterBar t�
 
 ## 4. SummaryBand (`@/components/shared/SummaryBand`)
 Dải `bg-sky-800` full-width ngay TRÊN bảng; mỗi tile = nhãn nhỏ in hoa + số lớn. List và detail **dùng chung** để đồng bộ. Số liệu tổng chuyển hết vào đây thay cho dòng text.
+- **Màn LÀM VIỆC trên điện thoại cần chỗ cho nội dung** (vd trang mẻ, 18/11): `<SummaryBand mobilePairs>` — dưới sm mỗi ô thành "NHÃN số" nối nhau tự xuống dòng (đủ mọi ô, ~42 px thay lưới ô ~81 px), máy tính giữ dải như cũ. List page giữ lưới ô mặc định.
 - **List CHƯA phân trang**: stats tính trên `displayItems` (đã filter).
 - **List ĐÃ phân trang** (mục 4b): tổng phải lấy từ **API summary tính bằng SQL trên TOÀN BỘ bộ lọc** — cộng trên trang đang xem ra "tổng của trang 1", **SAI mà không báo gì**. Thêm ô `{ label: 'Trang', value: \`${page}/${totalPages}\` }` vào cuối band khi `totalPages > 1`.
 
@@ -156,6 +157,8 @@ Mọi filter state (search, date, dropdown…) lưu `useWmsFilterStore` (`fronte
 - Đóng khung card như list. Header **kế thừa màu** `statusText(<module>Key(r))` trên mã/tiêu đề.
 - Mỗi khối = **section-band**: bar `bg-slate-100 border-b` + accent `bg-sky-500` + tiêu đề IN HOA + Action menu riêng.
 - Dùng chung `<SummaryBand>` với list. Mỗi bảng con áp lại skill này.
+- **Làm nhiều bản ghi một lúc** (chuyến xuất, mẻ chế biến): 🔖 cạnh mã ở trang chi tiết + ở dòng của list, dải tab "Đang làm:" dưới header — dùng `PinnedTabsBar` / `PinnedTab` (`components/shared/PinnedTabs.tsx`) + một store zustand persist sessionStorage riêng cho loại bản ghi (mẫu `activeVehiclesStore` · `activeBatchesStore`). Đừng tự vẽ dải "Đang làm" kiểu mới.
+- **Lưới số trên điện thoại** (`MobileNumHead` / `MobileNumRow`): số của một dòng luôn CÙNG một hàng — nút trong ô số không mang sàn chạm 44 px (component tự gỡ `.touch-target`); chú thích phụ của số ("gốc …") đứng cùng hàng, cột cần rộng hơn thì truyền `template` cho cả đầu lẫn dòng.
 - Layout 20/80: header `maxHeight:'22vh'` overflow-y-auto; vùng bảng `flex-1 min-h-0 overflow-auto pb-20 lg:pb-4`.
 
 ## 16. Detail Sheet (right slide-in) — CHỈ cho masterdata xem nhanh

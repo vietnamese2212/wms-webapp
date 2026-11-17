@@ -143,6 +143,43 @@ try {
   const s2c = await api(`/wms/production/batches/${B1.id}/scan-check?code=QA63RM1`)
   check('2c. Mã tồn gộp nhiều lô ⇒ 409 POOLED_CODE', s2c.s === 409 && s2c.j?.error?.code === 'POOLED_CODE', `http=${s2c.s}`)
 
+  // ── [2r] CẤP NVL = MỘT LOẠI XUẤT (17/11): "lấy ở đâu" + luân chuyển cùng luật quét xuất ──
+  // mẻ RIÊNG cho phần này (cấp rồi trả lại) — không làm lệch số dòng cấp của mẻ 1 mà các phép sau đếm
+  const BR = (await api('/wms/production/batches', 'POST', NEW({ cycle: 'QR', material_id: M_BTP, tank_id: T1.id }))).j?.data
+  const pk = await api(`/wms/production/batches/${BR.id}/pick-list?material_id=${M_RM}`)
+  const pkRows = pk.j?.data?.rows ?? []
+  check('2r1. Lấy ở đâu: tem của mã trong kho chế biến theo FEFO — HSD sớm nhất (P1) đứng 1, tem QA giữ (P3) không xếp hạng và xuống cuối, tem kho khác (P4) không có',
+    pk.s === 200 && pk.j?.data?.principle === 'FEFO' && pkRows[0]?.entry_id === 'QA63_E1' && pkRows[0]?.rank === 1
+      && pkRows[pkRows.length - 1]?.entry_id === 'QA63_E3' && pkRows[pkRows.length - 1]?.qa_hold === true && pkRows[pkRows.length - 1]?.rank === null
+      && !pkRows.some(r => r.entry_id === 'QA63_E4') && typeof pkRows[0]?.pct_date === 'number',
+    `http=${pk.s} ${JSON.stringify(pkRows.map(r => [r.entry_id, r.rank, r.qa_hold]))}`)
+  const sOk = await api(`/wms/production/batches/${BR.id}/scan-check?code=QA63_P1`)
+  const sLate = await api(`/wms/production/batches/${BR.id}/scan-check?code=QA63_P2`)
+  check('2r2. Quét tem HSD sớm nhất ⇒ đúng thứ tự; tem HSD muộn hơn ⇒ sai thứ tự, chỉ đúng tem P1 phải dùng trước (kho không bắt buộc)',
+    sOk.s === 200 && sOk.j?.data?.rotation?.violation === false && typeof sOk.j?.data?.pct_date === 'number'
+      && sLate.s === 200 && sLate.j?.data?.rotation?.violation === true && sLate.j?.data?.rotation?.best_pallet_code === 'QA63_P1' && sLate.j?.data?.rotation?.required === false,
+    `ok=${JSON.stringify(sOk.j?.data?.rotation ?? null)} late=${JSON.stringify(sLate.j?.data?.rotation ?? null)}`)
+  await restWrite('Warehouse', 'PATCH', `id=eq.${WC}`, { rotation_required: true, updated_at: ts() })
+  const rNo = await api(`/wms/production/batches/${BR.id}/consume-scan`, 'POST', { entry_id: 'QA63_E2', qty: 1, qty_semantics: 'base' })
+  const rYes = await api(`/wms/production/batches/${BR.id}/consume-scan`, 'POST', { entry_id: 'QA63_E2', qty: 1, qty_semantics: 'base', rotation_override_reason: 'BLOCKED' })
+  await restWrite('Warehouse', 'PATCH', `id=eq.${WC}`, { rotation_required: false, updated_at: ts() })
+  const rRow = rYes.j?.data?.rows?.[0]?.id ? (await restAll('batch_consumption', `select=rotation_violation,rotation_principle,rotation_best_date,rotation_override_reason&id=eq.${rYes.j.data.rows[0].id}`))[0] : null
+  check('2r3. Kho bật "bắt buộc lấy đúng thứ tự": cấp tem sai thứ tự thiếu lý do ⇒ 422 ROTATION_REASON_REQUIRED; có lý do ⇒ cấp được, dòng cấp ghi vết (sai thứ tự · FEFO · HSD tem đúng · lý do)',
+    rNo.s === 422 && rNo.j?.error?.code === 'ROTATION_REASON_REQUIRED' && rYes.s === 200 && rRow?.rotation_violation === true
+      && rRow?.rotation_principle === 'FEFO' && rRow?.rotation_best_date === '2027-01-01' && rRow?.rotation_override_reason === 'BLOCKED',
+    `http=${rNo.s}/${rYes.s} ${rNo.j?.error?.code} row=${JSON.stringify(rRow)}`)
+  // trả lại 1 KG cho các phép sau (tồn P2 = 50)
+  if (rYes.j?.data?.rows?.[0]?.id) await api(`/wms/production/consumption/${rYes.j.data.rows[0].id}/reverse`, 'POST', { reason: 'QA63 trả lại phép 2r3' })
+  const okRow = (await api(`/wms/production/batches/${BR.id}/consume-scan`, 'POST', { entry_id: 'QA63_E1', qty: 1, qty_semantics: 'base' })).j?.data?.rows?.[0]
+  const okRec = okRow?.id ? (await restAll('batch_consumption', `select=rotation_violation&id=eq.${okRow.id}`))[0] : null
+  if (okRow?.id) await api(`/wms/production/consumption/${okRow.id}/reverse`, 'POST', { reason: 'QA63 trả lại phép 2r4' })
+  const e2back = (await restAll('InventoryEntry', 'select=cartons_remaining&id=in.(QA63_E1,QA63_E2)&order=id'))
+  check('2r4. Cấp đúng thứ tự ⇒ dòng cấp ghi rotation_violation = false; trả lại ⇒ tồn P1 100 · P2 50 như trước',
+    okRec?.rotation_violation === false && num(e2back[0]?.cartons_remaining) === 100 && num(e2back[1]?.cartons_remaining) === 50,
+    `rec=${JSON.stringify(okRec)} tồn=${JSON.stringify(e2back)}`)
+
+  if (BR?.id) await api(`/wms/production/batches/${BR.id}/cancel`, 'POST', {})
+
   // ── [3] rút theo tem ──
   // api() tự đắp cờ qty_semantics ⇒ đi cửa THÔ để thử đúng body thiếu cờ (bundle cũ)
   const c3a = await rawFetch(`/wms/production/batches/${B1.id}/consume-scan`, { method: 'POST', body: JSON.stringify({ entry_id: 'QA63_E1', qty: 30 }) })

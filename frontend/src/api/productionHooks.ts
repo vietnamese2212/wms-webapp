@@ -72,6 +72,8 @@ export interface ConsumptionRow {
   production_date: string | null; batch_lot: string | null; qty: number; source: 'SCAN' | 'LOT'
   created_by_name: string | null; created_at: string
   reversed_at: string | null; reversed_by_name: string | null; reverse_reason: string | null
+  /** vết luân chuyển lúc cấp (17/11 — cùng bộ cột sổ quét xuất) */
+  rotation_violation?: boolean | null; rotation_principle?: string | null; rotation_best_date?: string | null; rotation_override_reason?: string | null
   material: ({ material_code: string; short_name: string | null } & MatUnits) | null
   entry: { cartons_remaining: number | null; expiry_date: string | null; location: { location_code: string } | null } | null
 }
@@ -133,6 +135,8 @@ export interface ScanEntry {
   production_date: string | null; expiry_date: string | null; batch: string | null
   qa_status_id?: string | null; qa_status: { code: string; name: string } | null; location: { location_code: string } | null
   material: ({ material_code: string; short_name: string | null } & MatUnits) | null
+  /** 17/11: %Date + luân chuyển của tem (như quét xuất) */
+  pct_date?: number | null; rotation?: MesRotation
 }
 export interface StockMaterial extends MatUnits { material_id: string; material_code: string; material_name: string | null; available: number; available_no_tem?: number; lots: number }
 export interface StockLot { production_date: string | null; batch_lot: string | null; expiry_date: string | null; available: number; available_no_tem?: number; tem_pallets?: number; pallets: number }
@@ -215,6 +219,24 @@ export function useGenealogy(kind: 'BATCH' | 'FG_PALLET' | 'RM_PALLET', value: s
   })
 }
 /** Tra tem quét được trong KHO CỦA MẺ — gọi tay lúc quét (không cache). */
+/** Luân chuyển của MỘT tem vừa quét — server chấm bằng CÙNG luật cửa quét xuất (utils/rotation.ts + cấu hình Kho → Loại kho) */
+export interface MesRotation {
+  principle: 'FEFO' | 'FIFO' | 'LIFO'; required: boolean; source: 'WAREHOUSE' | 'TYPE'; date_label: string
+  scanned_date: string | null; violation: boolean; best_date: string | null; best_pallet_code: string | null; best_location_code: string | null
+}
+/** "Lấy ở đâu": tem của mã trong kho chế biến theo thứ tự luân chuyển (rank 1 = nên lấy trước; null = QA giữ) */
+export interface PickListRow {
+  entry_id: string; pallet_code: string | null; batch: string | null; location_code: string | null; production_date: string | null
+  rot_date: string | null; pct_date: number | null; available: number; qa_hold: boolean; qa_name: string | null; rank: number | null
+}
+export interface PickList { principle: 'FEFO' | 'FIFO' | 'LIFO'; required: boolean; source: 'WAREHOUSE' | 'TYPE'; date_label: string; total: number; rows: PickListRow[] }
+export function usePickList(batchId: string | undefined, materialId: string | undefined) {
+  return useQuery({
+    // dưới tiền tố prod-stock ⇒ cấp xong / realtime batch_consumption tự tải lại
+    queryKey: [...K.stock, 'pick-list', batchId, materialId], enabled: !!batchId && !!materialId, staleTime: 5_000,
+    queryFn: async () => (await apiClient.get(`/wms/production/batches/${batchId}/pick-list`, { params: { material_id: materialId } })).data.data as PickList,
+  })
+}
 export async function scanCheck(batchId: string, code: string): Promise<ScanEntry> {
   return (await apiClient.get(`/wms/production/batches/${batchId}/scan-check`, { params: { code } })).data.data as ScanEntry
 }
@@ -383,8 +405,9 @@ export const useOpenShift = () => useProdMutation((b: { warehouse_id: string; re
 export const useSaveShift = () => useProdMutation(({ id, ...b }: { id: string; items: { material_id: string; qty_actual: number | null }[]; note?: string | null; close?: boolean }) =>
   (async () => (await apiClient.put(`/wms/production/shift-reports/${id}`, b)).data.data as ShiftReport)())
 export const useBatchStatus = () => useProdMutation(({ id, action }: { id: string; action: 'close' | 'reopen' | 'cancel' }) => post(`/wms/production/batches/${id}/${action}`))
-export const useConsumeScan = () => useProdMutation(({ batchId, entry_id, qty }: { batchId: string; entry_id: string; qty: number }) =>
-  post<{ rows: { pallet_code: string; qty: number; remaining: number }[] }>(`/wms/production/batches/${batchId}/consume-scan`, { entry_id, qty }))
+export const useConsumeScan = () => useProdMutation(({ batchId, entry_id, qty, rotation_override_reason }: { batchId: string; entry_id: string; qty: number; rotation_override_reason?: string }) =>
+  post<{ rows: { pallet_code: string; qty: number; remaining: number; rotation_violation?: boolean | null }[] }>(`/wms/production/batches/${batchId}/consume-scan`,
+    { entry_id, qty, ...(rotation_override_reason ? { rotation_override_reason } : {}) }))
 export const useConsumeLot = () => useProdMutation(({ batchId, ...b }: { batchId: string; material_id: string; production_date: string | null; batch_lot: string | null; qty: number }) =>
   post<{ rows: { pallet_code: string; qty: number; remaining: number }[] }>(`/wms/production/batches/${batchId}/consume-lot`, b))
 export const useReverseConsumption = () => useProdMutation(({ id, reason }: { id: string; reason: string }) => post(`/wms/production/consumption/${id}/reverse`, { reason }))

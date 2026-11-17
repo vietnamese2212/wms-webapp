@@ -19,6 +19,14 @@ import { btpUseError } from '../../utils/semiFinished'
 import { PRODUCTION_QA_GATES } from '../../utils/putaway'
 import { invalidatePutawayConfig } from '../../services/putawayContext'
 import { categoryAllowed, scopeCategoriesOf, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
+import { rotationConfigOf } from './outboundController'
+import { qaHoldIds } from '../../services/qaStatus'
+import { fetchAllRowsParallel } from '../../utils/pagination'
+import { computePctDate, type MaterialShelfInfo } from '../../utils/shelfLife'
+import {
+  rotationSortKey, rotationDateOf, isRotationViolation, isPickEligible, isRotationReason, ROTATION_DATE_LABEL, ROTATION_LABEL,
+  type RotationEntry, type RotationPrinciple,
+} from '../../utils/rotation'
 
 const nowIso = () => new Date().toISOString()
 const scopeOf = (req: Request): string[] | null => (req.user?.warehouse_scope === 'NATIONAL' ? null : (req.user?.warehouse_ids ?? []))
@@ -672,7 +680,7 @@ export async function scanCheck(req: Request, res: Response) {
     if (!(await inScope(req, b.warehouse_id))) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
     const code = normalizeQR(String((req.query as { code: string }).code))
     const { data: rows, error } = await db.from('InventoryEntry')
-      .select('id, pallet_code, material_id, cartons_remaining, cartons_imported, cartons_reserved, status, production_date, expiry_date, batch, qa_status_id, qa_status:QAStatus(code, name), location:Location(location_code), material:Material(material_code, short_name, base_unit, entry_unit, units_per_carton)')
+      .select('id, pallet_code, material_id, cartons_remaining, cartons_imported, cartons_reserved, status, production_date, expiry_date, batch, ncc_id, shelf_life_days, qa_status_id, qa_status:QAStatus(code, name), location:Location(location_code), material:Material(material_code, short_name, base_unit, entry_unit, units_per_carton)')
       .eq('warehouse_id', b.warehouse_id).eq('pallet_code', code).in('status', ['IN_STOCK', 'PARTIAL']).limit(20)
     if (error) return fail(res, error)
     if (!rows?.length) {
@@ -684,12 +692,19 @@ export async function scanCheck(req: Request, res: Response) {
     }
     if (rows.length > 1)
       return fail(res, 409, 'POOLED_CODE', `Mã ${code} là tồn gộp nhiều lô — dùng "Không có tem" để chọn đúng lô`)
-    return ok(res, rows[0])
+    // như quét xuất: %Date + đúng / sai thứ tự luân chuyển (17/11)
+    const ctx = await mesPickContext(b.warehouse_id, rows[0].material_id)
+    const e0 = rows[0] as unknown as PickRow
+    return ok(res, { ...rows[0], pct_date: computePctDate(e0, ctx.material), rotation: mesRotationCheck(ctx, e0) })
   } catch (e) { return failAny(res, e) }
 }
 
 // POST /wms/production/batches/:id/consume-scan — rút theo TEM (một dòng tồn)
-export const zConsumeScan = z.object({ entry_id: zText(1, 100), qty: z.number().positive().max(10_000_000), qty_semantics: z.literal('base') })
+export const zConsumeScan = z.object({
+  entry_id: zText(1, 100), qty: z.number().positive().max(10_000_000), qty_semantics: z.literal('base'),
+  // lấy khác thứ tự khi kho bật "bắt buộc" — mã lý do của ROTATION_REASONS (+ ": ghi chú"), quyền outbound.rotation_override
+  rotation_override_reason: zText(1, 200).optional(),
+})
 export async function consumeScan(req: Request, res: Response) {
   try {
     const body = req.body as z.infer<typeof zConsumeScan>
@@ -698,13 +713,95 @@ export async function consumeScan(req: Request, res: Response) {
     if (!(await inScope(req, b.warehouse_id))) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
     const gateErr = await consumeGateError(b)
     if (gateErr) return fail(res, 409, 'MES_NOT_APPROVED', gateErr)
-    const { data: e } = await db.from('InventoryEntry').select('id, material:Material(base_unit, entry_unit, units_per_carton)').eq('id', body.entry_id).maybeSingle()
+    const { data: e } = await db.from('InventoryEntry')
+      .select('id, pallet_code, material_id, production_date, expiry_date, shelf_life_days, ncc_id, qa_status_id, cartons_remaining, cartons_imported, cartons_reserved, material:Material(base_unit, entry_unit, units_per_carton)')
+      .eq('id', body.entry_id).maybeSingle()
     if (!e) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy dòng tồn')
     const intErr = qtyIntegerError(body.qty, e.material as unknown as { base_unit: string | null; entry_unit: string | null; units_per_carton: number | null } | null)
     if (intErr) return fail(res, 422, 'QTY_NOT_INTEGER', intErr)
-    const { data, error } = await db.rpc('mes_consume_scan', { p: { batch_id: b.id, entry_id: body.entry_id, qty: body.qty, ...actor(req) } })
+    // LUÂN CHUYỂN — cùng luật cửa quét xuất (outboundController.scanItem): kho / loại kho bật "bắt buộc" ⇒ sai thứ tự
+    // phải có người có quyền duyệt + lý do trong danh sách; không bật ⇒ chỉ ghi vết (màn hình nhắc trước khi bấm).
+    const rot = mesRotationCheck(await mesPickContext(b.warehouse_id, e.material_id), e as unknown as PickRow)
+    let override: string | null = null
+    if (rot.required && rot.violation) {
+      const raw = String(body.rotation_override_reason ?? '').trim()
+      if (!canRotationOverride(req))
+        return fail(res, 422, 'ROTATION_VIOLATION', `${mesRotationMessage(rot)} Cần người có quyền duyệt lấy khác thứ tự.`)
+      if (!isRotationReason(raw.split(':')[0].trim()))
+        return fail(res, 422, 'ROTATION_REASON_REQUIRED', `${mesRotationMessage(rot)} Chọn lý do để tiếp tục.`)
+      override = raw.slice(0, 200)
+    }
+    const { data, error } = await db.rpc('mes_consume_scan', { p: { batch_id: b.id, entry_id: body.entry_id, qty: body.qty, ...actor(req),
+      rotation: { violation: rot.violation, principle: rot.principle, best_date: rot.best_date, override_reason: override } } })
     if (error) return mesFail(res, error)
     return ok(res, data)
+  } catch (e) { return failAny(res, e) }
+}
+
+// ── LUÂN CHUYỂN KHI CẤP NVL (17/11 — user: "khi quét tem trong Mẻ thì cũng phải có các chức năng như bên xuất hàng … xem
+// được tồn kho đang ở đâu, date là gì, FIFO đã phù hợp chưa. Bản chất nó cũng là 1 loại xuất hàng"). CÙNG luật với quét
+// xuất: nguyên tắc + "bắt buộc" theo cấu hình 2 tầng Kho → Loại kho (`rotationConfigOf`), khoá xếp `rotationSortKey`,
+// vi phạm `isRotationViolation`, pallet so được `isPickEligible`, lý do vượt rào `ROTATION_REASONS`, quyền
+// `outbound.rotation_override` (một NĂNG LỰC "được lấy khác thứ tự", như `inbound.putaway_override`).
+// Khác DUY NHẤT là TẬP SO SÁNH: tồn của KHO CHẾ BIẾN theo cột warehouse_id, trạng thái IN_STOCK / PARTIAL (đúng tập mà
+// mes_consume_scan cho rút) — pallet ở kho chế biến thường chưa xếp ô, tập của cửa xuất (lọc theo kho của Ô) sẽ bỏ sót.
+type PickRow = RotationEntry & { id: string; pallet_code: string | null; batch?: string | null; material_id?: string
+  qa_status?: { code: string; name: string } | null; location?: { location_code: string | null } | null }
+type PickCtx = { principle: RotationPrinciple; required: boolean; source: 'WAREHOUSE' | 'TYPE'; material: MaterialShelfInfo | null
+  ranked: { row: PickRow; key: number | null; eligible: boolean }[] }
+async function mesPickContext(warehouseId: string, materialId: string): Promise<PickCtx> {
+  const [{ data: mat }, resolver, qaHold] = await Promise.all([
+    db.from('Material').select('category, shelf_life_days, supplier_shelf_life_overrides').eq('id', materialId).maybeSingle(),
+    rotationConfigOf([warehouseId]), qaHoldIds(),
+  ])
+  const cfg = resolver.of(warehouseId, mat?.category ?? null)
+  const material = (mat ?? null) as unknown as MaterialShelfInfo | null
+  const rows = await fetchAllRowsParallel(() => db.from('InventoryEntry')
+    .select('id, pallet_code, batch, material_id, qa_status_id, qa_status:QAStatus(code, name), cartons_remaining, cartons_imported, cartons_reserved, production_date, expiry_date, ncc_id, shelf_life_days, location:Location(location_code)')
+    .eq('warehouse_id', warehouseId).eq('material_id', materialId).in('status', ['IN_STOCK', 'PARTIAL']).gt('cartons_remaining', 0).order('id')) as PickRow[]
+  const ranked = rows.map(row => ({ row, key: rotationSortKey(row, material, cfg.principle), eligible: isPickEligible(row, qaHold) }))
+    .sort((a, b) => (Number(b.eligible) - Number(a.eligible)) || ((a.key ?? Infinity) - (b.key ?? Infinity))
+      || (a.row.pallet_code ?? '').localeCompare(b.row.pallet_code ?? ''))
+  return { principle: cfg.principle, required: cfg.required, source: cfg.source, material, ranked }
+}
+function mesRotationCheck(ctx: PickCtx, entry: PickRow) {
+  const best = ctx.ranked.find(r => r.eligible && r.key != null) ?? null
+  const scannedKey = rotationSortKey(entry, ctx.material, ctx.principle)
+  return {
+    principle: ctx.principle, required: ctx.required, source: ctx.source, date_label: ROTATION_DATE_LABEL[ctx.principle],
+    scanned_date: rotationDateOf(entry, ctx.material, ctx.principle),
+    violation: !!best && best.row.id !== entry.id && isRotationViolation(scannedKey, best.key),
+    best_date: best ? rotationDateOf(best.row, ctx.material, ctx.principle) : null,
+    best_pallet_code: best?.row.pallet_code ?? null, best_location_code: best?.row.location?.location_code ?? null,
+  }
+}
+function mesRotationMessage(r: ReturnType<typeof mesRotationCheck>): string {
+  const what = r.best_pallet_code ? ` (tem ${r.best_pallet_code})` : ''
+  const where = r.best_location_code ? ` tại ${r.best_location_code}` : ''
+  return `Kho yêu cầu lấy đúng ${ROTATION_LABEL[r.principle]}. Còn hàng ${r.date_label} ${r.best_date ?? '—'}${what}${where} phải dùng trước.`
+}
+const canRotationOverride = (req: Request): boolean =>
+  req.user?.is_superadmin === true || (req.user?.module_permissions ?? {})['outbound']?.includes('rotation_override') === true
+
+// GET /wms/production/batches/:id/pick-list?material_id= — "LẤY Ở ĐÂU": tem của mã trong kho chế biến theo thứ tự luân
+// chuyển (như cột Vị trí lấy của Xuất kho): ô · NSX · HSD · %Date · còn cấp được · QA giữ. Thứ 1 = nên lấy trước.
+export const zPickListQuery = z.object({ material_id: zText(1, 64) })
+export async function pickList(req: Request, res: Response) {
+  try {
+    const b = await loadBatch(req.params.id)
+    if (!b) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy mẻ')
+    if (!(await inScope(req, b.warehouse_id))) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
+    const ctx = await mesPickContext(b.warehouse_id, (req.query as unknown as z.infer<typeof zPickListQuery>).material_id)
+    let rank = 0
+    const rows = ctx.ranked.slice(0, 200).map(({ row, eligible }) => ({
+      entry_id: row.id, pallet_code: row.pallet_code, batch: row.batch ?? null, location_code: row.location?.location_code ?? null,
+      production_date: row.production_date ? String(row.production_date).slice(0, 10) : null,
+      rot_date: rotationDateOf(row, ctx.material, ctx.principle), pct_date: computePctDate(row, ctx.material),
+      available: Math.max(Number(row.cartons_remaining ?? row.cartons_imported ?? 0) - Number(row.cartons_reserved ?? 0), 0),
+      qa_hold: !eligible, qa_name: row.qa_status?.name ?? row.qa_status?.code ?? null, rank: eligible ? ++rank : null,
+    }))
+    return ok(res, { principle: ctx.principle, required: ctx.required, source: ctx.source, date_label: ROTATION_DATE_LABEL[ctx.principle],
+      total: ctx.ranked.length, rows })
   } catch (e) { return failAny(res, e) }
 }
 

@@ -16,7 +16,12 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { useDebouncedValue } from '@/hooks/useDebouncedValue'
 import { useWedgeScanner } from '@/hooks/useWedgeScanner'
-import { scanCheck, useConsumeScan, useConsumeLot, useProductionStock, type BatchDetail, type ScanEntry, type StockLot } from '@/api/productionHooks'
+import { scanCheck, useConsumeScan, useConsumeLot, useProductionStock, usePickList, type BatchDetail, type ScanEntry, type StockLot, type PickList } from '@/api/productionHooks'
+import { usePctBands } from '@/api/hooks'
+import { pctDateCls } from '@/utils/pctDateBands'
+import { ROTATION_REASONS } from '@/utils/rotation'
+import { useAuthStore } from '@/stores/authStore'
+import { can, type ModulePermissions } from '@/config/permissions'
 import { hasEntry, qtyIntegerError, type MatUnits } from '@/utils/qtyUnits'
 import { qtyCode, qtyNum, matUnitCode } from '@/utils/unitCode'
 import { reqLineState } from '@/utils/reqTolerance'
@@ -47,6 +52,12 @@ export function ConsumeSheet({ open, onClose, batch, focusId }: {
   const [qty, setQty] = useState(0)
   const [err, setErr] = useState('')
   const [done, setDone] = useState<string | null>(null)
+  // lấy khác thứ tự khi kho bật "bắt buộc" (như quét xuất): lý do trong danh sách cố định + quyền outbound.rotation_override
+  const [rotReason, setRotReason] = useState('')
+  const [showAllPick, setShowAllPick] = useState(false)
+  const perms = useAuthStore(s => s.user?.module_permissions) as ModulePermissions | null | undefined
+  const canRotOverride = can(perms ?? null, 'outbound', 'rotation_override')
+  const pctBands = usePctBands()
   // đường "Không có tem"
   const [matTerm, setMatTerm] = useState('')
   const [matId, setMatId] = useState('')
@@ -70,7 +81,7 @@ export function ConsumeSheet({ open, onClose, batch, focusId }: {
     const lotFirst = !!focus && Number(focus.tem_pallets) === 0 && Number(focus.available_no_tem) > 0
     setMode(lotFirst ? 'LOT' : 'SCAN'); setMatId(lotFirst ? focus.material_id : '')
   }, [open, focusId]) // eslint-disable-line react-hooks/exhaustive-deps
-  function reset() { setCode(''); setEntry(null); setQty(0); setErr('') }
+  function reset() { setCode(''); setEntry(null); setQty(0); setErr(''); setRotReason('') }
 
   async function lookup(raw: string) {
     const c = normalizeQR(raw)
@@ -92,9 +103,14 @@ export function ConsumeSheet({ open, onClose, batch, focusId }: {
   // Bắn trúng lúc con trỏ ở ô lượng: máy đọc trả lại số trong ô rồi mới phát mã (useWedgeScanner) — số đang nhập không bị chuỗi tem phá.
   useWedgeScanner(c => { void lookup(c) }, open && mode === 'SCAN' && !camOpen && !consumeScan.isPending, { exclusive: true })
 
-  // FEFO: cùng mã còn lô HSD sớm hơn tem vừa quét ⇒ nhắc (không chặn — user chốt 14/11 "nhắc thôi")
-  const scanLots = useProductionStock(entry ? batch.warehouse_id : undefined, entry?.material_id).data?.lots ?? []
-  const earlier = entry?.expiry_date ? scanLots.find(l => l.expiry_date && l.expiry_date < String(entry.expiry_date).slice(0, 10)) : undefined
+  // LUÂN CHUYỂN (17/11 — "bản chất nó cũng là 1 loại xuất hàng"): server chấm bằng CÙNG luật cửa quét xuất — nguyên tắc
+  // FEFO / FIFO / LIFO + "bắt buộc" theo cấu hình Kho → Loại kho. Không bắt buộc ⇒ chỉ nhắc (user chốt 14/11 "nhắc thôi");
+  // bắt buộc ⇒ sai thứ tự phải có quyền duyệt + lý do. Màn hình KHÔNG tự so ngày (bản tự so cũ chỉ biết HSD ghi trên tem).
+  const rot = entry?.rotation ?? null
+  const rotBlocked = mode === 'SCAN' && !!rot?.violation && rot.required && (!canRotOverride || !rotReason)
+  // "Lấy ở đâu": tem của mã đang cấp theo thứ tự luân chuyển — như cột Vị trí lấy của Xuất kho
+  const pickMatId = mode === 'SCAN' ? (entry?.material_id ?? focus?.material_id) : undefined
+  const pick = usePickList(open ? batch.id : undefined, pickMatId)
   const offPlan = !!entry && batch.board.some(r => r.required != null) && !batch.board.some(r => r.required != null && r.material_id === entry.material_id)
 
   const term = useDebouncedValue(matTerm, 250)
@@ -127,16 +143,17 @@ export function ConsumeSheet({ open, onClose, batch, focusId }: {
   const over = qty > max + 1e-9
   const saving = consumeScan.isPending || consumeLot.isPending
   const held = mode === 'SCAN' && !!entry && qaHold(entry)
-  const canSave = qty > 0 && !over && !intErr && !saving && !held && (mode === 'SCAN' ? !!entry : !!lot && free(lot) > 0)
+  const canSave = qty > 0 && !over && !intErr && !saving && !held && !rotBlocked && (mode === 'SCAN' ? !!entry : !!lot && free(lot) > 0)
   const unitText = (n: number) => qtyCode(n, mat)
 
   async function submit() {
     setErr('')
     try {
       if (mode === 'SCAN' && entry) {
-        const r = await consumeScan.mutateAsync({ batchId: batch.id, entry_id: entry.id, qty })
+        const r = await consumeScan.mutateAsync({ batchId: batch.id, entry_id: entry.id, qty,
+          rotation_override_reason: rot?.violation && rot.required && rotReason ? rotReason : undefined })
         const row = r.rows[0]
-        setDone(`Đã cấp ${unitText(qty)} từ tem ${entry.pallet_code} — tem còn ${unitText(Number(row?.remaining ?? 0))}`)
+        setDone(`Đã cấp ${unitText(qty)} từ tem ${entry.pallet_code} — tem còn ${unitText(Number(row?.remaining ?? 0))}${row?.rotation_violation ? ' · ghi nhận lấy khác thứ tự' : ''}`)
         reset()
         setTimeout(() => inputRef.current?.focus(), 50)
       } else if (lot && matId) {
@@ -207,13 +224,18 @@ export function ConsumeSheet({ open, onClose, batch, focusId }: {
               <div><span className="font-mono font-semibold">{entry.material?.material_code}</span> {entry.material?.short_name ?? ''}</div>
               <div className="text-slate-600">NSX {entry.production_date ? formatDate(String(entry.production_date).slice(0, 10)) : '—'}
                 {' · '}HSD {entry.expiry_date ? formatDate(String(entry.expiry_date).slice(0, 10)) : '—'}
-                {entry.batch ? ` · lô ${entry.batch}` : ''}{entry.location ? ` · ô ${entry.location.location_code}` : ''}</div>
+                {entry.batch ? ` · lô ${entry.batch}` : ''}{entry.location ? ` · ô ${entry.location.location_code}` : ''}
+                {entry.pct_date != null && <> · %Date <b className={`tabular-nums ${pctDateCls(entry.pct_date, pctBands)}`}>{Math.floor(entry.pct_date)}%</b></>}</div>
               <div>Trên tem còn: <span className="font-semibold tabular-nums">{unitText(avail(entry))}</span>
                 {!focus && needOf(entry.material_id) > 0 && <> · mẻ còn thiếu <span className="font-semibold tabular-nums text-amber-700">{unitText(needOf(entry.material_id))}</span></>}</div>
               {offPlan && <div className="rounded bg-amber-50 border border-amber-200 px-2 py-1 text-amber-800">Mã này không có trong yêu cầu của mẻ — vẫn cấp được, sẽ hiện là "ngoài yêu cầu".</div>}
               {held && <div className="rounded bg-red-50 border border-red-200 px-2 py-1 text-red-700">Tem đang bị QA giữ ({entry.qa_status?.name ?? entry.qa_status?.code ?? 'chưa duyệt'}) — không cấp được. Quét tem khác, hoặc nhờ QA đổi trạng thái.</div>}
-              {earlier && <div className="rounded bg-amber-50 border border-amber-200 px-2 py-1 text-amber-800">Còn lô HSD sớm hơn ({formatDate(earlier.expiry_date ?? '')}{earlier.batch_lot ? ` · lô ${earlier.batch_lot}` : ''}) trong kho — nên dùng lô đó trước. Bắn tem lô đó là thay.</div>}
+              {rot && !held && <RotationLine rot={rot} reason={rotReason} onReason={setRotReason} canOverride={canRotOverride} />}
             </div>
+          )}
+          {pick.data && pick.data.rows.length > 0 && (
+            <PickTable list={pick.data} scannedId={entry?.id ?? null} unit={(n: number) => qtyCode(n, entry?.material ?? focus ?? null)}
+              bands={pctBands} showAll={showAllPick} onShowAll={() => setShowAllPick(true)} />
           )}
         </>)}
 
@@ -282,5 +304,74 @@ export function ConsumeSheet({ open, onClose, batch, focusId }: {
       <QRScanDialog open={camOpen} onClose={() => setCamOpen(false)} warehouseId={batch.warehouse_id}
         title="Quét tem nguyên liệu" onScan={t => { setCamOpen(false); void lookup(t) }} />
     </FormSheet>
+  )
+}
+
+// ── Kết quả luân chuyển của tem vừa quét (server chấm — cùng luật quét xuất) ──
+function RotationLine({ rot, reason, onReason, canOverride }: {
+  rot: NonNullable<ScanEntry['rotation']>; reason: string; onReason: (v: string) => void; canOverride: boolean
+}) {
+  const rule = `${rot.principle}${rot.source === 'TYPE' ? ' (theo Loại kho)' : ''}`
+  if (!rot.violation) {
+    return rot.best_date || rot.scanned_date
+      ? <div className="rounded bg-green-50 border border-green-200 px-2 py-1 text-green-800" data-testid="rotation-ok">Đúng thứ tự {rule}{rot.scanned_date ? ` · ${rot.date_label} ${formatDate(rot.scanned_date)}` : ''}</div>
+      : null
+  }
+  const where = `Còn tem ${rot.best_pallet_code ?? ''} (${rot.date_label} ${rot.best_date ? formatDate(rot.best_date) : '—'})${rot.best_location_code ? ` ở ô ${rot.best_location_code}` : ''} phải dùng trước.`
+  if (!rot.required) {
+    return <div className="rounded bg-amber-50 border border-amber-200 px-2 py-1 text-amber-800" data-testid="rotation-warn">Sai thứ tự {rule}: {where} Bắn tem đó là thay — vẫn cấp tem này được.</div>
+  }
+  return (
+    <div className="rounded bg-red-50 border border-red-200 px-2 py-1.5 text-red-700 space-y-1.5" data-testid="rotation-block">
+      <p>Kho bắt buộc lấy đúng {rule}. {where}</p>
+      {canOverride ? (
+        <div className="flex flex-wrap gap-1">
+          {ROTATION_REASONS.map(r => (
+            <button key={r.code} type="button" onClick={() => onReason(reason === r.code ? '' : r.code)} aria-pressed={reason === r.code}
+              className={`touch-target rounded-md border px-2 py-1 text-[11px] ${reason === r.code ? 'border-red-500 bg-red-600 text-white' : 'border-red-300 bg-white text-red-700'}`}>{r.label}</button>
+          ))}
+        </div>
+      ) : <p className="font-medium">Cần người có quyền duyệt lấy khác thứ tự.</p>}
+    </div>
+  )
+}
+
+// ── "Lấy ở đâu": tem của mã theo thứ tự luân chuyển (như cột Vị trí lấy của Xuất kho) ──
+function PickTable({ list, scannedId, unit, bands, showAll, onShowAll }: {
+  list: PickList; scannedId: string | null; unit: (n: number) => string
+  bands: ReturnType<typeof usePctBands>; showAll: boolean; onShowAll: () => void
+}) {
+  const rows = showAll ? list.rows : list.rows.slice(0, 6)
+  return (
+    <div data-testid="pick-list">
+      <p className="text-[11px] font-semibold text-slate-600 mb-0.5">Lấy ở đâu <span className="font-normal text-slate-500">· {list.principle}{list.required ? ' bắt buộc' : ''} · {list.total} tem</span></p>
+      <div className="overflow-auto border rounded-lg">
+        <table className="w-full">
+          <thead><tr className="bg-slate-50 text-[9px] text-slate-500">
+            <th className="px-2 py-1 text-left whitespace-nowrap">#</th>
+            <th className="px-2 py-1 text-left whitespace-nowrap">Tem</th>
+            <th className="px-2 py-1 text-left whitespace-nowrap">Ô</th>
+            <th className="px-2 py-1 text-left whitespace-nowrap">{list.date_label}</th>
+            <th className="px-2 py-1 text-right whitespace-nowrap">%Date</th>
+            <th className="px-2 py-1 text-right whitespace-nowrap">Còn</th>
+          </tr></thead>
+          <tbody>
+            {rows.map(r => (
+              <tr key={r.entry_id} className={`border-t border-slate-100 ${r.entry_id === scannedId ? 'bg-sky-50' : ''} ${r.qa_hold ? 'text-slate-400' : ''}`}>
+                <td className="px-2 py-1 whitespace-nowrap tabular-nums">{r.qa_hold ? <StatusBadge tone="red">QA giữ</StatusBadge> : r.rank === 1 ? <b className="text-green-700">1 ★</b> : r.rank}</td>
+                <td className="px-2 py-1 whitespace-nowrap font-mono max-w-[7.5rem] sm:max-w-[11rem] truncate" title={r.pallet_code ?? ''}>{r.pallet_code}</td>
+                <td className="px-2 py-1 whitespace-nowrap font-mono">{r.location_code ?? <span className="text-slate-300">—</span>}</td>
+                <td className="px-2 py-1 whitespace-nowrap tabular-nums">{r.rot_date ? formatDate(r.rot_date) : '—'}</td>
+                <td className={`px-2 py-1 whitespace-nowrap text-right tabular-nums font-semibold ${pctDateCls(r.pct_date, bands)}`}>{r.pct_date != null ? `${Math.floor(r.pct_date)}%` : '—'}</td>
+                <td className="px-2 py-1 whitespace-nowrap text-right tabular-nums">{unit(r.available)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {!showAll && list.rows.length > rows.length && (
+        <button type="button" onClick={onShowAll} className="mt-0.5 text-[11px] text-blue-600 hover:underline touch-target">Xem cả {list.rows.length} tem</button>
+      )}
+    </div>
   )
 }

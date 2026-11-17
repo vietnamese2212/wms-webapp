@@ -78,6 +78,24 @@ User: *"BTP dịch thạch chính là 1 phiếu bổ sung thêm của các BTP c
 
 Gói QA 63 mục [13x1–13x3]. Mẻ cũ có phiếu bổ sung đã ghi được migration giữ phiếu đó trên mẻ.
 
+## CẤP NVL = MỘT LOẠI XUẤT (17/11 — migration `20261117d_mes_consume_rotation`)
+
+User: *"Khi quét tem trong Mẻ thì cũng phải có các chức năng như bên xuất hàng — xem được tồn kho hàng đang ở đâu, date là gì, tình hình FIFO đã phù hợp chưa. Bản chất nó cũng là 1 loại xuất hàng thôi mà?"*
+
+**Một luật với quét xuất:** nguyên tắc FEFO / FIFO / LIFO + "bắt buộc" lấy theo cấu hình 2 tầng Kho → Loại kho (`rotationConfigOf`), khoá xếp `rotationSortKey`, vi phạm `isRotationViolation`, pallet so được `isPickEligible`, lý do vượt rào `ROTATION_REASONS`, quyền `outbound.rotation_override` (một năng lực "được lấy khác thứ tự"). Khác duy nhất: **tập so sánh** = tồn của KHO CHẾ BIẾN theo cột `warehouse_id`, trạng thái IN_STOCK / PARTIAL (đúng tập `mes_consume_scan` cho rút) — pallet kho chế biến thường chưa xếp ô. Code: `mesPickContext` · `mesRotationCheck` (`productionController.ts`). Bản nhắc FEFO tự tính ở màn hình (chỉ biết HSD ghi trên tem) đã gỡ.
+
+| Tình huống | Kết quả |
+|---|---|
+| Mở cấp một nguyên liệu (nút "Cấp …" trên bàn của mẻ) | Bảng **Lấy ở đâu** (`GET /batches/:id/pick-list?material_id=`): tem theo thứ tự luân chuyển — # (1 ★ = lấy trước) · tem · ô · HSD / NSX theo nguyên tắc · %Date · còn cấp được; tem QA giữ xuống cuối, không xếp hạng |
+| Quét tem | Dòng tem thêm %Date; băng **Đúng thứ tự** (xanh) hoặc **Sai thứ tự** chỉ đúng tem phải dùng trước + ô của nó |
+| Sai thứ tự, kho / loại kho KHÔNG bắt buộc (Chế biến Ba Vì hôm nay: FEFO, không bắt buộc) | Băng vàng, vẫn cấp được — đúng quyết định 14/11 "nhắc thôi"; dòng cấp ghi `rotation_violation = true`, nhật ký cấp NVL hiện nhãn "Sai thứ tự" |
+| Sai thứ tự, kho BẮT BUỘC, người có quyền `outbound.rotation_override` | Chọn lý do trong danh sách (pallet bị chắn / hỏng / …) rồi mới cấp; lý do lưu ở `rotation_override_reason` |
+| Sai thứ tự, kho BẮT BUỘC, người KHÔNG có quyền | Băng đỏ "Cần người có quyền duyệt lấy khác thứ tự", nút Xác nhận khoá; gọi thẳng API ⇒ 422 `ROTATION_VIOLATION` |
+| Thiếu lý do khi kho bắt buộc | 422 `ROTATION_REASON_REQUIRED` |
+| Hàng hết hạn | Như quét xuất: KHÔNG chặn (FEFO tự đưa lô hết hạn lên đầu, %Date đỏ) — *chưa hỏi user riêng cho nguyên liệu vào sản xuất* |
+
+Sổ cấp: `batch_consumption` + `rotation_violation` · `rotation_principle` · `rotation_best_date` · `rotation_override_reason` (cùng bộ cột `OutboundScanEntry`). Đường "Không có tem" (chọn lô) giữ như cũ (FEFO trong lô do `mes_consume_lot`). Gói QA 63 mục [2r1–2r4].
+
 ## Trang / nghiệp vụ
 
 Nhà máy sữa: NVL → **mẻ chế biến** → bán thành phẩm (BTP) trong **bồn** → **Sổ đóng gói** → pallet thành phẩm. User chốt 14/11: thiết kế trước khi có kết quả phiếu khảo sát; giai đoạn 1 = nối lô + tồn theo bồn; rút NVL = quét tem HOẶC chọn lô + số lượng; mẻ tạo tay trong app; mã lô tự ghép từ chu kỳ + số mẻ + bồn (17/11 — xem mục Luồng làm việc của mẻ); bồn chưa QA thả = cho rót, chỉ cảnh báo (công tắc); quá hạn lưu bồn = chỉ cảnh báo; lượng rút khai khi đóng trang sổ.

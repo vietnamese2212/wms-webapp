@@ -431,6 +431,7 @@ router.get('/production/pour-status',              requireAnyPerm(['production',
 router.post('/production/pour-scan',               P('pour'),        validate({ body: production.zPourScan }), production.pourScan)
 router.post('/production/tanks/:id/qa',            P('qa_release'),  validate({ body: production.zTankQa }), production.tankQa)
 router.get('/production/batches/:id/scan-check',   P('consume'),    validate({ query: production.zScanCheckQuery }), production.scanCheck)
+router.get('/production/batches/:id/pick-list',    P('consume'),    validate({ query: production.zPickListQuery }), production.pickList)
 router.post('/production/batches/:id/consume-scan', P('consume'),   validate({ body: production.zConsumeScan }), production.consumeScan)
 router.post('/production/batches/:id/consume-lot', P('consume'),    validate({ body: production.zConsumeLot }), production.consumeLot)
 router.post('/production/consumption/:id/reverse', P('reverse'),    validate({ body: production.zReverse }), production.reverseConsumption)

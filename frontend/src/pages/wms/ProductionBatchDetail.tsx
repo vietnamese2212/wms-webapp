@@ -35,6 +35,7 @@ import { BATCH_STATUS_TONE, BATCH_QA_TONE, batchRowKey } from './ProductionBatch
 import { qtyNum, qtyCode, matUnitCode, unitCode } from '@/utils/unitCode'
 import { formatDate, formatDateTime } from '@/utils/formatters'
 import { reqLineState, devLabel, type ReqLineResult } from '@/utils/reqTolerance'
+import { rotationReasonLabel } from '@/utils/rotation'
 
 const TD = 'px-2 py-1 text-[10px] whitespace-nowrap'
 const NUM = `${TD} text-right font-semibold tabular-nums`
@@ -473,7 +474,10 @@ function ProductionBatchDetail() {
                     <TableCell className={`${TD} font-mono truncate`} title={c.pallet_code}>{c.pallet_code}</TableCell>
                     <TableCell className={`${TD} tabular-nums`}>{c.production_date ? formatDate(c.production_date) : <span className="text-slate-300">—</span>}</TableCell>
                     <TableCell className={`${TD} font-mono`}>{c.batch_lot ?? <span className="text-slate-300">—</span>}</TableCell>
-                    <TableCell className={TD}>{gone ? <StatusBadge tone="slate">Đã huỷ</StatusBadge> : <StatusBadge tone={c.source === 'SCAN' ? 'sky' : 'purple'}>{c.source === 'SCAN' ? 'Quét tem' : 'Theo lô'}</StatusBadge>}</TableCell>
+                    <TableCell className={TD}>{gone ? <StatusBadge tone="slate">Đã huỷ</StatusBadge> : <StatusBadge tone={c.source === 'SCAN' ? 'sky' : 'purple'}>{c.source === 'SCAN' ? 'Quét tem' : 'Theo lô'}</StatusBadge>}
+                      {/* lấy khác thứ tự luân chuyển (17/11) — như cột "Thứ tự lấy" của Lịch sử quét xuất */}
+                      {!gone && c.rotation_violation && <span className="ml-1"><StatusBadge tone="amber" title={`Còn ${c.rotation_principle ?? ''} ${c.rotation_best_date ? formatDate(c.rotation_best_date) : ''} phải dùng trước${c.rotation_override_reason ? ` · lý do: ${rotationReasonLabel(c.rotation_override_reason)}` : ''}`}>Sai thứ tự</StatusBadge></span>}
+                    </TableCell>
                     <TableCell className={`${TD} tabular-nums`}>{formatDateTime(c.created_at)}</TableCell>
                     <TableCell className={`${TD} truncate`}>{c.created_by_name ?? '—'}</TableCell>
                     <TableCell className={`${TD} sticky right-0 z-10 bg-white text-right`}>

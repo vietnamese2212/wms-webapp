@@ -35,7 +35,7 @@ const NUM = `${TD} text-right font-semibold tabular-nums`
 const nf = (n: number | null | undefined) => Number(n ?? 0).toLocaleString('vi-VN', { maximumFractionDigits: 3 })
 const apiMsg = (e: unknown) => (e as AxiosError<{ error?: { message?: string } }>)?.response?.data?.error?.message ?? 'Lỗi không xác định'
 const COLS: RtColDef[] = [
-  { id: 'code', label: 'Mã lô', w: 150 }, { id: 'day', label: 'Ngày SX', w: 78 }, { id: 'mat', label: 'Bán thành phẩm', w: 200 },
+  { id: 'code', label: 'Mã lô', w: 150 }, { id: 'cyc', label: 'Chu kỳ · Mẻ', w: 86 }, { id: 'tank', label: 'Bồn', w: 70 }, { id: 'day', label: 'Ngày SX', w: 78 }, { id: 'mat', label: 'Bán thành phẩm', w: 200 },
   { id: 'status', label: 'Trạng thái', w: 80 }, { id: 'qa', label: 'QA', w: 74 },
   { id: 'rm', label: 'NVL đã rút', w: 88, align: 'right' }, { id: 'filled', label: 'Đã nạp bồn', w: 96, align: 'right' },
   { id: 'intank', label: 'Còn trong bồn', w: 100, align: 'right' }, { id: 'plan', label: 'Kế hoạch', w: 86, align: 'right' },
@@ -129,7 +129,7 @@ export default function ProductionBatches() {
           ...(totalPages > 1 ? [{ label: 'Trang', value: `${page}/${totalPages}` }] : []),
         ]} />
         <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
-          <ResizableTable storageKey="production_batches_cols_v1" cols={COLS}>
+          <ResizableTable storageKey="production_batches_cols_v2" cols={COLS}>
             <TableBody>
               {q.isError && <TableEmptyRow colSpan={COLS.length}><span className="text-red-600">{apiMsg(q.error)}</span></TableEmptyRow>}
               {!q.isError && q.isLoading && !rows.length && <TableEmptyRow colSpan={COLS.length}>Đang tải…</TableEmptyRow>}
@@ -140,6 +140,8 @@ export default function ProductionBatches() {
                   <TableRow key={r.id} className={`cursor-pointer ${rowText(batchRowKey(r))} ${dense ? '' : '[&_td]:py-2.5'}`}
                     onClick={() => navigate(`/wms/production/${r.id}`)} title="Mở mẻ">
                     <TableCell className={`${TD} sticky left-0 z-10 bg-white font-mono font-semibold`}>{r.batch_code}</TableCell>
+                    <TableCell className={`${TD} font-mono`}>{r.cycle || r.batch_no ? `${r.cycle ?? '—'} · ${r.batch_no ? String(r.batch_no).padStart(4, '0') : '—'}` : <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className={`${TD} font-mono font-semibold`}>{r.tank_code ?? <span className="text-slate-300 font-normal">—</span>}</TableCell>
                     <TableCell className={`${TD} tabular-nums`}>{formatDate(r.prod_date)}</TableCell>
                     <TableCell className={`${TD} truncate`} title={r.material_name ?? ''}><span className="font-mono font-semibold">{r.material_code}</span> {r.material_name ?? ''}</TableCell>
                     <TableCell className={TD}><StatusBadge tone={BATCH_STATUS_TONE[r.status]}>{BATCH_STATUS_VI[r.status]}</StatusBadge></TableCell>

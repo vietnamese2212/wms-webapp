@@ -11,6 +11,7 @@ import { Save, X, Plus } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { SingleSelect } from '@/components/shared/SingleSelect'
+import { Switch } from '@/components/ui/switch'
 import { SettingsGroup, SettingRow } from '@/components/shared/SettingRow'
 import { useAuthStore } from '@/stores/authStore'
 import { useGlobalScopeStore } from '@/stores/globalScopeStore'
@@ -46,6 +47,7 @@ export default function ProductionSettings() {
 
   // BẢN NHÁP — một nút Lưu cho cả trang
   const [gate, setGate] = useState('WARN')
+  const [flow, setFlow] = useState(false)
   const [typeGate, setTypeGate] = useState<Record<string, string | null>>({})
   const [hours, setHours] = useState<Record<string, string>>({})   // material_id → giờ ('' = gỡ hạn)
   const [added, setAdded] = useState<HoldRow[]>([])                // mã thêm mới, chưa lưu
@@ -54,6 +56,7 @@ export default function ProductionSettings() {
   useEffect(() => {
     if (!server) return
     setGate(server.production_qa_gate)
+    setFlow(server.mes_flow_gate)
     setTypeGate(Object.fromEntries(server.types.map(t => [t.type_code, t.production_qa_gate])))
     setHours(Object.fromEntries(server.hold_hours.map(m => [m.id, String(m.tank_hold_hours ?? '')])))
     setAdded([]); setErr('')
@@ -68,15 +71,15 @@ export default function ProductionSettings() {
     const hold = rows.map(m => ({ m, v: (hours[m.id] ?? '').trim() }))
       .filter(({ m, v }) => v !== String(m.tank_hold_hours ?? ''))
       .map(({ m, v }) => ({ material_id: m.id, tank_hold_hours: v === '' ? null : Number(v) }))
-    return { gate: gate !== server.production_qa_gate ? gate : undefined, types, hold }
-  }, [server, gate, typeGate, hours, rows])
-  const dirty = !!changes && (changes.gate !== undefined || changes.types.length > 0 || changes.hold.length > 0)
+    return { gate: gate !== server.production_qa_gate ? gate : undefined, flow: flow !== server.mes_flow_gate ? flow : undefined, types, hold }
+  }, [server, gate, flow, typeGate, hours, rows])
+  const dirty = !!changes && (changes.gate !== undefined || changes.flow !== undefined || changes.types.length > 0 || changes.hold.length > 0)
   const invalid = rows.some(m => hoursErr(hours[m.id] ?? ''))
 
   function onSave() {
     if (!changes || !wh) return
     setErr('')
-    save.mutate({ warehouse_id: wh, production_qa_gate: changes.gate, types: changes.types.length ? changes.types : undefined, hold_hours: changes.hold.length ? changes.hold : undefined },
+    save.mutate({ warehouse_id: wh, production_qa_gate: changes.gate, mes_flow_gate: changes.flow, types: changes.types.length ? changes.types : undefined, hold_hours: changes.hold.length ? changes.hold : undefined },
       { onError: e => setErr(apiMsg(e)) })
   }
 
@@ -151,7 +154,16 @@ export default function ProductionSettings() {
                   )
                 })}
                 <SettingRow label="Bồn có lô QA LOẠI"
-                  desc={<>Luôn <b>chặn</b> rút cho đóng gói và chặn nạp thêm — không có công tắc. Muốn dùng lại lô (kể cả hạ cấp) thì QA phải đổi kết luận ở trang mẻ; không dùng được thì xả bỏ ở trang Bồn.</>} />
+                  desc={<>Luôn <b>chặn</b> rút cho đóng gói và chặn nạp thêm — không có công tắc. Muốn dùng lại lô (kể cả hạ cấp) thì QA phải đổi kết luận ở trang Bồn; không dùng được thì xả bỏ ở trang Bồn.</>} />
+              </SettingsGroup>
+            )}
+
+            {server && (
+              <SettingsGroup title="Luồng làm việc của mẻ"
+                tip={<>Trưởng ca duyệt → QA duyệt → cấp nguyên liệu → ghi phiếu → in tem pallet của mẻ → quét tem tại bồn → nạp bồn. Tắt = như trước: các bước vẫn dùng được nhưng không chặn nhau.</>}>
+                <SettingRow label="Chặn theo từng bước"
+                  desc={<>Bật: phiếu của mẻ chưa đủ hai bước duyệt thì <b>chưa cấp nguyên liệu</b>; <b>chưa nạp bồn</b> khi còn nguyên liệu cấp thiếu, ô bắt buộc của phiếu chưa ghi, hoặc chưa quét đủ tem pallet của mẻ tại đúng bồn.</>}
+                  control={<Switch checked={flow} onCheckedChange={setFlow} disabled={!canConfigure} aria-label="Chặn theo từng bước" />} />
               </SettingsGroup>
             )}
 

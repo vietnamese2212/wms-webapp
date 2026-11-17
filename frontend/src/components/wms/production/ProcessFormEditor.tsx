@@ -62,12 +62,15 @@ function FieldRow({ f, onChange, onMove, onRemove, first, last, disabled }: {
       </>}
       </div>
       <div className="order-2 sm:order-3 flex items-center ml-auto">
-        {(f.wide || f.prefill) && <span className="hidden sm:inline mr-1 text-[9px] rounded bg-slate-100 px-1 text-slate-500 whitespace-nowrap">{[f.wide && 'rộng', f.prefill && 'điền sẵn'].filter(Boolean).join(' · ')}</span>}
+        {(f.wide || f.prefill || f.required) && <span className="hidden sm:inline mr-1 text-[9px] rounded bg-slate-100 px-1 text-slate-500 whitespace-nowrap">{[f.required && 'bắt buộc', f.wide && 'rộng', f.prefill && 'điền sẵn'].filter(Boolean).join(' · ')}</span>}
         <DropdownMenu>
           <DropdownMenuTrigger asChild disabled={disabled}>
             <button type="button" className={iconBtn} title="Tuỳ chọn khác"><MoreHorizontal className="h-3.5 w-3.5" /></button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="text-xs">
+            <DropdownMenuItem onClick={() => onChange({ required: f.required ? undefined : true })}>
+              <Check className={`h-3.5 w-3.5 mr-1.5 ${f.required ? '' : 'opacity-0'}`} />Bắt buộc ghi trước khi nạp bồn
+            </DropdownMenuItem>
             <DropdownMenuItem onClick={() => onChange({ wide: f.wide ? undefined : true })}>
               <Check className={`h-3.5 w-3.5 mr-1.5 ${f.wide ? '' : 'opacity-0'}`} />Ô rộng cả hàng (ghi chú dài)
             </DropdownMenuItem>

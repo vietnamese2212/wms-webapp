@@ -9,7 +9,7 @@
 
 ## Giao thoa với
 <!-- giao-thoa:start -->
-_(chưa ghi nhận)_
+- [`production`](production.md) — Sản xuất (tem pallet CỦA MẺ in bằng cùng khổ tem + `PALLET_PRINT_CSS` + `QRImg` của `components/shared/palletLabel.tsx` — đổi khổ / CSS in ở đây thì xem lại `BatchFlow.tsx`; QR của tem mẻ có tiền tố `MEB;`, không đi qua `parseInboundQR`)
 <!-- giao-thoa:end -->
 
 ## Trang / nghiệp vụ

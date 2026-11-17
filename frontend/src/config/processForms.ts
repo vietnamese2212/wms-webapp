@@ -14,6 +14,8 @@ export interface ProcessField {
   wide?: boolean
   /** phiếu mới tự điền từ mẻ */
   prefill?: Prefill
+  /** 17/11: ô PHẢI ghi trước khi nạp bồn (kho bật luồng chặt — hàm DB mes_batch_gate đọc cờ này) */
+  required?: boolean
 }
 export interface FieldsBlock { type: 'fields'; title: string; hint?: string; fields: ProcessField[] }
 export interface GridBlock {
@@ -102,4 +104,18 @@ export function blocksError(blocks: FormBlock[]): string {
   const n = blockCellCount(blocks)
   if (n > MAX_CELLS) return `Phiếu có ${n} ô — tối đa ${MAX_CELLS} (bảng tính số lần × cột × ô)`
   return ''
+}
+
+/** TIẾN ĐỘ một phiếu (17/11 — user: "action trước xong mới hiện action sau", "phiếu đang điền / điền xong / chưa điền có dấu hiệu nhận diện").
+ *  Mốc giờ = các ô kiểu Giờ của nhóm ô, THEO THỨ TỰ trên mẫu: bấm là ghi giờ; `next` = mốc đầu tiên chưa ghi.
+ *  Xong = mọi mốc đã ghi và mọi ô bắt buộc đã có. */
+export interface FormProgress { actions: ProcessField[]; done: number; next: ProcessField | null; requiredMissing: ProcessField[]; state: 'none' | 'progress' | 'done' }
+export function formProgress(blocks: FormBlock[], data?: Record<string, string> | null): FormProgress {
+  const fields = blocks.flatMap(b => (b.type === 'fields' ? b.fields : []))
+  const has = (k: string) => !!String(data?.[k] ?? '').trim()
+  const actions = fields.filter(f => f.kind === 'time')
+  const next = actions.find(f => !has(f.key)) ?? null
+  const requiredMissing = fields.filter(f => f.required && !has(f.key))
+  const any = !!data && Object.values(data).some(v => String(v ?? '').trim())
+  return { actions, done: actions.filter(f => has(f.key)).length, next, requiredMissing, state: !any ? 'none' : !next && !requiredMissing.length ? 'done' : 'progress' }
 }

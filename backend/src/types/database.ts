@@ -1,5 +1,5 @@
 // FILE SINH TỰ ĐỘNG — `node scripts/gen-db-types.mjs` (từ information_schema STAGING). KHÔNG sửa tay.
-// Sinh lúc 2026-11-17T02:47:20.768Z · 123 bảng/view · 237 hàm · 0 enum
+// Sinh lúc 2026-11-17T09:33:16.758Z · 124 bảng/view · 247 hàm · 0 enum
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[]
 
 export type Database = {
@@ -2514,6 +2514,7 @@ export type Database = {
           geo_at: string | null
           geo_by: string | null
           production_qa_gate: string
+          mes_flow_gate: boolean
         }
         Insert: {
           id: string
@@ -2572,6 +2573,7 @@ export type Database = {
           geo_at?: string | null
           geo_by?: string | null
           production_qa_gate?: string
+          mes_flow_gate?: boolean
         }
         Update: {
           id?: string
@@ -2630,6 +2632,7 @@ export type Database = {
           geo_at?: string | null
           geo_by?: string | null
           production_qa_gate?: string
+          mes_flow_gate?: boolean
         }
         Relationships: []
       }
@@ -3260,6 +3263,42 @@ export type Database = {
         }
         Relationships: []
       }
+      batch_pour_scan: {
+        Row: {
+          id: string
+          batch_id: string
+          label_ver: number
+          pallet_no: number
+          tank_id: string
+          scanned_by: string | null
+          scanned_by_name: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id: string
+          batch_id: string
+          label_ver: number
+          pallet_no: number
+          tank_id: string
+          scanned_by?: string | null
+          scanned_by_name?: string | null
+          created_at?: string
+          updated_at: string
+        }
+        Update: {
+          id?: string
+          batch_id?: string
+          label_ver?: number
+          pallet_no?: number
+          tank_id?: string
+          scanned_by?: string | null
+          scanned_by_name?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       batch_process_log: {
         Row: {
           id: string
@@ -3274,6 +3313,7 @@ export type Database = {
           created_at: string
           updated_at: string
           blocks: Json | null
+          stamps: Json
         }
         Insert: {
           id: string
@@ -3288,6 +3328,7 @@ export type Database = {
           created_at?: string
           updated_at: string
           blocks?: Json | null
+          stamps?: Json
         }
         Update: {
           id?: string
@@ -3302,6 +3343,7 @@ export type Database = {
           created_at?: string
           updated_at?: string
           blocks?: Json | null
+          stamps?: Json
         }
         Relationships: []
       }
@@ -5386,6 +5428,18 @@ export type Database = {
           updated_at: string
           cycle: string | null
           recipe_id: string | null
+          batch_no: number | null
+          tank_id: string | null
+          lead_ok_at: string | null
+          lead_ok_by: string | null
+          lead_ok_by_name: string | null
+          qa_ok_at: string | null
+          qa_ok_by: string | null
+          qa_ok_by_name: string | null
+          label_count: number | null
+          label_ver: number
+          label_at: string | null
+          label_by_name: string | null
         }
         Insert: {
           id: string
@@ -5412,6 +5466,18 @@ export type Database = {
           updated_at: string
           cycle?: string | null
           recipe_id?: string | null
+          batch_no?: number | null
+          tank_id?: string | null
+          lead_ok_at?: string | null
+          lead_ok_by?: string | null
+          lead_ok_by_name?: string | null
+          qa_ok_at?: string | null
+          qa_ok_by?: string | null
+          qa_ok_by_name?: string | null
+          label_count?: number | null
+          label_ver?: number
+          label_at?: string | null
+          label_by_name?: string | null
         }
         Update: {
           id?: string
@@ -5438,6 +5504,18 @@ export type Database = {
           updated_at?: string
           cycle?: string | null
           recipe_id?: string | null
+          batch_no?: number | null
+          tank_id?: string | null
+          lead_ok_at?: string | null
+          lead_ok_by?: string | null
+          lead_ok_by_name?: string | null
+          qa_ok_at?: string | null
+          qa_ok_by?: string | null
+          qa_ok_by_name?: string | null
+          label_count?: number | null
+          label_ver?: number
+          label_at?: string | null
+          label_by_name?: string | null
         }
         Relationships: []
       }
@@ -7199,6 +7277,26 @@ export type Database = {
         Args: { p_batch_id: string | null }
         Returns: Json
       }
+      mes_batch_code: {
+        Args: { p_wh: string | null; p_cycle: string | null; p_no: number | null; p_tank: string | null }
+        Returns: string
+      }
+      mes_batch_create: {
+        Args: { p: Json | null }
+        Returns: Json
+      }
+      mes_batch_gate: {
+        Args: { p_batch_id: string | null }
+        Returns: Json
+      }
+      mes_batch_identity: {
+        Args: { p: Json | null }
+        Returns: Json
+      }
+      mes_batch_labels: {
+        Args: { p: Json | null }
+        Returns: Json
+      }
       mes_batch_page: {
         Args: { p: Json | null }
         Returns: Json
@@ -7235,9 +7333,21 @@ export type Database = {
         Args: { p_kind: string | null; p_value: string | null; p_wh_ids?: unknown | null; p_limit?: number | null }
         Returns: Json
       }
+      mes_log_stamp: {
+        Args: { p: Json | null }
+        Returns: Json
+      }
       mes_open_batch_wh: {
         Args: { p_batch_id: string | null }
         Returns: string
+      }
+      mes_plant_letter: {
+        Args: { p_wh: string | null }
+        Returns: string
+      }
+      mes_pour_scan: {
+        Args: { p: Json | null }
+        Returns: Json
       }
       mes_recipe_save: {
         Args: { p: Json | null }
@@ -7274,6 +7384,14 @@ export type Database = {
       mes_tank_fill: {
         Args: { p: Json | null }
         Returns: Json
+      }
+      mes_tank_qa: {
+        Args: { p: Json | null }
+        Returns: Json
+      }
+      mes_tank_room_check: {
+        Args: { p_tank: string | null; p_wh: string | null; p_material: string | null; p_planned: number | null; p_exclude: string | null }
+        Returns: number
       }
       mes_tank_take: {
         Args: { p: Json | null }
@@ -7544,7 +7662,7 @@ export type Database = {
         Returns: boolean
       }
       unaccent: {
-        Args: { arg1: unknown | null; arg2: string | null } | { arg1: string | null }
+        Args: { arg1: string | null } | { arg1: unknown | null; arg2: string | null }
         Returns: string
       }
       unaccent_init: {

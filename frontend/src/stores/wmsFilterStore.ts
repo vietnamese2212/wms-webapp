@@ -370,6 +370,8 @@ interface ProductionFilters {   // trang Mẻ chế biến (MES 14/11) — kho c
 interface ProductionTanksFilters {   // trang Bồn (MES 14/11)
   warehouseId: string
   showInactive: boolean
+  /** 17/11: 'map' = sơ đồ bồn 2D (mặc định) · 'table' = bảng */
+  view: 'map' | 'table'
 }
 interface InboundReturnsFilters {   // trang Hàng trả về (26/10)
   search: string
@@ -713,7 +715,7 @@ function initialFilters() {
     inboundReturns: { search: '', warehouseId: '', dateFrom: daysAgo(30), dateTo: today(), kind: '', reason: '', recallId: '', page: 1, pageSize: 100 },
     // dateTo trống = tới hôm nay (và sau) — bộ lọc được nhớ qua ngày, mặc định today() thành 'hôm qua' ở lần mở sau, mẻ hôm nay biến mất khỏi danh sách
     production: { search: '', warehouseId: '', dateFrom: daysAgo(14), dateTo: '', status: '', qa: '', page: 1, pageSize: 100 },
-    productionTanks: { warehouseId: '', showInactive: false },
+    productionTanks: { warehouseId: '', showInactive: false, view: 'map' as const },
     packing:      { tab: 'board' as const, search: '', warehouseId: '', machine: '', cycle: '', status: '', dateFrom: daysAgo(7), dateTo: today(), page: 1, pageSize: 200, runStatus: '', runPage: 1, received: '' },
     alerts:       { tab: 'general' as const, search: '', warehouseId: '', rules: [], severity: [], status: 'open' },
     stocktakeCycle: { search: '', warehouseId: '', cats: [], abc: [], dueOnly: true },

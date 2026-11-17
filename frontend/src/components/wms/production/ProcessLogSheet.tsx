@@ -77,7 +77,7 @@ export function ProcessLogBody({ blocks, values, onValue, editable, onAddRow, on
     return (
       <div key={f.key} className={f.wide ? 'col-span-2' : 'min-w-0'}>
         <Label className="text-[11px] text-slate-600 leading-tight">
-          {f.label}{f.unit ? ` (${f.unit})` : ''}{std && <span className="ml-1 text-[10px] text-slate-400">TC {std}</span>}
+          {f.label}{f.unit ? ` (${f.unit})` : ''}{f.required && <span className="text-red-500" title="Bắt buộc ghi trước khi nạp bồn"> *</span>}{std && <span className="ml-1 text-[10px] text-slate-400">TC {std}</span>}
         </Label>
         <div className="flex gap-1 mt-0.5">
           <Input value={val} disabled={!editable} onChange={e => onValue?.(f.key, e.target.value)}

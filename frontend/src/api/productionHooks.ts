@@ -59,6 +59,7 @@ export interface BatchRow {
   id: string; warehouse_id: string; warehouse_name: string; batch_code: string
   material_id: string; material_code: string; material_name: string | null; base_unit: string | null
   machine_code: string | null; shift: string | null; cycle?: string | null; prod_date: string; planned_qty: number | null
+  batch_no: number | null; tank_id: string | null; tank_code: string | null; lead_ok_at: string | null; qa_ok_at: string | null
   status: BatchStatus; qa_status: BatchQa; qa_at: string | null; qa_by_name: string | null
   note: string | null; opened_by_name: string | null; created_at: string; closed_at: string | null
   rm_lines: number; rm_materials: number; filled: number; in_tank: number
@@ -97,10 +98,26 @@ export interface BoardRow extends MatUnits {
 /** Phiếu theo dõi của mẻ: data = { mã_ô: giá_trị }; blocks = bản sửa riêng cho lần này (null = theo mẫu chung) */
 export interface ProcessLog {
   id: string; form: string; data: Record<string, string>; blocks: FormBlock[] | null
+  /** mốc giờ đã BẤM (17/11): mã ô → người bấm + lúc bấm (+ người sửa tay về sau) */
+  stamps?: Record<string, { by?: string; at?: string; edited_by?: string; edited_at?: string }>
   created_by_name: string | null; updated_by_name: string | null; confirmed_at: string | null; confirmed_by_name: string | null; updated_at: string
 }
+/** CỔNG CỦA MẺ (hàm DB mes_batch_gate — cùng một hàm chặn nạp bồn): hai bước duyệt · tem · quét tại bồn · NVL thiếu · ô bắt buộc */
+export interface BatchGate {
+  flow_gate: boolean; lead_ok: boolean; qa_ok: boolean; can_consume: boolean
+  label_count: number | null; label_valid: boolean; label_ver: number; scanned: number
+  short: { material_code: string; name: string | null; required: number; issued: number }[]
+  missing: { form: string; title: string; key: string; label: string }[]; need_log: boolean
+  fill_blockers: string[]
+}
+export interface BatchLabel { pallet_no: number; qr: string }
+export interface PourScan { pallet_no: number; scanned_by_name: string | null; created_at: string }
 export interface BatchDetail {
   cycle: string | null; board: BoardRow[]; process_logs: ProcessLog[]
+  batch_no: number | null; tank_id: string | null; tank: { id: string; code: string; name: string | null; capacity: number; unit: string } | null
+  lead_ok_at: string | null; lead_ok_by_name: string | null; qa_ok_at: string | null; qa_ok_by_name: string | null
+  label_count: number | null; label_ver: number; label_at: string | null; label_by_name: string | null
+  gate: BatchGate | null; pour_scans: PourScan[]; labels: BatchLabel[]
   recipe_id: string | null; recipe: { id: string; name: string; base_qty: number; is_active: boolean } | null
   id: string; warehouse_id: string; batch_code: string; material_id: string; machine_code: string | null; shift: string | null
   prod_date: string; planned_qty: number | null; status: BatchStatus; qa_status: BatchQa; qa_by_name: string | null; qa_at: string | null; qa_note: string | null
@@ -121,11 +138,15 @@ export interface TankLotView {
   id: string; tank_id: string; batch_id: string; qty_in: number; qty_remaining: number; filled_at: string; expires_at: string | null
   batch: { batch_code: string; qa_status: BatchQa; material: { material_code: string; short_name: string | null } | null } | null
 }
+/** Mẻ đang mở ĐÃ ĐẶT bồn này mà chưa nạp đủ — phần "sắp vào" */
+export interface TankIncoming { batch_id: string; batch_code: string; cycle: string | null; batch_no: number | null; material_code: string | null; material_name: string | null; qty: number; started: boolean }
+export type TankQaState = 'EMPTY' | 'HOLD' | 'RELEASED' | 'REJECTED'
 export interface TankRow {
   id: string; warehouse_id: string; code: string; name: string | null; capacity: number; unit: 'L' | 'KG'; is_active: boolean; note: string | null
   created_by: string | null; updated_by: string | null; created_at: string; updated_at: string
   warehouse: { code: string; name: string } | null
   content: number; lots: TankLotView[]; qa_pending: boolean; expired: boolean; next_expiry: string | null
+  incoming: TankIncoming[]; reserved: number; qa_state: TankQaState
 }
 export interface RunTank { id: string; code: string; name: string | null; unit: string; capacity: number; warehouse_id: string; warehouse: { name: string } | null }
 export interface GenealogyBatch {
@@ -153,11 +174,11 @@ export function useProductionBatch(id: string | undefined) {
     queryFn: async () => (await apiClient.get(`/wms/production/batches/${id}`)).data.data as BatchDetail,
   })
 }
-export function useNextBatchCode(p: { warehouse_id?: string; material_id?: string; prod_date?: string; machine_code?: string }) {
-  const ready = !!p.warehouse_id && !!p.material_id && !!p.prod_date
+/** Số mẻ kế tiếp của chu kỳ + mã lô sẽ ghép (17/11: <chữ nhà máy><chu kỳ><số mẻ 4 số><mã bồn>). plant = null ⇒ kho chưa khai Mã NMSX. */
+export function useNextBatchCode(p: { warehouse_id?: string; cycle?: string; tank_id?: string; batch_no?: number }, enabled = true) {
   return useQuery({
-    queryKey: ['prod-next-code', p], enabled: ready, staleTime: 0,
-    queryFn: async () => (await apiClient.get('/wms/production/batches/next-code', { params: p })).data.data as { code: string; stem: string },
+    queryKey: ['prod-next-code', p], enabled: enabled && !!p.warehouse_id, staleTime: 0,
+    queryFn: async () => (await apiClient.get('/wms/production/batches/next-code', { params: p })).data.data as { plant: string | null; cycle: string; next_no: number | null; code: string | null },
   })
 }
 /** Tồn RÚT ĐƯỢC ở kho chế biến: không có `materialId` ⇒ danh sách mã (tìm trên server, ≤50); có ⇒ các lô của mã đó. */
@@ -214,6 +235,8 @@ const patch = async <T,>(url: string, body: unknown) => (await apiClient.patch(u
 export interface ProductionSettings {
   warehouse_id: string
   production_qa_gate: string
+  /** luồng chặt (17/11): chưa duyệt đủ thì chưa cấp NVL · chưa đủ điều kiện thì chưa nạp bồn */
+  mes_flow_gate: boolean
   types: { type_code: string; production_qa_gate: string | null }[]
   hold_hours: { id: string; material_code: string; short_name: string | null; category: string | null; base_unit: string | null; tank_hold_hours: number | null }[]
 }
@@ -226,7 +249,7 @@ export function useProductionSettings(warehouseId: string | undefined) {
 export function useSaveProductionSettings() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: async (b: { warehouse_id: string; production_qa_gate?: string; types?: { type_code: string; production_qa_gate: string | null }[]; hold_hours?: { material_id: string; tank_hold_hours: number | null }[] }) =>
+    mutationFn: async (b: { warehouse_id: string; production_qa_gate?: string; mes_flow_gate?: boolean; types?: { type_code: string; production_qa_gate: string | null }[]; hold_hours?: { material_id: string; tank_hold_hours: number | null }[] }) =>
       (await apiClient.put('/wms/production/settings', b)).data.data as ProductionSettings,
     onSuccess: (data, v) => { qc.setQueryData(['prod-settings', v.warehouse_id], data) },
     onSettled: () => {
@@ -235,9 +258,28 @@ export function useSaveProductionSettings() {
   })
 }
 
-export interface BatchInput { warehouse_id: string; material_id: string; prod_date: string; batch_code?: string; machine_code?: string; shift?: string; cycle?: string; planned_qty?: number | null; note?: string; recipe_id?: string }
+export interface BatchInput { warehouse_id: string; material_id: string; prod_date: string; cycle: string; batch_no?: number; tank_id: string; machine_code?: string; shift?: string; planned_qty?: number | null; note?: string; recipe_id?: string }
 export const useCreateBatch = () => useProdMutation((b: BatchInput) => post<BatchDetail>('/wms/production/batches', b))
-export const useUpdateBatch = () => useProdMutation(({ id, ...b }: { id: string } & Partial<Omit<BatchInput, 'warehouse_id' | 'machine_code' | 'shift' | 'cycle' | 'note' | 'recipe_id'>> & { machine_code?: string | null; shift?: string | null; cycle?: string | null; note?: string | null }) => patch<BatchDetail>(`/wms/production/batches/${id}`, b))
+export const useUpdateBatch = () => useProdMutation(({ id, ...b }: { id: string } & Partial<Omit<BatchInput, 'warehouse_id' | 'machine_code' | 'shift' | 'note' | 'recipe_id'>> & { machine_code?: string | null; shift?: string | null; note?: string | null }) => patch<BatchDetail & { relabel?: boolean }>(`/wms/production/batches/${id}`, b))
+// ── Luồng của mẻ (17/11): hai bước duyệt · tem pallet · bấm ghi giờ · đổ bồn · QA ở bồn ──
+export const useApproveBatch = () => useProdMutation(({ id, step, approve }: { id: string; step: 'lead' | 'qa'; approve: boolean }) => post(`/wms/production/batches/${id}/approve-${step}`, { approve }))
+export const useBatchLabels = () => useProdMutation(({ id, count }: { id: string; count: number }) =>
+  post<{ batch_code: string; count: number; ver: number; reprint: boolean; labels: BatchLabel[] }>(`/wms/production/batches/${id}/labels`, { count }))
+export const useStampLog = () => useProdMutation(({ batchId, form, key }: { batchId: string; form: string; key: string }) =>
+  post<{ key: string; value: string }>(`/wms/production/batches/${batchId}/process-log/${form}/stamp`, { key }))
+export const useTankQa = () => useProdMutation(({ tankId, qa_status, note }: { tankId: string; qa_status: BatchQa; note?: string }) =>
+  post<{ batches: number; batch_codes: string }>(`/wms/production/tanks/${tankId}/qa`, { qa_status, note }))
+export interface PourView {
+  batch: { id: string; batch_code: string; cycle: string | null; batch_no: number | null; planned_qty: number | null; label_count: number | null; label_ver: number; label_at: string | null
+    tank_id: string | null; status: BatchStatus; material: { material_code: string; short_name: string | null; base_unit: string | null } | null
+    tank: { id: string; code: string; capacity: number; unit: string } | null }
+  scans: PourScan[]; gate: BatchGate | null; filled: number
+}
+/** Công nhân đổ bồn khai chu kỳ · số mẻ · bồn đang đứng ⇒ mẻ (sai bồn ⇒ 409 MES_WRONG_TANK) — gọi tay, không cache */
+export async function fetchPourStatus(p: { warehouse_id: string; tank_id: string; cycle: string; batch_no: number }): Promise<PourView> {
+  return (await apiClient.get('/wms/production/pour-status', { params: p })).data.data as PourView
+}
+export const usePourScan = () => useProdMutation((b: { batch_id: string; tank_id: string; code: string }) => post<PourView & { pallet_no: number }>('/wms/production/pour-scan', b))
 // ── Bàn làm việc của mẻ: yêu cầu nguyên liệu + định mức ──
 /** Sửa phiếu của mẻ (quyền edit_requirement, 17/11): có thay đổi thì BẮT BUỘC lý do · `replaces` = đổi mã (dòng mới thay cho mã cũ) */
 export const useSetRequirements = () => useProdMutation(({ batchId, items, reason }: { batchId: string; items: { material_id: string; qty: number; replaces?: string }[]; reason?: string }) =>
@@ -336,7 +378,6 @@ export const useOpenShift = () => useProdMutation((b: { warehouse_id: string; re
 export const useSaveShift = () => useProdMutation(({ id, ...b }: { id: string; items: { material_id: string; qty_actual: number | null }[]; note?: string | null; close?: boolean }) =>
   (async () => (await apiClient.put(`/wms/production/shift-reports/${id}`, b)).data.data as ShiftReport)())
 export const useBatchStatus = () => useProdMutation(({ id, action }: { id: string; action: 'close' | 'reopen' | 'cancel' }) => post(`/wms/production/batches/${id}/${action}`))
-export const useBatchQa = () => useProdMutation(({ id, qa_status, note }: { id: string; qa_status: BatchQa; note?: string }) => post(`/wms/production/batches/${id}/qa`, { qa_status, note }))
 export const useConsumeScan = () => useProdMutation(({ batchId, entry_id, qty }: { batchId: string; entry_id: string; qty: number }) =>
   post<{ rows: { pallet_code: string; qty: number; remaining: number }[] }>(`/wms/production/batches/${batchId}/consume-scan`, { entry_id, qty }))
 export const useConsumeLot = () => useProdMutation(({ batchId, ...b }: { batchId: string; material_id: string; production_date: string | null; batch_lot: string | null; qty: number }) =>
@@ -352,5 +393,5 @@ export const useTankTransfer = () => useProdMutation(({ tankId, to_tank_id, qty,
 export const useTankDiscard = () => useProdMutation(({ tankId, qty, reason }: { tankId: string; qty: number; reason: string }) => post(`/wms/production/tanks/${tankId}/discard`, { qty, reason }))
 
 export const BATCH_STATUS_VI: Record<BatchStatus, string> = { OPEN: 'Đang mở', CLOSED: 'Đã đóng', CANCELLED: 'Đã huỷ' }
-export const BATCH_QA_VI: Record<BatchQa, string> = { HOLD: 'Chờ QA', RELEASED: 'QA thả', REJECTED: 'QA loại' }
+export const BATCH_QA_VI: Record<BatchQa, string> = { HOLD: 'Chờ QA', RELEASED: 'QA đạt', REJECTED: 'QA không đạt' }
 export const TANK_MOVE_VI: Record<TankMoveRow['kind'], string> = { FILL: 'Nạp từ mẻ', DRAW: 'Rút đóng gói', TRANSFER_OUT: 'Chuyển đi', TRANSFER_IN: 'Chuyển đến', ADJUST: 'Điều chỉnh', DISCARD: 'Xả bỏ' }

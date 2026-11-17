@@ -107,6 +107,7 @@ export function TankOpSheet({ open, onClose, tank, op, presetBatchId }: {
   const batches = useProductionBatches({ warehouse_id: tank?.warehouse_id, page: 1, pageSize: 200 }, open && op === 'FILL' && !!tank?.warehouse_id)
   const batchOpts = useMemo(() => (open && op === 'FILL' ? (batches.data?.rows ?? []) : [])
     .filter(b => b.status !== 'CANCELLED' && b.qa_status !== 'REJECTED' && b.warehouse_id === tank?.warehouse_id
+      && (!b.tank_id || b.tank_id === tank?.id)   // 17/11: mẻ đã đặt bồn thì chỉ nạp đúng bồn đó
       && (!tankMat || b.material_code === tankMat) && String(b.base_unit ?? '').toUpperCase() === tank?.unit)
     .map(b => ({ value: b.id, label: b.batch_code, sub: `${b.material_code} · ${b.prod_date}` })), [batches.data, open, op, tank?.warehouse_id, tank?.unit, tankMat])
   const tanks = useProductionTanks(tank?.warehouse_id, false, open && op === 'TRANSFER' && !!tank?.warehouse_id).data ?? []
@@ -209,7 +210,9 @@ export function TankMovesSheet({ open, onClose, tank }: { open: boolean; onClose
 }
 
 // ── Nạp mẻ vào bồn (mở từ trang chi tiết mẻ: chọn BỒN, mẻ đã biết) ─────────────────────────────────
-export function BatchFillSheet({ open, onClose, batchId, batchCode, warehouseId, unit, materialCode, suggestQty }: {
+export function BatchFillSheet({ open, onClose, batchId, batchCode, warehouseId, unit, materialCode, suggestQty, fixedTankId, blockers = [] }: {
+  /** 17/11: bồn đã chọn lúc tạo mẻ — nạp ĐÚNG bồn đó (đổi bồn thì đổi ở mẻ) · điều kiện còn thiếu trước khi nạp (kho bật luồng chặt) */
+  fixedTankId?: string | null; blockers?: string[]
   open: boolean; onClose: () => void; batchId: string; batchCode: string; warehouseId: string; unit: string | null
   /** mã BTP của mẻ — bồn đang chứa mã khác không hiện ra để chọn */
   materialCode?: string | null
@@ -221,7 +224,7 @@ export function BatchFillSheet({ open, onClose, batchId, batchCode, warehouseId,
   const tanks = useProductionTanks(warehouseId, false, open && !!warehouseId).data ?? []
   useEffect(() => { if (open) { setTankId(''); setQty(suggestQty && suggestQty > 0 ? vnNumberInput(suggestQty) : ''); setErr('') } }, [open]) // eslint-disable-line react-hooks/exhaustive-deps
   const u = String(unit ?? '').toUpperCase()
-  const usable = tanks.filter(t => t.warehouse_id === warehouseId && t.unit === u
+  const usable = tanks.filter(t => t.warehouse_id === warehouseId && t.unit === u && (!fixedTankId || t.id === fixedTankId)
     && (!t.lots.length || !materialCode || t.lots[0].batch?.material?.material_code === materialCode))
   // chọn sẵn bồn: bồn đang chứa chính mẻ này (nạp tiếp), không thì bồn duy nhất dùng được
   const usableKey = usable.map(t => t.id).join(',')
@@ -244,7 +247,7 @@ export function BatchFillSheet({ open, onClose, batchId, batchCode, warehouseId,
       description="Một bồn chỉ chứa một mã bán thành phẩm; nhiều mẻ cùng mã được nạp chung một bồn."
       footer={<>
         <Button variant="outline" size="sm" className="h-8" onClick={onClose}>Huỷ</Button>
-        <Button size="sm" className="h-8" disabled={!tank || !qtyN || qtyN <= 0 || over || fill.isPending} onClick={() => void save()}>{fill.isPending ? 'Đang nạp…' : 'Nạp'}</Button>
+        <Button size="sm" className="h-8" disabled={!tank || !qtyN || qtyN <= 0 || over || fill.isPending || blockers.length > 0} onClick={() => void save()}>{fill.isPending ? 'Đang nạp…' : 'Nạp'}</Button>
       </>}>
       <div className="space-y-3">
         <div><Label className="text-xs">Bồn <span className="text-red-500">*</span></Label>
@@ -254,6 +257,12 @@ export function BatchFillSheet({ open, onClose, batchId, batchCode, warehouseId,
           <Input value={qty} onChange={e => setQty(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && tank && qtyN && qtyN > 0 && !over && !fill.isPending) void save() }}
             inputMode="decimal" autoFocus className={`h-9 sm:h-8 text-sm mt-0.5 ${over ? 'border-red-400' : ''}`} />
           {tank && <p className={`text-[11px] mt-0.5 ${over ? 'text-red-600' : 'text-slate-500'}`}>{over ? 'Vượt chỗ còn trống — bồn' : 'Bồn'} còn chỗ {nfQty(room)} {tank.unit}</p>}</div>
+        {blockers.length > 0 && (
+          <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-800">
+            <p className="font-semibold">Chưa nạp bồn được:</p>
+            <ul className="list-disc pl-4 mt-0.5 space-y-0.5">{blockers.map(x => <li key={x}>{x}</li>)}</ul>
+          </div>
+        )}
         <ErrBox msg={err} />
       </div>
     </FormSheet>

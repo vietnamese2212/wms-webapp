@@ -20,6 +20,10 @@
 //   [14] Chức danh chỉ có quyền Sản xuất (mở mẻ) tìm được mã hàng cho form Mở mẻ / Định mức; chức danh chỉ xem thì không (16/11)
 //   [13] Mẫu phiếu là CẤU HÌNH (Cài đặt MES): tạo / sửa / ngưng mẫu; phiếu của mẻ sửa riêng cấu trúc cho lần đó (thêm lần, thêm ô) và về theo mẫu chung
 //   [9] Huỷ mẻ còn dòng rút ⇒ 409; đóng / mở lại mẻ; bất biến tồn: nhập − còn = Σ rút sống
+//   [16] LUỒNG CỦA MẺ (17/11): chu kỳ · số mẻ · bồn bắt buộc, mã lô = <chữ nhà máy><chu kỳ><số mẻ 4 số><mã bồn>; tạo mẻ chặn bồn thiếu chỗ /
+//        khác mã; nạp sai bồn ⇒ 409; kho bật `mes_flow_gate`: chưa đủ 2 duyệt không cấp NVL, QA duyệt ⇒ phiếu khoá; tem pallet i/n;
+//        đổ bồn sai bồn / sai tem / tem cũ ⇒ chặn; đổi bồn ⇒ mã lô đổi + tem mất hiệu lực; nạp bồn cần đủ tem + đủ NVL + ô bắt buộc;
+//        QA đạt / không đạt ở BỒN (cửa QA ở mẻ đã gỡ)
 // Fixture QA63: kho cha QA63_PARENT + kho phụ QA63_CB (+ QA63_CB2 để thử chéo kho) · mã NVL/BTP QA63* · tem QA63_* — dọn bằng PostgREST.
 import { randomUUID } from 'crypto'
 import { login, api, rawFetch, restAll, restWrite, check, finish, BASE } from './lib.mjs'
@@ -47,6 +51,7 @@ async function cleanup() {
   if (tanks.length) await restWrite('tank_movement', 'DELETE', `tank_id=in.(${tanks.map(t => t.id).join(',')})`)
   if (tanks.length) await restWrite('tank_lot', 'DELETE', `tank_id=in.(${tanks.map(t => t.id).join(',')})`)
   if (batches.length) await restWrite('batch_consumption', 'DELETE', `batch_id=in.(${batches.map(b => b.id).join(',')})`)
+  if (batches.length) await restWrite('batch_pour_scan', 'DELETE', `batch_id=in.(${batches.map(b => b.id).join(',')})`)
   if (batches.length) await restWrite('batch_process_log', 'DELETE', `batch_id=in.(${batches.map(b => b.id).join(',')})`)
   await restWrite('production_process_form', 'DELETE', 'code=like.QA63*')
   if (batches.length) await restWrite('batch_requirement', 'DELETE', `batch_id=in.(${batches.map(b => b.id).join(',')})`)
@@ -70,7 +75,7 @@ async function cleanup() {
 await cleanup()
 try {
   // ── Fixture ──
-  await restWrite('Warehouse', 'POST', null, { id: WP, code: 'QA63PARENT', name: 'QA63 — nhà máy (bộ kiểm tự dùng)', warehouse_type: 'CENTRAL', inventory_mode: 'QR', updated_at: ts() })
+  await restWrite('Warehouse', 'POST', null, { id: WP, code: 'QA63PARENT', name: 'QA63 — nhà máy (bộ kiểm tự dùng)', warehouse_type: 'CENTRAL', inventory_mode: 'QR', nmsx_code: 'Q', updated_at: ts() })
   await restWrite('Warehouse', 'POST', null, [
     { id: WC, code: 'QA63CB', name: 'QA63 — kho chế biến', warehouse_type: 'CENTRAL', inventory_mode: 'QR', parent_warehouse_id: WP, updated_at: ts() },
     { id: WC2, code: 'QA63CB2', name: 'QA63 — kho chế biến 2', warehouse_type: 'CENTRAL', inventory_mode: 'QR', parent_warehouse_id: WP, updated_at: ts() },
@@ -95,25 +100,40 @@ try {
     E('QA63_E6', 'QA63RM1', 20, WC, '2026-11-06', '2027-03-02'),
   ])
 
+  // ── bồn dựng trước (17/11: mẻ chọn bồn ngay lúc tạo) — các phép 5a / 5b ở dưới đọc lại kết quả ──
+  const t1 = await api('/wms/production/tanks', 'POST', { warehouse_id: WC, code: 'qa63-t1', capacity: 1000, unit: 'L' })
+  const T1 = t1.j?.data
+  const t1dup = await api('/wms/production/tanks', 'POST', { warehouse_id: WC, code: 'QA63-T1', capacity: 10, unit: 'L' })
+  const T2 = (await api('/wms/production/tanks', 'POST', { warehouse_id: WC, code: 'QA63-T2', capacity: 500, unit: 'L' })).j?.data
+  const T3 = (await api('/wms/production/tanks', 'POST', { warehouse_id: WC2, code: 'QA63-T3', capacity: 500, unit: 'L' })).j?.data
+  const T4 = (await api('/wms/production/tanks', 'POST', { warehouse_id: WC, code: 'QA63-T4', capacity: 2000, unit: 'L' })).j?.data   // các mẻ M_BTP2
+  const T5 = (await api('/wms/production/tanks', 'POST', { warehouse_id: WC2, code: 'QA63-T5', capacity: 500, unit: 'L' })).j?.data
+  const T6 = (await api('/wms/production/tanks', 'POST', { warehouse_id: WC, code: 'QA63-T6', capacity: 500, unit: 'L' })).j?.data    // mẻ đổi mã (10j)
+  const NEW = (o) => ({ warehouse_id: WC, prod_date: todayVN, cycle: 'Q1', ...o })
+
   // ── [1] mở mẻ ──
-  const r1a = await api('/wms/production/batches', 'POST', { warehouse_id: WP, material_id: M_BTP, prod_date: todayVN })
+  const r1a = await api('/wms/production/batches', 'POST', NEW({ warehouse_id: WP, material_id: M_BTP, tank_id: T1.id }))
   check('1a. Mở mẻ ở kho KHÔNG phải kho phụ ⇒ 422 NOT_PRODUCTION_WAREHOUSE', r1a.s === 422 && r1a.j?.error?.code === 'NOT_PRODUCTION_WAREHOUSE', `http=${r1a.s} ${r1a.j?.error?.code}`)
-  const r1b = await api('/wms/production/batches', 'POST', { warehouse_id: WC, material_id: M_EA, prod_date: todayVN })
+  const r1b = await api('/wms/production/batches', 'POST', NEW({ material_id: M_EA, tank_id: T1.id }))
   check('1b. Mã tính theo EA (không phải BTP) ⇒ 422 NOT_SEMI_FINISHED', r1b.s === 422 && r1b.j?.error?.code === 'NOT_SEMI_FINISHED', `http=${r1b.s} ${r1b.j?.error?.code}`)
   // C117: NVL tính KG từng lọt làm "mã bán thành phẩm" (luật cũ chỉ xét đơn vị L / KG)
-  const r1b2 = await api('/wms/production/batches', 'POST', { warehouse_id: WC, material_id: M_RM, prod_date: todayVN })
+  const r1b2 = await api('/wms/production/batches', 'POST', NEW({ material_id: M_RM, tank_id: T1.id }))
   check('1b2. Mở mẻ với mã NGUYÊN LIỆU tính KG (chưa đánh dấu BTP) ⇒ 422 NOT_SEMI_FINISHED', r1b2.s === 422 && r1b2.j?.error?.code === 'NOT_SEMI_FINISHED', `http=${r1b2.s} ${r1b2.j?.error?.code}`)
-  const nc = await api(`/wms/production/batches/next-code?warehouse_id=${WC}&material_id=${M_BTP}&prod_date=${todayVN}&machine_code=t1`)
-  const stem = `QD${todayVN.slice(2, 4)}${todayVN.slice(5, 7)}${todayVN.slice(8, 10)}T1`
-  check('1c. Mã lô gợi ý = tiền tố + yymmdd + máy + 001', nc.s === 200 && nc.j?.data?.code === `${stem}001`, `http=${nc.s} code=${nc.j?.data?.code}`)
-  const b1 = await api('/wms/production/batches', 'POST', { warehouse_id: WC, material_id: M_BTP, prod_date: todayVN, machine_code: 'T1', planned_qty: 1000 })
+  const r1g = await api('/wms/production/batches', 'POST', { warehouse_id: WC, material_id: M_BTP, prod_date: todayVN })
+  check('1g. Mở mẻ thiếu chu kỳ / bồn ⇒ 400 (17/11: bắt buộc)', r1g.s === 400, `http=${r1g.s}`)
+  const nc = await api(`/wms/production/batches/next-code?warehouse_id=${WC}&cycle=q1&tank_id=${T1.id}`)
+  check('1c. Gợi ý: chữ nhà máy lấy ở kho CHA (Q) · số mẻ kế tiếp 1 · mã lô = Q + Q1 + 0001 + mã bồn', nc.s === 200 && nc.j?.data?.plant === 'Q' && nc.j?.data?.next_no === 1 && nc.j?.data?.code === 'QQ10001QA63-T1',
+    `http=${nc.s} ${JSON.stringify(nc.j?.data ?? null)}`)
+  const b1 = await api('/wms/production/batches', 'POST', NEW({ material_id: M_BTP, tank_id: T1.id, machine_code: 'T1', planned_qty: 1000 }))
   const B1 = b1.j?.data
-  check('1d. Mở mẻ không gõ mã ⇒ 201, mã = gợi ý, QA mặc định HOLD', b1.s === 201 && B1?.batch_code === `${stem}001` && B1?.qa_status === 'HOLD', `http=${b1.s} ${JSON.stringify(b1.j?.error ?? null)}`)
-  const b2 = await api('/wms/production/batches', 'POST', { warehouse_id: WC, material_id: M_BTP, prod_date: todayVN, machine_code: 'T1' })
+  check('1d. Mở mẻ không gõ số mẻ ⇒ 201, mã lô tự ghép, số mẻ 1, QA mặc định HOLD', b1.s === 201 && B1?.batch_code === 'QQ10001QA63-T1' && B1?.batch_no === 1 && B1?.tank_id === T1.id && B1?.qa_status === 'HOLD', `http=${b1.s} ${JSON.stringify(b1.j?.error ?? null)} ${B1?.batch_code}`)
+  const b2 = await api('/wms/production/batches', 'POST', NEW({ material_id: M_BTP, tank_id: T1.id, machine_code: 'T1' }))
   const B2 = b2.j?.data
-  check('1e. Mẻ thứ hai cùng gốc ⇒ số kế 002', b2.s === 201 && B2?.batch_code === `${stem}002`, `code=${B2?.batch_code}`)
-  const dup = await api('/wms/production/batches', 'POST', { warehouse_id: WC, material_id: M_BTP, prod_date: todayVN, batch_code: B1?.batch_code?.toLowerCase() })
-  check('1f. Gõ tay trùng mã (chữ thường) ⇒ 409 BATCH_CODE_DUP', dup.s === 409 && dup.j?.error?.code === 'BATCH_CODE_DUP', `http=${dup.s}`)
+  check('1e. Mẻ thứ hai cùng chu kỳ ⇒ số mẻ kế 2', b2.s === 201 && B2?.batch_code === 'QQ10002QA63-T1' && B2?.batch_no === 2, `code=${B2?.batch_code}`)
+  const dup = await api('/wms/production/batches', 'POST', NEW({ material_id: M_BTP, tank_id: T1.id, batch_no: 1 }))
+  check('1f. Gõ số mẻ đã có trong chu kỳ ⇒ 409 BATCH_NO_DUP', dup.s === 409 && dup.j?.error?.code === 'BATCH_NO_DUP', `http=${dup.s} ${dup.j?.error?.code}`)
+  const over = await api('/wms/production/batches', 'POST', NEW({ material_id: M_BTP, tank_id: T1.id, planned_qty: 1 }))
+  check('1h. Bồn 1.000 đã đặt đủ cho mẻ 1 (kế hoạch 1.000) ⇒ mẻ có kế hoạch nữa bị 409 MES_OVER_CAPACITY', over.s === 409 && over.j?.error?.code === 'MES_OVER_CAPACITY', `http=${over.s} ${over.j?.error?.code}`)
 
   // ── [2] tra tem ──
   const s2a = await api(`/wms/production/batches/${B1.id}/scan-check?code=QA63_P1`)
@@ -180,22 +200,21 @@ try {
   check('4i. Bất biến: nhập − còn = Σ rút sống, mọi dòng tồn kho chế biến', bad.length === 0, bad.map(e => e.id).join(','))
 
   // ── [5] bồn ──
-  const t1 = await api('/wms/production/tanks', 'POST', { warehouse_id: WC, code: 'qa63-t1', capacity: 1000, unit: 'L' })
-  const T1 = t1.j?.data
   check('5a. Tạo bồn ⇒ 201, mã chuẩn hoá hoa', t1.s === 201 && T1?.code === 'QA63-T1', `http=${t1.s}`)
-  const t1dup = await api('/wms/production/tanks', 'POST', { warehouse_id: WC, code: 'QA63-T1', capacity: 10, unit: 'L' })
   check('5b. Trùng mã bồn trong kho ⇒ 409 TANK_DUP', t1dup.s === 409 && t1dup.j?.error?.code === 'TANK_DUP', `http=${t1dup.s}`)
-  const T2 = (await api('/wms/production/tanks', 'POST', { warehouse_id: WC, code: 'QA63-T2', capacity: 500, unit: 'L' })).j?.data
-  const T3 = (await api('/wms/production/tanks', 'POST', { warehouse_id: WC2, code: 'QA63-T3', capacity: 500, unit: 'L' })).j?.data
   const f1 = await api(`/wms/production/tanks/${T1.id}/fill`, 'POST', { batch_id: B1.id, qty: 600 })
   const f2 = await api(`/wms/production/tanks/${T1.id}/fill`, 'POST', { batch_id: B2.id, qty: 400 })
   check('5c. Nạp 600 (mẻ 1) + 400 (mẻ 2) vào bồn 1000 L', f1.s === 200 && f2.s === 200, `http=${f1.s}/${f2.s} ${f1.j?.error?.message ?? ''}`)
   const f3 = await api(`/wms/production/tanks/${T1.id}/fill`, 'POST', { batch_id: B1.id, qty: 1 })
   check('5d. Nạp thêm khi đầy ⇒ 409 MES_OVER_CAPACITY', f3.s === 409 && f3.j?.error?.code === 'MES_OVER_CAPACITY', `http=${f3.s}`)
-  const b3 = (await api('/wms/production/batches', 'POST', { warehouse_id: WC, material_id: M_BTP2, prod_date: todayVN })).j?.data
-  await api(`/wms/production/tanks/${T2.id}/fill`, 'POST', { batch_id: B1.id, qty: 100 })
-  const f4 = await api(`/wms/production/tanks/${T2.id}/fill`, 'POST', { batch_id: b3.id, qty: 10 })
-  check('5e. Trộn mã BTP khác vào bồn ⇒ 409 MES_MIX_MATERIAL', f4.s === 409 && f4.j?.error?.code === 'MES_MIX_MATERIAL', `http=${f4.s}`)
+  const b3 = (await api('/wms/production/batches', 'POST', NEW({ material_id: M_BTP2, tank_id: T4.id }))).j?.data
+  // bồn 2 nhận một mẻ M_BTP riêng (17/11: một mẻ chỉ vào ĐÚNG bồn đã đặt — không còn nạp mẻ 1 sang bồn 2)
+  const B1b = (await api('/wms/production/batches', 'POST', NEW({ material_id: M_BTP, tank_id: T2.id, planned_qty: 100 }))).j?.data
+  const f1b = await api(`/wms/production/tanks/${T2.id}/fill`, 'POST', { batch_id: B1b?.id, qty: 100 })
+  const f4 = await api('/wms/production/batches', 'POST', NEW({ material_id: M_BTP2, tank_id: T2.id }))
+  check('5e. Đặt mẻ mã BTP KHÁC vào bồn đang chứa mã khác ⇒ 409 MES_MIX_MATERIAL (chặn ngay lúc tạo mẻ)', f1b.s === 200 && f4.s === 409 && f4.j?.error?.code === 'MES_MIX_MATERIAL', `http=${f1b.s}/${f4.s} ${f4.j?.error?.code}`)
+  const fWrong = await api(`/wms/production/tanks/${T2.id}/fill`, 'POST', { batch_id: b3.id, qty: 10 })
+  check('5e2. Nạp mẻ vào bồn KHÁC bồn đã đặt ⇒ 409 MES_WRONG_TANK', fWrong.s === 409 && fWrong.j?.error?.code === 'MES_WRONG_TANK', `http=${fWrong.s} ${fWrong.j?.error?.code}`)
   const f5 = await api(`/wms/production/tanks/${T3.id}/fill`, 'POST', { batch_id: B1.id, qty: 10 })
   check('5f. Nạp mẻ vào bồn KHO KHÁC (cặp id chéo) ⇒ 409 MES_WRONG_WAREHOUSE', f5.s === 409 && f5.j?.error?.code === 'MES_WRONG_WAREHOUSE', `http=${f5.s}`)
   const tl = await api(`/wms/production/tanks?warehouse_id=${WC}`)
@@ -228,10 +247,15 @@ try {
   const cl2 = await api(`/wms/packing-runs/${R2.id}/close`, 'POST', { tank_qty: 50 })
   const r2now = (await restAll('packing_runs', `select=status&id=eq.${R2.id}`))[0]
   check('6e. Kho đặt CHẶN ⇒ 409 MES_QA_BLOCK và trang VẪN MỞ', cl2.s === 409 && cl2.j?.error?.code === 'MES_QA_BLOCK' && r2now?.status === 'OPEN', `http=${cl2.s} status=${r2now?.status}`)
-  const qa1 = await api(`/wms/production/batches/${B1.id}/qa`, 'POST', { qa_status: 'RELEASED' })
-  const qa2 = await api(`/wms/production/batches/${B2.id}/qa`, 'POST', { qa_status: 'RELEASED' })
-  const qaRej = await api(`/wms/production/batches/${b3.id}/qa`, 'POST', { qa_status: 'REJECTED' })
-  check('6f. QA thả 2 mẻ; loại lô không lý do ⇒ 422', qa1.s === 200 && qa2.s === 200 && qaRej.s === 422, `http=${qa1.s}/${qa2.s}/${qaRej.s}`)
+  const qaOld = await api(`/wms/production/batches/${B1.id}/qa`, 'POST', { qa_status: 'RELEASED' })
+  const qaRej = await api(`/wms/production/tanks/${T1.id}/qa`, 'POST', { qa_status: 'REJECTED' })
+  const qaEmpty = await api(`/wms/production/tanks/${T4.id}/qa`, 'POST', { qa_status: 'RELEASED' })
+  const qa1 = await api(`/wms/production/tanks/${T1.id}/qa`, 'POST', { qa_status: 'RELEASED' })
+  const qaNow = await restAll('production_batch', `select=id,qa_status&id=in.(${B1.id},${B2.id},${B1b.id})`)
+  check('6f. QA ĐẠT bấm ở BỒN ⇒ cả 2 mẻ trong bồn 1 thành RELEASED, mẻ ở bồn khác không đổi; không đạt thiếu lý do ⇒ 422; bồn trống ⇒ 409; cửa QA ở mẻ đã gỡ (404)',
+    qa1.s === 200 && num(qa1.j?.data?.batches) === 2 && qaRej.s === 422 && qaEmpty.s === 409 && qaEmpty.j?.error?.code === 'MES_TANK_EMPTY' && qaOld.s === 404
+      && qaNow.find(x => x.id === B1.id)?.qa_status === 'RELEASED' && qaNow.find(x => x.id === B2.id)?.qa_status === 'RELEASED' && qaNow.find(x => x.id === B1b.id)?.qa_status === 'HOLD',
+    `http=${qa1.s}/${qaRej.s}/${qaEmpty.s}/${qaOld.s} ${JSON.stringify(qaNow)}`)
   const cl3 = await api(`/wms/packing-runs/${R2.id}/close`, 'POST', { tank_qty: 50 })
   check('6g. Thả QA xong đóng được, không cảnh báo', cl3.s === 200 && (cl3.j?.data?.tank_warnings ?? []).length === 0, `http=${cl3.s} ${JSON.stringify(cl3.j?.error ?? null)}`)
   const runGet = await api(`/wms/packing-runs/${R1.id}`)
@@ -239,7 +263,7 @@ try {
   await restWrite('Warehouse', 'PATCH', `id=eq.${WC}`, { production_qa_gate: 'WARN', updated_at: ts() })
 
   // ── [6+] đợt rà 14/11 (migration 20261114d): lô QA LOẠI · đúng mã lô · dòng tồn không còn trong kho ──
-  const rej = await api(`/wms/production/batches/${B2.id}/qa`, 'POST', { qa_status: 'REJECTED', note: 'QA63 thử loại lô' })
+  const rej = await api(`/wms/production/tanks/${T1.id}/qa`, 'POST', { qa_status: 'REJECTED', note: 'QA63 thử loại lô' })
   const R3 = (await api('/wms/packing-runs', 'POST', { warehouse_id: WP, material_codes: ['QA63FG3'], machine_code: 'QA63M', cycle: 'C63', tank_id: T1.id })).j?.data
   const cl4 = await api(`/wms/packing-runs/${R3.id}/close`, 'POST', { tank_qty: 10 })
   const r3now = (await restAll('packing_runs', `select=status&id=eq.${R3.id}`))[0]
@@ -247,7 +271,7 @@ try {
     rej.s === 200 && cl4.s === 409 && cl4.j?.error?.code === 'MES_QA_REJECTED' && r3now?.status === 'OPEN', `qa=${rej.s} http=${cl4.s} ${cl4.j?.error?.code} status=${r3now?.status}`)
   const fillRej = await api(`/wms/production/tanks/${T1.id}/fill`, 'POST', { batch_id: B2.id, qty: 1 })
   check('6j. Nạp lô QA loại vào bồn ⇒ 409 MES_QA_REJECTED', fillRej.s === 409 && fillRej.j?.error?.code === 'MES_QA_REJECTED', `http=${fillRej.s} ${fillRej.j?.error?.code}`)
-  await api(`/wms/production/batches/${B2.id}/qa`, 'POST', { qa_status: 'RELEASED' })
+  await api(`/wms/production/tanks/${T1.id}/qa`, 'POST', { qa_status: 'RELEASED' })
   const cl5 = await api(`/wms/packing-runs/${R3.id}/close`, 'POST', { tank_qty: 0 })   // 0 = không rút: mức bồn giữ nguyên cho các phép sau
   check('6k. QA đổi kết luận về THẢ ⇒ đóng trang được', cl5.s === 200 && cl5.j?.data?.status === 'CLOSED', `http=${cl5.s} ${JSON.stringify(cl5.j?.error ?? null)}`)
   await restWrite('InventoryEntry', 'POST', null, [
@@ -372,7 +396,7 @@ try {
   check('10b. Lưu định mức 2 dòng; đọc lại đủ dòng; có trong danh sách',
     rcOk.s === 201 && rcOk.j?.data?.is_default === true && rcGet.s === 200 && (rcGet.j?.data?.lines ?? []).length === 2 && num(rcGet.j?.data?.base_qty) === 100 && (rcList.j?.data ?? []).some(r => r.material_id === M_BTP2),
     `http=${rcOk.s}/${rcGet.s}/${rcList.s} ${JSON.stringify(rcOk.j?.error ?? null)}`)
-  const bw = await api('/wms/production/batches', 'POST', { warehouse_id: WC, material_id: M_BTP2, prod_date: todayVN, planned_qty: 300, cycle: 'C63' })
+  const bw = await api('/wms/production/batches', 'POST', NEW({ material_id: M_BTP2, planned_qty: 300, cycle: 'C63', tank_id: T4.id }))
   const BW = bw.j?.data
   const bwGet = await api(`/wms/production/batches/${BW?.id}`)
   const board0 = bwGet.j?.data?.board ?? []
@@ -407,11 +431,11 @@ try {
   check('10k. Một mã BTP có 2 công thức; đặt mặc định công thức mới ⇒ đúng MỘT mặc định; trùng tên (khác hoa thường) ⇒ 409 MES_DUPLICATE_NAME',
     rc2.s === 201 && (rl.j?.data ?? []).length === 2 && defs.length === 1 && defs[0] === RCP2 && rcDupName.s === 409 && rcDupName.j?.error?.code === 'MES_DUPLICATE_NAME',
     `http=${rc2.s}/${rl.s}/${rcDupName.s} defs=${JSON.stringify(defs)} ${rcDupName.j?.error?.code}`)
-  const bv = await api('/wms/production/batches', 'POST', { warehouse_id: WC, material_id: M_BTP2, prod_date: todayVN, planned_qty: 200, recipe_id: RCP1 })
+  const bv = await api('/wms/production/batches', 'POST', NEW({ material_id: M_BTP2, planned_qty: 200, recipe_id: RCP1, tank_id: T4.id }))
   const BV = bv.j?.data
   const bvGet = (await api(`/wms/production/batches/${BV?.id}`)).j?.data
   const bvRm = (bvGet?.board ?? []).find(r => r.material_id === M_RM)
-  const bvMis = await api('/wms/production/batches', 'POST', { warehouse_id: WC, material_id: M_BTP, prod_date: todayVN, recipe_id: RCP1 })
+  const bvMis = await api('/wms/production/batches', 'POST', NEW({ material_id: M_BTP, recipe_id: RCP1, tank_id: T2.id }))
   check('10l. Mở mẻ chọn công thức KHÔNG mặc định ⇒ phiếu theo đúng công thức đó (× 2), gốc = yêu cầu; công thức của mã khác ⇒ 422 MES_RECIPE_MISMATCH',
     bv.s === 201 && bvGet?.recipe?.id === RCP1 && num(bvRm?.required) === 10 && num(bvRm?.standard) === 10 && bvMis.s === 422 && bvMis.j?.error?.code === 'MES_RECIPE_MISMATCH',
     `http=${bv.s}/${bvMis.s} recipe=${bvGet?.recipe?.name} rm=${JSON.stringify(bvRm ?? null)}`)
@@ -447,7 +471,7 @@ try {
   check('10i. Sửa kế hoạch 300 → 600 ⇒ yêu cầu nhân đôi (15 → 30, 6 → 12), phần đã cấp giữ nguyên',
     upPlan.s === 200 && num(board4.find(r => r.material_id === M_RM)?.required) === 30 && num(board4.find(r => r.material_id === M_EA)?.required) === 12
       && num(board4.find(r => r.material_id === M_RM)?.consumed) === 6, `http=${upPlan.s} ${JSON.stringify(board4.map(r => [r.material_id, r.required, r.consumed]))}`)
-  const bx = await api('/wms/production/batches', 'POST', { warehouse_id: WC, material_id: M_BTP2, prod_date: todayVN, planned_qty: 100 })
+  const bx = await api('/wms/production/batches', 'POST', NEW({ material_id: M_BTP2, planned_qty: 100, tank_id: T6.id }))
   const BX = bx.j?.data
   const upRm = await api(`/wms/production/batches/${BX?.id}`, 'PATCH', { material_id: M_RM })
   check('10j0. Sửa mẻ đổi mã BTP sang mã NGUYÊN LIỆU ⇒ 422 NOT_SEMI_FINISHED (C117)', upRm.s === 422 && upRm.j?.error?.code === 'NOT_SEMI_FINISHED', `http=${upRm.s} ${upRm.j?.error?.code}`)
@@ -580,11 +604,12 @@ try {
   const consClosed = await api(`/wms/production/batches/${B1.id}/consume-scan`, 'POST', { entry_id: 'QA63_E2', qty: 1, qty_semantics: 'base' })
   const reB = await api(`/wms/production/batches/${B1.id}/reopen`, 'POST', {})
   check('9b. Đóng mẻ ⇒ không rút được (409 MES_BATCH_NOT_OPEN); mở lại được', clB.s === 200 && consClosed.s === 409 && consClosed.j?.error?.code === 'MES_BATCH_NOT_OPEN' && reB.s === 200, `http=${clB.s}/${consClosed.s}/${reB.s}`)
-  const lockEdit = await api(`/wms/production/batches/${B1.id}`, 'PATCH', { batch_code: 'QA63DOI' })
-  check('9c. Đổi mã lô khi đã rút NVL ⇒ 409 BATCH_LOCKED', lockEdit.s === 409 && lockEdit.j?.error?.code === 'BATCH_LOCKED', `http=${lockEdit.s}`)
+  const lockEdit = await api(`/wms/production/batches/${B1.id}`, 'PATCH', { material_id: M_BTP2 })
+  const lockTank = await api(`/wms/production/batches/${B1.id}`, 'PATCH', { tank_id: T2.id })
+  check('9c. Đổi mã BTP khi đã rút NVL ⇒ 409 BATCH_LOCKED; đổi bồn khi đã nạp ⇒ 409 MES_FILLED', lockEdit.s === 409 && lockEdit.j?.error?.code === 'BATCH_LOCKED' && lockTank.s === 409 && lockTank.j?.error?.code === 'MES_FILLED', `http=${lockEdit.s}/${lockTank.s} ${lockTank.j?.error?.code}`)
   const lst = await api(`/wms/production/batches?warehouse_id=${WC}&pageSize=50`)
   const rowB1 = (lst.j?.data?.rows ?? []).find(r => r.id === B1.id)
-  check('9d. Danh sách mẻ: dòng + ô tổng một lời gọi; mẻ 1 có NVL + đã nạp', lst.s === 200 && num(lst.j?.data?.summary?.total) >= 3 && num(rowB1?.rm_lines) >= 2 && num(rowB1?.filled) === 700,
+  check('9d. Danh sách mẻ: dòng + ô tổng một lời gọi; mẻ 1 có NVL + đã nạp', lst.s === 200 && num(lst.j?.data?.summary?.total) >= 3 && num(rowB1?.rm_lines) >= 2 && num(rowB1?.filled) === 600 && rowB1?.tank_code === 'QA63-T1' && rowB1?.batch_no === 1,
     JSON.stringify({ s: lst.s, sum: lst.j?.data?.summary, row: rowB1 && { rm: rowB1.rm_lines, f: rowB1.filled } }))
   const lstP = await api(`/wms/production/batches?warehouse_id=${WP}&pageSize=50`)
   const tP = await api(`/wms/production/tanks?warehouse_id=${WP}`)
@@ -592,6 +617,101 @@ try {
     && (tP.j?.data ?? []).some(t => t.id === T1.id) && (tP.j?.data ?? []).some(t => t.id === T3.id), `http=${lstP.s}/${tP.s} n=${lstP.j?.data?.rows?.length}/${tP.j?.data?.length}`)
   const cx3 = await api(`/wms/production/batches/${b3.id}/cancel`, 'POST', {})
   check('9e. Huỷ mẻ chưa rút / chưa nạp ⇒ 200', cx3.s === 200 && cx3.j?.data?.status === 'CANCELLED', `http=${cx3.s}`)
+
+  // ── [16] LUỒNG CỦA MẺ (17/11) ở kho chế biến 2 bật `mes_flow_gate` ──
+  {
+    const setOn = await api('/wms/production/settings', 'PUT', { warehouse_id: WC2, mes_flow_gate: true })
+    await restWrite('InventoryEntry', 'POST', null, [E('QA63_E16', 'QA63_P16', 50, WC2, '2026-11-01', '2027-01-01')])
+    const fb = await api('/wms/production/batches', 'POST', { warehouse_id: WC2, material_id: M_BTP, prod_date: todayVN, cycle: 'Q2', tank_id: T3.id, planned_qty: 100 })
+    const FB = fb.j?.data
+    check('16a. Bật luồng chặt qua Cài đặt MES; mở mẻ ở kho 2 ⇒ mã lô QQ20001QA63-T3', setOn.s === 200 && setOn.j?.data?.mes_flow_gate === true && fb.s === 201 && FB?.batch_code === 'QQ20001QA63-T3', `http=${setOn.s}/${fb.s} ${FB?.batch_code}`)
+    const fbOver = await api('/wms/production/batches', 'POST', { warehouse_id: WC2, material_id: M_BTP, prod_date: todayVN, cycle: 'Q2', tank_id: T3.id, planned_qty: 401 })
+    check('16b. Bồn 500 đã đặt 100 ⇒ mẻ kế hoạch 401 bị 409 MES_OVER_CAPACITY', fbOver.s === 409 && fbOver.j?.error?.code === 'MES_OVER_CAPACITY', `http=${fbOver.s}`)
+    const rq = await api(`/wms/production/batches/${FB.id}/requirements`, 'PUT', { reason: 'QA63 khai phiếu', items: [{ material_id: M_RM, qty: 10 }] })
+    const cNo = await api(`/wms/production/batches/${FB.id}/consume-scan`, 'POST', { entry_id: 'QA63_E16', qty: 10, qty_semantics: 'base' })
+    const cNoLot = await api(`/wms/production/batches/${FB.id}/consume-lot`, 'POST', { material_id: M_RM, production_date: '2026-11-01', qty: 1, qty_semantics: 'base' })
+    check('16c. Chưa duyệt ⇒ CẢ HAI cửa cấp NVL (quét tem · chọn lô) đều 409 MES_NOT_APPROVED', rq.s === 200 && cNo.s === 409 && cNo.j?.error?.code === 'MES_NOT_APPROVED' && cNoLot.s === 409 && cNoLot.j?.error?.code === 'MES_NOT_APPROVED', `http=${rq.s}/${cNo.s}/${cNoLot.s}`)
+    const aQa0 = await api(`/wms/production/batches/${FB.id}/approve-qa`, 'POST', { approve: true })
+    const aLead = await api(`/wms/production/batches/${FB.id}/approve-lead`, 'POST', { approve: true })
+    const aLead2 = await api(`/wms/production/batches/${FB.id}/approve-lead`, 'POST', { approve: true })
+    const lbl0 = await api(`/wms/production/batches/${FB.id}/labels`, 'POST', { count: 2 })
+    const aQa = await api(`/wms/production/batches/${FB.id}/approve-qa`, 'POST', { approve: true })
+    const rqLocked = await api(`/wms/production/batches/${FB.id}/requirements`, 'PUT', { reason: 'QA63', items: [{ material_id: M_RM, qty: 11 }] })
+    const planLocked = await api(`/wms/production/batches/${FB.id}`, 'PATCH', { planned_qty: 120 })
+    check('16d. QA duyệt trước trưởng ca ⇒ 409; trưởng ca duyệt (lần 2 ⇒ 409); in tem khi QA chưa duyệt ⇒ 409; QA duyệt ⇒ phiếu + kế hoạch khoá (409 MES_APPROVED)',
+      aQa0.s === 409 && aLead.s === 200 && aLead2.s === 409 && lbl0.s === 409 && lbl0.j?.error?.code === 'MES_NOT_APPROVED' && aQa.s === 200 && rqLocked.s === 409 && rqLocked.j?.error?.code === 'MES_APPROVED' && planLocked.s === 409,
+      `http=${aQa0.s}/${aLead.s}/${aLead2.s}/${lbl0.s}/${aQa.s}/${rqLocked.s}/${planLocked.s}`)
+    const cOk = await api(`/wms/production/batches/${FB.id}/consume-scan`, 'POST', { entry_id: 'QA63_E16', qty: 10, qty_semantics: 'base' })
+    const lbl = await api(`/wms/production/batches/${FB.id}/labels`, 'POST', { count: 2 })
+    const L = lbl.j?.data?.labels ?? []
+    check('16e. Đủ hai duyệt ⇒ cấp NVL được; in 2 tem pallet: QR MEB;<mã lô>;i;2;1', cOk.s === 200 && lbl.s === 200 && L.length === 2 && L[0]?.qr === 'MEB;QQ20001QA63-T3;1;2;1' && L[1]?.qr === 'MEB;QQ20001QA63-T3;2;2;1', `http=${cOk.s}/${lbl.s} ${JSON.stringify(L)}`)
+    const fEarly = await api(`/wms/production/tanks/${T3.id}/fill`, 'POST', { batch_id: FB.id, qty: 100 })
+    check('16f. Nạp bồn khi chưa quét tem nào ⇒ 409 MES_NOT_READY (nêu "tem pallet")', fEarly.s === 409 && fEarly.j?.error?.code === 'MES_NOT_READY' && /tem pallet/.test(fEarly.j?.error?.message ?? ''), `http=${fEarly.s} ${fEarly.j?.error?.message}`)
+    const psWrong = await api(`/wms/production/pour-status?warehouse_id=${WC2}&tank_id=${T5.id}&cycle=Q2&batch_no=1`)
+    const psNone = await api(`/wms/production/pour-status?warehouse_id=${WC2}&tank_id=${T3.id}&cycle=Q2&batch_no=9`)
+    const psOk = await api(`/wms/production/pour-status?warehouse_id=${WC2}&tank_id=${T3.id}&cycle=q2&batch_no=1`)
+    check('16g. Đổ bồn: khai SAI bồn ⇒ 409 MES_WRONG_TANK (nói đúng bồn phải đổ); số mẻ không có ⇒ 404; đúng ⇒ 200 kèm mẻ + 0 tem đã quét',
+      psWrong.s === 409 && psWrong.j?.error?.code === 'MES_WRONG_TANK' && /QA63-T3/.test(psWrong.j?.error?.message ?? '') && psNone.s === 404 && psOk.s === 200 && psOk.j?.data?.batch?.id === FB.id && (psOk.j?.data?.scans ?? []).length === 0,
+      `http=${psWrong.s}/${psNone.s}/${psOk.s} ${psWrong.j?.error?.message}`)
+    const scBad = await api('/wms/production/pour-scan', 'POST', { batch_id: FB.id, tank_id: T3.id, code: 'QA63_P16' })
+    const scOther = await api('/wms/production/pour-scan', 'POST', { batch_id: FB.id, tank_id: T3.id, code: 'MEB;QQ10001QA63-T1;1;2;1' })
+    const scTank = await api('/wms/production/pour-scan', 'POST', { batch_id: FB.id, tank_id: T5.id, code: L[0]?.qr })
+    const sc1 = await api('/wms/production/pour-scan', 'POST', { batch_id: FB.id, tank_id: T3.id, code: L[0]?.qr })
+    const sc1b = await api('/wms/production/pour-scan', 'POST', { batch_id: FB.id, tank_id: T3.id, code: L[0]?.qr })
+    check('16h. Quét tem nguyên liệu ⇒ 422 NOT_BATCH_LABEL; tem của MẺ KHÁC ⇒ 409 MES_WRONG_LABEL; đứng SAI BỒN ⇒ 409 MES_WRONG_TANK; tem 1/2 ⇒ 200; quét lại ⇒ 409 MES_ALREADY',
+      scBad.s === 422 && scBad.j?.error?.code === 'NOT_BATCH_LABEL' && scOther.s === 409 && scOther.j?.error?.code === 'MES_WRONG_LABEL' && scTank.s === 409 && scTank.j?.error?.code === 'MES_WRONG_TANK'
+        && sc1.s === 200 && (sc1.j?.data?.scans ?? []).length === 1 && sc1b.s === 409 && sc1b.j?.error?.code === 'MES_ALREADY',
+      `http=${scBad.s}/${scOther.s}/${scTank.s}/${sc1.s}/${sc1b.s}`)
+    // ĐỔI BỒN tại mẻ ⇒ mã lô đổi theo, tem đã in mất hiệu lực
+    const mv = await api(`/wms/production/batches/${FB.id}`, 'PATCH', { tank_id: T5.id })
+    const scOld = await api('/wms/production/pour-scan', 'POST', { batch_id: FB.id, tank_id: T5.id, code: L[1]?.qr })
+    const lbl2 = await api(`/wms/production/batches/${FB.id}/labels`, 'POST', { count: 3 })
+    const L2 = lbl2.j?.data?.labels ?? []
+    check('16i. Đổi bồn ⇒ mã lô QQ20001QA63-T5 + cờ in lại tem; tem cũ quét ⇒ 409; in lại 3 tem ⇒ bản tem 3 (đổi mã +1, in lại +1)',
+      mv.s === 200 && mv.j?.data?.batch_code === 'QQ20001QA63-T5' && mv.j?.data?.relabel === true && scOld.s === 409 && lbl2.s === 200 && L2.length === 3 && L2[2]?.qr === 'MEB;QQ20001QA63-T5;3;3;3',
+      `http=${mv.s}/${scOld.s}/${lbl2.s} ${mv.j?.data?.batch_code} ${scOld.j?.error?.code} ${JSON.stringify(L2.map(x => x.qr))}`)
+    const tkMid = (await api(`/wms/production/tanks?warehouse_id=${WC2}`)).j?.data ?? []
+    const m5 = tkMid.find(t => t.id === T5.id), m3 = tkMid.find(t => t.id === T3.id)
+    check('16i2. Danh sách bồn kèm phần ĐÃ ĐẶT: bồn 5 có mẻ vừa chuyển sang đặt 100, bồn 3 hết phần đặt', num(m5?.reserved) === 100 && m5?.incoming?.[0]?.batch_id === FB.id && num(m3?.reserved) === 0 && m5?.qa_state === 'EMPTY',
+      JSON.stringify({ r5: m5?.reserved, r3: m3?.reserved, q: m5?.qa_state }))
+    for (const l of L2) await api('/wms/production/pour-scan', 'POST', { batch_id: FB.id, tank_id: T5.id, code: l.qr })
+    // ô BẮT BUỘC của phiếu (bản sửa riêng của phiếu này — không đụng mẫu chung) chưa ghi ⇒ chưa nạp
+    const blocks = [{ type: 'fields', title: 'QA63 mốc', fields: [{ key: 'qa63_start', label: 'Bắt đầu đổ', kind: 'time', required: true }, { key: 'qa63_temp', label: 'Nhiệt độ', kind: 'num' }] }]
+    const plReq = await api(`/wms/production/batches/${FB.id}/process-log/MIX`, 'PUT', { data: { qa63_temp: '45' }, blocks })
+    const gate1 = (await api(`/wms/production/batches/${FB.id}`)).j?.data?.gate
+    const fNoLog = await api(`/wms/production/tanks/${T5.id}/fill`, 'POST', { batch_id: FB.id, qty: 100 })
+    check('16j. Đã quét đủ 3/3 nhưng phiếu còn ô bắt buộc ⇒ 409 MES_NOT_READY; cổng của mẻ liệt kê đúng ô thiếu',
+      plReq.s < 300 && num(gate1?.scanned) === 3 && (gate1?.missing ?? []).length === 1 && gate1.missing[0].key === 'qa63_start' && fNoLog.s === 409 && fNoLog.j?.error?.code === 'MES_NOT_READY' && /bắt buộc/.test(fNoLog.j?.error?.message ?? ''),
+      `http=${plReq.s}/${fNoLog.s} gate=${JSON.stringify(gate1 ?? null)}`)
+    const st1 = await api(`/wms/production/batches/${FB.id}/process-log/MIX/stamp`, 'POST', { key: 'qa63_start' })
+    const st2 = await api(`/wms/production/batches/${FB.id}/process-log/MIX/stamp`, 'POST', { key: 'qa63_start' })
+    const stBad = await api(`/wms/production/batches/${FB.id}/process-log/MIX/stamp`, 'POST', { key: 'qa63_temp' })
+    const logRow = (await restAll('batch_process_log', `select=data,stamps&batch_id=eq.${FB.id}&form=eq.MIX`))[0]
+    check('16k. Bấm mốc giờ ⇒ ghi HH:MM + người bấm; bấm lần 2 ⇒ 409 MES_ALREADY; ô không phải mốc giờ ⇒ 422',
+      st1.s === 200 && /^\d\d:\d\d$/.test(st1.j?.data?.value ?? '') && logRow?.data?.qa63_start === st1.j?.data?.value && !!logRow?.stamps?.qa63_start?.by && logRow?.data?.qa63_temp === '45'
+        && st2.s === 409 && st2.j?.error?.code === 'MES_ALREADY' && stBad.s === 422,
+      `http=${st1.s}/${st2.s}/${stBad.s} ${JSON.stringify(logRow ?? null)}`)
+    const edit = await api(`/wms/production/batches/${FB.id}/process-log/MIX`, 'PUT', { data: { qa63_temp: '45', qa63_start: '07:30' } })
+    const logRow2 = (await restAll('batch_process_log', `select=data,stamps&batch_id=eq.${FB.id}&form=eq.MIX`))[0]
+    check('16l. Sửa giờ đã bấm tại phiếu ⇒ lưu giờ mới + giữ vết người sửa', edit.s === 200 && logRow2?.data?.qa63_start === '07:30' && !!logRow2?.stamps?.qa63_start?.edited_by && !!logRow2?.stamps?.qa63_start?.by, JSON.stringify(logRow2 ?? null))
+    // thiếu NVL ⇒ chưa nạp: huỷ dòng cấp rồi cấp lại
+    const consId = (await restAll('batch_consumption', `select=id&batch_id=eq.${FB.id}&reversed_at=is.null`))[0]?.id
+    await api(`/wms/production/consumption/${consId}/reverse`, 'POST', { reason: 'QA63 thử thiếu NVL' })
+    const fShort = await api(`/wms/production/tanks/${T5.id}/fill`, 'POST', { batch_id: FB.id, qty: 100 })
+    await api(`/wms/production/batches/${FB.id}/consume-scan`, 'POST', { entry_id: 'QA63_E16', qty: 10, qty_semantics: 'base' })
+    const fOk = await api(`/wms/production/tanks/${T5.id}/fill`, 'POST', { batch_id: FB.id, qty: 100 })
+    check('16m. Nguyên liệu cấp chưa đủ ⇒ 409 MES_NOT_READY (nêu mã thiếu); đủ cả ba điều kiện ⇒ nạp 200', fShort.s === 409 && fShort.j?.error?.code === 'MES_NOT_READY' && /QA63RM1/.test(fShort.j?.error?.message ?? '') && fOk.s === 200,
+      `http=${fShort.s}/${fOk.s} ${fShort.j?.error?.message} ${JSON.stringify(fOk.j?.error ?? null)}`)
+    const unQa = await api(`/wms/production/batches/${FB.id}/approve-qa`, 'POST', { approve: false })
+    const tq = await api(`/wms/production/tanks/${T5.id}/qa`, 'POST', { qa_status: 'REJECTED', note: 'QA63 không đạt' })
+    const tk = (await api(`/wms/production/tanks?warehouse_id=${WC2}`)).j?.data ?? []
+    const t5 = tk.find(t => t.id === T5.id), t3 = tk.find(t => t.id === T3.id)
+    const fbNow = (await restAll('production_batch', `select=qa_status,qa_note&id=eq.${FB.id}`))[0]
+    check('16n. Đã nạp ⇒ QA không bỏ duyệt được (409 MES_FILLED); QA KHÔNG ĐẠT ở bồn ⇒ mẻ REJECTED + lý do; danh sách bồn: bồn 5 chứa 100 / không đạt, bồn 3 trống không còn phần đặt',
+      unQa.s === 409 && unQa.j?.error?.code === 'MES_FILLED' && tq.s === 200 && fbNow?.qa_status === 'REJECTED' && fbNow?.qa_note === 'QA63 không đạt'
+        && num(t5?.content) === 100 && t5?.qa_state === 'REJECTED' && num(t5?.reserved) === 0 && t3?.qa_state === 'EMPTY' && num(t3?.reserved) === 0,
+      `http=${unQa.s}/${tq.s} ${JSON.stringify(fbNow ?? null)} t5=${JSON.stringify(t5 && { c: t5.content, q: t5.qa_state, r: t5.reserved })}`)
+  }
 
   // ── [14] CHỨC DANH CHỈ CÓ QUYỀN SẢN XUẤT (16/11 — nghiệm thu bằng vai thật): form Mở / Sửa mẻ, Định mức tìm mã qua danh mục Mã hàng ──
   if (!bcrypt) console.log('  ⏭  [14] không load được bcrypt của backend — bỏ qua')

@@ -126,7 +126,7 @@ Sửa module nào thì đọc `docs/modules/<key>.md` của nó và các file tr
 - **SAP → xe:** ZSD02/VL06O (`external_do_sap`) → Điều vận (`dispatch`) → Kế hoạch xuất (`external_khvc`) → chuyến Xuất kho (`outbound`) và lệnh vận chuyển (`tms_plan`) → khung giờ, cổng, cân → cước (`freight`). Xuất kho là kết quả dẫn xuất: muốn sửa thì sửa ở nguồn. Với kho dùng bàn ghép xe, bàn là cửa ghi duy nhất của Kế hoạch xuất. Luật ghép xe nằm trong một hàm `manualRuleBlocks`. "Đã xuất" chỉ tính theo chuyến hoàn thành trong app, không theo cờ SAP. Ngày giao trong ZSD02 không quyết định gì.
 - **Tồn kho** là đích ghi của nhập, xuất, nhặt lẻ, kiểm kê, dồn/tách, slotting, fill: mọi cửa ghi theo đơn vị gốc và nguyên tử.
 - **Hạ hàng xuống ô nhặt lẻ:** Fill ⇄ Việc cần làm ⇄ Nhặt lẻ. Phép trừ "đã có người lo" đếm cả hai nguồn.
-- **Sản xuất (MES, `production`):** kho chế biến là kho phụ nội bộ; nguyên liệu → mẻ → bồn → Sổ đóng gói → pallet thành phẩm. Rút nguyên liệu vào mẻ và "xuất tiêu hao" ở kho phụ là hai cửa trừ cùng một sổ, nên cùng luật giữ QA và FEFO. Hàng có tem QR phải quét. Sổ bồn chỉ ghi thêm. Chuỗi gia phả mẻ không lưu trữ ra ngoài. Chi tiết: `docs/modules/production.md`.
+- **Sản xuất (MES, `production`):** kho chế biến là kho phụ nội bộ; nguyên liệu → mẻ → bồn → Sổ đóng gói → pallet thành phẩm. Rút nguyên liệu vào mẻ và "xuất tiêu hao" ở kho phụ là hai cửa trừ cùng một sổ, nên cùng luật giữ QA và FEFO. Hàng có tem QR phải quét. Sổ bồn chỉ ghi thêm. Mẻ gắn một bồn từ lúc tạo, mã lô tự ghép (chữ nhà máy + chu kỳ + số mẻ + mã bồn); QA đạt / không đạt bấm ở bồn; điều kiện của mẻ chỉ tính ở hàm `mes_batch_gate`. Chuỗi gia phả mẻ không lưu trữ ra ngoài. Chi tiết: `docs/modules/production.md`.
 - **Hàng trả về:** phiếu nhập `source_type='RETURN'`; chi tiết ở `docs/modules/inbound.md`.
 - **Khách hàng** nuôi %Date (kho), kho đích chuyển kho (`Customer.warehouse_id`) và luật dòng xe (điều vận). **Loại kho** quyết định phạm vi quyền và điều kiện bảo quản.
 - Mẫu lỗi hay gặp nhất: hai cửa cùng ghi hoặc đọc một sổ mà khác luật (form ↔ upload ↔ API ↔ máy tự làm). Đổi luật ở một cửa thì rà mọi cửa của bảng đó.
@@ -179,7 +179,7 @@ Sửa module nào thì đọc `docs/modules/<key>.md` của nó và các file tr
 | `packing` | Sổ đóng gói | Sổ đóng gói | view, record, open_run, edit, cancel, export | [docs/modules/packing.md](docs/modules/packing.md) |
 | `inbound_plan` | Kế hoạch nhập chuyển kho | trong TMS Bookings (tab Kế hoạch) | view, edit | [docs/modules/inbound_plan.md](docs/modules/inbound_plan.md) |
 | `external_khvc` | Dữ liệu bên ngoài → Kế hoạch xuất | Dữ liệu bên ngoài → Kế hoạch xuất | view, create, edit, delete | [docs/modules/external_khvc.md](docs/modules/external_khvc.md) |
-| `production` | Sản xuất (Mẻ chế biến · Bồn) | Mẻ chế biến · Bồn · Báo cáo NVL · Định mức · Cài đặt MES (nhóm menu cấp 1 "Sản xuất (MES)") — MES gđ1 | view, open_batch, consume, reverse, qa_release, manage_tank, tank_ops, export, configure, manage_recipe, shift_report, process_log, edit_requirement | [docs/modules/production.md](docs/modules/production.md) |
+| `production` | Sản xuất (Mẻ chế biến · Bồn) | Mẻ chế biến · Bồn · Báo cáo NVL · Định mức · Cài đặt MES (nhóm menu cấp 1 "Sản xuất (MES)") — MES gđ1 | view, open_batch, consume, reverse, qa_release, manage_tank, tank_ops, export, configure, manage_recipe, shift_report, process_log, edit_requirement, approve_lead, approve_qa, print_label, pour | [docs/modules/production.md](docs/modules/production.md) |
 
 ## Skill
 

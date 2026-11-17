@@ -5,7 +5,7 @@
 
 **Trang:** Mẻ chế biến (bàn làm việc của mẻ) · Bồn · Báo cáo NVL · Định mức · Cài đặt MES — nhóm menu CẤP 1 "Sản xuất (MES)" đứng TRÊN Kho (WMS) (user chốt 14/11 tối: "cho MES lên phía trên của WMS") (user chốt 14/11 "tách MES riêng": chỉ tách menu, vẫn chung app + chung DB; Sổ đóng gói giữ ở Kho (WMS) → Nhập hàng; đường dẫn `/wms/production…` không đổi)
 
-**Quyền (BE `ALL_PERMISSIONS`):** view · open_batch · consume · reverse · qa_release · manage_tank · tank_ops · export · configure · manage_recipe · shift_report · process_log · edit_requirement
+**Quyền (BE `ALL_PERMISSIONS`):** view · open_batch · consume · reverse · qa_release · manage_tank · tank_ops · export · configure · manage_recipe · shift_report · process_log · edit_requirement · approve_lead · approve_qa · print_label · pour
 
 ## Giao thoa với
 <!-- giao-thoa:start -->
@@ -13,13 +13,51 @@
 - [`packing`](packing.md) — Sổ đóng gói (trang sổ gắn bồn, đóng trang khai lượng rút — một giao dịch)
 - [`traceability`](traceability.md) — Truy xuất lô (gia phả sản xuất: NVL → mẻ → bồn → trang sổ → pallet TP)
 - [`outbound`](outbound.md) — Xuất kho ("xuất tiêu hao" ở kho phụ cũng trừ tồn kho chế biến — hai cửa cùng một sổ)
-- [`wms_settings`](wms_settings.md) — Cài đặt WMS (kho chế biến = kho phụ nội bộ; cột `production_qa_gate` nằm ở Kho / Loại kho nhưng CỬA GHI là Cài đặt MES — cửa Loại kho của Cài đặt WMS không được đè)
+- [`wms_settings`](wms_settings.md) — Cài đặt WMS (chữ nhà máy trong mã lô = "Mã NMSX" của kho chế biến, trống thì của kho cha; kho chế biến = kho phụ nội bộ; cột `production_qa_gate` nằm ở Kho / Loại kho nhưng CỬA GHI là Cài đặt MES — cửa Loại kho của Cài đặt WMS không được đè)
+- [`pallet_print`](pallet_print.md) — In tem pallet (tem pallet CỦA MẺ dùng chung khổ tem 1/4 A4 + CSS in `PALLET_PRINT_CSS` + `QRImg` của `components/shared/palletLabel.tsx`; QR tiền tố `MEB;` để không lẫn tem pallet nhập kho)
 - [`materials`](materials.md) — Mã hàng (`tank_hold_hours` hạn lưu bồn — sửa ở Cài đặt MES, form Mã hàng chỉ hiển thị; `batch_prefix` làm tiền tố mã lô gợi ý)
 <!-- giao-thoa:end -->
 
+## LUỒNG LÀM VIỆC CỦA MẺ (17/11 đêm — user chốt 10 điểm; migration `20261117b_mes_workflow`)
+
+**Đọc mục này trước — nó THAY các luật cũ: "mã lô app gợi ý, sửa được" và "QA thả / giữ / loại ở trang mẻ".**
+
+Luồng: **trưởng ca** tạo mẻ + duyệt → **QA** duyệt → **công nhân trộn** quét tem QR nguyên liệu để cấp → **QA** bấm các mốc trên phiếu → **QA** in tem pallet của mẻ → **công nhân đổ bồn** khai chu kỳ · số mẻ · bồn đang đứng, quét tem khớp mới đổ → **Nạp bồn** → **QA đạt / không đạt ở BỒN**.
+
+| Tình huống | Kết quả |
+|---|---|
+| Tạo mẻ thiếu chu kỳ / bồn | 400 — chu kỳ (1–6 chữ số), bồn bắt buộc; số mẻ trống ⇒ số kế tiếp của chu kỳ (1–9999) |
+| Mã lô | Không gõ tay. `<chữ nhà máy><chu kỳ><số mẻ 4 số><mã bồn>` (vd `B300001BD62`) — hàm `mes_batch_code`; chữ nhà máy = `Warehouse.nmsx_code` của kho chế biến, trống thì của kho cha; cả hai trống ⇒ 422 `MES_NO_PLANT` |
+| Hai mẻ cùng chu kỳ cùng số | 409 `BATCH_NO_DUP` (chỉ mục duy nhất `(warehouse_id, cycle, batch_no)` trừ mẻ đã huỷ); mã lô trùng mẻ ĐÃ HUỶ ⇒ 409 `MES_CODE_USED` |
+| Bồn đang chứa / đã đặt cho mã BTP khác | 409 `MES_MIX_MATERIAL` ngay lúc tạo mẻ / đổi bồn |
+| Kế hoạch > chỗ trống của bồn | 409 `MES_OVER_CAPACITY`. Chỗ trống = sức chứa − đang chứa − Σ (kế hoạch − đã nạp) của các mẻ ĐANG MỞ khác đã đặt bồn đó (`mes_tank_room_check`, gọi sau khi khoá dòng bồn). Sửa kế hoạch cũng kiểm lại |
+| Đổi chu kỳ / số mẻ / bồn TRƯỚC khi nạp | Được (`mes_batch_identity`): mã lô ghép lại; tem đã in mất hiệu lực (`label_ver` +1, `label_at` = null), PATCH trả `relabel: true`, trang mẻ hiện băng "in lại tem" |
+| Đổi bồn SAU khi nạp | 409 `MES_FILLED` — mã lô đứng yên; đưa sang bồn khác = Chuyển bồn ở trang Bồn |
+| Nạp mẻ vào bồn khác bồn đã đặt | 409 `MES_WRONG_TANK` (luôn áp, không cần cờ) |
+| QA đạt / không đạt | Bấm ở BỒN: `POST /tanks/:id/qa` (`mes_tank_qa`, quyền `qa_release`) ghi `production_batch.qa_status` của MỌI mẻ đang có lô trong bồn. Mẻ mới nạp thêm mang HOLD ⇒ bồn về "chờ QA". Bồn trống ⇒ 409 `MES_TANK_EMPTY`; không đạt thiếu lý do ⇒ 422. Cửa `POST /batches/:id/qa` ĐÃ GỠ. Luật "lô QA loại luôn chặn rút đóng gói" + công tắc lô chờ QA giữ nguyên |
+| Hai bước duyệt | `approve-lead` (quyền `approve_lead`) rồi `approve-qa` (`approve_qa`). QA duyệt cần trưởng ca đã duyệt; trưởng ca bỏ duyệt cần QA chưa duyệt; QA bỏ duyệt chỉ khi mẻ chưa nạp bồn. Trưởng ca duyệt cần phiếu có ít nhất một nguyên liệu |
+| QA đã duyệt mà sửa định mức / kế hoạch / mã / đổi công thức | 409 `MES_APPROVED` — bỏ duyệt rồi mới sửa (áp cho mọi kho, vì chỉ xảy ra khi đã có người duyệt) |
+| Tem pallet của mẻ | `POST /batches/:id/labels {count}` (quyền `print_label`): QR `MEB;<mã lô>;<i>;<n>;<bản tem>` (`utils/batchLabel.ts`, có test). Cùng số pallet + tem còn hiệu lực = in lại; đổi số pallet = bản tem mới, tem cũ bị từ chối. Đã nạp bồn thì không đổi số pallet. App KHÔNG ghi nguyên liệu nào nằm trên pallet nào |
+| Đổ bồn | `GET /pour-status?warehouse_id&tank_id&cycle&batch_no`: khai sai bồn ⇒ 409 `MES_WRONG_TANK` nói đúng bồn phải đổ. `POST /pour-scan` (quyền `pour`, `mes_pour_scan`, bảng `batch_pour_scan`): tem nguyên liệu ⇒ 422 `NOT_BATCH_LABEL`; tem mẻ khác ⇒ `MES_WRONG_LABEL`; tem bản cũ ⇒ `MES_LABEL_VOID`; quét lại ⇒ `MES_ALREADY` |
+| Phiếu: bấm mốc giờ | `POST …/process-log/:form/stamp {key}` (`mes_log_stamp`): ghi HH:MM giờ VN của MÁY CHỦ + người bấm vào `batch_process_log.stamps`; bấm lần hai ⇒ 409 `MES_ALREADY`; sửa giờ tại phiếu (PUT) giữ vết `edited_by` / `edited_at` |
+| Ô "bắt buộc" của mẫu phiếu | Cờ `required` trên ô (Cài đặt MES → Mẫu phiếu → ⋯ "Bắt buộc ghi trước khi nạp bồn"). Kiểm trên các phiếu mẻ ĐÃ MỞ; mẻ chưa mở phiếu nào mà có mẫu đang dùng mang ô bắt buộc ⇒ "Chưa ghi phiếu theo dõi" |
+
+**Cờ `Warehouse.mes_flow_gate`** (Cài đặt MES → "Luồng làm việc của mẻ" → "Chặn theo từng bước"; mặc định TẮT = như trước; staging bật cho Chế biến Ba Vì). Chỉ cờ này gác HAI chỗ chặn:
+- **cấp nguyên liệu** khi chưa đủ hai duyệt ⇒ 409 `MES_NOT_APPROVED` — `consumeGateError` dùng ở CẢ HAI cửa cấp (quét tem · chọn lô);
+- **nạp bồn** ⇒ 409 `MES_NOT_READY` kèm danh sách còn thiếu: hai duyệt · nguyên liệu dưới cận dưới mức lệch (cấp vượt vẫn chỉ tô đỏ) · ô bắt buộc · chưa in tem · chưa quét đủ n/n tem tại đúng bồn.
+Một hàm `mes_batch_gate(batch_id)` cho cả màn hình (`getBatch` trả `gate`) lẫn hàm nạp bồn — đừng tự tính điều kiện ở chỗ khác. Mã lô mới, chu kỳ / số mẻ / bồn bắt buộc, QA ở bồn, đúng bồn mới nạp: áp cho MỌI kho, không cần cờ.
+
+**Màn hình:**
+- Form Mở / Sửa mẻ (`BatchFormSheet`): Chu kỳ · Số mẻ (gợi ý) · Bồn (in chỗ trống từng bồn) · ô Mã lô chỉ đọc; kế hoạch vượt chỗ ⇒ đỏ tại ô.
+- Trang mẻ: dải 8 bước `FlowStrip` (chỉ hiện khi kho bật cờ); **nút chính = đúng bước đang tới** (bước trước xong mới tới bước sau), các việc khác vào ⋮. Bồn trên header bấm được để đổi. Nhãn QA chỉ hiện. Thẻ phiếu: dấu hiệu Chưa ghi / Đang ghi / Đã ghi đủ / QA đã xác nhận (màu viền), MỘT nút mốc kế tiếp (`formProgress` ở `config/processForms.ts`: mốc = các ô kiểu Giờ của nhóm ô, theo thứ tự mẫu), nút "Mở phiếu" để xem / sửa.
+- `components/wms/production/BatchFlow.tsx`: `BatchLabelSheet` (in tem 1/4 A4: QR + mã lô + ô lớn Chu kỳ / Mẻ / Bồn / Pallet i/n) · `PourSheet` (khai bồn · chu kỳ · số mẻ → quét bằng súng / camera / gõ; sai thì băng đỏ; đủ thì Nạp bồn) · `TankQaSheet`.
+- Trang Bồn: mặc định **SƠ ĐỒ BỒN 2D** (`TankMimic`, nút đổi sang Bảng; nhớ ở `useWmsFilterStore.productionTanks.view`). Theo lối màn hình điều khiển nhà máy: thân bồn trung tính, mực tỷ lệ đúng sức chứa, thang chia 25 / 50 / 75 / 100 %, mỗi mẻ một lớp, màu chỉ nói tình trạng (QA đạt xanh · chờ QA vàng · không đạt / quá hạn lưu đỏ), phần gạch chéo = mẻ đã đặt bồn mà chưa nạp. Realtime qua `production_tank` / `production_batch` (mọi hàm ghi đều chạm `production_tank.updated_at`). `GET /tanks` trả thêm `incoming` · `reserved` · `qa_state`.
+
+**Staging (17/11):** dữ liệu cũ của Chế biến Ba Vì đã xoá theo lệnh user; kho chuyển sang chế độ QR + bật cờ; 20 pallet tồn thử đều có tem (dạng `ddmmyy_mãhàng_1_N_stt_B`, ghi chú "Demo MES — tồn thử có tem QR (17/11)"); bốn chức danh thử `jt-mes-lead` · `jt-mes-qa` · `jt-mes-mixer` · `jt-mes-pour`.
+
 ## Trang / nghiệp vụ
 
-Nhà máy sữa: NVL → **mẻ chế biến** → bán thành phẩm (BTP) trong **bồn** → **Sổ đóng gói** → pallet thành phẩm. User chốt 14/11: thiết kế trước khi có kết quả phiếu khảo sát; giai đoạn 1 = nối lô + tồn theo bồn; rút NVL = quét tem HOẶC chọn lô + số lượng; mẻ tạo tay trong app; mã lô app gợi ý, sửa được; bồn chưa QA thả = cho rót, chỉ cảnh báo (công tắc); quá hạn lưu bồn = chỉ cảnh báo; lượng rút khai khi đóng trang sổ.
+Nhà máy sữa: NVL → **mẻ chế biến** → bán thành phẩm (BTP) trong **bồn** → **Sổ đóng gói** → pallet thành phẩm. User chốt 14/11: thiết kế trước khi có kết quả phiếu khảo sát; giai đoạn 1 = nối lô + tồn theo bồn; rút NVL = quét tem HOẶC chọn lô + số lượng; mẻ tạo tay trong app; mã lô tự ghép từ chu kỳ + số mẻ + bồn (17/11 — xem mục Luồng làm việc của mẻ); bồn chưa QA thả = cho rót, chỉ cảnh báo (công tắc); quá hạn lưu bồn = chỉ cảnh báo; lượng rút khai khi đóng trang sổ.
 
 - **Kho chế biến = KHO PHỤ NỘI BỘ** (`Warehouse.parent_warehouse_id`, có từ 10/07) — mẻ và bồn chỉ mở / khai ở kho phụ (422 `NOT_PRODUCTION_WAREHOUSE`). KHÔNG thêm loại kho mới (32 chỗ so `CENTRAL`/`NPP`). NVL sang kho chế biến bằng chuyển kho / Xuất luôn có sẵn, pallet giữ tem gốc.
 - **Rút NVL vào mẻ** — hai đường, cùng sổ `batch_consumption`, cùng luật trừ tồn (kho của mẻ · không QA giữ qua `qa_is_hold` · còn > 0 sau giữ chỗ · mã có đơn vị nhập phải số nguyên base):
@@ -31,7 +69,7 @@ Nhà máy sữa: NVL → **mẻ chế biến** → bán thành phẩm (BTP) tron
 - **Bồn** (`production_tank` + `tank_lot` + `tank_movement`): một bồn một mã BTP (chặn trộn mã), đơn vị bồn = base của mã BTP (L/KG), chặn vượt sức chứa (khoá dòng bồn). Nhiều mẻ chung một bồn được ⇒ mọi lần lấy ra (`mes_tank_take`: rút cho trang sổ · xả · điều chỉnh giảm · chuyển đi) **chia theo tỷ lệ lượng còn của từng mẻ**, làm tròn 3 số lẻ, phần dư vào lô lớn nhất. Chuyển bồn giữ lúc nạp + hạn lưu gốc (trộn thì hạn theo phần cũ nhất). Điều chỉnh mức bắt buộc lý do.
 - **Sổ đóng gói rút từ bồn:** trang sổ chọn bồn của chính kho hoặc kho phụ trực thuộc (`tanks-for-run`); đóng trang khai lượng rút ⇒ hàm `mes_close_run` đóng trang + rút bồn trong MỘT giao dịch. Rút gặp lô chưa QA thả ⇒ công tắc 2 tầng Kho + Loại kho `production_qa_gate` (OFF / WARN mặc định / BLOCK — `services/productionGate.ts`); quá hạn lưu ⇒ chỉ cảnh báo; cảnh báo lưu vào `tank_movement.warning`. **Lô QA LOẠI (REJECTED) khác lô CHỜ QA (14/11, C111):** không nạp vào bồn, bồn đang chứa nó không rút cho đóng gói được BẤT KỂ công tắc (409 `MES_QA_REJECTED`) — công tắc chỉ nói về lô HOLD; xả bỏ / chuyển / điều chỉnh vẫn làm được. Lượng bồn giữ tối đa 3 số lẻ (`round3` ở controller + lưới tổng phần chia trong `mes_tank_take`). Form Giờ kết thúc của trang GẮN BỒN bắt khai lượng rút (0 = không rút) — để trống từng đóng trang âm thầm, mất đường truy xuất.
 - **Sửa / khai bù lượng rút SAU khi trang đã đóng (14/11 tối, user chốt "Sửa được"):** `POST /wms/packing-runs/:id/tank-draw` `{ tank_qty (TỔNG mới, 0 = không rút), reason }` — quyền `packing.edit`, hàm `mes_run_redraw`. Sổ bồn CHỈ GHI THÊM: tăng ⇒ rút thêm phần chênh qua `mes_tank_take` (cùng luật QA, chia theo tỷ lệ các mẻ ĐANG trong bồn); giảm ⇒ trả phần chênh về bồn chia theo tỷ lệ lượng thuần trang đã rút của từng mẻ (dòng DRAW dấu +, kèm lý do; lô đã cạn thì mở lại, giữ lúc nạp + hạn lưu gốc). Chặn: trang đang mở (409 `MES_RUN_NOT_CLOSED`) · chưa gắn bồn · bồn nay đã chứa mã khác · vượt sức chứa · rút thêm quá lượng bồn có. Mọi chỗ đọc "trang rút bao nhiêu từ mẻ nào" phải cộng ĐẠI SỐ các dòng DRAW (`mes_genealogy` chỉ nối cặp có lượng thuần > 0; FE `runDrawn`).
-- **Lô QA loại ⇒ muốn dùng lại (kể cả hạ cấp) thì QA đổi kết luận ở trang mẻ** — không có đường vòng nào khác (user xác nhận 14/11 tối). Hạ cấp (KPH) KHÔNG có trạng thái riêng — user chốt 14/11: "không cần, bấm Thả là được"; đừng đề xuất lại.
+- **Lô QA loại ⇒ muốn dùng lại (kể cả hạ cấp) thì QA đổi kết luận ở trang Bồn (17/11; trước đó ở trang mẻ)** — không có đường vòng nào khác (user xác nhận 14/11 tối). Hạ cấp (KPH) KHÔNG có trạng thái riêng — user chốt 14/11: "không cần, bấm Thả là được"; đừng đề xuất lại.
 - **Truy xuất sản xuất:** `GET /wms/production/genealogy?kind=BATCH|FG_PALLET|RM_PALLET` (hàm `mes_genealogy`) — phạm vi = kho được giao + kho phụ trực thuộc (chỉ đọc). Đi tiếp từ pallet TP tới NPP / xe = `lot_trace` sẵn có.
 - **Danh sách mẻ:** hàm `mes_batch_page` trả dòng + tổng + ô band trong MỘT lời gọi.
 - Lỗi nghiệp vụ từ hàm DB: `MESERR:<MÃ>|<câu>` ⇒ controller dịch 404 / 422 / 409 `MES_<MÃ>`.
@@ -85,8 +123,8 @@ User 16–17/11: "mẻ chọn SC CĐ Long Thành ⇒ ra NVL và định mức th
 - Đóng trang sổ có khai lượng rút ⇒ tải lại bồn / mẻ ngay (như Sửa lượng rút).
 
 ## Màn hình (14/11)
-- **Mẻ chế biến** `/wms/production` (`ProductionBatches.tsx`): phân trang server, lọc ngày SX · kho · trạng thái · QA; lọc theo kho NHÀ MÁY gồm các kho chế biến trực thuộc. Nút chính "Mở mẻ" (`BatchFormSheet`: mã lô gợi ý tự điền, sửa được).
-- **Chi tiết mẻ** `/wms/production/:id`: nút chính "Rút NVL" (`ConsumeSheet`: Quét tem — súng PDA chỉ nghe khi đang chờ quét / camera / gõ; Không có tem — chọn mã đang có tồn → bảng lô HSD sớm lên đầu); Nạp bồn · QA thả / giữ / loại · Sửa · Đóng / Mở lại / Huỷ mẻ; bảng NVL đã rút (huỷ dòng có lý do), Ra bồn, Sổ nạp / rút.
+- **Mẻ chế biến** `/wms/production` (`ProductionBatches.tsx`): phân trang server, lọc ngày SX · kho · trạng thái · QA; lọc theo kho NHÀ MÁY gồm các kho chế biến trực thuộc. Nút chính "Mở mẻ" (`BatchFormSheet`: chu kỳ · số mẻ · bồn bắt buộc, mã lô tự ghép — 17/11).
+- **Chi tiết mẻ** `/wms/production/:id`: nút chính "Rút NVL" (`ConsumeSheet`: Quét tem — súng PDA chỉ nghe khi đang chờ quét / camera / gõ; Không có tem — chọn mã đang có tồn → bảng lô HSD sớm lên đầu); Nạp bồn · Sửa (QA đạt / không đạt: ở trang Bồn từ 17/11) · Đóng / Mở lại / Huỷ mẻ; bảng NVL đã rút (huỷ dòng có lý do), Ra bồn, Sổ nạp / rút.
 - **Bồn** `/wms/production/tanks`: mỗi dòng một bồn (% đầy là con số có màu, mẻ trong bồn bấm mở mẻ, hạn lưu, QA); thao tác gom một nút ⋮ (Nạp · Chuyển · Điều chỉnh · Xả · Sổ bồn · Sửa).
 - **Sổ đóng gói:** form Mở trang sổ có ô "Rút bán thành phẩm từ bồn" (chỉ hiện khi kho có bồn); Giờ kết thúc có ô "Lượng đã rút từ bồn"; chi tiết trang hiện bồn + lượng rút theo mẻ.
 - **Truy xuất lô:** nút "Sản xuất" → `GenealogySheet` (tem thành phẩm / tem NVL / mã lô BTP); bấm tem thành phẩm ⇒ điền bộ lọc Xuôi để truy tiếp tới khách / xe.
@@ -97,11 +135,13 @@ User 16–17/11: "mẻ chọn SC CĐ Long Thành ⇒ ra NVL và định mức th
 
 ## Actions
 
+**approve_lead** = trưởng ca duyệt / bỏ duyệt phiếu · **approve_qa** = QA duyệt / bỏ duyệt phiếu · **print_label** = in tem pallet của mẻ · **pour** = quét tem đổ bồn (cấp theo năng lực, migration `20261117b`: open_batch ⇒ approve_lead · qa_release ⇒ approve_qa + print_label · tank_ops ⇒ pour) · **qa_release** nay = QA đạt / không đạt ở BỒN + xác nhận phiếu.
+
 view · **configure** = sửa Cài đặt MES (cấp theo năng lực: `wms_settings.manage_warehouse` + `production.view`, migration `20261114e`) · **open_batch** = mở / sửa / đóng / mở lại / huỷ mẻ · **consume** = rút NVL vào mẻ · **reverse** = huỷ dòng rút · **qa_release** = QA giữ / thả / loại lô BTP · **manage_tank** = danh mục bồn · **tank_ops** = nạp / chuyển / điều chỉnh / xả bồn · **export** = Xuất Excel danh sách mẻ (FE) · **edit_requirement** = sửa định mức trên phiếu của mẻ (thêm / bỏ / sửa / đổi mã / đổi công thức, bắt buộc lý do) — vd trưởng ca; không tự cấp cho chức danh nào. Cấp quyền theo năng lực (migration `20261114`): `packing.open_run` ⇒ view/open_batch/consume/tank_ops · `packing.record` ⇒ view/consume · `inventory.qa_update` ⇒ view/qa_release · `wms_settings.manage_machine` ⇒ view/manage_tank.
 
 ## Gói QA
 
-`scripts/qa/63-production.mjs` (95 phép — thêm [10] bàn làm việc của mẻ / định mức / có tem phải quét · [11] báo cáo ca · [12] phiếu theo dõi · [13] mẫu phiếu cấu hình + sửa riêng tại bàn): mẻ ở kho phụ · mã lô gợi ý · tra tem · rút theo tem / theo lô · 5 người cùng rút một tem · bất biến nhập − còn = Σ rút sống · bồn (sức chứa, trộn, cặp id chéo kho, sửa bồn còn hàng) · trang sổ khai rút + công tắc QA · điều chỉnh / chuyển / xả · sửa / khai bù lượng rút của trang đã đóng (tăng · về 0 · trang mở · quá bồn · gia phả) · Cài đặt MES (đọc · ghi một lần · kho không phải chế biến · cửa Loại kho của Cài đặt WMS không đè) · lô QA loại chặn rút + nạp · đúng mã lô · dòng tồn không còn trong kho · gia phả ba chiều · sổ pallet · vòng đời mẻ.
+`scripts/qa/63-production.mjs` (131 phép — thêm [16] luồng của mẻ 17/11: mã lô tự ghép · bồn thiếu chỗ / khác mã · nạp sai bồn · hai duyệt chặn cả hai cửa cấp · tem pallet · đổ bồn sai bồn / sai tem / tem cũ · đổi bồn đổi mã lô · ô bắt buộc · bấm mốc giờ · QA ở bồn; thêm [10] bàn làm việc của mẻ / định mức / có tem phải quét · [11] báo cáo ca · [12] phiếu theo dõi · [13] mẫu phiếu cấu hình + sửa riêng tại bàn): mẻ ở kho phụ · mã lô gợi ý · tra tem · rút theo tem / theo lô · 5 người cùng rút một tem · bất biến nhập − còn = Σ rút sống · bồn (sức chứa, trộn, cặp id chéo kho, sửa bồn còn hàng) · trang sổ khai rút + công tắc QA · điều chỉnh / chuyển / xả · sửa / khai bù lượng rút của trang đã đóng (tăng · về 0 · trang mở · quá bồn · gia phả) · Cài đặt MES (đọc · ghi một lần · kho không phải chế biến · cửa Loại kho của Cài đặt WMS không đè) · lô QA loại chặn rút + nạp · đúng mã lô · dòng tồn không còn trong kho · gia phả ba chiều · sổ pallet · vòng đời mẻ.
 
 ## Ngoài giai đoạn 1
 

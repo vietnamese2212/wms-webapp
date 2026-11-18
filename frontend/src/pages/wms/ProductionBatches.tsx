@@ -24,7 +24,8 @@ import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { useProductionBatches, useProductionWarehouses, type BatchRow } from '@/api/productionHooks'
-import { StageBadge, BATCH_STAGE, BATCH_STAGES, stageOf, stageRowText, stageLabel } from '@/components/wms/production/BatchStage'
+import { StageBadge, StageSymbol, StageLegend, BATCH_STAGE, BATCH_STAGES, stageOf, stageRowText, stageLabel } from '@/components/wms/production/BatchStage'
+import { InfoTip } from '@/components/shared/InfoTip'
 import { unitCode } from '@/utils/unitCode'
 import { formatDate } from '@/utils/formatters'
 import { saveWorkbook } from '@/utils/saveExcel'
@@ -34,12 +35,17 @@ const TD = 'px-2 py-1 text-[10px] whitespace-nowrap'
 const NUM = `${TD} text-right font-semibold tabular-nums`
 const nf = (n: number | null | undefined) => Number(n ?? 0).toLocaleString('vi-VN', { maximumFractionDigits: 3 })
 const apiMsg = (e: unknown) => (e as AxiosError<{ error?: { message?: string } }>)?.response?.data?.error?.message ?? 'Lỗi không xác định'
+// THỨ TỰ CỘT (18/11 — user: "Mã lô cho ra sau cùng cũng được: Ngày, Chu kỳ · mẻ, bồn, Bán thành phẩm …"): mã lô ghép từ chu kỳ + mẻ +
+// bồn nên đứng cuối; tình trạng có KÝ HIỆU ngay trong ô Chu kỳ · Mẻ (điện thoại thấy ngay, không phải vuốt sang cột Tình trạng)
 const COLS: RtColDef[] = [
-  { id: 'code', label: 'Mã lô', w: 150 }, { id: 'cyc', label: 'Chu kỳ · Mẻ', w: 86 }, { id: 'tank', label: 'Bồn', w: 70 }, { id: 'day', label: 'Ngày SX', w: 88 }, { id: 'mat', label: 'Bán thành phẩm', w: 200 },
+  { id: 'day', label: 'Ngày SX', w: 104 },
+  { id: 'cyc', label: 'Chu kỳ · Mẻ', w: 100, head: <span className="inline-flex items-center gap-1">Chu kỳ · Mẻ<InfoTip tip={<StageLegend />} /></span> },
+  { id: 'tank', label: 'Bồn', w: 64 }, { id: 'mat', label: 'Bán thành phẩm', w: 200 },
   { id: 'stage', label: 'Tình trạng', w: 150 },   // mẻ đang làm ghi bước đang tới — "Check trước khi đổ bồn" là chữ dài nhất
   { id: 'rm', label: 'NVL đã rút', w: 88, align: 'right' }, { id: 'filled', label: 'Đã nạp bồn', w: 96, align: 'right' },
   { id: 'intank', label: 'Còn trong bồn', w: 100, align: 'right' }, { id: 'plan', label: 'Kế hoạch', w: 86, align: 'right' },
   { id: 'wh', label: 'Kho chế biến', w: 150 }, { id: 'machine', label: 'Máy · Ca', w: 100 }, { id: 'by', label: 'Người mở', w: 130 },
+  { id: 'code', label: 'Mã lô', w: 130 },
 ]
 
 export default function ProductionBatches() {
@@ -129,7 +135,7 @@ export default function ProductionBatches() {
           ...(totalPages > 1 ? [{ label: 'Trang', value: `${page}/${totalPages}` }] : []),
         ]} />
         <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
-          <ResizableTable storageKey="production_batches_cols_v4" cols={COLS}>
+          <ResizableTable storageKey="production_batches_cols_v5" cols={COLS}>
             <TableBody>
               {q.isError && <TableEmptyRow colSpan={COLS.length}><span className="text-red-600">{apiMsg(q.error)}</span></TableEmptyRow>}
               {!q.isError && q.isLoading && !rows.length && <TableEmptyRow colSpan={COLS.length}>Đang tải…</TableEmptyRow>}
@@ -140,18 +146,22 @@ export default function ProductionBatches() {
                 return (
                   <TableRow key={r.id} data-stage={stageOf(r.stage)} className={`cursor-pointer ${stageRowText(r.stage)} ${dense ? '' : '[&_td]:py-2.5'}`}
                     onClick={() => navigate(`/wms/production/${r.id}`)} title="Mở mẻ">
-                    <TableCell className={`${TD} sticky left-0 z-10 bg-white font-mono font-semibold`}>
-                      {/* 🔖 = đánh dấu ĐANG LÀM ⇒ tab "Đang làm:" trên trang mẻ (như danh sách Xuất kho) */}
+                    <TableCell className={`${TD} sticky left-0 z-10 bg-white tabular-nums`}>
+                      {/* 🔖 = đánh dấu ĐANG LÀM ⇒ tab "Đang làm:" trên trang mẻ (như danh sách Xuất kho) — đi theo cột ĐẦU */}
                       <button type="button" onClick={e => { e.stopPropagation(); if (pinned) unpinBatch(r.id); else pinBatch({ id: r.id, code: r.batch_code, stage: r.stage }) }}
                         className={`p-1 -my-1 -ml-1 mr-0.5 rounded align-middle transition-colors ${pinned ? 'text-amber-500' : 'text-slate-300 hover:text-slate-500'}`}
                         title={pinned ? 'Bỏ đánh dấu đang làm' : 'Đánh dấu đang làm'} aria-label={`${pinned ? 'Bỏ đánh dấu' : 'Đánh dấu'} đang làm ${r.batch_code}`} aria-pressed={pinned}>
                         <Bookmark className="h-3 w-3" fill={pinned ? 'currentColor' : 'none'} />
                       </button>
-                      {r.batch_code}
+                      {formatDate(r.prod_date)}
                     </TableCell>
-                    <TableCell className={`${TD} font-mono`}>{r.cycle || r.batch_no ? `${r.cycle ?? '—'} · ${r.batch_no ? String(r.batch_no).padStart(4, '0') : '—'}` : <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className={`${TD} font-mono`} data-cyc>
+                      <span className="inline-flex items-center gap-1.5">
+                        {r.cycle || r.batch_no ? `${r.cycle ?? '—'} · ${r.batch_no ? String(r.batch_no).padStart(4, '0') : '—'}` : <span className="text-slate-300">—</span>}
+                        <StageSymbol stage={r.stage} step={r.step} />
+                      </span>
+                    </TableCell>
                     <TableCell className={`${TD} font-mono font-semibold`}>{r.tank_code ?? <span className="text-slate-300 font-normal">—</span>}</TableCell>
-                    <TableCell className={`${TD} tabular-nums`}>{formatDate(r.prod_date)}</TableCell>
                     <TableCell className={`${TD} truncate`} title={r.material_name ?? ''}><span className="font-mono font-semibold">{r.material_code}</span> {r.material_name ?? ''}</TableCell>
                     <TableCell className={TD} data-step={r.step ?? undefined}><StageBadge stage={r.stage} step={r.step} /></TableCell>
                     <TableCell className={NUM} title={`${r.rm_lines} dòng rút · ${r.rm_materials} mã nguyên liệu`}>{r.rm_lines ? <>{r.rm_lines} <span className="text-slate-400 font-normal">dòng</span></> : <span className="text-slate-300 font-normal">—</span>}</TableCell>
@@ -161,6 +171,7 @@ export default function ProductionBatches() {
                     <TableCell className={`${TD} truncate`}>{r.warehouse_name}</TableCell>
                     <TableCell className={TD}>{[r.machine_code, r.shift].filter(Boolean).join(' · ') || <span className="text-slate-300">—</span>}</TableCell>
                     <TableCell className={`${TD} truncate`}>{r.opened_by_name ?? <span className="text-slate-300">—</span>}</TableCell>
+                    <TableCell className={`${TD} font-mono font-semibold`}>{r.batch_code}</TableCell>
                   </TableRow>
                 )
               })}

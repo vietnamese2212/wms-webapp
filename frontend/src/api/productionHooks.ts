@@ -64,6 +64,8 @@ export interface BatchRow {
   status: BatchStatus; qa_status: BatchQa; qa_at: string | null; qa_by_name: string | null
   /** tình trạng theo bước (18/11 — hàm DB mes_batch_stage): new · wait_lead · wait_qa · working · filled · released · rejected · cancelled */
   stage: string
+  /** mẻ đang làm: BƯỚC ĐANG TỚI (18/11 d — mes_batch_gate.step, cùng giá trị dải bước của trang mẻ): rm · log · label · pour · fill */
+  step?: string | null
   note: string | null; opened_by_name: string | null; created_at: string
   rm_lines: number; rm_materials: number; filled: number; in_tank: number
 }
@@ -121,6 +123,11 @@ export interface BatchGate {
   fill_blockers: string[]
   /** tình trạng của mẻ (18/11) — cùng hàm mes_batch_stage với danh sách */
   stage?: string
+  /** BƯỚC ĐANG TỚI (18/11 d): lead · qa · rm · log · label · pour · fill · tankqa; mẻ xong / huỷ = null — dải bước + cột Tình trạng
+   *  của danh sách đọc CÙNG giá trị này (không tự tính ở trình duyệt) */
+  step?: string | null
+  /** mẻ có phiếu nguyên liệu (dòng yêu cầu chưa bỏ) — chưa có thì bước Cấp nguyên liệu chưa xong */
+  has_req?: boolean
 }
 export interface BatchLabel { pallet_no: number; qr: string }
 /** NVL HẾT HẠN (17/11 — "chặn và cho qua khi QA duyệt"): yêu cầu / quyết định QA cho MỘT tem (entry_id) hoặc MỘT lô không tem, của MỘT mẻ */
@@ -256,6 +263,8 @@ export interface PickItem {
  *  LÔ. state: OK = cấp được · EXPIRED = hết hạn chưa QA duyệt · QA = QA giữ. rank 1 = nên lấy trước (chung cả có tem lẫn không tem). */
 export interface PickGroup {
   key: string; kind: 'TEM' | 'LOT'; state: 'OK' | 'EXPIRED' | 'QA'; rank: number | null
+  /** vị trí trong thứ tự CHUNG của cả có tem lẫn không tem (server xếp) — gộp hai danh sách thì xếp theo số này, không tự so ngày */
+  pos?: number
   rot_date: string | null; pct_date: number | null; expiry_date: string | null; production_date: string | null; batch_lot: string | null
   location_code: string | null; locations: string[]; available: number; count: number; qa_name: string | null
   /** nhóm có hàng quá HSD (đã được QA duyệt cho mẻ thì state vẫn là OK) */
@@ -364,11 +373,12 @@ export interface PourView {
     tank: { id: string; code: string; capacity: number; unit: string } | null }
   scans: PourScan[]; gate: BatchGate | null; filled: number
 }
-/** Công nhân đổ bồn khai chu kỳ · số mẻ · bồn đang đứng ⇒ mẻ (sai bồn ⇒ 409 MES_WRONG_TANK) — gọi tay, không cache */
-export async function fetchPourStatus(p: { warehouse_id: string; tank_id: string; cycle: string; batch_no: number }): Promise<PourView> {
-  return (await apiClient.get('/wms/production/pour-status', { params: p })).data.data as PourView
+/** "Check trước khi đổ bồn" mở từ trang mẻ: tình trạng quét tem của mẻ đó (18/11 — chỉ quét, không khai chu kỳ / số mẻ) — gọi tay, không cache */
+export async function fetchPourStatus(batchId: string): Promise<PourView> {
+  return (await apiClient.get('/wms/production/pour-status', { params: { batch_id: batchId } })).data.data as PourView
 }
-export const usePourScan = () => useProdMutation((b: { batch_id: string; tank_id: string; code: string }) => post<PourView & { pallet_no: number }>('/wms/production/pour-scan', b))
+/** Quét một tem pallet của mẻ tại bồn. Không gửi batch_id (mở ở thẻ bồn) ⇒ server lấy mẻ từ mã lô in trong tem; sai bồn ⇒ 409 */
+export const usePourScan = () => useProdMutation((b: { batch_id?: string; tank_id: string; code: string }) => post<PourView & { pallet_no: number }>('/wms/production/pour-scan', b))
 // ── Bàn làm việc của mẻ: yêu cầu nguyên liệu + định mức ──
 /** Sửa phiếu của mẻ (quyền edit_requirement, 17/11): có thay đổi thì BẮT BUỘC lý do · `replaces` = đổi mã (dòng mới thay cho mã cũ) */
 export const useSetRequirements = () => useProdMutation(({ batchId, items, reason }: { batchId: string; items: { material_id: string; qty: number; replaces?: string }[]; reason?: string }) =>

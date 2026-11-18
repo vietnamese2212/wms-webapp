@@ -24,7 +24,7 @@ import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { useProductionBatches, useProductionWarehouses, type BatchRow } from '@/api/productionHooks'
-import { StageBadge, BATCH_STAGE, BATCH_STAGES, stageOf, stageRowText } from '@/components/wms/production/BatchStage'
+import { StageBadge, BATCH_STAGE, BATCH_STAGES, stageOf, stageRowText, stageLabel } from '@/components/wms/production/BatchStage'
 import { unitCode } from '@/utils/unitCode'
 import { formatDate } from '@/utils/formatters'
 import { saveWorkbook } from '@/utils/saveExcel'
@@ -36,7 +36,7 @@ const nf = (n: number | null | undefined) => Number(n ?? 0).toLocaleString('vi-V
 const apiMsg = (e: unknown) => (e as AxiosError<{ error?: { message?: string } }>)?.response?.data?.error?.message ?? 'Lỗi không xác định'
 const COLS: RtColDef[] = [
   { id: 'code', label: 'Mã lô', w: 150 }, { id: 'cyc', label: 'Chu kỳ · Mẻ', w: 86 }, { id: 'tank', label: 'Bồn', w: 70 }, { id: 'day', label: 'Ngày SX', w: 88 }, { id: 'mat', label: 'Bán thành phẩm', w: 200 },
-  { id: 'stage', label: 'Tình trạng', w: 96 },
+  { id: 'stage', label: 'Tình trạng', w: 150 },   // mẻ đang làm ghi bước đang tới — "Check trước khi đổ bồn" là chữ dài nhất
   { id: 'rm', label: 'NVL đã rút', w: 88, align: 'right' }, { id: 'filled', label: 'Đã nạp bồn', w: 96, align: 'right' },
   { id: 'intank', label: 'Còn trong bồn', w: 100, align: 'right' }, { id: 'plan', label: 'Kế hoạch', w: 86, align: 'right' },
   { id: 'wh', label: 'Kho chế biến', w: 150 }, { id: 'machine', label: 'Máy · Ca', w: 100 }, { id: 'by', label: 'Người mở', w: 130 },
@@ -75,7 +75,7 @@ export default function ProductionBatches() {
   function exportExcel() {
     const sheet = rows.map((r: BatchRow) => ({
       'Mã lô': r.batch_code, 'Ngày SX': r.prod_date, 'Mã BTP': r.material_code, 'Tên BTP': r.material_name ?? '', 'Đơn vị': unitCode(r.base_unit),
-      'Tình trạng': BATCH_STAGE[stageOf(r.stage)].label, 'Dòng NVL đã rút': r.rm_lines, 'Số mã NVL': r.rm_materials,
+      'Tình trạng': stageLabel(r.stage, r.step), 'Dòng NVL đã rút': r.rm_lines, 'Số mã NVL': r.rm_materials,
       'Đã nạp bồn': Number(r.filled), 'Còn trong bồn': Number(r.in_tank), 'Kế hoạch': r.planned_qty ?? '', 'Kho chế biến': r.warehouse_name,
       'Máy': r.machine_code ?? '', 'Ca': r.shift ?? '', 'Người mở': r.opened_by_name ?? '', 'Ghi chú': r.note ?? '',
     }))
@@ -129,7 +129,7 @@ export default function ProductionBatches() {
           ...(totalPages > 1 ? [{ label: 'Trang', value: `${page}/${totalPages}` }] : []),
         ]} />
         <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
-          <ResizableTable storageKey="production_batches_cols_v3" cols={COLS}>
+          <ResizableTable storageKey="production_batches_cols_v4" cols={COLS}>
             <TableBody>
               {q.isError && <TableEmptyRow colSpan={COLS.length}><span className="text-red-600">{apiMsg(q.error)}</span></TableEmptyRow>}
               {!q.isError && q.isLoading && !rows.length && <TableEmptyRow colSpan={COLS.length}>Đang tải…</TableEmptyRow>}
@@ -153,7 +153,7 @@ export default function ProductionBatches() {
                     <TableCell className={`${TD} font-mono font-semibold`}>{r.tank_code ?? <span className="text-slate-300 font-normal">—</span>}</TableCell>
                     <TableCell className={`${TD} tabular-nums`}>{formatDate(r.prod_date)}</TableCell>
                     <TableCell className={`${TD} truncate`} title={r.material_name ?? ''}><span className="font-mono font-semibold">{r.material_code}</span> {r.material_name ?? ''}</TableCell>
-                    <TableCell className={TD}><StageBadge stage={r.stage} /></TableCell>
+                    <TableCell className={TD} data-step={r.step ?? undefined}><StageBadge stage={r.stage} step={r.step} /></TableCell>
                     <TableCell className={NUM} title={`${r.rm_lines} dòng rút · ${r.rm_materials} mã nguyên liệu`}>{r.rm_lines ? <>{r.rm_lines} <span className="text-slate-400 font-normal">dòng</span></> : <span className="text-slate-300 font-normal">—</span>}</TableCell>
                     <TableCell className={NUM}>{Number(r.filled) ? <>{nf(r.filled)} <span className="text-slate-400 font-normal">{u}</span></> : <span className="text-slate-300 font-normal">—</span>}</TableCell>
                     <TableCell className={NUM}>{Number(r.in_tank) ? <>{nf(r.in_tank)} <span className="text-slate-400 font-normal">{u}</span></> : <span className="text-slate-300 font-normal">—</span>}</TableCell>

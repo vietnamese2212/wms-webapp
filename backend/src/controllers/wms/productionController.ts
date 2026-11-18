@@ -871,6 +871,8 @@ export const zPickListQuery = z.object({ material_id: zText(1, 64) })
 type PickItem = { entry_id: string; pallet_code: string | null; batch: string | null; location_code: string | null; available: number
   import_date: string | null; expired: boolean; approval: ExpiryApproval | null }
 type PickGroup = { key: string; kind: 'TEM' | 'LOT'; state: 'OK' | 'EXPIRED' | 'QA'; rank: number | null
+  /** vị trí trong thứ tự CHUNG của cả có tem lẫn không tem (18/11 — "Lấy ở đâu" của cửa quét tem hiện cả hai, đúng thứ tự server) */
+  pos: number
   rot_date: string | null; pct_date: number | null; expiry_date: string | null; production_date: string | null; batch_lot: string | null
   location_code: string | null; locations: string[]; available: number; count: number; qa_name: string | null
   /** nhóm có hàng quá HSD (kể cả đã được QA duyệt cho mẻ — khi đó state = OK) */
@@ -897,7 +899,7 @@ export async function pickList(req: Request, res: Response) {
       const gk = r.noTem ? `L|${pd ?? ''}|${lot ?? ''}|${state}` : `T|${rotDate ?? ''}|${loc ?? ''}|${state}`
       let g = groups.get(gk)
       if (!g) {
-        g = { key: gk, kind: r.noTem ? 'LOT' : 'TEM', state, rank: null, rot_date: rotDate, pct_date: pct, expiry_date: dayOf(row.expiry_calc),
+        g = { key: gk, kind: r.noTem ? 'LOT' : 'TEM', state, rank: null, pos: 0, rot_date: rotDate, pct_date: pct, expiry_date: dayOf(row.expiry_calc),
           production_date: pd, batch_lot: r.noTem ? lot : null, location_code: r.noTem ? null : loc, locations: [], available: 0, count: 0,
           qa_name: r.qaHeld ? (row.qa_status?.name ?? row.qa_status?.code ?? null) : null, expired: false, violation: false,
           approval: r.noTem ? r.approval : null, items: [], minKey: r.key }
@@ -918,7 +920,7 @@ export async function pickList(req: Request, res: Response) {
     const sorted = [...groups.values()].sort((a, b) => (stateOrder[a.state] - stateOrder[b.state])
       || ((a.minKey ?? Infinity) - (b.minKey ?? Infinity)) || (a.available - b.available) || a.key.localeCompare(b.key))
     let rank = 0
-    const out: PickGroup[] = sorted.map(({ minKey, ...g }) => ({ ...g,
+    const out: PickGroup[] = sorted.map(({ minKey, ...g }, i) => ({ ...g, pos: i,
       rank: g.state === 'OK' ? ++rank : null,
       violation: g.state === 'OK' && !!best && isRotationViolation(minKey, best.key) }))
     return ok(res, {
@@ -1244,9 +1246,11 @@ export async function batchLabels(req: Request, res: Response) {
   } catch (e) { return failAny(res, e) }
 }
 
-// GET /wms/production/pour-status?warehouse_id=&tank_id=&cycle=&batch_no= — công nhân đổ bồn KHAI chu kỳ · số mẻ · bồn đang đứng
-// ⇒ mẻ phải đúng là mẻ của bồn đó (sai bồn báo ngay, trước khi quét tem nào).
-export const zPourStatusQuery = z.object({ warehouse_id: zText(1, 64), tank_id: zText(1, 64), cycle: zText(1, 20), batch_no: z.coerce.number().int().min(1).max(9999) })
+// "CHECK TRƯỚC KHI ĐỔ BỒN" CHỈ QUÉT (18/11 — user: "cái này chỉ quét, ko điền nhé"): bỏ khai chu kỳ · số mẻ · bồn đang đứng.
+// Mẻ đến từ trang mẻ đang mở (batch_id), hoặc từ CHÍNH tem quét đầu tiên khi mở ở thẻ bồn (mã lô trong QR `MEB;<mã lô>;i;n;bản`);
+// bồn đang đứng = thẻ bồn đã bấm ⇒ tem của mẻ thuộc bồn khác vẫn bị báo SAI BỒN ngay (mes_pour_scan).
+// GET /wms/production/pour-status?batch_id= — tình trạng quét tem của một mẻ (form mở từ trang mẻ)
+export const zPourStatusQuery = z.object({ batch_id: zText(1, 64) })
 async function pourView(batchId: string) {
   const [{ data: b }, { data: gate }] = await Promise.all([
     db.from('production_batch').select('id, batch_code, cycle, batch_no, planned_qty, label_count, label_ver, label_at, tank_id, status, material:Material!production_batch_material_id_fkey(material_code, short_name, base_unit), tank:production_tank!production_batch_tank_id_fkey(id, code, capacity, unit)')
@@ -1263,28 +1267,33 @@ async function pourView(batchId: string) {
 export async function pourStatus(req: Request, res: Response) {
   try {
     const q = req.query as unknown as z.infer<typeof zPourStatusQuery>
-    if (!(await inScope(req, q.warehouse_id))) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
-    const cycle = normalizeCycle(q.cycle)
-    const { data: b } = await db.from('production_batch').select('id, batch_code, tank_id, tank:production_tank!production_batch_tank_id_fkey(code)')
-      .eq('warehouse_id', q.warehouse_id).eq('cycle', cycle).eq('batch_no', q.batch_no).eq('status', 'OPEN').maybeSingle()
-    if (!b) return fail(res, 404, 'NOT_FOUND', `Không có mẻ đang mở số ${q.batch_no} của chu kỳ ${cycle}`)
-    if (b.tank_id !== q.tank_id) {
-      const { data: here } = await db.from('production_tank').select('code').eq('id', q.tank_id).maybeSingle()
-      return fail(res, 409, 'MES_WRONG_TANK', `SAI BỒN: mẻ ${b.batch_code} phải đổ vào bồn ${(b.tank as unknown as { code: string } | null)?.code ?? '(chưa chọn)'}, bạn đang đứng ở bồn ${here?.code ?? '?'}`)
-    }
+    const b = await loadBatch(q.batch_id)
+    if (!b) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy mẻ')
+    if (!(await inScope(req, b.warehouse_id))) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
     return ok(res, await pourView(b.id))
   } catch (e) { return failAny(res, e) }
 }
-// POST /wms/production/pour-scan { batch_id, tank_id, code } — quét MỘT tem pallet của mẻ tại bồn; khớp mẻ + bồn + bản tem mới nhận. Quyền pour.
-export const zPourScan = z.object({ batch_id: zText(1, 64), tank_id: zText(1, 64), code: zText(1, 200) })
+// POST /wms/production/pour-scan { tank_id, code, batch_id? } — quét MỘT tem pallet của mẻ tại bồn; khớp mẻ + bồn + bản tem mới nhận.
+// Không gửi batch_id (form mở ở thẻ bồn, chưa biết mẻ) ⇒ mẻ = mẻ ĐANG MỞ có mã lô in trong tem, cùng kho với bồn. Quyền pour.
+export const zPourScan = z.object({ batch_id: zText(1, 64).optional(), tank_id: zText(1, 64), code: zText(1, 200) })
 export async function pourScan(req: Request, res: Response) {
   try {
     const body = req.body as z.infer<typeof zPourScan>
-    const b = await loadBatch(body.batch_id)
-    if (!b) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy mẻ')
-    if (!(await inScope(req, b.warehouse_id))) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
     const label = parseBatchLabel(body.code)
     if (!label) return fail(res, 422, 'NOT_BATCH_LABEL', 'Đây không phải tem pallet của mẻ — quét tem QA đã dán lên pallet của mẻ')
+    let batchId = body.batch_id
+    if (!batchId) {
+      const t = await loadTank(body.tank_id)
+      if (!t) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy bồn')
+      if (!(await inScope(req, t.warehouse_id))) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
+      const { data: hit } = await db.from('production_batch').select('id')
+        .eq('warehouse_id', t.warehouse_id).eq('batch_code', label.batch_code).eq('status', 'OPEN').limit(1).maybeSingle()
+      if (!hit) return fail(res, 404, 'MES_LABEL_NO_BATCH', `Không có mẻ đang mở mã lô ${label.batch_code} ở kho của bồn ${t.code} — tem cũ (mẻ đã đổi bồn / số mẻ) thì nhờ QA in lại tem`)
+      batchId = hit.id
+    }
+    const b = await loadBatch(batchId)
+    if (!b) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy mẻ')
+    if (!(await inScope(req, b.warehouse_id))) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
     const { error } = await db.rpc('mes_pour_scan', { p: { batch_id: b.id, tank_id: body.tank_id, label_code: label.batch_code, pallet_no: label.pallet_no,
       pallet_total: label.pallet_total, label_ver: label.label_ver, ...actor(req) } })
     if (error) return mesFail(res, error)

@@ -12,7 +12,7 @@ export const BATCH_STAGE: Record<BatchStage, { label: string; tone: BadgeTone; r
   new:       { label: 'Mới mở',       tone: 'slate',  row: 'pending',    dot: 'bg-slate-400',  tip: 'Chưa cấp nguyên liệu' },
   wait_lead: { label: 'Chờ duyệt',    tone: 'slate',  row: 'pending',    dot: 'bg-slate-400',  tip: 'Chờ trưởng ca duyệt phiếu (duyệt 1)' },
   wait_qa:   { label: 'Chờ QA duyệt', tone: 'purple', row: 'review',     dot: 'bg-purple-500', tip: 'Trưởng ca đã duyệt (duyệt 1) — chờ QA duyệt phiếu (duyệt 2)' },
-  working:   { label: 'Đang làm',     tone: 'amber',  row: 'inProgress', dot: 'bg-amber-500',  tip: 'Đang cấp nguyên liệu · ghi phiếu · in tem · check trước khi đổ bồn' },
+  working:   { label: 'Đang làm',     tone: 'amber',  row: 'inProgress', dot: 'bg-amber-500',  tip: 'Đang làm: cấp nguyên liệu → ghi phiếu → in tem pallet → check trước khi đổ bồn → nạp BTP vào bồn (cột Tình trạng ghi bước đang tới)' },
   filled:    { label: 'Chờ QA bồn',   tone: 'blue',   row: 'full',       dot: 'bg-blue-500',   tip: 'Đã nạp BTP vào bồn (xong phần sản xuất) — chờ QA kết luận ở bồn' },
   released:  { label: 'QA đạt',       tone: 'green',  row: 'assigned',   dot: 'bg-green-500',  tip: 'Đã nạp bồn, QA bồn đạt — mẻ xong' },
   rejected:  { label: 'QA loại',      tone: 'red',    row: 'paused',     dot: 'bg-red-500',    tip: 'QA bồn không đạt — bồn chặn đóng gói tới khi xả bỏ' },
@@ -20,17 +20,32 @@ export const BATCH_STAGE: Record<BatchStage, { label: string; tone: BadgeTone; r
 }
 /** chuỗi từ API / bộ nhớ tab (bản cũ chưa có tình trạng) ⇒ khoá hợp lệ */
 export const stageOf = (s: string | null | undefined): BatchStage => (s && s in BATCH_STAGE ? (s as BatchStage) : 'new')
+
+// BƯỚC CỦA MẺ (18/11 d — user: "Tình trạng: thể hiện chính xác đang ở bước nào"): MỘT bộ tên cho dải bước của trang mẻ và cho cột
+// Tình trạng của danh sách. Bước đang tới do DB tính (mes_batch_gate.step) — ở đây chỉ có tên.
+export type BatchStep = 'lead' | 'qa' | 'rm' | 'log' | 'label' | 'pour' | 'fill' | 'tankqa'
+export const BATCH_STEP_LABEL: Record<BatchStep, string> = {
+  lead: 'Trưởng ca duyệt', qa: 'QA duyệt', rm: 'Cấp nguyên liệu', log: 'Ghi phiếu', label: 'In tem pallet',
+  pour: 'Check trước khi đổ bồn', fill: 'Nạp BTP vào bồn', tankqa: 'QA bồn',
+}
+const stepOf = (s: string | null | undefined): BatchStep | null => (s && s in BATCH_STEP_LABEL ? (s as BatchStep) : null)
+/** Chữ của tình trạng: mẻ đang làm ghi BƯỚC đang tới ("Check trước khi đổ bồn"), còn lại như cũ ("Chờ duyệt" · "Chờ QA bồn"…) */
+export function stageLabel(stage: string | null | undefined, step?: string | null): string {
+  const k = stageOf(stage), st = stepOf(step)
+  return k === 'working' && st ? BATCH_STEP_LABEL[st] : BATCH_STAGE[k].label
+}
 /** class cho <TableRow> (màu chữ + hover) và cho mã lô ở đầu trang mẻ */
 export const stageRowText = (s: string | null | undefined) => rowText(BATCH_STAGE[stageOf(s)].row)
 export const stageText = (s: string | null | undefined) => statusText(BATCH_STAGE[stageOf(s)].row)
 
-/** Nhãn tình trạng; QA loại mang khiên đỏ (user: "QA block thì có symbol") */
-export function StageBadge({ stage, title }: { stage: string | null | undefined; title?: string }) {
+/** Nhãn tình trạng; QA loại mang khiên đỏ (user: "QA block thì có symbol"). Mẻ đang làm ghi bước đang tới (`step`), màu vẫn của "Đang làm". */
+export function StageBadge({ stage, step, title }: { stage: string | null | undefined; step?: string | null; title?: string }) {
   const k = stageOf(stage)
   const s = BATCH_STAGE[k]
+  const label = stageLabel(stage, step)
   return (
-    <StatusBadge tone={s.tone} title={title ?? s.tip}>
-      {k === 'rejected' && <ShieldX className="inline h-2.5 w-2.5 -mt-px mr-0.5" aria-hidden />}{s.label}
+    <StatusBadge tone={s.tone} title={title ?? (k === 'working' && label !== s.label ? `Đang làm — bước đang tới: ${label}` : s.tip)}>
+      {k === 'rejected' && <ShieldX className="inline h-2.5 w-2.5 -mt-px mr-0.5" aria-hidden />}{label}
     </StatusBadge>
   )
 }

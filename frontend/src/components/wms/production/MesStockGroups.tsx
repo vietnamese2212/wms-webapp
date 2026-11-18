@@ -33,6 +33,19 @@ export function pickSummary(list: PickList, groups: PickGroup[], noun: string): 
   const n = groups.reduce((t, g) => t + g.count, 0)
   return `${list.principle}${list.required ? ' bắt buộc' : ''} · ${n} ${noun} · ${groups.length} nhóm`
 }
+/** tóm tắt danh sách GỘP có tem + không tem (18/11): "FEFO · 3 tem · 1 lô · 4 nhóm" — phần bằng 0 bỏ đi */
+export function pickSummaryAll(list: PickList, groups: PickGroup[]): string {
+  const tems = groups.filter(g => g.kind === 'TEM').reduce((t, g) => t + g.count, 0)
+  const lots = new Set(groups.filter(g => g.kind === 'LOT').map(g => `${g.production_date ?? ''}|${g.batch_lot ?? ''}`)).size
+  return [`${list.principle}${list.required ? ' bắt buộc' : ''}`, tems ? `${tems} tem` : '', lots ? `${lots} lô` : '', `${groups.length} nhóm`]
+    .filter(Boolean).join(' · ')
+}
+/** mã lô in trên các tem của một nhóm có tem: "lô A" · "lô A, B" · "3 lô" (tem không ghi lô thì bỏ qua) */
+function temLotsText(g: PickGroup): string | null {
+  if (g.kind !== 'TEM') return null
+  const lots = [...new Set(g.items.map(i => String(i.batch ?? '').trim()).filter(Boolean))]
+  return !lots.length ? null : lots.length <= 2 ? `lô ${lots.join(', ')}` : `${lots.length} lô`
+}
 
 export function MesStockGroups({ groups, dateLabel, mat, bands, selectedId, idOf, onSelect, highlightEntryId, onOpenPallet, limit = 6, testId }: {
   groups: PickGroup[]; dateLabel: string
@@ -70,7 +83,8 @@ export function MesStockGroups({ groups, dateLabel, mat, bands, selectedId, idOf
               const sel = selectable && !!idOf && selectedId === idOf(g) && g.state !== 'QA'
               const canPick = selectable && g.state !== 'QA'
               const a = approvalShort(g.approval)
-              const rowCls = g.state === 'QA' ? 'bg-purple-50' : g.state === 'EXPIRED' ? 'bg-red-50/70' : sel ? 'bg-sky-50' : 'hover:bg-slate-50'
+              const temLots = temLotsText(g)
+              const rowCls =g.state === 'QA' ? 'bg-purple-50' : g.state === 'EXPIRED' ? 'bg-red-50/70' : sel ? 'bg-sky-50' : 'hover:bg-slate-50'
               return (
                 <Fragment key={g.key}>
                   <tr data-group={g.key} data-state={g.state} data-rank={g.rank ?? ''} aria-selected={sel || undefined}
@@ -89,6 +103,8 @@ export function MesStockGroups({ groups, dateLabel, mat, bands, selectedId, idOf
                         <div className="text-[9px] text-slate-500 font-mono leading-tight">{g.batch_lot ? `lô ${g.batch_lot}` : 'không mã lô'}
                           {dateLabel !== 'NSX' && g.production_date && <span className="block">NSX <Day d={g.production_date} /></span>}</div>
                       )}
+                      {/* có tem: mã lô in trên tem (18/11 — "thể hiện cả tem lô") — cùng chỗ với lô của hàng không tem */}
+                      {temLots && <div className="text-[9px] text-slate-500 font-mono leading-tight truncate max-w-[9rem]" title={temLots}>{temLots}</div>}
                       {g.expired && g.state === 'OK' && <div className="text-[9px] text-green-700">hết hạn · QA đã duyệt</div>}
                       {a && g.kind === 'LOT' && g.state === 'EXPIRED' && <div className={`text-[9px] ${a.tone === 'red' ? 'text-red-600' : 'text-amber-700'}`}>{a.text}</div>}
                     </td>
@@ -136,11 +152,13 @@ function ItemRow({ g, it, selectable, unit, highlight, onOpenPallet }: {
     <tr className={`text-[10px] ${highlight ? 'bg-sky-100' : g.state === 'QA' ? 'bg-purple-50/60' : 'bg-slate-50'}`} data-item={it.entry_id}>
       {selectable && <td />}
       <td colSpan={3} className="pl-5 pr-1.5 py-1 whitespace-nowrap">
-        {g.kind === 'TEM' ? (
-          onOpenPallet
+        {g.kind === 'TEM' ? (<>
+          {onOpenPallet
             ? <button type="button" className="font-mono font-semibold text-blue-600 hover:underline text-left" onClick={e => { e.stopPropagation(); onOpenPallet(it.entry_id) }}>{it.pallet_code}</button>
-            : <span className="font-mono font-semibold">{it.pallet_code}</span>
-        ) : (
+            : <span className="font-mono font-semibold">{it.pallet_code}</span>}
+          {/* mã lô in trên tem — dòng riêng để mã tem dài không đẩy bảng tràn 360 px */}
+          {it.batch && <span className="block text-[9px] text-slate-500 font-mono leading-tight">lô {it.batch}</span>}
+        </>) : (
           <span className="text-slate-600"><span className="font-mono">{it.location_code ?? '—'}</span>{it.import_date ? ` · nhập ${formatDate(it.import_date)}` : ''}</span>
         )}
         {a && <span className={`ml-1.5 ${a.tone === 'green' ? 'text-green-700' : a.tone === 'red' ? 'text-red-600' : 'text-amber-700'}`}>· {a.text}</span>}

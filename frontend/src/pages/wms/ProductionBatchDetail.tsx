@@ -39,7 +39,7 @@ import {
   useProductionBatch, useBatchStatus, useApproveBatch, useLogStart, useReverseConsumption, TANK_MOVE_VI,
   useProcessForms, useSetBatchForms, useExpiryDecide, type BatchDetail, type ExpiryApproval,
 } from '@/api/productionHooks'
-import { StageBadge, BATCH_STAGE, stageOf, stageText, stageTabMark } from '@/components/wms/production/BatchStage'
+import { StageBadge, BATCH_STAGE, BATCH_STEP_LABEL, stageOf, stageText, stageTabMark } from '@/components/wms/production/BatchStage'
 import { qtyNum, qtyCode, matUnitCode, unitCode } from '@/utils/unitCode'
 import { formatDate, formatDateTime } from '@/utils/formatters'
 import { reqLineState, devLabel, type ReqLineResult } from '@/utils/reqTolerance'
@@ -219,25 +219,27 @@ function ProductionBatchDetail() {
   const rmOk = reqRows.length > 0 && (g?.short.length ?? 0) === 0
   const logOk = !!g && !g.need_log && g.missing.length === 0
   const no4 = b.batch_no ? String(b.batch_no).padStart(4, '0') : '—'
+  const L = BATCH_STEP_LABEL   // MỘT bộ tên bước cho dải bước này và cột Tình trạng của danh sách
   const stepDefs = [
-    { key: 'lead', label: 'Trưởng ca duyệt', done: !!b.lead_ok_at },
-    { key: 'qa', label: 'QA duyệt', done: !!b.qa_ok_at },
-    { key: 'rm', label: 'Cấp nguyên liệu', done: rmOk, detail: reqRows.length ? `${reqDone}/${reqRows.length}` : undefined },
-    { key: 'log', label: 'Ghi phiếu', done: logOk, detail: g?.missing.length ? `còn ${g.missing.length} ô` : undefined },
-    { key: 'label', label: 'In tem pallet', done: labelsOk, detail: labelsOk ? `${g?.label_count} tem` : undefined },
-    { key: 'pour', label: 'Check trước khi đổ bồn', done: scannedAll, detail: labelsOk ? `${g?.scanned}/${g?.label_count}` : undefined },
-    { key: 'fill', label: 'Nạp BTP vào bồn', done: hasFill },
-    { key: 'tankqa', label: 'QA bồn', done: hasFill && b.qa_status === 'RELEASED', bad: b.qa_status === 'REJECTED' },
+    { key: 'lead', label: L.lead, done: !!b.lead_ok_at },
+    { key: 'qa', label: L.qa, done: !!b.qa_ok_at },
+    { key: 'rm', label: L.rm, done: rmOk, detail: reqRows.length ? `${reqDone}/${reqRows.length}` : undefined },
+    { key: 'log', label: L.log, done: logOk, detail: g?.missing.length ? `còn ${g.missing.length} ô` : undefined },
+    { key: 'label', label: L.label, done: labelsOk, detail: labelsOk ? `${g?.label_count} tem` : undefined },
+    { key: 'pour', label: L.pour, done: scannedAll, detail: labelsOk ? `${g?.scanned}/${g?.label_count}` : undefined },
+    { key: 'fill', label: L.fill, done: hasFill },
+    { key: 'tankqa', label: L.tankqa, done: hasFill && b.qa_status === 'RELEASED', bad: b.qa_status === 'REJECTED' },
   ]
-  const cur = stepDefs.findIndex(s => !s.done)
-  const curKey = cur >= 0 ? stepDefs[cur].key : null
+  // BƯỚC ĐANG TỚI do DB tính (mes_batch_gate.step — cùng giá trị cột Tình trạng của danh sách, 18/11 d); API cũ chưa có thì tự tính như trước
+  const curKey = g && 'step' in g ? (g.step ?? null) : (stepDefs.find(s => !s.done)?.key ?? null)
+  const cur = stepDefs.findIndex(s => s.key === curKey)
   // bước nào là VIỆC CỦA NGƯỜI ĐANG XEM (quyền của chức danh — cùng quyền gác nút của bước đó): bước đang tới không phải việc của mình
   // ⇒ dải in "chờ" (user 18/11 "các user tương tác theo quyền hạn của nó … có nên cho họ thấy không")
   const mineOf: Record<string, boolean> = {
     lead: P('approve_lead'), qa: P('approve_qa'), rm: P('consume'), log: P('process_log'),
     label: P('print_label'), pour: P('pour') || P('tank_ops'), fill: P('tank_ops'), tankqa: P('qa_release'),
   }
-  const steps: FlowStep[] = stepDefs.map((s, i) => ({ key: s.key, label: s.label, detail: s.detail, mine: mineOf[s.key], state: s.bad ? 'bad' : s.done ? 'done' : i === cur ? 'now' : 'todo' }))
+  const steps: FlowStep[] = stepDefs.map((s, i) => ({ key: s.key, label: s.label, detail: s.detail, mine: mineOf[s.key], state: s.bad ? 'bad' : i === cur ? 'now' : s.done ? 'done' : 'todo' }))
   // luồng chặt: chỉ BƯỚC ĐANG TỚI là nút chính (bước trước xong mới tới bước sau); không chặt: như trước (Cấp NVL + Nạp bồn)
   const prim = (k: string) => (strict ? curKey === k : k === 'rm' || k === 'fill')
   // mẻ đã nạp BTP vào bồn ⇒ sổ nguyên liệu KHOÁ (user 18/11 "ok" khoá cấp / huỷ sau khi nạp — BE: mes_open_batch_wh, 409 MES_BATCH_FILLED)
@@ -309,7 +311,7 @@ function ProductionBatchDetail() {
                 <ArrowLeft className="h-4 w-4" />
               </button>
               <span data-stage={stageOf(g?.stage)} className={`font-semibold font-mono text-xs sm:text-sm leading-tight break-all whitespace-normal sm:truncate min-w-0 ${stageText(g?.stage)}`}>{b.batch_code}</span>
-              <StageBadge stage={g?.stage} title={stageOf(g?.stage) === 'rejected' && b.qa_note ? `QA loại: ${b.qa_note}` : undefined} />
+              <StageBadge stage={g?.stage} step={g?.step} title={stageOf(g?.stage) === 'rejected' && b.qa_note ? `QA loại: ${b.qa_note}` : undefined} />
               <button type="button" onClick={() => isBatchPinned(b.id) ? unpinBatch(b.id) : pinBatch({ id: b.id, code: b.batch_code, stage: g?.stage ?? '' })}
                 className={`p-1 rounded transition-colors shrink-0 ${isBatchPinned(b.id) ? 'text-amber-500' : 'text-slate-300 hover:text-slate-500'}`}
                 title={isBatchPinned(b.id) ? 'Bỏ đánh dấu đang làm' : 'Đánh dấu đang làm mẻ này — hiện thành tab để chuyển nhanh giữa các mẻ'}
@@ -673,7 +675,7 @@ function ProductionBatchDetail() {
         materialCode={b.material?.material_code ?? null} suggestQty={b.planned_qty != null ? Math.round((Number(b.planned_qty) - filled) * 1000) / 1000 : null}
         fixedTankId={b.tank_id} blockers={g?.fill_blockers ?? []} />
       <BatchLabelSheet open={labelOpen} onClose={() => setLabelOpen(false)} batch={b} />
-      <PourSheet open={pourOpen} onClose={() => setPourOpen(false)} warehouseId={b.warehouse_id} preset={{ tankId: b.tank_id, cycle: b.cycle, batchNo: b.batch_no }}
+      <PourSheet open={pourOpen} onClose={() => setPourOpen(false)} warehouseId={b.warehouse_id} batchId={b.id} tankId={b.tank_id ?? ''}
         canScan={P('pour')} canFill={canFill} />
       <BatchFormSheet open={editOpen} onClose={() => setEditOpen(false)} batch={b} />
       <BatchFormSheet open={cloneOpen} onClose={() => setCloneOpen(false)} template={b}

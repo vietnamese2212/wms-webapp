@@ -1,11 +1,10 @@
 // LUỒNG LÀM VIỆC CỦA MẺ (MES 17/11 — user chốt): trưởng ca duyệt → QA duyệt → cấp nguyên liệu (quét tem) → ghi phiếu (bấm mốc giờ)
-// → QA in TEM PALLET của mẻ (1/n … n/n) → công nhân ĐỔ BỒN (khai chu kỳ · số mẻ · bồn đang đứng, quét tem khớp mới đổ) → NẠP BỒN
+// → QA in TEM PALLET của mẻ (1/n … n/n) → công nhân CHECK TRƯỚC KHI ĐỔ BỒN (chỉ quét tem, khớp mẻ + bồn mới đổ) → NẠP BTP VÀO BỒN
 // → QA kết luận ở BỒN. File này: dải bước + form in tem + form đổ bồn + form QA bồn.
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { AxiosError } from 'axios'
 import { Check, Printer, AlertTriangle, ShieldCheck, ShieldX, ShieldAlert, Hourglass } from 'lucide-react'
 import { FormSheet } from '@/components/shared/FormSheet'
-import { SingleSelect } from '@/components/shared/SingleSelect'
 import { QRScanDialog } from '@/components/shared/QRScanDialog'
 import { ScanIcon } from '@/components/shared/ScanIcon'
 import { QRImg, PALLET_PRINT_CSS } from '@/components/shared/palletLabel'
@@ -155,44 +154,48 @@ export function BatchLabelSheet({ open, onClose, batch }: { open: boolean; onClo
   )
 }
 
-// ─── ĐỔ BỒN ────────────────────────────────────────────────────────────────────────────────────────────────────
-/** Công nhân đổ bồn: khai BỒN ĐANG ĐỨNG · CHU KỲ · SỐ MẺ ⇒ app tìm mẻ (sai bồn báo ngay) ⇒ quét từng tem pallet ⇒ đủ thì Nạp bồn. */
-export function PourSheet({ open, onClose, warehouseId, preset, canScan, canFill }: {
+// ─── CHECK TRƯỚC KHI ĐỔ BỒN ────────────────────────────────────────────────────────────────────────────────────
+/** Công nhân đổ bồn CHỈ QUÉT (user 18/11: "cái này chỉ quét, ko điền nhé"): không khai bồn · chu kỳ · số mẻ, không gõ mã tem — súng
+ *  PDA bắn thẳng (không cần ô nhập, như màn quét Xuất kho) hoặc bấm Camera. Mở từ trang mẻ ⇒ biết mẻ + bồn của mẻ. Mở từ thẻ bồn ⇒ biết
+ *  bồn đang đứng, mẻ lấy từ CHÍNH tem quét đầu tiên (mã lô in trong QR); tem của mẻ thuộc bồn khác ⇒ báo SAI BỒN ngay. Đủ n/n ⇒ Nạp bồn. */
+export function PourSheet({ open, onClose, warehouseId, batchId, tankId, canScan, canFill }: {
   open: boolean; onClose: () => void; warehouseId: string
-  preset?: { tankId?: string | null; cycle?: string | null; batchNo?: number | null }
+  /** mẻ đang mở ở trang mẻ — có thì tải ngay số tem đã quét của mẻ đó */
+  batchId?: string | null
+  /** bồn đang đứng: thẻ bồn đã bấm, hoặc bồn của mẻ */
+  tankId: string
   canScan: boolean; canFill: boolean
 }) {
-  const [tankId, setTankId] = useState(''); const [cycle, setCycle] = useState(''); const [no, setNo] = useState('')
   const [view, setView] = useState<PourView | null>(null)
-  const [err, setErr] = useState(''); const [okMsg, setOkMsg] = useState(''); const [busy, setBusy] = useState(false)
-  const [cam, setCam] = useState(false); const [typed, setTyped] = useState(''); const [qty, setQty] = useState('')
+  const [err, setErr] = useState(''); const [okMsg, setOkMsg] = useState(''); const [loading, setLoading] = useState(false)
+  const [cam, setCam] = useState(false); const [qty, setQty] = useState('')
   const scan = usePourScan(); const fill = useTankFill()
   const tanks = useProductionTanks(warehouseId, false, open && !!warehouseId).data ?? []
-  const auto = useRef(false)
+  /** lượng nạp điền sẵn = phần kế hoạch chưa nạp — chỉ lần đầu biết mẻ, người đã sửa thì không đè */
+  const prefillQty = (v: PourView) => {
+    const rest = v.batch.planned_qty != null ? Math.round((Number(v.batch.planned_qty) - v.filled) * 1000) / 1000 : 0
+    setQty(rest > 0 ? vnNumberInput(rest) : '')
+  }
   useEffect(() => {
     if (!open) return
-    setTankId(preset?.tankId ?? ''); setCycle(preset?.cycle ?? ''); setNo(preset?.batchNo ? String(preset.batchNo) : '')
-    setView(null); setErr(''); setOkMsg(''); setTyped(''); setQty('')
-    auto.current = !!(preset?.tankId && preset?.cycle && preset?.batchNo)
-  }, [open]) // eslint-disable-line react-hooks/exhaustive-deps
-  const noNum = /^\d{1,4}$/.test(no.trim()) ? Number(no) : 0
-  const ready = !!tankId && !!cycle.trim() && noNum > 0
-  async function check() {
-    setErr(''); setOkMsg(''); setBusy(true)
-    try {
-      const v = await fetchPourStatus({ warehouse_id: warehouseId, tank_id: tankId, cycle: cycle.trim(), batch_no: noNum })
-      setView(v)
-      const rest = v.batch.planned_qty != null ? Math.round((Number(v.batch.planned_qty) - v.filled) * 1000) / 1000 : 0
-      setQty(rest > 0 ? vnNumberInput(rest) : '')
-    } catch (e) { setView(null); setErr(apiMsg(e)) } finally { setBusy(false) }
-  }
-  useEffect(() => { if (open && auto.current && ready) { auto.current = false; void check() } }, [open, ready]) // eslint-disable-line react-hooks/exhaustive-deps
+    setView(null); setErr(''); setOkMsg(''); setQty('')
+    if (!batchId) return
+    let alive = true
+    setLoading(true)
+    fetchPourStatus(batchId)
+      .then(v => { if (alive) { setView(v); prefillQty(v) } })
+      .catch(e => { if (alive) setErr(apiMsg(e)) })
+      .finally(() => { if (alive) setLoading(false) })
+    return () => { alive = false }
+  }, [open, batchId]) // eslint-disable-line react-hooks/exhaustive-deps
   async function onCode(code: string) {
-    if (!view || !code.trim() || scan.isPending) return
+    if (!code.trim() || scan.isPending || !tankId) return
     setErr(''); setOkMsg('')
     try {
-      const r = await scan.mutateAsync({ batch_id: view.batch.id, tank_id: tankId, code: code.trim() })
-      setView(r); setOkMsg(`Đã nhận pallet ${r.pallet_no}/${r.batch.label_count}`); setTyped('')
+      // đã biết mẻ ⇒ gửi kèm (tem của mẻ khác bị từ chối); chưa biết (mở ở thẻ bồn) ⇒ server lấy mẻ từ mã lô trong tem
+      const r = await scan.mutateAsync({ batch_id: view?.batch.id ?? batchId ?? undefined, tank_id: tankId, code: code.trim() })
+      if (!view) prefillQty(r)
+      setView(r); setOkMsg(`Đã nhận pallet ${r.pallet_no}/${r.batch.label_count}`)
     } catch (e) { setErr(apiMsg(e)) }
   }
   const total = view?.batch.label_count ?? 0
@@ -201,38 +204,42 @@ export function PourSheet({ open, onClose, warehouseId, preset, canScan, canFill
   const blockers = view?.gate?.fill_blockers ?? []
   const qtyN = parseVnNumber(qty)
   const u = unitCode(view?.batch.material?.base_unit)
-  useWedgeScanner(c => { void onCode(c) }, open && !!view && canScan && !all && !cam, { exclusive: true })
+  const waitingScan = canScan && !loading && !all && (!view || total > 0)
+  useWedgeScanner(c => { void onCode(c) }, open && waitingScan && !cam, { exclusive: true })
   async function doFill() {
     if (!view || !qtyN) return
     setErr('')
     try { await fill.mutateAsync({ tankId, batch_id: view.batch.id, qty: qtyN }); onClose() } catch (e) { setErr(apiMsg(e)) }
   }
   const tank = tanks.find(t => t.id === tankId)
+  const waiting = (tank?.incoming ?? []).filter(x => !x.started).map(x => x.batch_code)
+  // chỗ quét: KHÔNG có ô gõ mã — súng PDA bắn là nhận (máy đọc nghe cả trang), điện thoại bấm Camera
+  const scanPrompt = waitingScan ? (
+    <div className="flex items-center gap-2 rounded-lg border border-dashed border-sky-300 bg-sky-50 px-3 py-2" data-testid="pour-scan-prompt">
+      <ScanIcon className="h-5 w-5 shrink-0 text-sky-600" />
+      <p className="flex-1 min-w-0 text-sky-900">{scan.isPending ? 'Đang kiểm tem…' : `Bắn súng vào tem pallet ${scanned.size > 0 ? 'tiếp theo' : 'của mẻ'} — hoặc bấm Camera`}</p>
+      <Button type="button" variant="outline" size="sm" className="h-9 sm:h-8 gap-1 shrink-0 bg-white" onClick={() => setCam(true)}><ScanIcon className="h-3.5 w-3.5" />Camera</Button>
+    </div>
+  ) : !canScan && !view && !loading ? (
+    <p className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-amber-800">Cần quyền quét tem đổ bồn (Sản xuất · đổ bồn) để kiểm mẻ ở bồn này.</p>
+  ) : null
   return (
-    <FormSheet open={open} onClose={onClose} title="Check trước khi đổ bồn" description="Khai bồn đang đứng, chu kỳ và số mẻ. Quét tem pallet của mẻ: khớp mới đổ."
+    <FormSheet open={open} onClose={onClose} title="Check trước khi đổ bồn" description="Chỉ quét: bắn súng hoặc bấm Camera vào từng tem pallet của mẻ — đúng mẻ, đúng bồn mới đổ."
       footer={<>
         <Button variant="outline" size="sm" className="h-8" onClick={onClose}>Đóng</Button>
-        {!view && <Button size="sm" className="h-8" disabled={!ready || busy} onClick={() => void check()}>{busy ? 'Đang kiểm…' : 'Kiểm mẻ'}</Button>}
         {view && canFill && <Button size="sm" className="h-8" disabled={blockers.length > 0 || !qtyN || qtyN <= 0 || fill.isPending} onClick={() => void doFill()}>{fill.isPending ? 'Đang nạp…' : 'Nạp BTP vào bồn'}</Button>}
       </>}>
       <div className="space-y-3 text-xs">
-        <div className="grid grid-cols-3 gap-2">
-          <div>
-            <Label className="text-xs">Bồn đang đứng <span className="text-red-500">*</span></Label>
-            <SingleSelect value={tankId} onChange={v => { setTankId(v); setView(null) }} searchable={tanks.length > 8} triggerClassName="h-9 sm:h-8 text-xs mt-0.5"
-              placeholder="Chọn bồn" options={tanks.filter(t => t.warehouse_id === warehouseId).map(t => ({ value: t.id, label: t.code }))} />
+        {!view && (
+          // chưa biết mẻ (mở ở thẻ bồn): chỉ có bồn đang đứng — tem đầu tiên cho biết mẻ
+          <div className="rounded-lg border border-slate-200 px-3 py-2 space-y-0.5" data-testid="pour-tank">
+            <p className="text-slate-500">Bồn đang đứng</p>
+            <p className="font-mono text-base font-bold text-slate-900">{tank?.code ?? (loading ? '…' : '—')}</p>
+            {tank && <p className="text-slate-500">Đang chứa {nf(tank.content)} / {nf(tank.capacity)} {tank.unit}{waiting.length ? ` · mẻ chờ đổ: ${waiting.join(', ')}` : ''}</p>}
           </div>
-          <div>
-            <Label className="text-xs">Chu kỳ <span className="text-red-500">*</span></Label>
-            <Input value={cycle} onChange={e => { setCycle(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '')); setView(null) }} maxLength={6} aria-label="Chu kỳ" className="h-9 sm:h-8 text-xs mt-0.5 font-mono" />
-          </div>
-          <div>
-            <Label className="text-xs">Số mẻ <span className="text-red-500">*</span></Label>
-            <Input value={no} onChange={e => { setNo(e.target.value.replace(/\D/g, '').slice(0, 4)); setView(null) }} inputMode="numeric" aria-label="Số mẻ"
-              onKeyDown={e => { if (e.key === 'Enter' && ready && !view) void check() }} className="h-9 sm:h-8 text-xs mt-0.5 font-mono" />
-          </div>
-        </div>
+        )}
         {err && <div role="alert" className="rounded-lg bg-red-600 text-white px-3 py-2.5 text-sm font-semibold flex items-start gap-2"><AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" /><span>{err}</span></div>}
+        {!view && scanPrompt}
         {view && (
           <>
             <div className="rounded-lg border border-slate-200 px-3 py-2 space-y-0.5">
@@ -253,13 +260,7 @@ export function PourSheet({ open, onClose, warehouseId, preset, canScan, canFill
               </div>
             )}
             {okMsg && !err && <p className="text-green-700 font-semibold">{okMsg}</p>}
-            {total > 0 && !all && canScan && (
-              <div className="flex gap-1.5">
-                <Input value={typed} onChange={e => setTyped(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') void onCode(typed) }} placeholder="Bắn súng quét, hoặc gõ mã tem rồi Enter"
-                  aria-label="Mã tem pallet của mẻ" className="h-9 sm:h-8 text-xs flex-1 min-w-0 font-mono" />
-                <Button type="button" variant="outline" size="sm" className="h-9 sm:h-8 gap-1 shrink-0" onClick={() => setCam(true)}><ScanIcon className="h-3.5 w-3.5" />Camera</Button>
-              </div>
-            )}
+            {scanPrompt}
             {all && <p className="rounded-lg bg-green-50 border border-green-200 px-3 py-2 text-green-800 font-semibold">Đã quét đủ {total}/{total} pallet — đổ vào bồn {view.batch.tank?.code}.</p>}
             {canFill && (all || view.filled > 0 || !view.gate?.flow_gate) && (
               <div className="border-t border-slate-200 pt-2.5">

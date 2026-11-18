@@ -832,8 +832,13 @@ try {
     const cNo = await api(`/wms/production/batches/${FB.id}/consume-scan`, 'POST', { entry_id: 'QA63_E16', qty: 10, qty_semantics: 'base' })
     const cNoLot = await api(`/wms/production/batches/${FB.id}/consume-lot`, 'POST', { material_id: M_RM, production_date: '2026-11-01', qty: 1, qty_semantics: 'base' })
     check('16c. Chưa duyệt ⇒ CẢ HAI cửa cấp NVL (quét tem · chọn lô) đều 409 MES_NOT_APPROVED', rq.s === 200 && cNo.s === 409 && cNo.j?.error?.code === 'MES_NOT_APPROVED' && cNoLot.s === 409 && cNoLot.j?.error?.code === 'MES_NOT_APPROVED', `http=${rq.s}/${cNo.s}/${cNoLot.s}`)
+    // (18/11 d) BƯỚC ĐANG TỚI do DB tính (mes_batch_gate.step) — dải bước của trang mẻ và cột Tình trạng của danh sách đọc cùng giá trị
+    const stepOf = async () => (await api(`/wms/production/batches/${FB.id}`)).j?.data?.gate?.step ?? null
+    const stLead = await stepOf()
     const aQa0 = await api(`/wms/production/batches/${FB.id}/approve-qa`, 'POST', { approve: true })
     const aLead = await api(`/wms/production/batches/${FB.id}/approve-lead`, 'POST', { approve: true })
+    const stQa = await stepOf()
+    check('16c2. Bước đang tới: mẻ mới mở ⇒ "lead" (Trưởng ca duyệt); trưởng ca duyệt xong ⇒ "qa" (QA duyệt)', stLead === 'lead' && stQa === 'qa', `${stLead}/${stQa}`)
     const aLead2 = await api(`/wms/production/batches/${FB.id}/approve-lead`, 'POST', { approve: true })
     const lbl0 = await api(`/wms/production/batches/${FB.id}/labels`, 'POST', { count: 2 })
     const aQa = await api(`/wms/production/batches/${FB.id}/approve-qa`, 'POST', { approve: true })
@@ -848,20 +853,25 @@ try {
     check('16e. Đủ hai duyệt ⇒ cấp NVL được; in 2 tem pallet: QR MEB;<mã lô>;i;2;1', cOk.s === 200 && lbl.s === 200 && L.length === 2 && L[0]?.qr === 'MEB;QQ20001QA63-T3;1;2;1' && L[1]?.qr === 'MEB;QQ20001QA63-T3;2;2;1', `http=${cOk.s}/${lbl.s} ${JSON.stringify(L)}`)
     const fEarly = await api(`/wms/production/tanks/${T3.id}/fill`, 'POST', { batch_id: FB.id, qty: 100 })
     check('16f. Nạp bồn khi chưa quét tem nào ⇒ 409 MES_NOT_READY (nêu "tem pallet")', fEarly.s === 409 && fEarly.j?.error?.code === 'MES_NOT_READY' && /tem pallet/.test(fEarly.j?.error?.message ?? ''), `http=${fEarly.s} ${fEarly.j?.error?.message}`)
-    const psWrong = await api(`/wms/production/pour-status?warehouse_id=${WC2}&tank_id=${T5.id}&cycle=Q2&batch_no=1`)
-    const psNone = await api(`/wms/production/pour-status?warehouse_id=${WC2}&tank_id=${T3.id}&cycle=Q2&batch_no=9`)
-    const psOk = await api(`/wms/production/pour-status?warehouse_id=${WC2}&tank_id=${T3.id}&cycle=q2&batch_no=1`)
-    check('16g. Đổ bồn: khai SAI bồn ⇒ 409 MES_WRONG_TANK (nói đúng bồn phải đổ); số mẻ không có ⇒ 404; đúng ⇒ 200 kèm mẻ + 0 tem đã quét',
-      psWrong.s === 409 && psWrong.j?.error?.code === 'MES_WRONG_TANK' && /QA63-T3/.test(psWrong.j?.error?.message ?? '') && psNone.s === 404 && psOk.s === 200 && psOk.j?.data?.batch?.id === FB.id && (psOk.j?.data?.scans ?? []).length === 0,
-      `http=${psWrong.s}/${psNone.s}/${psOk.s} ${psWrong.j?.error?.message}`)
+    // (18/11) "Check trước khi đổ bồn" CHỈ QUÉT — không khai chu kỳ / số mẻ / bồn: trang mẻ hỏi theo batch_id; thẻ bồn quét không batch_id
+    // ⇒ server lấy mẻ từ mã lô in trong tem, bồn đang đứng = thẻ bồn
+    const psOk = await api(`/wms/production/pour-status?batch_id=${FB.id}`)
+    const psNone = await api('/wms/production/pour-status?batch_id=QA63_KHONG_CO_ME')
+    const pbWrong = await api('/wms/production/pour-scan', 'POST', { tank_id: T5.id, code: L[0]?.qr })
+    const pbNone = await api('/wms/production/pour-scan', 'POST', { tank_id: T3.id, code: 'MEB;QQ29999QA63-T3;1;2;1' })
+    check('16g. Check trước khi đổ bồn chỉ quét: tình trạng theo mẻ ⇒ 200 kèm 0 tem đã quét; mẻ không có ⇒ 404; quét ở thẻ bồn (không gửi mẻ) tem của mẻ bồn khác ⇒ 409 MES_WRONG_TANK nói đúng bồn phải đổ; mã lô không có mẻ đang mở ⇒ 404 MES_LABEL_NO_BATCH',
+      psOk.s === 200 && psOk.j?.data?.batch?.id === FB.id && (psOk.j?.data?.scans ?? []).length === 0 && psNone.s === 404
+        && pbWrong.s === 409 && pbWrong.j?.error?.code === 'MES_WRONG_TANK' && /QA63-T3/.test(pbWrong.j?.error?.message ?? '')
+        && pbNone.s === 404 && pbNone.j?.error?.code === 'MES_LABEL_NO_BATCH',
+      `http=${psOk.s}/${psNone.s}/${pbWrong.s}/${pbNone.s} ${pbWrong.j?.error?.message} ${pbNone.j?.error?.code}`)
     const scBad = await api('/wms/production/pour-scan', 'POST', { batch_id: FB.id, tank_id: T3.id, code: 'QA63_P16' })
     const scOther = await api('/wms/production/pour-scan', 'POST', { batch_id: FB.id, tank_id: T3.id, code: 'MEB;QQ10001QA63-T1;1;2;1' })
     const scTank = await api('/wms/production/pour-scan', 'POST', { batch_id: FB.id, tank_id: T5.id, code: L[0]?.qr })
-    const sc1 = await api('/wms/production/pour-scan', 'POST', { batch_id: FB.id, tank_id: T3.id, code: L[0]?.qr })
+    const sc1 = await api('/wms/production/pour-scan', 'POST', { tank_id: T3.id, code: L[0]?.qr })   // thẻ bồn: mẻ lấy từ tem
     const sc1b = await api('/wms/production/pour-scan', 'POST', { batch_id: FB.id, tank_id: T3.id, code: L[0]?.qr })
-    check('16h. Quét tem nguyên liệu ⇒ 422 NOT_BATCH_LABEL; tem của MẺ KHÁC ⇒ 409 MES_WRONG_LABEL; đứng SAI BỒN ⇒ 409 MES_WRONG_TANK; tem 1/2 ⇒ 200; quét lại ⇒ 409 MES_ALREADY',
+    check('16h. Quét tem nguyên liệu ⇒ 422 NOT_BATCH_LABEL; tem của MẺ KHÁC ⇒ 409 MES_WRONG_LABEL; đứng SAI BỒN ⇒ 409 MES_WRONG_TANK; tem 1/2 quét ở thẻ bồn (không gửi mẻ) ⇒ 200 đúng mẻ; quét lại ⇒ 409 MES_ALREADY',
       scBad.s === 422 && scBad.j?.error?.code === 'NOT_BATCH_LABEL' && scOther.s === 409 && scOther.j?.error?.code === 'MES_WRONG_LABEL' && scTank.s === 409 && scTank.j?.error?.code === 'MES_WRONG_TANK'
-        && sc1.s === 200 && (sc1.j?.data?.scans ?? []).length === 1 && sc1b.s === 409 && sc1b.j?.error?.code === 'MES_ALREADY',
+        && sc1.s === 200 && sc1.j?.data?.batch?.id === FB.id && (sc1.j?.data?.scans ?? []).length === 1 && sc1b.s === 409 && sc1b.j?.error?.code === 'MES_ALREADY',
       `http=${scBad.s}/${scOther.s}/${scTank.s}/${sc1.s}/${sc1b.s}`)
     // ĐỔI BỒN tại mẻ ⇒ mã lô đổi theo, tem đã in mất hiệu lực
     const mv = await api(`/wms/production/batches/${FB.id}`, 'PATCH', { tank_id: T5.id })
@@ -881,8 +891,9 @@ try {
     const plReq = await api(`/wms/production/batches/${FB.id}/process-log/MIX`, 'PUT', { data: { qa63_temp: '45' }, blocks })
     const gate1 = (await api(`/wms/production/batches/${FB.id}`)).j?.data?.gate
     const fNoLog = await api(`/wms/production/tanks/${T5.id}/fill`, 'POST', { batch_id: FB.id, qty: 100 })
-    check('16j. Đã quét đủ 3/3 nhưng phiếu còn ô bắt buộc ⇒ 409 MES_NOT_READY; cổng của mẻ liệt kê đúng ô thiếu',
-      plReq.s < 300 && num(gate1?.scanned) === 3 && (gate1?.missing ?? []).length === 1 && gate1.missing[0].key === 'qa63_start' && fNoLog.s === 409 && fNoLog.j?.error?.code === 'MES_NOT_READY' && /bắt buộc/.test(fNoLog.j?.error?.message ?? ''),
+    check('16j. Đã quét đủ 3/3 nhưng phiếu còn ô bắt buộc ⇒ 409 MES_NOT_READY; cổng của mẻ liệt kê đúng ô thiếu; bước đang tới = "log" (Ghi phiếu)',
+      plReq.s < 300 && num(gate1?.scanned) === 3 && (gate1?.missing ?? []).length === 1 && gate1.missing[0].key === 'qa63_start' && fNoLog.s === 409 && fNoLog.j?.error?.code === 'MES_NOT_READY' && /bắt buộc/.test(fNoLog.j?.error?.message ?? '')
+        && gate1?.step === 'log',
       `http=${plReq.s}/${fNoLog.s} gate=${JSON.stringify(gate1 ?? null)}`)
     // (18/11) phiếu ghi TỪNG Ô: bấm ô giờ (không gửi giá trị) = giờ máy chủ + người bấm
     const st1 = await api(`/wms/production/batches/${FB.id}/process-log/MIX/cell`, 'POST', { key: 'qa63_start' })
@@ -914,10 +925,18 @@ try {
     const consId = (await restAll('batch_consumption', `select=id&batch_id=eq.${FB.id}&reversed_at=is.null`))[0]?.id
     await api(`/wms/production/consumption/${consId}/reverse`, 'POST', { reason: 'QA63 thử thiếu NVL' })
     const fShort = await api(`/wms/production/tanks/${T5.id}/fill`, 'POST', { batch_id: FB.id, qty: 100 })
+    const stRm = await stepOf()
     await api(`/wms/production/batches/${FB.id}/consume-scan`, 'POST', { entry_id: 'QA63_E16', qty: 10, qty_semantics: 'base' })
+    const stFill = await stepOf()
+    // cột Tình trạng của danh sách mẻ: dòng đang làm mang CÙNG bước với trang mẻ
+    const lrow = ((await api(`/wms/production/batches?warehouse_id=${WC2}&search=QQ20001`)).j?.data?.rows ?? []).find(r => r.id === FB.id)
     const fOk = await api(`/wms/production/tanks/${T5.id}/fill`, 'POST', { batch_id: FB.id, qty: 100 })
+    const stAfter = await stepOf()
     check('16m. Nguyên liệu cấp chưa đủ ⇒ 409 MES_NOT_READY (nêu mã thiếu); đủ cả ba điều kiện ⇒ nạp 200', fShort.s === 409 && fShort.j?.error?.code === 'MES_NOT_READY' && /QA63RM1/.test(fShort.j?.error?.message ?? '') && fOk.s === 200,
       `http=${fShort.s}/${fOk.s} ${fShort.j?.error?.message} ${JSON.stringify(fOk.j?.error ?? null)}`)
+    check('16m2. Bước đang tới: thiếu NVL ⇒ "rm" (Cấp nguyên liệu); đủ mọi điều kiện ⇒ "fill" (Nạp BTP vào bồn) — danh sách mẻ cùng "fill" ở dòng đang làm; đã nạp ⇒ "tankqa" (QA bồn)',
+      stRm === 'rm' && stFill === 'fill' && lrow?.stage === 'working' && lrow?.step === 'fill' && stAfter === 'tankqa',
+      `${stRm}/${stFill}/list=${lrow?.stage}:${lrow?.step}/${stAfter}`)
     const unQa = await api(`/wms/production/batches/${FB.id}/approve-qa`, 'POST', { approve: false })
     const tq = await api(`/wms/production/tanks/${T5.id}/qa`, 'POST', { qa_status: 'REJECTED', note: 'QA63 không đạt' })
     const tk = (await api(`/wms/production/tanks?warehouse_id=${WC2}`)).j?.data ?? []

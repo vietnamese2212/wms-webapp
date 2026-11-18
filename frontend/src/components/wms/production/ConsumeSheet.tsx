@@ -7,7 +7,7 @@
 //   • hàng HẾT HẠN bị chặn, chỉ cấp khi QA duyệt cho mẻ này (user chốt 17/11) — gửi QA duyệt ngay tại form; QA đứng tại bàn duyệt luôn.
 // Mở từ một dòng của bàn (`focusId`) ⇒ form biết đang cấp mã nào: tem khác mã bị từ chối, lượng điền sẵn = phần còn thiếu.
 // Sheet giữ mở sau mỗi lần cấp để quét liên tục; kết quả lần vừa cấp hiện ngay trên đầu.
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import type { AxiosError } from 'axios'
 import { FormSheet } from '@/components/shared/FormSheet'
@@ -37,7 +37,7 @@ import { reqLineState } from '@/utils/reqTolerance'
 import { Check, ChevronDown, MapPin } from 'lucide-react'
 import { normalizeQR } from '@/utils/qr'
 import { formatDate } from '@/utils/formatters'
-import { MesStockGroups, pickSummary } from './MesStockGroups'
+import { MesStockGroups, pickSummary, pickSummaryAll } from './MesStockGroups'
 
 const apiMsg = (e: unknown) => (e as AxiosError<{ error?: { message?: string } }>)?.response?.data?.error?.message ?? 'Lỗi không xác định'
 const avail = (e: ScanEntry) => Number(e.cartons_remaining ?? e.cartons_imported ?? 0) - Number(e.cartons_reserved ?? 0)
@@ -219,6 +219,9 @@ export function ConsumeSheet({ open, onClose, batch, focusId }: {
   const focusNeed = focus ? needOf(focus.material_id) : 0
   const pickMat: MatUnits | null = (mode === 'SCAN' ? entry?.material : lotMat) ?? focus ?? null
   const temGroups = list?.tem_groups ?? NO_GROUPS
+  // "Lấy ở đâu" của cửa quét tem GỘP có tem + không tem (18/11 — user: "thể hiện cả tem lô nữa … trong sx họ dùng FEFO"): đúng thứ tự
+  // chung server xếp (pos) — hạng 1★ có thể là lô không tem; FE không tự so ngày
+  const allGroups = useMemo(() => (list ? [...list.tem_groups, ...list.lot_groups].sort((a, b) => (a.pos ?? 0) - (b.pos ?? 0)) : NO_GROUPS), [list])
   const expiryLine = exp?.expired ? (
     <ExpiryLine exp={exp} what={mode === 'SCAN' ? 'Tem này' : 'Lô này'} today={list?.today ?? null} canApprove={canApproveExpired}
       busy={expReq.isPending || expDec.isPending} onRequest={() => void requestQa()} onDecide={(d, n) => void decideQa(d, n)} />
@@ -346,17 +349,17 @@ export function ConsumeSheet({ open, onClose, batch, focusId }: {
             hết, bấm vào mới hiện ra") — form chỉ còn quét → lượng → xác nhận; cần xem tồn theo date thì bấm thanh. Nhóm bên trong
             cũng đóng sẵn (▸ từng nhóm). Dòng nhắc "nên lấy hàng KHÔNG tem trước" là luật luân chuyển ⇒ không giấu trong phần thu gọn.
             Cửa "Không có tem" giữ bảng lô ở chỗ cũ: đó là ô CHỌN lô (bắt buộc, chọn sẵn hạng 1) — giấu đi thì không thấy đang trừ lô nào. */}
-        {mode === 'SCAN' && list && (temGroups.length > 0 || list.best?.kind === 'LOT') && (
+        {mode === 'SCAN' && list && (allGroups.length > 0 || list.best?.kind === 'LOT') && (
           <div className="space-y-1" data-testid="pick-section">
-            {temGroups.length > 0 && (<>
+            {allGroups.length > 0 && (<>
               <button type="button" onClick={() => setPickOpen(v => !v)} aria-expanded={pickOpen} data-testid="pick-toggle"
                 className="touch-target w-full flex items-center gap-1.5 rounded-md border border-slate-200 bg-slate-50 px-3 py-1.5 text-left text-xs font-medium text-slate-600 hover:bg-slate-100">
                 <MapPin className="h-3.5 w-3.5 shrink-0 text-slate-400" />
-                <span className="min-w-0 truncate">Lấy ở đâu <span className="font-normal text-slate-500">· {pickSummary(list, temGroups, 'tem')}</span></span>
+                <span className="min-w-0 truncate">Lấy ở đâu <span className="font-normal text-slate-500">· {pickSummaryAll(list, allGroups)}</span></span>
                 <ChevronDown className={`h-3.5 w-3.5 ml-auto shrink-0 transition-transform ${pickOpen ? 'rotate-180' : ''}`} />
               </button>
               {pickOpen && (
-                <MesStockGroups groups={temGroups} dateLabel={list.date_label} mat={pickMat} bands={pctBands}
+                <MesStockGroups groups={allGroups} dateLabel={list.date_label} mat={pickMat} bands={pctBands}
                   highlightEntryId={entry?.id ?? null} onOpenPallet={setDetailId} testId="pick-list" />
               )}
             </>)}

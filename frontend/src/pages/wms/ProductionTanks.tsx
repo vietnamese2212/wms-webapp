@@ -183,8 +183,8 @@ export default function ProductionTanks() {
       <TankOpSheet open={!!op} onClose={() => setOp(null)} tank={op?.tank ? tanks.find(t => t.id === op.tank!.id) ?? op.tank : null} op={op?.op ?? 'FILL'} />
       <TankMovesSheet open={!!moves} onClose={() => setMoves(null)} tank={moves} />
       <TankQaSheet open={!!qaTank} onClose={() => setQaTank(null)} tank={qaTank ? tanks.find(t => t.id === qaTank.id) ?? qaTank : null} />
-      {pourTank && <PourSheet open onClose={() => setPourTank(null)} warehouseId={pourTank.warehouse_id} canScan={canPour} canFill={canOps}
-        preset={{ tankId: pourTank.id, cycle: pourTank.incoming.length === 1 ? pourTank.incoming[0].cycle : null, batchNo: pourTank.incoming.length === 1 ? pourTank.incoming[0].batch_no : null }} />}
+      {/* mở ở thẻ bồn = đang đứng ở bồn này; mẻ lấy từ tem quét đầu tiên (tem của mẻ bồn khác ⇒ báo SAI BỒN) */}
+      {pourTank && <PourSheet open onClose={() => setPourTank(null)} warehouseId={pourTank.warehouse_id} tankId={pourTank.id} canScan={canPour} canFill={canOps} />}
     </div>
   )
 }

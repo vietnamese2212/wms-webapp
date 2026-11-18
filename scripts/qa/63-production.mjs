@@ -31,6 +31,10 @@
 //   [2e7] quyền duyệt NVL hết hạn chỉ ở chức danh QA (18/11 — gỡ ở Quản lý kho NPP / site / toàn quốc)
 //   [17] BÁO CÁO NVL THEO CHU KỲ (18/11 f): danh sách chu kỳ · Σ thực cấp NVL × mẻ = sổ · nhân sự đếm đúng việc · chi tiết cấp kể cả lần huỷ ·
 //        chu kỳ sai dạng 400; sơ đồ bồn: mẻ đặt bồn chưa nạp mang tình trạng + bước đang tới (mes_batch_steps)
+//   [18] DỮ LIỆU THÔ TIÊU HAO NVL (18/11 g — "raw data đủ thông tin để làm việc với ERP SAP"): mỗi dòng một phát sinh Cấp (+) / Huỷ cấp (−);
+//        Σ SL có dấu = sổ; lọc ngày VN · chặn khoảng sai; file xuất 3 phần (phát sinh · định mức – thực cấp · nạp bồn); phân trang server;
+//        SƠ ĐỒ BỒN 2D: lưu chỗ đặt (map_x / map_y), chặn dữ liệu sai; ống ra = sổ đóng gói đang mở rút từ bồn. [14d] quyền view / export /
+//        manage_tank + phạm vi kho của hai cửa mới.
 // Fixture QA63: kho cha QA63_PARENT + kho phụ QA63_CB (+ QA63_CB2 để thử chéo kho) · mã NVL/BTP QA63* · tem QA63_* — dọn bằng PostgREST.
 import { randomUUID } from 'crypto'
 import { login, api, rawFetch, restAll, restWrite, check, finish, BASE } from './lib.mjs'
@@ -968,11 +972,10 @@ try {
     check('17c. Nhân sự của chu kỳ: người cấp có lần cấp ≥ 1, cấp phải huỷ ≥ 1, nạp bồn ≥ 1, quét đổ bồn ≥ 1, mở mẻ 1, duyệt TC + QA',
       !!me && num(me.rm_rev) >= 1 && num(me.fill) >= 1 && num(me.pour) >= 1 && num(me.open) === 1 && num(me.lead) === 1 && num(me.qaok) === 1,
       JSON.stringify(me ?? null))
-    const cln = await api(`/wms/production/cycles/lines?warehouse_id=${WC2}&cycle=Q2`)
     const crBad = await api(`/wms/production/cycles/report?warehouse_id=${WC2}&cycle=QABCDEFG`)
-    check('17d. Chi tiết cấp = mọi lần cấp của chu kỳ (kể cả lần đã huỷ, có ghi); chu kỳ quá 6 ký tự ⇒ 400 BAD_CYCLE',
-      cln.s === 200 && (cln.j?.data ?? []).length === live16.length && (cln.j?.data ?? []).some(l => !!l.reversed_at) && crBad.s === 400 && crBad.j?.error?.code === 'BAD_CYCLE',
-      `http=${cln.s}/${crBad.s} n=${(cln.j?.data ?? []).length}/${live16.length}`)
+    const rawBad = await api(`/wms/production/consumption-raw?warehouse_id=${WC2}&cycle=QABCDEFG`)
+    check('17d. Chu kỳ quá 6 ký tự ⇒ 400 BAD_CYCLE (báo cáo chu kỳ và dữ liệu thô cùng luật)',
+      crBad.s === 400 && crBad.j?.error?.code === 'BAD_CYCLE' && rawBad.s === 400 && rawBad.j?.error?.code === 'BAD_CYCLE', `http=${crBad.s}/${rawBad.s}`)
     // sơ đồ bồn: mẻ đặt bồn mà chưa nạp đứng trên bồn kèm tình trạng + bước (cùng hàm cổng với danh sách mẻ)
     const qb = (await api('/wms/production/batches', 'POST', { warehouse_id: WC2, material_id: M_BTP, prod_date: todayVN, cycle: 'Q3', tank_id: T3.id, planned_qty: 10 })).j?.data
     const inc = async () => ((await api(`/wms/production/tanks?warehouse_id=${WC2}`)).j?.data ?? []).find(t => t.id === T3.id)?.incoming?.find(x => x.batch_id === qb?.id)
@@ -986,6 +989,66 @@ try {
     check('17e. Sơ đồ bồn: mẻ đặt bồn chưa nạp mang tình trạng + bước — mới mở "wait_lead/lead", trưởng ca duyệt "wait_qa/qa"; huỷ ⇒ chu kỳ Q3 còn 0 mẻ (1 huỷ)',
       !!qb && i1?.stage === 'wait_lead' && i1?.step === 'lead' && i2?.stage === 'wait_qa' && i2?.step === 'qa' && num(cQ3?.batches) === 0 && num(cQ3?.cancelled) === 1,
       `${i1?.stage}/${i1?.step} → duyệt http=${ap.s} → ${i2?.stage}/${i2?.step} q3=${JSON.stringify(cQ3 ?? null)}`)
+
+    // ── [18] DỮ LIỆU THÔ TIÊU HAO NVL (18/11 g) + SƠ ĐỒ BỒN 2D ──
+    const revN = live16.filter(x => !!x.reversed_at).length
+    const rawQ = await api(`/wms/production/consumption-raw?warehouse_id=${WC2}&cycle=q2&page_size=1000`)
+    const RW = rawQ.j?.data
+    const rows18 = RW?.rows ?? []
+    const sumSigned = rows18.reduce((s, r) => s + num(r.signed_qty), 0)
+    const revRow = rows18.find(r => r.event === 'REVERSAL')
+    check('18a. Dữ liệu thô chu kỳ Q2: số phát sinh = số lần cấp + số lần huỷ; Σ SL có dấu = Σ cấp còn hiệu lực; dòng Huỷ cấp SL âm, ghi ngày huỷ; mỗi dòng đủ mã lô BTP · mã NVL · ĐVT · kho · mã dòng',
+      rawQ.s === 200 && revN >= 1 && num(RW?.total) === live16.length + revN && Math.abs(sumSigned - sumDb) < 1e-6
+        && !!revRow && num(revRow.signed_qty) < 0 && revRow.at === revRow.reversed_at
+        && num(RW?.summary?.issues) === live16.length && num(RW?.summary?.reversals) === revN
+        && rows18.every(r => r.batch_code && r.mat_code && r.unit && r.wh_code && r.line_id),
+      `http=${rawQ.s} total=${RW?.total} lines=${live16.length}+${revN} Σ=${sumSigned}/${sumDb}`)
+    const ydVN = new Date(Date.now() - 86_400_000).toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
+    const rawDay = await api(`/wms/production/consumption-raw?warehouse_id=${WC2}&date_from=${ydVN}&date_to=${todayVN}&page_size=1000`)
+    const badRange = await api(`/wms/production/consumption-raw?warehouse_id=${WC2}&date_from=${todayVN}&date_to=2020-01-01`)
+    const noRange = await api(`/wms/production/consumption-raw?warehouse_id=${WC2}`)
+    const badDay = await api(`/wms/production/consumption-raw?warehouse_id=${WC2}&date_from=2026-02-31&date_to=2026-03-01`)
+    check('18b. Lọc theo NGÀY phát sinh (giờ VN): hôm qua → hôm nay có đủ phát sinh của Q2; Đến < Từ · thiếu cả ngày lẫn chu kỳ · ngày không có thật ⇒ 400',
+      rawDay.s === 200 && num(rawDay.j?.data?.total) >= live16.length + revN && badRange.s === 400 && badRange.j?.error?.code === 'DATE_RANGE'
+        && noRange.s === 400 && badDay.s === 400,
+      `http=${rawDay.s}/${badRange.s}/${noRange.s}/${badDay.s} total=${rawDay.j?.data?.total}`)
+    const exE = await api(`/wms/production/consumption-raw/export?warehouse_id=${WC2}&cycle=Q2&part=events`)
+    const exR = await api(`/wms/production/consumption-raw/export?warehouse_id=${WC2}&cycle=Q2&part=req`)
+    const exF = await api(`/wms/production/consumption-raw/export?warehouse_id=${WC2}&cycle=Q2&part=fill`)
+    const evs = exE.j?.data?.rows ?? [], rqs = exR.j?.data?.rows ?? [], fls = exF.j?.data?.rows ?? []
+    check('18c. File xuất (quyền export): phát sinh đủ dòng, sắp theo thời gian; định mức – thực cấp: Σ thực cấp = sổ, dòng NVL định mức 10 · thực cấp 10; nạp bồn: tổng 100 vào bồn QA63-T5',
+      exE.s === 200 && evs.length === live16.length + revN && evs.every((r, i, a) => i === 0 || a[i - 1].at <= r.at)
+        && exR.s === 200 && Math.abs(rqs.reduce((s, r) => s + num(r.iss), 0) - sumDb) < 1e-6 && rqs.some(r => r.batch_id === FB.id && num(r.req) === 10 && num(r.iss) === 10)
+        && exF.s === 200 && fls.length >= 1 && Math.abs(fls.reduce((s, r) => s + num(r.qty), 0) - 100) < 1e-6 && fls.every(r => r.tank_code === 'QA63-T5'),
+      `http=${exE.s}/${exR.s}/${exF.s} ev=${evs.length} req=${rqs.length} fill=${fls.length}`)
+    const pg2 = await api(`/wms/production/consumption-raw?warehouse_id=${WC2}&cycle=Q2&sort=asc&page=2&page_size=1`)
+    check('18d. Phân trang server: trang 2 cỡ 1 (sắp tăng) = dòng thứ 2 của file xuất; tổng không đổi theo trang',
+      pg2.s === 200 && pg2.j?.data?.rows?.length === 1 && pg2.j.data.rows[0].line_id === evs[1]?.line_id && pg2.j.data.rows[0].event === evs[1]?.event
+        && num(pg2.j?.data?.total) === live16.length + revN,
+      `http=${pg2.s} ${pg2.j?.data?.rows?.[0]?.line_id}/${evs[1]?.line_id}`)
+    const lay1 = await api('/wms/production/tank-layout', 'PUT', { items: [{ id: T3.id, x: 40, y: 80 }, { id: T5.id, x: 320, y: 80 }] })
+    const tkL = (await api(`/wms/production/tanks?warehouse_id=${WC2}`)).j?.data ?? []
+    const t3p = tkL.find(t => t.id === T3.id), t5p = tkL.find(t => t.id === T5.id)
+    const lay2 = await api('/wms/production/tank-layout', 'PUT', { items: [{ id: T3.id, x: 40, y: 80 }] })
+    const layBad = await api('/wms/production/tank-layout', 'PUT', { items: [{ id: T3.id, x: 40, y: null }] })
+    const layNf = await api('/wms/production/tank-layout', 'PUT', { items: [{ id: 'QA63_NO_TANK', x: 0, y: 0 }] })
+    const layDup = await api('/wms/production/tank-layout', 'PUT', { items: [{ id: T3.id, x: 0, y: 0 }, { id: T3.id, x: 20, y: 0 }] })
+    const layReset = await api('/wms/production/tank-layout', 'PUT', { items: [{ id: T3.id, x: null, y: null }] })
+    const t3r = (await restAll('production_tank', `select=map_x,map_y&id=eq.${T3.id}`))[0]
+    check('18e. Sơ đồ 2D — lưu chỗ đặt: 2 bồn ⇒ 2, danh sách bồn trả map_x / map_y; lưu lại y hệt ⇒ 0; x có mà y trống ⇒ 400; bồn không có ⇒ 404; trùng bồn ⇒ 422; về tự xếp ⇒ null',
+      lay1.s === 200 && num(lay1.j?.data?.updated) === 2 && t3p?.map_x === 40 && t3p?.map_y === 80 && t5p?.map_x === 320 && t5p?.map_y === 80
+        && lay2.s === 200 && num(lay2.j?.data?.updated) === 0 && layBad.s === 400 && layNf.s === 404 && layDup.s === 422
+        && layReset.s === 200 && num(layReset.j?.data?.updated) === 1 && t3r?.map_x == null && t3r?.map_y == null,
+      `http=${lay1.s}/${lay2.s}/${layBad.s}/${layNf.s}/${layDup.s}/${layReset.s} t3=${t3p?.map_x},${t3p?.map_y} reset=${JSON.stringify(t3r ?? null)}`)
+    const runId = randomUUID()
+    await restWrite('packing_runs', 'POST', '', [{ id: runId, warehouse_id: WC2, run_date: todayVN, material_code: 'QA63BTP1', machine_code: 'QA63M', start_at: ts(),
+      status: 'OPEN', tank_id: T5.id, created_at: ts(), updated_at: ts() }])
+    const t5run = ((await api(`/wms/production/tanks?warehouse_id=${WC2}`)).j?.data ?? []).find(t => t.id === T5.id)
+    await restWrite('packing_runs', 'DELETE', `id=eq.${runId}`)
+    const t5none = ((await api(`/wms/production/tanks?warehouse_id=${WC2}`)).j?.data ?? []).find(t => t.id === T5.id)
+    check('18f. Sơ đồ 2D — ống ra: sổ đóng gói ĐANG MỞ rút từ bồn 5 ⇒ danh sách bồn trả máy QA63M; sổ đã gỡ ⇒ không còn',
+      t5run?.runs?.length === 1 && t5run.runs[0].machine_code === 'QA63M' && Array.isArray(t5none?.runs) && t5none.runs.length === 0,
+      `${JSON.stringify(t5run?.runs ?? null)} / ${JSON.stringify(t5none?.runs ?? null)}`)
   }
 
   // ── [14] CHỨC DANH CHỈ CÓ QUYỀN SẢN XUẤT (16/11 — nghiệm thu bằng vai thật): form Mở / Sửa mẻ, Định mức tìm mã qua danh mục Mã hàng ──
@@ -993,7 +1056,7 @@ try {
   else {
     const pw = 'Qa' + randomUUID().slice(0, 10) + '!'   // dùng một lần, không in
     await restWrite('JobTitle', 'POST', '', [
-      { id: JT_OPEN, name: 'QA63 tổ trưởng chế biến', updated_at: ts(), module_permissions: { production: ['view', 'open_batch', 'consume'] } },
+      { id: JT_OPEN, name: 'QA63 tổ trưởng chế biến', updated_at: ts(), module_permissions: { production: ['view', 'open_batch', 'consume', 'manage_tank'] } },
       { id: JT_VIEW, name: 'QA63 chỉ xem sản xuất', updated_at: ts(), module_permissions: { production: ['view'] } },
     ])
     const mk = async (jid, n) => {
@@ -1016,6 +1079,18 @@ try {
     const postAs = async (tk, p, body) => (await fetch(`${BASE}/api${p}`, { method: 'POST', headers: { Authorization: `Bearer ${tk}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body) })).status
     const sDec = tkOpen ? await postAs(tkOpen, `/wms/production/batches/${BR?.id ?? 'x'}/expiry-approvals/decide`, { entry_id: 'QA63_X1', decision: 'APPROVED', note: 'QA63' }) : 0
     check('14c. Chức danh cấp NVL được nhưng KHÔNG có quyền QA duyệt hàng hết hạn ⇒ 403 (17/11)', sDec === 403, `http=${sDec}`)
+    // 18/11 g: hai cửa mới — dữ liệu thô (view đọc · export xuất file) và lưu chỗ đặt bồn (manage_tank), cắt theo kho được giao
+    const putLay = async (tk, items) => (await fetch(`${BASE}/api/wms/production/tank-layout`, { method: 'PUT', headers: { Authorization: `Bearer ${tk}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ items }) })).status
+    const rawP = (w, exp = false) => `/wms/production/consumption-raw${exp ? '/export' : ''}?warehouse_id=${w}&date_from=${todayVN}&date_to=${todayVN}`
+    const sRawView = tkView ? await st(tkView, rawP(WC)) : 0
+    const sRawExp = tkView ? await st(tkView, rawP(WC, true)) : 0
+    const sRawScope = tkView ? await st(tkView, rawP(WC2)) : 0
+    const sLayView = tkView ? await putLay(tkView, [{ id: T1.id, x: 0, y: 0 }]) : 0
+    const sLayScope = tkOpen ? await putLay(tkOpen, [{ id: T3.id, x: 0, y: 0 }]) : 0
+    const sLayOk = tkOpen ? await putLay(tkOpen, [{ id: T1.id, x: 20, y: 40 }]) : 0
+    check('14d. Dữ liệu thô: chức danh chỉ xem đọc kho mình 200 · xuất file 403 (cần quyền export) · kho ngoài phạm vi 403; sơ đồ 2D: không có "Quản lý bồn" 403 · bồn kho ngoài phạm vi 403 · bồn kho mình 200',
+      sRawView === 200 && sRawExp === 403 && sRawScope === 403 && sLayView === 403 && sLayScope === 403 && sLayOk === 200,
+      `raw=${sRawView}/${sRawExp}/${sRawScope} layout=${sLayView}/${sLayScope}/${sLayOk}`)
   }
 
   // ── [15] CỜ "BÁN THÀNH PHẨM" Ở MÃ HÀNG (16/11, C117 — ô "Mã bán thành phẩm" từng chỉ liệt kê nguyên liệu) ──

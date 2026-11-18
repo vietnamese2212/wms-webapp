@@ -372,12 +372,21 @@ interface ProductionTanksFilters {   // trang Bồn (MES 14/11)
   /** 17/11: 'map' = sơ đồ bồn 2D (mặc định) · 'table' = bảng */
   view: 'map' | 'table'
 }
-interface ProductionReportFilters {   // trang Báo cáo NVL (18/11 f): tab Theo chu kỳ (mặc định) · Đếm tồn theo ca
-  tab: 'cycle' | 'shift'
+interface ProductionReportFilters {   // trang Báo cáo NVL (18/11 f): tab Theo chu kỳ (mặc định) · Dữ liệu thô (18/11 g) · Đếm tồn theo ca
+  tab: 'cycle' | 'raw' | 'shift'
   warehouseId: string    // kho chế biến ('' = kho mặc định trong phạm vi)
   cycle: string          // '' = chu kỳ mới nhất
   /** NVL × mẻ · Ca · Mẻ · Nhân sự */
   view: 'nvl' | 'batch' | 'people'
+  /** tab Dữ liệu thô (tiêu hao NVL cho SAP): khoảng ngày của phát sinh ('' = 7 ngày gần nhất) · chu kỳ · tìm · loại phát sinh · cờ · trang */
+  rawFrom: string
+  rawTo: string
+  rawCycle: string
+  rawSearch: string
+  rawEvent: '' | 'ISSUE' | 'REVERSAL'
+  rawFlag: '' | 'rotation' | 'expiry' | 'reversed'
+  rawPage: number
+  rawPageSize: number
 }
 interface InboundReturnsFilters {   // trang Hàng trả về (26/10)
   search: string
@@ -724,7 +733,7 @@ function initialFilters() {
     // dateTo trống = tới hôm nay (và sau) — bộ lọc được nhớ qua ngày, mặc định today() thành 'hôm qua' ở lần mở sau, mẻ hôm nay biến mất khỏi danh sách
     production: { search: '', warehouseId: '', dateFrom: daysAgo(14), dateTo: '', stage: '', page: 1, pageSize: 100 },
     productionTanks: { warehouseId: '', showInactive: false, view: 'map' as const },
-    productionReport: { tab: 'cycle' as const, warehouseId: '', cycle: '', view: 'nvl' as const },
+    productionReport: { tab: 'cycle' as const, warehouseId: '', cycle: '', view: 'nvl' as const, rawFrom: '', rawTo: '', rawCycle: '', rawSearch: '', rawEvent: '' as const, rawFlag: '' as const, rawPage: 1, rawPageSize: 200 },
     packing:      { tab: 'board' as const, search: '', warehouseId: '', machine: '', cycle: '', status: '', dateFrom: daysAgo(7), dateTo: today(), page: 1, pageSize: 200, runStatus: '', runPage: 1, received: '' },
     alerts:       { tab: 'general' as const, search: '', warehouseId: '', rules: [], severity: [], status: 'open' },
     stocktakeCycle: { search: '', warehouseId: '', cats: [], abc: [], dueOnly: true },

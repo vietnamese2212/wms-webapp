@@ -53,7 +53,7 @@ export function sweepGlobalScope(scope: GlobalScope, opts: { force: boolean }) {
     // MES (14/11): bối cảnh là kho NHÀ MÁY ⇒ BE tự gồm các kho phụ (kho chế biến) trực thuộc
     s.setProduction({ warehouseId: wid, page: 1 })
     s.setProductionTanks({ warehouseId: wid })
-    s.setProductionReport({ warehouseId: wid, cycle: '' })
+    s.setProductionReport({ warehouseId: wid, cycle: '', rawCycle: '', rawPage: 1 })
     s.setWeighTickets({ warehouse_ids: one(wid) })
     s.setTmsTransfer({ khoXuat: one(wid) })
     s.setUserAdmin({ warehouseId: wid || '__all__', page: 1 })   // slice duy nhất sentinel '__all__'

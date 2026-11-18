@@ -116,14 +116,14 @@ const TABLE_QUERY_MAP: Record<string, string[][]> = {
   forklift_checklist_items: [['forklift-items']],
   forklift_daily_logs:      [['forklift-board'], ['forklift-report'], ['forklift-log'], ['forklift-logs-matrix']],
   packing_logs:             [['packing-board'], ['packing-logs'], ['packing-run-board'], ['packing-runs'], ['packing-run']],
-  packing_runs:             [['packing-run-board'], ['packing-runs'], ['packing-run']],
+  packing_runs:             [['packing-run-board'], ['packing-runs'], ['packing-run'], ['prod-tanks']],
   // Sản xuất — MES gđ1 (14/11): mẻ · sổ tiêu hao (rút NVL trừ InventoryEntry — bảng đó tự bắn tín hiệu tồn) · bồn · tồn trong bồn · sổ bồn
   // 18/11 f: sơ đồ bồn vẽ mẻ sắp vào kèm BƯỚC đang tới ⇒ mọi sổ đổi bước (cấp NVL · phiếu · tem · quét đổ bồn) đều chạm prod-tanks;
   // báo cáo NVL theo chu kỳ (prod-cycle / prod-cycles) đọc cùng các sổ đó
-  production_batch:         [['prod-batches'], ['prod-batch'], ['prod-tanks'], ['prod-genealogy'], ['prod-cycles'], ['prod-cycle']],
-  batch_consumption:        [['prod-batches'], ['prod-batch'], ['prod-stock'], ['prod-genealogy'], ['pallet-ledger'], ['prod-shift-report'], ['prod-tanks'], ['prod-cycle']],
+  production_batch:         [['prod-batches'], ['prod-batch'], ['prod-tanks'], ['prod-genealogy'], ['prod-cycles'], ['prod-cycle'], ['prod-consumption-raw']],
+  batch_consumption:        [['prod-batches'], ['prod-batch'], ['prod-stock'], ['prod-genealogy'], ['pallet-ledger'], ['prod-shift-report'], ['prod-tanks'], ['prod-cycle'], ['prod-consumption-raw']],
   // NVL hết hạn chờ QA duyệt (17/11) — trang mẻ (mục chờ duyệt) + form cấp ("Lấy ở đâu" nằm dưới prod-stock) đổi ngay khi QA bấm
-  mes_expiry_approval:      [['prod-batch'], ['prod-stock']],
+  mes_expiry_approval:      [['prod-batch'], ['prod-stock'], ['prod-consumption-raw']],
   production_tank:          [['prod-tanks'], ['prod-tanks-for-run']],
   tank_lot:                 [['prod-tanks'], ['prod-batch'], ['prod-batches']],
   batch_requirement:        [['prod-batch'], ['prod-tanks'], ['prod-cycle']],

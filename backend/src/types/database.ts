@@ -1,5 +1,5 @@
 // FILE SINH TỰ ĐỘNG — `node scripts/gen-db-types.mjs` (từ information_schema STAGING). KHÔNG sửa tay.
-// Sinh lúc 2026-11-18T11:02:37.247Z · 125 bảng/view · 260 hàm · 0 enum
+// Sinh lúc 2026-11-18T14:30:48.982Z · 125 bảng/view · 261 hàm · 0 enum
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[]
 
 export type Database = {
@@ -5830,6 +5830,8 @@ export type Database = {
           updated_by: string | null
           created_at: string
           updated_at: string
+          map_x: number | null
+          map_y: number | null
         }
         Insert: {
           id: string
@@ -5844,6 +5846,8 @@ export type Database = {
           updated_by?: string | null
           created_at?: string
           updated_at: string
+          map_x?: number | null
+          map_y?: number | null
         }
         Update: {
           id?: string
@@ -5858,6 +5862,8 @@ export type Database = {
           updated_by?: string | null
           created_at?: string
           updated_at?: string
+          map_x?: number | null
+          map_y?: number | null
         }
         Relationships: []
       }
@@ -7431,8 +7437,8 @@ export type Database = {
         Args: { p: Json | null }
         Returns: Json
       }
-      mes_cycle_lines: {
-        Args: { p_wh: string | null; p_cycle: string | null }
+      mes_consumption_raw: {
+        Args: { p: Json | null }
         Returns: Json
       }
       mes_cycle_list: {
@@ -7522,6 +7528,10 @@ export type Database = {
       mes_tank_fill: {
         Args: { p: Json | null }
         Returns: Json
+      }
+      mes_tank_layout_save: {
+        Args: { p: Json | null }
+        Returns: number
       }
       mes_tank_qa: {
         Args: { p: Json | null }

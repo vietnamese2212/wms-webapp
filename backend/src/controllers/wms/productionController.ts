@@ -67,7 +67,7 @@ function mesFail(res: Response, e: unknown): Response {
   if (!m) return failAny(res, e)
   const [, code, text] = m
   const status = code === 'NOT_FOUND' ? 404 : ['QTY', 'REASON', 'UNIT', 'KIND', 'SAME_TANK', 'DUPLICATE', 'SELF', 'NAME', 'MISMATCH', 'RECIPE_MISMATCH', 'RECIPE_INACTIVE', 'CYCLE', 'BATCH_NO', 'TANK', 'NO_PLANT', 'FORM_INVALID',
-    'EXPIRED', 'EXPIRED_REJECTED', 'NOT_EXPIRED', 'DECISION', 'SUBJECT', 'KEY', 'TIME', 'TOO_LONG'].includes(code) ? 422 : 409
+    'EXPIRED', 'EXPIRED_REJECTED', 'NOT_EXPIRED', 'DECISION', 'SUBJECT', 'KEY', 'TIME', 'TOO_LONG', 'DATE_RANGE', 'WAREHOUSE'].includes(code) ? 422 : 409
   return fail(res, status, `MES_${code}`, text.trim())
 }
 
@@ -1050,12 +1050,26 @@ export async function listTanks(req: Request, res: Response) {
     if (error) return fail(res, error)
     const ids = (tanks ?? []).map(t => t.id)
     const lots: LotView[] = []
-    for (let i = 0; i < ids.length; i += 300) {
-      const { data } = await db.from('tank_lot')
-        .select('id, tank_id, batch_id, qty_in, qty_remaining, filled_at, expires_at, batch:production_batch!tank_lot_batch_id_fkey(batch_code, batch_no, cycle, shift, qa_status, material:Material!production_batch_material_id_fkey(material_code, short_name))')
-        .in('tank_id', ids.slice(i, i + 300)).eq('status', 'ACTIVE').order('filled_at').limit(1000)
-      lots.push(...((data ?? []) as unknown as LotView[]))
-    }
+    // SƠ ĐỒ BỒN 2D (18/11 g): sổ đóng gói ĐANG MỞ rút từ bồn ⇒ ống ra của bồn chạy tới máy đóng gói (đọc song song với lô)
+    type RunView = { id: string; tank_id: string | null; machine_code: string; material_code: string; start_at: string; shift: string | null }
+    const runs: RunView[] = []
+    await Promise.all([
+      (async () => {
+        for (let i = 0; i < ids.length; i += 300) {
+          const { data } = await db.from('tank_lot')
+            .select('id, tank_id, batch_id, qty_in, qty_remaining, filled_at, expires_at, batch:production_batch!tank_lot_batch_id_fkey(batch_code, batch_no, cycle, shift, qa_status, material:Material!production_batch_material_id_fkey(material_code, short_name))')
+            .in('tank_id', ids.slice(i, i + 300)).eq('status', 'ACTIVE').order('filled_at').limit(1000)
+          lots.push(...((data ?? []) as unknown as LotView[]))
+        }
+      })(),
+      (async () => {
+        for (let i = 0; i < ids.length; i += 300) {
+          const { data } = await db.from('packing_runs').select('id, tank_id, machine_code, material_code, start_at, shift')
+            .in('tank_id', ids.slice(i, i + 300)).eq('status', 'OPEN').order('start_at').limit(1000)
+          runs.push(...((data ?? []) as RunView[]))
+        }
+      })(),
+    ])
     // mẻ đang mở ĐÃ ĐẶT bồn mà chưa nạp đủ ⇒ phần "sắp vào" của bồn (sơ đồ bồn vẽ phần này; tạo mẻ trừ phần này khỏi chỗ trống)
     type Planned = { id: string; tank_id: string | null; batch_code: string; cycle: string | null; batch_no: number | null; planned_qty: number | null
       shift: string | null; created_at: string; material: { material_code: string; short_name: string | null } | null }
@@ -1094,6 +1108,7 @@ export async function listTanks(req: Request, res: Response) {
       const qa = ls.map(l => l.batch?.qa_status)
       return {
         ...t, content, lots: ls, incoming, reserved: round3(incoming.reduce((s, x) => s + x.qty, 0)),
+        runs: runs.filter(r => r.tank_id === t.id).map(r => ({ id: r.id, machine_code: r.machine_code, material_code: r.material_code, start_at: r.start_at, shift: r.shift })),
         qa_state: !ls.length ? 'EMPTY' : qa.includes('REJECTED') ? 'REJECTED' : qa.some(x => x !== 'RELEASED') ? 'HOLD' : 'RELEASED',
         qa_pending: ls.some(l => l.batch?.qa_status !== 'RELEASED'),
         expired: ls.some(l => !!l.expires_at && Date.parse(l.expires_at) < now),
@@ -1117,6 +1132,33 @@ export async function tankMovements(req: Request, res: Response) {
       .eq('tank_id', t.id).order('created_at', { ascending: false }).range((page - 1) * size, page * size - 1)
     if (error) return fail(res, error)
     return ok(res, { rows: data ?? [], total: count ?? 0, page, pageSize: size })
+  } catch (e) { return failAny(res, e) }
+}
+
+// PUT /wms/production/tank-layout — chỗ đặt bồn trên SƠ ĐỒ 2D (18/11 g, quyền manage_tank): [{ id, x, y }] theo điểm sơ đồ, tính trong khung
+// kho chế biến của bồn; x = y = null ⇒ về tự xếp. Mọi bồn phải thuộc kho trong phạm vi người sửa. Ghi một lượt (RPC), realtime qua production_tank.
+export const zTankLayout = z.object({
+  items: z.array(z.object({
+    id: zText(1, 64), x: z.number().int().min(0).max(100000).nullable(), y: z.number().int().min(0).max(100000).nullable(),
+  }).refine(v => (v.x === null) === (v.y === null), 'x và y cùng có giá trị hoặc cùng để trống')).min(1).max(500),
+})
+export async function saveTankLayout(req: Request, res: Response) {
+  try {
+    const body = req.body as z.infer<typeof zTankLayout>
+    const ids = [...new Set(body.items.map(i => i.id))]
+    if (ids.length !== body.items.length) return fail(res, 422, 'DUPLICATE', 'Một bồn chỉ có một chỗ đặt')
+    const found: { id: string; warehouse_id: string }[] = []
+    for (let i = 0; i < ids.length; i += 300) {
+      const { data, error } = await db.from('production_tank').select('id, warehouse_id').in('id', ids.slice(i, i + 300))
+      if (error) return fail(res, error)
+      found.push(...(data ?? []))
+    }
+    if (found.length !== ids.length) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy bồn')
+    const whs = [...new Set(found.map(t => t.warehouse_id))]
+    for (const w of whs) if (!(await inScope(req, w))) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
+    const { data, error } = await db.rpc('mes_tank_layout_save', { p: { items: body.items, warehouse_ids: whs, actor_name: actor(req).actor_name } })
+    if (error) return mesFail(res, error)
+    return ok(res, { updated: Number(data ?? 0) })
   } catch (e) { return failAny(res, e) }
 }
 
@@ -1484,7 +1526,7 @@ export async function saveShiftReport(req: Request, res: Response) {
 
 // ── BÁO CÁO NVL THEO CHU KỲ (18/11 f — user: "theo chu kỳ, chu kỳ là lớn hơn ca, mẻ" · "cuối chu kỳ, nhưng tách ra ca, mẻ — từ đó ra được
 // các chỉ số của nhân sự, số liệu"). Chu kỳ = (kho chế biến, production_batch.cycle); ca của mẻ = ca khai lúc mở mẻ. Mọi con số tính ở DB
-// (mes_cycle_list / mes_cycle_report / mes_cycle_lines — chỉ đọc sổ gốc), màn hình xem realtime qua chính các sổ đó.
+// (mes_cycle_list / mes_cycle_report — chỉ đọc sổ gốc; sheet thô của file đọc mes_consumption_raw), màn hình xem realtime qua chính các sổ đó.
 export const zCycleListQuery = z.object({ warehouse_id: zText(1, 64), search: zText(0, 20).optional() })
 export async function listCycles(req: Request, res: Response) {
   try {
@@ -1515,14 +1557,61 @@ export async function cycleReport(req: Request, res: Response) {
     return ok(res, data)
   } catch (e) { return failAny(res, e) }
 }
-// GET /wms/production/cycles/lines?warehouse_id=&cycle= — từng lần cấp NVL (sheet "Chi tiết cấp" của báo cáo cuối — quyền export)
-export async function cycleLines(req: Request, res: Response) {
+// ── DỮ LIỆU THÔ TIÊU HAO NVL (18/11 g — user: "tiêu hao NVL phải làm dạng raw data, có đầy đủ thông tin hết — để còn làm việc với ERP SAP").
+// Mỗi dòng MỘT phát sinh như chứng từ kho của SAP: CẤP (+SL, lúc cấp) · HUỶ CẤP (−SL, lúc huỷ) — lọc theo ngày của chính phát sinh (giờ VN).
+// MỘT hàm DB (mes_consumption_raw) cho màn "Dữ liệu thô", file xuất của nó và sheet thô của báo cáo chu kỳ ⇒ hai file cùng khuôn cột.
+const zRawBase = {
+  warehouse_id: zText(1, 64), date_from: zDay.optional(), date_to: zDay.optional(), cycle: zText(0, 20).optional(), search: zText(0, 80).optional(),
+  event: z.enum(['ISSUE', 'REVERSAL']).optional(), flag: z.enum(['rotation', 'expiry', 'reversed']).optional(), sort: z.enum(['asc', 'desc']).optional(),
+  page: z.coerce.number().int().min(1).max(100000).optional(),
+}
+export const zRawQuery = z.object({ ...zRawBase, page_size: z.coerce.number().int().min(1).max(1000).optional() })
+export const zRawExportQuery = z.object({ ...zRawBase, part: z.enum(['events', 'req', 'fill']).optional(), page_size: z.coerce.number().int().min(1).max(2000).optional() })
+const RAW_MAX_DAYS = 366
+/** kho trong phạm vi · chu kỳ đúng dạng · khoảng ngày đủ hai đầu, tối đa 367 ngày (không chọn chu kỳ thì bắt buộc) — trả null khi đã trả lỗi */
+async function rawArgs(req: Request, res: Response): Promise<Record<string, string | number | null> | null> {
+  const q = req.query as unknown as z.infer<typeof zRawExportQuery>
+  if (!(await inScope(req, q.warehouse_id))) { fail(res, 403, 'FORBIDDEN', SCOPE_MSG); return null }
+  let cycle: string | null = null
+  if (q.cycle) {
+    cycle = normalizeCycle(q.cycle)
+    if (!CYCLE_RE.test(cycle)) { fail(res, 400, 'BAD_CYCLE', 'Chu kỳ chỉ gồm chữ và số, tối đa 6 ký tự'); return null }
+  }
+  const from = q.date_from ?? null, to = q.date_to ?? null
+  if (!!from !== !!to) { fail(res, 400, 'DATE_RANGE', 'Chọn đủ Từ ngày và Đến ngày'); return null }
+  if (!cycle && !from) { fail(res, 400, 'DATE_RANGE', 'Chọn khoảng ngày (hoặc một chu kỳ)'); return null }
+  if (from && to) {
+    const d0 = Date.parse(`${from}T00:00:00Z`), d1 = Date.parse(`${to}T00:00:00Z`)
+    if (!Number.isFinite(d0) || !Number.isFinite(d1)) { fail(res, 400, 'DATE_RANGE', 'Ngày không hợp lệ'); return null }
+    const days = (d1 - d0) / 86_400_000
+    if (days < 0 || days > RAW_MAX_DAYS) { fail(res, 400, 'DATE_RANGE', `Khoảng ngày không hợp lệ — Đến ngày phải sau Từ ngày, tối đa ${RAW_MAX_DAYS + 1} ngày`); return null }
+  }
+  return {
+    warehouse_id: q.warehouse_id, date_from: from, date_to: to, cycle, search: q.search?.trim() || null, event: q.event ?? null, flag: q.flag ?? null,
+    sort: q.sort ?? 'desc', page: q.page ?? 1,
+  }
+}
+// GET /wms/production/consumption-raw — màn "Dữ liệu thô": một trang phát sinh + tổng + dải số (quyền view)
+export async function consumptionRaw(req: Request, res: Response) {
   try {
-    const a = await cycleArgs(req, res)
+    const a = await rawArgs(req, res)
     if (!a) return res
-    const { data, error } = await db.rpc('mes_cycle_lines', { p_wh: a.wh, p_cycle: a.cycle })
-    if (error) return fail(res, error)
-    return ok(res, data ?? [])
+    const size = (req.query as unknown as z.infer<typeof zRawQuery>).page_size ?? 200
+    const { data, error } = await db.rpc('mes_consumption_raw', { p: { ...a, part: 'events', mode: 'page', page_size: size } })
+    if (error) return mesFail(res, error)
+    return ok(res, data)
+  } catch (e) { return failAny(res, e) }
+}
+// GET /wms/production/consumption-raw/export?part=events|req|fill — file xuất (và sheet thô của báo cáo chu kỳ): lật trang tới hết (quyền export)
+export async function consumptionRawExport(req: Request, res: Response) {
+  try {
+    const a = await rawArgs(req, res)
+    if (!a) return res
+    const q = req.query as unknown as z.infer<typeof zRawExportQuery>
+    // file thô đi theo thứ tự thời gian (cũ → mới) như sổ chứng từ, trừ khi gọi chỉ rõ
+    const { data, error } = await db.rpc('mes_consumption_raw', { p: { ...a, sort: q.sort ?? 'asc', part: q.part ?? 'events', mode: 'rows', page_size: q.page_size ?? 2000 } })
+    if (error) return mesFail(res, error)
+    return ok(res, data)
   } catch (e) { return failAny(res, e) }
 }
 

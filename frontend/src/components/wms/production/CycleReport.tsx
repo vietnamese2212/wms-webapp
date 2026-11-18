@@ -6,7 +6,8 @@
 //   • Ba cách xem: NVL × mẻ (mỗi mẻ một cột, gom theo CA, mỗi ô thực cấp + định mức, tô theo luật mức lệch của phiếu mẻ) · Ca · Mẻ (mỗi mẻ
 //     một dòng: tình trạng, kế hoạch / nạp bồn, dòng NVL đủ / thiếu / vượt, sai thứ tự, mốc giờ, người làm; mỗi ca một dòng chỉ số) ·
 //     Nhân sự (mỗi người một dòng: đếm việc đã làm trong chu kỳ).
-//   • Báo cáo cuối = Xuất Excel 4 sheet: NVL theo mẻ (bố cục tờ giấy: Ca / BTP / Mẻ) · Ca · Mẻ · Nhân sự · Chi tiết cấp (từng lần cấp).
+//   • Báo cáo cuối = Xuất Excel 4 sheet: NVL theo mẻ (bố cục tờ giấy: Ca / BTP / Mẻ) · Ca · Mẻ · Nhân sự · Tiêu hao NVL (thô) — 18/11 g:
+//     sheet thô đọc CÙNG khuôn cột với tab Dữ liệu thô (utils/consumptionRaw.ts — mỗi dòng một phát sinh Cấp / Huỷ cấp, đủ cột cho SAP).
 // Số gốc tính ở DB (mes_cycle_report); phép gom ở utils/cycleReport.ts (có test) — bảng, dải số và Excel đọc cùng hàm.
 import { useMemo, useState, type ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
@@ -25,7 +26,7 @@ import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { useGlobalScopeStore } from '@/stores/globalScopeStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { useCanSeePath } from '@/hooks/useCanSeePath'
-import { useProductionWarehouses, useCycles, useCycleReport, fetchCycleLines, defaultKitchen, type CycleBatch, type CycleRow, type CyclePerson } from '@/api/productionHooks'
+import { useProductionWarehouses, useCycles, useCycleReport, fetchRawAll, defaultKitchen, type CycleBatch, type CycleRow, type CyclePerson } from '@/api/productionHooks'
 import { StageSymbol, StageBadge, stageLabel } from './BatchStage'
 import { MobileNumHead, MobileNumRow, type NumCol } from './MobileNumGrid'
 import { shiftGroups, liveBatches, rowSum, cellState, shiftKpis, minutesBetween, durLabel, isFilled, lineStats, type ShiftKpi } from '@/utils/cycleReport'
@@ -33,6 +34,7 @@ import { reqLineState, devLabel } from '@/utils/reqTolerance'
 import { qtyNum, qtyCode, matUnitCode, unitCode } from '@/utils/unitCode'
 import { formatDate, formatDateTime, formatTimestampTime } from '@/utils/formatters'
 import { saveWorkbook } from '@/utils/saveExcel'
+import { RAW_EVENT_COLS, rawAoa, rawColWidths } from '@/utils/consumptionRaw'
 import { sanitizeAoa } from '@/utils/excelSafe'
 
 const TD = 'px-2 py-1 text-[10px] whitespace-nowrap'
@@ -103,7 +105,7 @@ export function CycleReport({ tabBar }: { tabBar: ReactNode }) {
     if (!rep) return
     setErr(''); setBusy(true)
     try {
-      const lines = await fetchCycleLines(wh, cycle)
+      const lines = await fetchRawAll({ warehouse_id: wh, cycle }, 'events')
       const wb = XLSX.utils.book_new()
       const head = [
         [`BÁO CÁO SỬ DỤNG NGUYÊN VẬT LIỆU — CHU KỲ ${cycle}`],
@@ -163,25 +165,17 @@ export function CycleReport({ tabBar }: { tabBar: ReactNode }) {
       const ws3 = XLSX.utils.aoa_to_sheet(sanitizeAoa(ppl))
       ws3['!cols'] = [{ wch: 22 }, { wch: 14 }, ...Array.from({ length: 15 }, () => ({ wch: 10 })), { wch: 18 }, { wch: 18 }]
       XLSX.utils.book_append_sheet(wb, ws3, 'Nhân sự')
-      // 4) Chi tiết cấp — từng lần cấp (kể cả lần đã huỷ, ghi rõ)
-      const det: unknown[][] = [...head,
-        ['Ca', 'Mẻ', 'Mã lô', 'NVL', 'Tên', 'ĐVT', 'Số lượng', 'Tem / pallet', 'Lô NCC', 'NSX', 'Cách cấp', 'Người cấp', 'Lúc', 'Sai thứ tự', 'Lý do', 'Hết hạn QA duyệt', 'Đã huỷ', 'Người huỷ', 'Lý do huỷ'],
-        ...lines.map(l => [l.shift ?? '', l.batch_no ?? '', l.batch_code, l.material_code, l.material_name ?? '', unitCode(l.base_unit), Number(l.qty),
-          l.pallet_code ?? '', l.batch_lot ?? '', l.production_date ? formatDate(l.production_date) : '', l.source === 'SCAN' ? 'Quét tem' : 'Chọn lô',
-          l.by ?? '', formatDateTime(l.at), l.rotation_violation ? 'Có' : '', l.rotation_override_reason ?? '', l.expiry_approved ? 'Có' : '',
-          l.reversed_at ? formatDateTime(l.reversed_at) : '', l.reversed_by_name ?? '', l.reverse_reason ?? '']),
-      ]
-      const ws4 = XLSX.utils.aoa_to_sheet(sanitizeAoa(det))
-      ws4['!cols'] = [{ wch: 10 }, { wch: 6 }, { wch: 14 }, { wch: 12 }, { wch: 26 }, { wch: 6 }, { wch: 10 }, { wch: 30 }, { wch: 10 }, { wch: 11 }, { wch: 10 }, { wch: 18 }, { wch: 17 },
-        { wch: 9 }, { wch: 24 }, { wch: 10 }, { wch: 17 }, { wch: 16 }, { wch: 20 }]
-      XLSX.utils.book_append_sheet(wb, ws4, 'Chi tiết cấp')
+      // 4) Tiêu hao NVL (thô) — mỗi dòng một phát sinh Cấp (+) / Huỷ cấp (−), dòng 1 là tên cột; cùng khuôn với tab Dữ liệu thô
+      const ws4 = XLSX.utils.aoa_to_sheet(sanitizeAoa(rawAoa(RAW_EVENT_COLS, lines)))
+      ws4['!cols'] = rawColWidths(RAW_EVENT_COLS)
+      XLSX.utils.book_append_sheet(wb, ws4, 'Tiêu hao NVL (thô)')
       await saveWorkbook(wb, `bao_cao_nvl_chu_ky_${cycle}${running ? '_dang_chay' : ''}.xlsx`)
     } catch (e) { setErr(apiMsg(e)) } finally { setBusy(false) }
   }
 
   const actions: ActionItem[] = []
   if (canSeePath('/wms/production/tanks')) actions.push({ key: 'map', icon: LayoutGrid, label: 'Sơ đồ bồn', tip: 'Về sơ đồ bồn — mẻ đang làm và bồn, cập nhật trực tiếp', onClick: () => navigate('/wms/production/tanks') })
-  if (canExport && rep) actions.push({ key: 'xlsx', icon: FileDown, label: busy ? 'Đang xuất…' : 'Xuất Excel', tip: 'Báo cáo cuối của chu kỳ: NVL theo mẻ · Ca · Mẻ · Nhân sự · Chi tiết cấp', onClick: () => void exportExcel(), busy, disabled: busy, primary: true, variant: 'default', mobileHidden: true })
+  if (canExport && rep) actions.push({ key: 'xlsx', icon: FileDown, label: busy ? 'Đang xuất…' : 'Xuất Excel', tip: 'Báo cáo cuối của chu kỳ: NVL theo mẻ · Ca · Mẻ · Nhân sự · Tiêu hao NVL (thô — mỗi dòng một phát sinh)', onClick: () => void exportExcel(), busy, disabled: busy, primary: true, variant: 'default', mobileHidden: true })
 
   // ── NVL × mẻ ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   const nvlCols: RtColDef[] = useMemo(() => [

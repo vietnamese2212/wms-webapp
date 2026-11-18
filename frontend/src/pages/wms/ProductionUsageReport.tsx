@@ -1,5 +1,6 @@
-// TRANG "BÁO CÁO NVL" — 18/11 f: hai tab. TAB MẶC ĐỊNH "Theo chu kỳ" (CycleReport — user: "theo chu kỳ, chu kỳ lớn hơn ca, mẻ";
-// báo cáo cuối tách ca · mẻ · nhân sự). Tab "Đếm tồn theo ca" = báo cáo theo ca dưới đây (giữ nguyên).
+// TRANG "BÁO CÁO NVL" — 18/11 f: TAB MẶC ĐỊNH "Theo chu kỳ" (CycleReport — user: "theo chu kỳ, chu kỳ lớn hơn ca, mẻ";
+// báo cáo cuối tách ca · mẻ · nhân sự). 18/11 g: tab "Dữ liệu thô" (ConsumptionRaw — tiêu hao NVL mỗi dòng một phát sinh, đủ cột cho SAP).
+// Tab "Đếm tồn theo ca" = báo cáo theo ca dưới đây (giữ nguyên).
 // BÁO CÁO SỬ DỤNG NVL THEO CA (MES 14/11/2026) — thay biểu mẫu giấy NB-QA-BM-CB.01 (user: "mục tiêu là bỏ các tờ giấy này đi").
 // Một báo cáo = MỘT CA của một kho chế biến. Mọi con số tự ra từ các lần cấp nguyên liệu cho mẻ; người chỉ nhập TỒN CUỐI THỰC TẾ rồi CHỐT ca.
 // Cột đúng thứ tự tờ giấy: Tồn đầu thực tế · Nhập · dùng theo TỪNG MẺ (BTP / chu kỳ / mẻ) · Tổng sử dụng · Tồn cuối thực tế · Tồn cuối sổ sách · Chênh lệch.
@@ -7,6 +8,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { CycleReport } from '@/components/wms/production/CycleReport'
+import { ConsumptionRaw } from '@/components/wms/production/ConsumptionRaw'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { useMobileTabs } from '@/hooks/useMobileSurface'
 import type { AxiosError } from 'axios'
@@ -49,7 +51,7 @@ const MOBILE_COLS: NumCol[] = [
 ]
 
 // tab cấp trang — key khớp PAGE_TABS['/wms/production/usage-report'] (config/mobileSurface.ts)
-const TABS = [{ key: 'cycle', label: 'Theo chu kỳ' }, { key: 'shift', label: 'Đếm tồn theo ca' }] as const
+const TABS = [{ key: 'cycle', label: 'Theo chu kỳ' }, { key: 'raw', label: 'Dữ liệu thô' }, { key: 'shift', label: 'Đếm tồn theo ca' }] as const
 
 export default function ProductionUsageReport() {
   const f = useWmsFilterStore(s => s.productionReport)
@@ -71,7 +73,7 @@ export default function ProductionUsageReport() {
       ))}
     </div>
   )
-  return f.tab === 'shift' ? <ShiftReportView tabBar={tabBar} /> : <CycleReport tabBar={tabBar} />
+  return f.tab === 'shift' ? <ShiftReportView tabBar={tabBar} /> : f.tab === 'raw' ? <ConsumptionRaw tabBar={tabBar} /> : <CycleReport tabBar={tabBar} />
 }
 
 function ShiftReportView({ tabBar }: { tabBar: ReactNode }) {

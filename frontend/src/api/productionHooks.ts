@@ -7,6 +7,7 @@ import { apiClient } from './client'
 import { useWarehouses, useImportShifts, useMaterials } from './hooks'
 import { useAuthStore } from '@/stores/authStore'
 import type { MatUnits } from '@/utils/qtyUnits'
+import type { RawEvent, RawSummary, RawReq, RawFill } from '@/utils/consumptionRaw'
 import type { FormBlock } from '@/config/processForms'
 
 export interface ProdWarehouse { id: string; code: string; name: string; parent_warehouse_id: string | null; parent_name: string | null }
@@ -187,7 +188,12 @@ export interface TankRow {
   warehouse: { code: string; name: string } | null
   content: number; lots: TankLotView[]; qa_pending: boolean; expired: boolean; next_expiry: string | null
   incoming: TankIncoming[]; reserved: number; qa_state: TankQaState
+  /** sơ đồ 2D (18/11 g): chỗ đặt trong khu kho chế biến — null = tự xếp */
+  map_x: number | null; map_y: number | null
+  /** sổ đóng gói ĐANG MỞ rút từ bồn (ống ra của bồn tới máy) */
+  runs?: TankRun[]
 }
+export interface TankRun { id: string; machine_code: string; material_code: string; start_at: string; shift: string | null }
 export interface RunTank { id: string; code: string; name: string | null; unit: string; capacity: number; warehouse_id: string; warehouse: { name: string } | null }
 export interface GenealogyBatch {
   id: string; batch_code: string; warehouse_id: string; warehouse_name: string; prod_date: string; machine_code: string | null; shift: string | null
@@ -232,6 +238,15 @@ export function useProductionTanks(warehouseId?: string, includeInactive = false
   return useQuery({
     queryKey: [...K.tanks, warehouseId ?? '', includeInactive], enabled, staleTime: 10_000,
     queryFn: async () => (await apiClient.get('/wms/production/tanks', { params: { warehouse_id: warehouseId || undefined, include_inactive: includeInactive ? '1' : undefined } })).data.data as TankRow[],
+  })
+}
+/** Lưu chỗ đặt bồn trên sơ đồ 2D (quyền manage_tank) — x / y null = về tự xếp */
+export function useSaveTankLayout() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (items: { id: string; x: number | null; y: number | null }[]) =>
+      (await apiClient.put('/wms/production/tank-layout', { items })).data.data as { updated: number },
+    onSettled: () => { qc.invalidateQueries({ queryKey: K.tanks }) },
   })
 }
 export function useTankMovements(tankId: string | null) {
@@ -483,12 +498,6 @@ export interface CyclePerson {
   pour: number; fill: number; tankqa: number; log: number; logok: number; batches: number; shifts: string[]; first_at: string | null; last_at: string | null
 }
 export interface CycleReport { warehouse_id: string; cycle: string; batches: CycleBatch[]; rows: CycleRow[]; people: CyclePerson[] }
-export interface CycleLine extends MatUnits {
-  batch_id: string; batch_code: string; batch_no: number | null; shift: string | null; material_code: string; material_name: string | null
-  pallet_code: string | null; batch_lot: string | null; production_date: string | null; qty: number; source: string | null; by: string | null; at: string
-  rotation_violation: boolean; rotation_principle: string | null; rotation_override_reason: string | null; expiry_approved: boolean
-  reversed_at: string | null; reversed_by_name: string | null; reverse_reason: string | null
-}
 export function useCycles(warehouseId: string | undefined, search = '') {
   return useQuery({
     queryKey: ['prod-cycles', warehouseId, search], enabled: !!warehouseId, staleTime: 15_000, placeholderData: keepPreviousData,
@@ -501,9 +510,31 @@ export function useCycleReport(warehouseId: string | undefined, cycle: string | 
     queryFn: async () => (await apiClient.get('/wms/production/cycles/report', { params: { warehouse_id: warehouseId, cycle } })).data.data as CycleReport,
   })
 }
-/** từng lần cấp NVL — chỉ tải khi xuất Excel báo cáo cuối */
-export async function fetchCycleLines(warehouseId: string, cycle: string): Promise<CycleLine[]> {
-  return (await apiClient.get('/wms/production/cycles/lines', { params: { warehouse_id: warehouseId, cycle } })).data.data as CycleLine[]
+/** DỮ LIỆU THÔ TIÊU HAO NVL (18/11 g — "để làm việc với ERP SAP"): mỗi dòng một phát sinh Cấp (+) / Huỷ cấp (−). Lọc theo ngày của phát sinh
+ *  (giờ VN) hoặc theo chu kỳ. Màn hình: một trang + tổng + dải số. */
+export interface RawFilter {
+  warehouse_id: string; date_from?: string; date_to?: string; cycle?: string; search?: string
+  event?: 'ISSUE' | 'REVERSAL'; flag?: 'rotation' | 'expiry' | 'reversed'
+}
+export function useConsumptionRaw(f: RawFilter & { page: number; page_size: number }, enabled = true) {
+  return useQuery({
+    queryKey: ['prod-consumption-raw', f], enabled: enabled && !!f.warehouse_id && (!!f.cycle || (!!f.date_from && !!f.date_to)),
+    staleTime: 10_000, placeholderData: keepPreviousData,
+    queryFn: async () => (await apiClient.get('/wms/production/consumption-raw', { params: f })).data.data as { rows: RawEvent[]; total: number; summary: RawSummary },
+  })
+}
+/** File xuất (quyền export): lật trang 2.000 dòng tới hết. part = events (phát sinh) · req (định mức – thực cấp theo mẻ) · fill (nạp bồn). */
+export async function fetchRawAll<P extends 'events' | 'req' | 'fill'>(f: RawFilter, part: P, onProgress?: (n: number) => void):
+  Promise<P extends 'events' ? RawEvent[] : P extends 'req' ? RawReq[] : RawFill[]> {
+  const size = 2000
+  const out: unknown[] = []
+  for (let page = 1; page <= 500; page++) {
+    const rows = (await apiClient.get('/wms/production/consumption-raw/export', { params: { ...f, part, sort: 'asc', page, page_size: size } })).data.data.rows as unknown[]
+    out.push(...rows)
+    onProgress?.(out.length)
+    if (rows.length < size) break
+  }
+  return out as P extends 'events' ? RawEvent[] : P extends 'req' ? RawReq[] : RawFill[]
 }
 
 export function useShiftReports(warehouseId: string | undefined) {

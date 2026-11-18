@@ -14,6 +14,7 @@
 // Khung + tường là NHÁP cục bộ tới khi "Lưu khung" — chỉ reset khi bản khung đã lưu trên máy chủ đổi, KHÔNG reset
 // theo mỗi lần refetch (đặt một chân kệ xong mà mất tường đang tô là bẫy bản đầu).
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { zoomAt, fitView, pinchView } from '@/utils/panZoom'
 import { useNavigate } from 'react-router-dom'
 import type { AxiosError } from 'axios'
 import { Map as MapIcon, Pencil, Eye, Save, Maximize2, MousePointer2, Hand, Grid3x3, Brush, DoorOpen, Eraser, Sparkles, Trash2, X, Package, BookOpen, Undo2, Redo2, Box } from 'lucide-react'
@@ -1196,7 +1197,7 @@ function MapCanvas({ frame, blocked, footprints, zoneColor, zonesFilter, overlay
   const [view, setView] = useState({ scale: 12, ox: 8, oy: 8 })
   const viewRef = useRef(view); viewRef.current = view
   const ptr = useRef<{ id: number; x: number; y: number; moved: boolean; startCell: GridCell | null; pan: boolean } | null>(null)
-  const pinch = useRef<{ d: number; scale: number } | null>(null)
+  const pinch = useRef<{ d: number; v0: { scale: number; ox: number; oy: number }; m0: { x: number; y: number } } | null>(null)
   const [hover, setHover] = useState<GridCell | null>(null)
   const [lineStart, setLineStart] = useState<GridCell | null>(null)       // vệt Rải dãy / Tường
   const [marqueeStart, setMarqueeStart] = useState<GridCell | null>(null) // kéo chọn vùng (Shift+kéo ở chế độ xem; kéo thường trên ô trống ở chế độ vẽ)
@@ -1216,8 +1217,7 @@ function MapCanvas({ frame, blocked, footprints, zoneColor, zonesFilter, overlay
     return () => ro.disconnect()
   }, [])
   const fit = useCallback(() => {
-    const s = Math.max(2, Math.min((size.w - 16) / frame.width, (size.h - 16) / frame.height))
-    setView({ scale: s, ox: (size.w - frame.width * s) / 2, oy: (size.h - frame.height * s) / 2 })
+    setView(fitView(frame.width, frame.height, size.w, size.h, 8, 2, Infinity))   // phép toán chung utils/panZoom (cùng Sơ đồ bồn 2D)
   }, [size, frame.width, frame.height])
   useEffect(() => { fitRef.current = fit }, [fit, fitRef])
   const fittedFor = useRef('')
@@ -1443,7 +1443,8 @@ function MapCanvas({ frame, blocked, footprints, zoneColor, zonesFilter, overlay
     pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY })
     if (pointers.current.size === 2) {
       const [a, b] = [...pointers.current.values()]
-      pinch.current = { d: Math.hypot(a.x - b.x, a.y - b.y), scale: viewRef.current.scale }
+      const r = canvasRef.current?.getBoundingClientRect()
+      pinch.current = { d: Math.hypot(a.x - b.x, a.y - b.y), v0: viewRef.current, m0: { x: (a.x + b.x) / 2 - (r?.left ?? 0), y: (a.y + b.y) / 2 - (r?.top ?? 0) } }
       ptr.current = null
       return
     }
@@ -1464,8 +1465,10 @@ function MapCanvas({ frame, blocked, footprints, zoneColor, zonesFilter, overlay
     if (pinch.current && pointers.current.size === 2) {
       const [a, b] = [...pointers.current.values()]
       const d = Math.hypot(a.x - b.x, a.y - b.y)
-      const ns = Math.max(2, Math.min(80, pinch.current.scale * (d / pinch.current.d)))
-      setView(v => ({ ...v, scale: ns }))
+      const r = canvasRef.current?.getBoundingClientRect()
+      const p = pinch.current
+      // hai ngón: phóng quanh điểm giữa hai ngón + rê theo ngón (trước đây phóng quanh góc trái trên — bản vẽ trôi khỏi tay)
+      setView(pinchView(p.v0, p.m0, p.d, { x: (a.x + b.x) / 2 - (r?.left ?? 0), y: (a.y + b.y) / 2 - (r?.top ?? 0) }, d, 2, 80))
       return
     }
     const here = toCell(e.clientX, e.clientY)
@@ -1522,11 +1525,7 @@ function MapCanvas({ frame, blocked, footprints, zoneColor, zonesFilter, overlay
       e.preventDefault()
       const r = el.getBoundingClientRect()
       const mx = e.clientX - r.left, my = e.clientY - r.top
-      setView(v => {
-        const ns = Math.max(2, Math.min(80, v.scale * (e.deltaY < 0 ? 1.15 : 1 / 1.15)))
-        const k = ns / v.scale
-        return { scale: ns, ox: mx - (mx - v.ox) * k, oy: my - (my - v.oy) * k }
-      })
+      setView(v => zoomAt(v, mx, my, e.deltaY < 0 ? 1.15 : 1 / 1.15, 2, 80))
     }
     el.addEventListener('wheel', onWheel, { passive: false })
     return () => el.removeEventListener('wheel', onWheel)

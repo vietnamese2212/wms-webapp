@@ -1,5 +1,5 @@
 // FILE SINH TỰ ĐỘNG — `node scripts/gen-db-types.mjs` (từ information_schema STAGING). KHÔNG sửa tay.
-// Sinh lúc 2026-11-18T01:52:40.012Z · 125 bảng/view · 256 hàm · 0 enum
+// Sinh lúc 2026-11-18T11:02:37.247Z · 125 bảng/view · 260 hàm · 0 enum
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[]
 
 export type Database = {
@@ -7411,6 +7411,10 @@ export type Database = {
         Args: { p_status: string | null; p_qa: string | null; p_lead: string | null; p_qa_ok: string | null; p_filled: boolean | null; p_consumed: boolean | null; p_gate: boolean | null }
         Returns: string
       }
+      mes_batch_steps: {
+        Args: { p_ids: unknown | null }
+        Returns: Json
+      }
       mes_close_run: {
         Args: { p: Json | null }
         Returns: Json
@@ -7425,6 +7429,18 @@ export type Database = {
       }
       mes_consume_scan: {
         Args: { p: Json | null }
+        Returns: Json
+      }
+      mes_cycle_lines: {
+        Args: { p_wh: string | null; p_cycle: string | null }
+        Returns: Json
+      }
+      mes_cycle_list: {
+        Args: { p: Json | null }
+        Returns: Json
+      }
+      mes_cycle_report: {
+        Args: { p_wh: string | null; p_cycle: string | null }
         Returns: Json
       }
       mes_default_forms: {
@@ -7788,7 +7804,7 @@ export type Database = {
         Returns: boolean
       }
       unaccent: {
-        Args: { arg1: string | null } | { arg1: unknown | null; arg2: string | null }
+        Args: { arg1: unknown | null; arg2: string | null } | { arg1: string | null }
         Returns: string
       }
       unaccent_init: {

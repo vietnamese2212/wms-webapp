@@ -372,6 +372,13 @@ interface ProductionTanksFilters {   // trang Bồn (MES 14/11)
   /** 17/11: 'map' = sơ đồ bồn 2D (mặc định) · 'table' = bảng */
   view: 'map' | 'table'
 }
+interface ProductionReportFilters {   // trang Báo cáo NVL (18/11 f): tab Theo chu kỳ (mặc định) · Đếm tồn theo ca
+  tab: 'cycle' | 'shift'
+  warehouseId: string    // kho chế biến ('' = kho mặc định trong phạm vi)
+  cycle: string          // '' = chu kỳ mới nhất
+  /** NVL × mẻ · Ca · Mẻ · Nhân sự */
+  view: 'nvl' | 'batch' | 'people'
+}
 interface InboundReturnsFilters {   // trang Hàng trả về (26/10)
   search: string
   warehouseId: string    // '' = mọi kho trong scope
@@ -585,6 +592,7 @@ interface WmsFilterState {
   inboundReturns:    InboundReturnsFilters
   production:        ProductionFilters
   productionTanks:   ProductionTanksFilters
+  productionReport:  ProductionReportFilters
   stocktake:         StocktakeFilters
   stocktakeSummary:  StocktakeSummaryFilters
   stocktakeHistory:  StocktakeHistoryFilters
@@ -642,6 +650,7 @@ interface WmsFilterState {
   setInboundReturns:    (f: Partial<InboundReturnsFilters>)    => void
   setProduction:        (f: Partial<ProductionFilters>)        => void
   setProductionTanks:   (f: Partial<ProductionTanksFilters>)   => void
+  setProductionReport:  (f: Partial<ProductionReportFilters>)  => void
   setStocktake:         (f: Partial<StocktakeFilters>)         => void
   setStocktakeSummary:  (f: Partial<StocktakeSummaryFilters>)  => void
   setStocktakeHistory:  (f: Partial<StocktakeHistoryFilters>)  => void
@@ -715,6 +724,7 @@ function initialFilters() {
     // dateTo trống = tới hôm nay (và sau) — bộ lọc được nhớ qua ngày, mặc định today() thành 'hôm qua' ở lần mở sau, mẻ hôm nay biến mất khỏi danh sách
     production: { search: '', warehouseId: '', dateFrom: daysAgo(14), dateTo: '', stage: '', page: 1, pageSize: 100 },
     productionTanks: { warehouseId: '', showInactive: false, view: 'map' as const },
+    productionReport: { tab: 'cycle' as const, warehouseId: '', cycle: '', view: 'nvl' as const },
     packing:      { tab: 'board' as const, search: '', warehouseId: '', machine: '', cycle: '', status: '', dateFrom: daysAgo(7), dateTo: today(), page: 1, pageSize: 200, runStatus: '', runPage: 1, received: '' },
     alerts:       { tab: 'general' as const, search: '', warehouseId: '', rules: [], severity: [], status: 'open' },
     stocktakeCycle: { search: '', warehouseId: '', cats: [], abc: [], dueOnly: true },
@@ -780,6 +790,7 @@ export const useWmsFilterStore = create<WmsFilterState>()(
       setInboundReturns:   (f) => set(s => ({ inboundReturns:   { ...s.inboundReturns,   ...f } })),
       setProduction:       (f) => set(s => ({ production:       { ...s.production,       ...f } })),
       setProductionTanks:  (f) => set(s => ({ productionTanks:  { ...s.productionTanks,  ...f } })),
+      setProductionReport: (f) => set(s => ({ productionReport: { ...s.productionReport, ...f } })),
       setAlerts:           (f) => set(s => ({ alerts:           { ...s.alerts,           ...f } })),
       setStocktakeCycle:   (f) => set(s => ({ stocktakeCycle:   { ...s.stocktakeCycle,   ...f } })),
       setStocktake:        (f) => set(s => ({ stocktake:        { ...s.stocktake,        ...f } })),

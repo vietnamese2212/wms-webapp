@@ -1,9 +1,14 @@
-// TRANG "BÁO CÁO SỬ DỤNG NVL" (MES 14/11/2026) — thay biểu mẫu giấy NB-QA-BM-CB.01 (user: "mục tiêu là bỏ các tờ giấy này đi").
+// TRANG "BÁO CÁO NVL" — 18/11 f: hai tab. TAB MẶC ĐỊNH "Theo chu kỳ" (CycleReport — user: "theo chu kỳ, chu kỳ lớn hơn ca, mẻ";
+// báo cáo cuối tách ca · mẻ · nhân sự). Tab "Đếm tồn theo ca" = báo cáo theo ca dưới đây (giữ nguyên).
+// BÁO CÁO SỬ DỤNG NVL THEO CA (MES 14/11/2026) — thay biểu mẫu giấy NB-QA-BM-CB.01 (user: "mục tiêu là bỏ các tờ giấy này đi").
 // Một báo cáo = MỘT CA của một kho chế biến. Mọi con số tự ra từ các lần cấp nguyên liệu cho mẻ; người chỉ nhập TỒN CUỐI THỰC TẾ rồi CHỐT ca.
 // Cột đúng thứ tự tờ giấy: Tồn đầu thực tế · Nhập · dùng theo TỪNG MẺ (BTP / chu kỳ / mẻ) · Tổng sử dụng · Tồn cuối thực tế · Tồn cuối sổ sách · Chênh lệch.
 // Máy tính = bảng; điện thoại = danh sách mỗi nguyên liệu một dòng có ô nhập số đếm.
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useNavigate, useSearchParams } from 'react-router-dom'
+import { CycleReport } from '@/components/wms/production/CycleReport'
+import { useWmsFilterStore } from '@/stores/wmsFilterStore'
+import { useMobileTabs } from '@/hooks/useMobileSurface'
 import type { AxiosError } from 'axios'
 import * as XLSX from 'xlsx'
 import { Plus, FileDown, Save, CheckCheck } from 'lucide-react'
@@ -43,7 +48,33 @@ const MOBILE_COLS: NumCol[] = [
   { label: 'Sổ còn', title: 'Tồn cuối sổ sách' }, { label: 'Lệch', title: 'Tồn cuối thực tế − sổ sách · ✓ = khớp' },
 ]
 
+// tab cấp trang — key khớp PAGE_TABS['/wms/production/usage-report'] (config/mobileSurface.ts)
+const TABS = [{ key: 'cycle', label: 'Theo chu kỳ' }, { key: 'shift', label: 'Đếm tồn theo ca' }] as const
+
 export default function ProductionUsageReport() {
+  const f = useWmsFilterStore(s => s.productionReport)
+  const setF = useWmsFilterStore(s => s.setProductionReport)
+  const [sp, setSp] = useSearchParams()
+  // lối từ sơ đồ bồn: ?wh=&cycle= ⇒ mở đúng kho + chu kỳ (rồi gỡ khỏi địa chỉ để tải lại trang không ghim lại)
+  useEffect(() => {
+    const wh = sp.get('wh'), cycle = sp.get('cycle')
+    if (!wh && !cycle) return
+    setF({ tab: 'cycle', ...(wh ? { warehouseId: wh } : {}), cycle: cycle ?? '' })
+    setSp({}, { replace: true })
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  const tabs = useMobileTabs('/wms/production/usage-report', TABS, f.tab, k => setF({ tab: k }))
+  const tabBar = (
+    <div className="flex rounded-lg border border-slate-200 overflow-hidden text-xs font-medium shrink-0" role="tablist" aria-label="Báo cáo NVL">
+      {tabs.map((t, i) => (
+        <button key={t.key} type="button" role="tab" aria-selected={f.tab === t.key} onClick={() => setF({ tab: t.key })} data-tab={t.key}
+          className={`h-9 sm:h-7 px-3 whitespace-nowrap ${i > 0 ? 'border-l border-slate-200 ' : ''}${f.tab === t.key ? 'bg-sky-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}>{t.label}</button>
+      ))}
+    </div>
+  )
+  return f.tab === 'shift' ? <ShiftReportView tabBar={tabBar} /> : <CycleReport tabBar={tabBar} />
+}
+
+function ShiftReportView({ tabBar }: { tabBar: ReactNode }) {
   const navigate = useNavigate()
   const perms = useAuthStore(s => s.user)?.module_permissions as ModulePermissions | null ?? null
   const canWrite = can(perms, 'production', 'shift_report')
@@ -172,7 +203,8 @@ export default function ProductionUsageReport() {
       <div className="flex flex-col flex-1 min-h-0 bg-white sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm">
         <div className="border-b bg-white px-3 py-1.5 space-y-1 sm:py-2 shrink-0 sm:rounded-t-xl">
           <div className="flex items-center gap-1.5 flex-wrap xl:flex-nowrap">
-            <span className="hidden sm:inline text-sm font-semibold text-slate-700 shrink-0">Báo cáo sử dụng NVL{kitchens.length === 1 ? ` · ${kitchens[0].name}` : ''}</span>
+            {tabBar}
+            {kitchens.length === 1 && <span className="hidden sm:inline text-xs text-slate-500 shrink-0">{kitchens[0].name}</span>}
             {kitchens.length > 1 && (
               <div className="w-40 sm:w-48 min-w-0 shrink">
                 <SingleSelect value={wh} onChange={v => { setWhPick(v); setPick('') }} triggerClassName="h-9 sm:h-7" placeholder="Kho chế biến" options={kitchens.map(k => ({ value: k.id, label: k.name }))} />

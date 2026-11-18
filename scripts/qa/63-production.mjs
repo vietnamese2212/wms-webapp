@@ -29,6 +29,8 @@
 //   [2l] cửa "Không có tem" CÙNG luật luân chuyển với cửa quét (kho bắt buộc ⇒ lý do + quyền, dòng cấp ghi vết)
 //   [2x] DÒNG MỞ RỘNG của bàn (18/11): mỗi dòng cấp kèm %Date LÚC CẤP + HSD hiệu lực (như "pallet đã quét" của Xuất kho)
 //   [2e7] quyền duyệt NVL hết hạn chỉ ở chức danh QA (18/11 — gỡ ở Quản lý kho NPP / site / toàn quốc)
+//   [17] BÁO CÁO NVL THEO CHU KỲ (18/11 f): danh sách chu kỳ · Σ thực cấp NVL × mẻ = sổ · nhân sự đếm đúng việc · chi tiết cấp kể cả lần huỷ ·
+//        chu kỳ sai dạng 400; sơ đồ bồn: mẻ đặt bồn chưa nạp mang tình trạng + bước đang tới (mes_batch_steps)
 // Fixture QA63: kho cha QA63_PARENT + kho phụ QA63_CB (+ QA63_CB2 để thử chéo kho) · mã NVL/BTP QA63* · tem QA63_* — dọn bằng PostgREST.
 import { randomUUID } from 'crypto'
 import { login, api, rawFetch, restAll, restWrite, check, finish, BASE } from './lib.mjs'
@@ -946,6 +948,44 @@ try {
       unQa.s === 409 && unQa.j?.error?.code === 'MES_FILLED' && tq.s === 200 && fbNow?.qa_status === 'REJECTED' && fbNow?.qa_note === 'QA63 không đạt'
         && num(t5?.content) === 100 && t5?.qa_state === 'REJECTED' && num(t5?.reserved) === 0 && t3?.qa_state === 'EMPTY' && num(t3?.reserved) === 0,
       `http=${unQa.s}/${tq.s} ${JSON.stringify(fbNow ?? null)} t5=${JSON.stringify(t5 && { c: t5.content, q: t5.qa_state, r: t5.reserved })}`)
+
+    // ── [17] BÁO CÁO NVL THEO CHU KỲ + MẺ TRÊN SƠ ĐỒ BỒN (18/11 f — "theo chu kỳ, tách ca, mẻ, nhân sự"; "mẻ hiện trên sơ đồ, liên kết tình trạng") ──
+    const cl = await api(`/wms/production/cycles?warehouse_id=${WC2}`)
+    const cQ2 = (cl.j?.data ?? []).find(c => c.cycle === 'Q2')
+    check('17a. Danh sách chu kỳ của kho: Q2 có 1 mẻ, 1 mẻ đã nạp bồn', cl.s === 200 && num(cQ2?.batches) === 1 && num(cQ2?.filled) === 1, `http=${cl.s} ${JSON.stringify(cQ2 ?? null)}`)
+    const cr = await api(`/wms/production/cycles/report?warehouse_id=${WC2}&cycle=q2`)
+    const R = cr.j?.data
+    const rb = (R?.batches ?? []).find(b => b.id === FB.id)
+    const live16 = await restAll('batch_consumption', `select=material_id,qty,reversed_at&batch_id=eq.${FB.id}`)
+    const sumDb = live16.filter(x => !x.reversed_at).reduce((s, x) => s + num(x.qty), 0)
+    const sumRep = (R?.rows ?? []).reduce((s, r) => s + Object.values(r.cells ?? {}).reduce((a, c) => a + num(c.iss), 0), 0)
+    const rmCell = (R?.rows ?? []).find(r => r.material_id === M_RM)?.cells?.[FB.id]
+    check('17b. Báo cáo chu kỳ (gõ "q2" ⇒ Q2): mẻ QA loại, nạp 100, 1 lần cấp phải huỷ; ô NVL định mức 10 · thực cấp 10; Σ thực cấp = Σ lần cấp chưa huỷ trong sổ',
+      cr.s === 200 && R?.cycle === 'Q2' && rb?.stage === 'rejected' && num(rb?.filled_qty) === 100 && num(rb?.rm_rev) >= 1
+        && num(rmCell?.req) === 10 && num(rmCell?.iss) === 10 && Math.abs(sumRep - sumDb) < 1e-6,
+      `http=${cr.s} b=${JSON.stringify(rb && { s: rb.stage, f: rb.filled_qty, rev: rb.rm_rev })} cell=${JSON.stringify(rmCell ?? null)} rep=${sumRep} db=${sumDb}`)
+    const me = (R?.people ?? []).find(p => num(p.rm) >= 1)
+    check('17c. Nhân sự của chu kỳ: người cấp có lần cấp ≥ 1, cấp phải huỷ ≥ 1, nạp bồn ≥ 1, quét đổ bồn ≥ 1, mở mẻ 1, duyệt TC + QA',
+      !!me && num(me.rm_rev) >= 1 && num(me.fill) >= 1 && num(me.pour) >= 1 && num(me.open) === 1 && num(me.lead) === 1 && num(me.qaok) === 1,
+      JSON.stringify(me ?? null))
+    const cln = await api(`/wms/production/cycles/lines?warehouse_id=${WC2}&cycle=Q2`)
+    const crBad = await api(`/wms/production/cycles/report?warehouse_id=${WC2}&cycle=QABCDEFG`)
+    check('17d. Chi tiết cấp = mọi lần cấp của chu kỳ (kể cả lần đã huỷ, có ghi); chu kỳ quá 6 ký tự ⇒ 400 BAD_CYCLE',
+      cln.s === 200 && (cln.j?.data ?? []).length === live16.length && (cln.j?.data ?? []).some(l => !!l.reversed_at) && crBad.s === 400 && crBad.j?.error?.code === 'BAD_CYCLE',
+      `http=${cln.s}/${crBad.s} n=${(cln.j?.data ?? []).length}/${live16.length}`)
+    // sơ đồ bồn: mẻ đặt bồn mà chưa nạp đứng trên bồn kèm tình trạng + bước (cùng hàm cổng với danh sách mẻ)
+    const qb = (await api('/wms/production/batches', 'POST', { warehouse_id: WC2, material_id: M_BTP, prod_date: todayVN, cycle: 'Q3', tank_id: T3.id, planned_qty: 10 })).j?.data
+    const inc = async () => ((await api(`/wms/production/tanks?warehouse_id=${WC2}`)).j?.data ?? []).find(t => t.id === T3.id)?.incoming?.find(x => x.batch_id === qb?.id)
+    const i1 = await inc()
+    // trưởng ca chỉ duyệt được phiếu đã có NVL (MES_EMPTY_SHEET) ⇒ khai một dòng trước
+    await api(`/wms/production/batches/${qb?.id}/requirements`, 'PUT', { reason: 'QA63 khai phiếu', items: [{ material_id: M_RM, qty: 1 }] })
+    const ap = await api(`/wms/production/batches/${qb?.id}/approve-lead`, 'POST', { approve: true })
+    const i2 = await inc()
+    await api(`/wms/production/batches/${qb?.id}/cancel`, 'POST', {})
+    const cQ3 = ((await api(`/wms/production/cycles?warehouse_id=${WC2}&search=Q3`)).j?.data ?? []).find(c => c.cycle === 'Q3')
+    check('17e. Sơ đồ bồn: mẻ đặt bồn chưa nạp mang tình trạng + bước — mới mở "wait_lead/lead", trưởng ca duyệt "wait_qa/qa"; huỷ ⇒ chu kỳ Q3 còn 0 mẻ (1 huỷ)',
+      !!qb && i1?.stage === 'wait_lead' && i1?.step === 'lead' && i2?.stage === 'wait_qa' && i2?.step === 'qa' && num(cQ3?.batches) === 0 && num(cQ3?.cancelled) === 1,
+      `${i1?.stage}/${i1?.step} → duyệt http=${ap.s} → ${i2?.stage}/${i2?.step} q3=${JSON.stringify(cQ3 ?? null)}`)
   }
 
   // ── [14] CHỨC DANH CHỈ CÓ QUYỀN SẢN XUẤT (16/11 — nghiệm thu bằng vai thật): form Mở / Sửa mẻ, Định mức tìm mã qua danh mục Mã hàng ──

@@ -3,10 +3,13 @@
 // nạp từ mẻ · chuyển bồn · điều chỉnh mức (khớp đồng hồ) · xả bỏ · sổ bồn · sửa. Mỗi kho vài chục bồn ⇒ không phân trang.
 // 17/11: xem mặc định là SƠ ĐỒ BỒN 2D (TankMimic — mực theo sức chứa, mỗi mẻ một lớp, phần sắp vào gạch chéo, realtime); nút đổi sang bảng.
 // QA ĐẠT / KHÔNG ĐẠT bấm ở đây (áp cho mọi mẻ trong bồn) · ĐỔ BỒN (quét tem pallet của mẻ) mở từ bồn đang đứng.
-import { useState } from 'react'
+// 18/11 f: sơ đồ GỌN cho 20–30 bồn (TankBoard — mỗi bồn một ô nhỏ, MẺ đang làm đứng trên bồn của nó kèm ký hiệu + bước như cột Tình trạng,
+// dải lọc theo bước); bấm ô ⇒ khung chi tiết (thẻ bồn đầy đủ + thao tác + lối sang Báo cáo NVL của chu kỳ).
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import type { AxiosError } from 'axios'
-import { Plus, ArrowDownToLine, ArrowLeftRight, Gauge, Trash2, History, Pencil, Layers, MoreVertical, ShieldCheck, LayoutGrid, Table2 } from 'lucide-react'
+import { Plus, ArrowDownToLine, ArrowLeftRight, Gauge, Trash2, History, Pencil, Layers, MoreVertical, ShieldCheck, LayoutGrid, Table2, FileBarChart, ExternalLink } from 'lucide-react'
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '@/components/ui/sheet'
 import { ScanIcon } from '@/components/shared/ScanIcon'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { TableBody, TableCell, TableRow } from '@/components/ui/table'
@@ -20,6 +23,8 @@ import { StatusBadge } from '@/components/shared/StatusBadge'
 import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { TankFormSheet, TankOpSheet, TankMovesSheet, nfQty, type TankOp } from '@/components/wms/production/TankSheets'
 import { TankMimic } from '@/components/wms/production/TankMimic'
+import { TankBoard, boardBatchesOf } from '@/components/wms/production/TankBoard'
+import { StageBadge, StageSymbol, STAGE_LIQUID } from '@/components/wms/production/BatchStage'
 import { PourSheet, TankQaSheet } from '@/components/wms/production/BatchFlow'
 import { useCanSeePath } from '@/hooks/useCanSeePath'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
@@ -56,7 +61,19 @@ export default function ProductionTanks() {
   const [moves, setMoves] = useState<TankRow | null>(null)
   const [qaTank, setQaTank] = useState<TankRow | null>(null)
   const [pourTank, setPourTank] = useState<TankRow | null>(null)
+  const [selId, setSelId] = useState<string | null>(null)
+  const sel = selId ? tanks.find(t => t.id === selId) ?? null : null   // lấy lại từ danh sách sống ⇒ khung chi tiết cũng realtime
+  // mở một thao tác (form chồng lên) ⇒ đóng khung chi tiết, tránh hai hộp thoại cùng mở
+  useEffect(() => { if (op || qaTank || pourTank || moves || form.open) setSelId(null) }, [op, qaTank, pourTank, moves, form.open])
   const mapView = f.view !== 'table'
+  const reportPath = '/wms/production/usage-report'
+  const openReport = (wh?: string | null, cycle?: string | null) => {
+    const p = new URLSearchParams()
+    if (wh) p.set('wh', wh)
+    if (cycle) p.set('cycle', cycle)
+    const qs = p.toString()
+    navigate(qs ? `${reportPath}?${qs}` : reportPath)
+  }
 
   const whOpts = [...factories.map(w => ({ value: w.id, label: `${w.name} (nhà máy)` })), ...kitchens.map(k => ({ value: k.id, label: k.name }))]
   const defs: FilterDef[] = [
@@ -67,6 +84,7 @@ export default function ProductionTanks() {
   if (canManage) actions.push({ key: 'new', icon: Plus, label: 'Khai bồn', tip: 'Khai bồn mới của kho chế biến', primary: true, variant: 'default', onClick: () => setForm({ open: true, tank: null }) })
   actions.push({ key: 'view', icon: mapView ? Table2 : LayoutGrid, label: mapView ? 'Bảng' : 'Sơ đồ', tip: mapView ? 'Xem dạng bảng' : 'Xem sơ đồ bồn', onClick: () => setF({ view: mapView ? 'table' : 'map' }) })
   if (canSeePath('/wms/production')) actions.push({ key: 'batches', icon: Layers, label: 'Mẻ', tip: 'Về danh sách mẻ chế biến', onClick: () => navigate('/wms/production') })
+  if (canSeePath(reportPath)) actions.push({ key: 'report', icon: FileBarChart, label: 'Báo cáo NVL', tip: 'Báo cáo NVL theo chu kỳ (tách ca, mẻ, nhân sự) — xem trực tiếp, xuất báo cáo cuối', onClick: () => openReport(f.warehouseId || null) })
 
   const menuFor = (t: TankRow) => (
     <DropdownMenu>
@@ -85,6 +103,22 @@ export default function ProductionTanks() {
       </DropdownMenuContent>
     </DropdownMenu>
   )
+  // việc chính NGAY TRÊN Ô của sơ đồ gọn (vận hành để ngoài): mẻ đã duyệt đang làm cho bồn ⇒ Check trước khi đổ bồn (không chờ cấp đủ
+  // NVL — một số NVL đổ thẳng tại bồn); bồn còn lô chưa kết luận ⇒ QA bồn
+  const quickFor = (t: TankRow) => {
+    const pour = (canPour || canOps) && t.is_active && t.incoming.some(x => x.stage === 'working')
+    const qa = canQa && t.lots.length > 0 && t.qa_state !== 'RELEASED'
+    if (!pour && !qa) return null
+    const btn = 'mt-1 w-full min-w-0 inline-flex h-7 items-center justify-center gap-1 whitespace-nowrap rounded border px-1 text-[10px] font-semibold'
+    return (
+      <div onClick={e => e.stopPropagation()} onKeyDown={e => e.stopPropagation()}>
+        {pour && <button type="button" onClick={() => setPourTank(t)} data-quick="pour" title="Check trước khi đổ bồn — quét tem pallet của mẻ tại bồn này"
+          className={`${btn} border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100`}><ScanIcon className="h-3 w-3 shrink-0" /><span className="truncate sm:hidden">Check</span><span className="hidden sm:inline truncate">Check đổ bồn</span></button>}
+        {qa && <button type="button" onClick={() => setQaTank(t)} data-quick="qa" title="QA đạt / không đạt cho mọi mẻ trong bồn"
+          className={`${btn} border-green-200 bg-green-50 text-green-800 hover:bg-green-100`}><ShieldCheck className="h-3 w-3 shrink-0" /><span className="truncate">QA bồn</span></button>}
+      </div>
+    )
+  }
   // việc chính trên thẻ bồn: bồn có mẻ sắp vào ⇒ Đổ bồn; bồn còn lô chưa kết luận ⇒ QA
   const footFor = (t: TankRow) => {
     const pour = (canPour || canOps) && t.is_active && t.incoming.length > 0
@@ -112,7 +146,8 @@ export default function ProductionTanks() {
             <ActionCluster className="w-auto shrink-0 ml-auto" items={actions} />
           </div>
         </div>
-        <SummaryBand tiles={[
+        {/* điện thoại: dải số dạng "NHÃN số" nối nhau (gọn ~2 dòng) — chỗ cho sơ đồ bồn (user 18/11: "tiết kiệm vị trí") */}
+        <SummaryBand mobilePairs tiles={[
           { label: 'Bồn', value: tanks.length.toLocaleString('vi-VN') },
           { label: 'Đang chứa (L)', value: nfQty(sumBy('L')) },
           { label: 'Đang chứa (kg)', value: nfQty(sumBy('KG')) },
@@ -127,16 +162,16 @@ export default function ProductionTanks() {
               {q.isError && <p className="text-xs text-red-600">{apiMsg(q.error)}</p>}
               {!q.isError && q.isLoading && <p className="text-xs text-slate-400">Đang tải…</p>}
               {!q.isError && !q.isLoading && !tanks.length && <p className="text-xs text-slate-400">{kitchens.length ? 'Chưa khai bồn nào.' : 'Chưa có kho chế biến trong phạm vi — khai kho phụ nội bộ ở Cài đặt WMS → Kho.'}</p>}
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-2 sm:gap-3">
-                {tanks.map(t => <TankMimic key={t.id} tank={t} onOpenBatch={id => navigate(`/wms/production/${id}`)} menu={menuFor(t)} footer={footFor(t)} />)}
-              </div>
               {tanks.length > 0 && (
-                <p className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-slate-500">
-                  <span className="inline-flex items-center gap-1"><span className="h-2 w-3 rounded-sm bg-sky-500" />QA đạt</span>
-                  <span className="inline-flex items-center gap-1"><span className="h-2 w-3 rounded-sm bg-amber-400" />Chờ QA</span>
-                  <span className="inline-flex items-center gap-1"><span className="h-2 w-3 rounded-sm bg-red-500" />Không đạt / quá hạn lưu</span>
-                  <span className="inline-flex items-center gap-1"><span className="h-2 w-3 rounded-sm border border-slate-400" style={{ background: 'repeating-linear-gradient(45deg,#94a3b8 0 1.5px,#f1f5f9 1.5px 3px)' }} />Mẻ đã đặt bồn, chưa nạp</span>
-                  <span>Mỗi lớp trong bồn là một mẻ.</span>
+                <TankBoard tanks={tanks} selectedId={selId} onSelect={t => setSelId(t.id)} onOpenBatch={id => navigate(`/wms/production/${id}`)} quick={quickFor} />
+              )}
+              {tanks.length > 0 && (
+                <p className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-slate-500" data-testid="board-legend">
+                  <span className="inline-flex items-center gap-1"><span className="h-2 w-3 rounded-sm" style={{ background: STAGE_LIQUID.filled.a }} />Chờ QA bồn</span>
+                  <span className="inline-flex items-center gap-1"><span className="h-2 w-3 rounded-sm" style={{ background: STAGE_LIQUID.released.a }} />QA đạt</span>
+                  <span className="inline-flex items-center gap-1"><span className="h-2 w-3 rounded-sm" style={{ background: STAGE_LIQUID.rejected.a }} />QA loại / quá hạn lưu</span>
+                  <span className="inline-flex items-center gap-1"><span className="h-2 w-3 rounded-sm border border-slate-400" style={{ background: 'repeating-linear-gradient(45deg,#94a3b8 0 1.5px,#f1f5f9 1.5px 3px)' }} />Mẻ đang làm sẽ vào</span>
+                  <span>Mẻ đang làm đứng trên bồn của nó · mỗi lớp trong bồn là một mẻ · bấm bồn để xem chi tiết.</span>
                 </p>
               )}
             </div>
@@ -185,6 +220,48 @@ export default function ProductionTanks() {
       <TankQaSheet open={!!qaTank} onClose={() => setQaTank(null)} tank={qaTank ? tanks.find(t => t.id === qaTank.id) ?? qaTank : null} />
       {/* mở ở thẻ bồn = đang đứng ở bồn này; mẻ lấy từ tem quét đầu tiên (tem của mẻ bồn khác ⇒ báo SAI BỒN) */}
       {pourTank && <PourSheet open onClose={() => setPourTank(null)} warehouseId={pourTank.warehouse_id} tankId={pourTank.id} canScan={canPour} canFill={canOps} />}
+      {/* KHUNG CHI TIẾT của bồn đang chọn trên sơ đồ gọn: thẻ bồn đầy đủ + thao tác + các mẻ (tình trạng · bước) + lối sang Báo cáo NVL của chu kỳ */}
+      <Sheet open={!!sel} onOpenChange={o => { if (!o) setSelId(null) }}>
+        <SheetContent side="right" className="w-full sm:max-w-md p-0 flex flex-col" data-testid="tank-detail">
+          {sel && <>
+            <SheetHeader className="px-4 py-3 border-b bg-slate-50 shrink-0 text-left">
+              <SheetTitle className="text-sm">Bồn <span className="font-mono">{sel.code}</span>{sel.name ? <span className="font-normal text-slate-500"> · {sel.name}</span> : null}</SheetTitle>
+              <SheetDescription className="text-xs">{sel.warehouse?.name ?? ''}</SheetDescription>
+            </SheetHeader>
+            <div className="flex-1 min-h-0 overflow-auto p-3 space-y-3">
+              <TankMimic tank={sel} onOpenBatch={id => navigate(`/wms/production/${id}`)} menu={menuFor(sel)} footer={footFor(sel)} />
+              {(() => {
+                const bs = boardBatchesOf(sel)
+                const cycles = [...new Set(bs.map(b => b.cycle).filter((c): c is string => !!c))]
+                return <>
+                  {bs.length > 0 && (
+                    <div className="rounded-lg border border-slate-200">
+                      <p className="px-2.5 py-1.5 border-b bg-slate-50 text-[11px] font-semibold text-slate-600">Mẻ của bồn</p>
+                      <div className="divide-y divide-slate-100">
+                        {bs.map(b => (
+                          <button key={`${b.id}-${b.inTank ? 'in' : 'up'}`} type="button" onClick={() => navigate(`/wms/production/${b.id}`)}
+                            className="w-full flex items-center gap-2 px-2.5 py-2 text-left text-xs hover:bg-sky-50">
+                            <StageSymbol stage={b.stage} step={b.step} />
+                            <span className="font-mono font-semibold">{b.code}</span>
+                            <span className="text-slate-400">{b.inTank ? 'trong bồn' : 'đang làm'}</span>
+                            <span className="ml-auto"><StageBadge stage={b.stage} step={b.step} /></span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {canSeePath(reportPath) && (cycles.length ? cycles : [null]).map(c => (
+                    <button key={c ?? 'all'} type="button" onClick={() => openReport(sel.warehouse_id, c)} data-testid="tank-report-link"
+                      className="touch-target w-full inline-flex items-center justify-center gap-1.5 rounded-md border border-sky-200 bg-sky-50 px-3 py-2 text-xs font-semibold text-sky-800 hover:bg-sky-100">
+                      <FileBarChart className="h-3.5 w-3.5" />Báo cáo NVL{c ? ` · chu kỳ ${c}` : ''}<ExternalLink className="h-3 w-3 opacity-60" />
+                    </button>
+                  ))}
+                </>
+              })()}
+            </div>
+          </>}
+        </SheetContent>
+      </Sheet>
     </div>
   )
 }

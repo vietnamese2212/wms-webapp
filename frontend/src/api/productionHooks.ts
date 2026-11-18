@@ -172,10 +172,14 @@ export interface StockMaterial extends MatUnits { material_id: string; material_
 export interface StockLot { production_date: string | null; batch_lot: string | null; expiry_date: string | null; available: number; available_no_tem?: number; tem_pallets?: number; pallets: number }
 export interface TankLotView {
   id: string; tank_id: string; batch_id: string; qty_in: number; qty_remaining: number; filled_at: string; expires_at: string | null
-  batch: { batch_code: string; qa_status: BatchQa; material: { material_code: string; short_name: string | null } | null } | null
+  batch: { batch_code: string; batch_no?: number | null; cycle?: string | null; shift?: string | null; qa_status: BatchQa; material: { material_code: string; short_name: string | null } | null } | null
 }
 /** Mẻ đang mở ĐÃ ĐẶT bồn này mà chưa nạp đủ — phần "sắp vào" */
-export interface TankIncoming { batch_id: string; batch_code: string; cycle: string | null; batch_no: number | null; material_code: string | null; material_name: string | null; qty: number; started: boolean }
+export interface TankIncoming {
+  batch_id: string; batch_code: string; cycle: string | null; batch_no: number | null; material_code: string | null; material_name: string | null; qty: number; started: boolean
+  /** 18/11 f — sơ đồ bồn: mẻ đứng trên bồn của nó kèm tình trạng + bước đang tới (cùng hàm cổng với danh sách mẻ) */
+  shift?: string | null; created_at?: string; stage?: string | null; step?: string | null
+}
 export type TankQaState = 'EMPTY' | 'HOLD' | 'RELEASED' | 'REJECTED'
 export interface TankRow {
   id: string; warehouse_id: string; code: string; name: string | null; capacity: number; unit: 'L' | 'KG'; is_active: boolean; note: string | null
@@ -454,6 +458,54 @@ export interface ShiftReport {
   batches: { id: string; batch_code: string; cycle: string | null; shift: string | null; machine_code: string | null; material_code: string; material_name: string | null }[]
   rows: ShiftRow[]
 }
+// ── BÁO CÁO NVL THEO CHU KỲ (18/11 f — chu kỳ lớn hơn ca, mẻ; báo cáo cuối tách ca · mẻ · nhân sự) ────────────────────────────────────
+export interface CycleListRow {
+  cycle: string; batches: number; cancelled: number; filled: number; first_at: string; last_at: string
+  date_from: string | null; date_to: string | null; shifts: string[]; btp: string[]
+}
+export interface CycleBatch {
+  id: string; batch_code: string; batch_no: number | null; shift: string | null; prod_date: string | null
+  material_id: string; material_code: string; material_name: string | null; base_unit: string | null
+  tank_id: string | null; tank_code: string | null; planned_qty: number | null; status: BatchStatus; qa_status: BatchQa
+  stage: string; step: string | null; created_at: string; opened_by_name: string | null
+  lead_ok_at: string | null; lead_ok_by_name: string | null; qa_ok_at: string | null; qa_ok_by_name: string | null
+  label_at: string | null; label_by_name: string | null; label_count: number | null
+  rm_first_at: string | null; rm_last_at: string | null; rm_lines: number
+  /** lần cấp sai thứ tự luân chuyển · hàng hết hạn QA duyệt · dòng cấp đã huỷ */
+  rm_bad: number; rm_exp: number; rm_rev: number
+  filled_qty: number; filled_at: string | null; filled_by_name: string | null; tank_qa_at: string | null; tank_qa_by_name: string | null
+}
+/** một ô NVL × mẻ: định mức (null = mã ngoài phiếu) · mức lệch % · thực cấp · số lần cấp */
+export interface CycleCell { req: number | null; tol: number | null; iss: number; n: number }
+export interface CycleRow extends MatUnits { material_id: string; material_code: string; material_name: string | null; cells: Record<string, CycleCell> }
+export interface CyclePerson {
+  name: string; open: number; lead: number; qaok: number; label: number; rm: number; rm_rev: number; rm_bad: number; rm_exp: number; rm_batches: number
+  pour: number; fill: number; tankqa: number; log: number; logok: number; batches: number; shifts: string[]; first_at: string | null; last_at: string | null
+}
+export interface CycleReport { warehouse_id: string; cycle: string; batches: CycleBatch[]; rows: CycleRow[]; people: CyclePerson[] }
+export interface CycleLine extends MatUnits {
+  batch_id: string; batch_code: string; batch_no: number | null; shift: string | null; material_code: string; material_name: string | null
+  pallet_code: string | null; batch_lot: string | null; production_date: string | null; qty: number; source: string | null; by: string | null; at: string
+  rotation_violation: boolean; rotation_principle: string | null; rotation_override_reason: string | null; expiry_approved: boolean
+  reversed_at: string | null; reversed_by_name: string | null; reverse_reason: string | null
+}
+export function useCycles(warehouseId: string | undefined, search = '') {
+  return useQuery({
+    queryKey: ['prod-cycles', warehouseId, search], enabled: !!warehouseId, staleTime: 15_000, placeholderData: keepPreviousData,
+    queryFn: async () => (await apiClient.get('/wms/production/cycles', { params: { warehouse_id: warehouseId, search: search || undefined } })).data.data as CycleListRow[],
+  })
+}
+export function useCycleReport(warehouseId: string | undefined, cycle: string | undefined) {
+  return useQuery({
+    queryKey: ['prod-cycle', warehouseId, cycle], enabled: !!warehouseId && !!cycle, staleTime: 10_000,
+    queryFn: async () => (await apiClient.get('/wms/production/cycles/report', { params: { warehouse_id: warehouseId, cycle } })).data.data as CycleReport,
+  })
+}
+/** từng lần cấp NVL — chỉ tải khi xuất Excel báo cáo cuối */
+export async function fetchCycleLines(warehouseId: string, cycle: string): Promise<CycleLine[]> {
+  return (await apiClient.get('/wms/production/cycles/lines', { params: { warehouse_id: warehouseId, cycle } })).data.data as CycleLine[]
+}
+
 export function useShiftReports(warehouseId: string | undefined) {
   return useQuery({
     queryKey: ['prod-shift-reports', warehouseId], enabled: !!warehouseId, staleTime: 15_000,

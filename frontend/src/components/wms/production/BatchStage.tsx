@@ -30,6 +30,40 @@ export const BATCH_STEP_LABEL: Record<BatchStep, string> = {
   pour: 'Check trước khi đổ bồn', fill: 'Nạp BTP vào bồn', tankqa: 'QA bồn',
 }
 const stepOf = (s: string | null | undefined): BatchStep | null => (s && s in BATCH_STEP_LABEL ? (s as BatchStep) : null)
+/** tên NGẮN của bước — ô nhỏ trên sơ đồ bồn (18/11 f); chữ đầy đủ ở title */
+export const BATCH_STEP_SHORT: Record<BatchStep, string> = {
+  lead: 'Chờ duyệt', qa: 'Chờ QA duyệt', rm: 'Cấp NVL', log: 'Ghi phiếu', label: 'In tem', pour: 'Check đổ bồn', fill: 'Nạp bồn', tankqa: 'QA bồn',
+}
+/** nhãn ngắn của tình trạng (mẻ đang làm: bước ngắn) */
+export function stageShort(stage: string | null | undefined, step?: string | null): string {
+  const k = stageOf(stage), st = stepOf(step)
+  return k === 'working' && st ? BATCH_STEP_SHORT[st] : BATCH_STAGE[k].label
+}
+/** khoá lọc của sơ đồ: mẻ đang làm lọc theo BƯỚC, còn lại theo tình trạng */
+export const stageKey = (stage: string | null | undefined, step?: string | null): string => {
+  const k = stageOf(stage), st = stepOf(step)
+  return k === 'working' && st ? `step:${st}` : k
+}
+/** khung + nền thẻ mẻ trên sơ đồ bồn — cùng màu tình trạng với danh sách mẻ */
+export const STAGE_CHIP: Record<BatchStage, string> = {
+  new:       'border-slate-300 bg-white text-slate-700',
+  wait_lead: 'border-slate-300 bg-slate-50 text-slate-700',
+  wait_qa:   'border-purple-300 bg-purple-50 text-purple-800',
+  working:   'border-amber-300 bg-amber-50 text-amber-900',
+  filled:    'border-blue-300 bg-blue-50 text-blue-800',
+  released:  'border-green-300 bg-green-50 text-green-800',
+  rejected:  'border-red-300 bg-red-50 text-red-800',
+  cancelled: 'border-slate-200 bg-slate-50 text-slate-400',
+}
+/** màu chất lỏng trong bồn theo tình trạng của mẻ đã nạp (hai sắc xen kẽ cho các lớp) — Chờ QA bồn xanh dương · QA đạt xanh lá · QA loại đỏ */
+export const STAGE_LIQUID: Record<'filled' | 'released' | 'rejected', { a: string; b: string }> = {
+  filled:   { a: '#3b82f6', b: '#60a5fa' },
+  released: { a: '#22c55e', b: '#4ade80' },
+  rejected: { a: '#ef4444', b: '#f87171' },
+}
+/** tình trạng của một lô trong bồn (mẻ đã nạp) — theo QA bồn */
+export const lotStage = (qa: string | null | undefined): 'filled' | 'released' | 'rejected' =>
+  qa === 'RELEASED' ? 'released' : qa === 'REJECTED' ? 'rejected' : 'filled'
 /** Chữ của tình trạng: mẻ đang làm ghi BƯỚC đang tới ("Check trước khi đổ bồn"), còn lại như cũ ("Chờ duyệt" · "Chờ QA bồn"…) */
 export function stageLabel(stage: string | null | undefined, step?: string | null): string {
   const k = stageOf(stage), st = stepOf(step)

@@ -1,20 +1,27 @@
 // SƠ ĐỒ BỒN 2D (MES 17/11 — user: "vẽ 1 dạng 2D của bồn, thể hiện bồn nào dung tích bao nhiêu, đang chứa gì một cách realtime").
 // Theo lối màn hình điều khiển nhà máy (HMI kiểu ISA-101): thân bồn trung tính, mực chất lỏng tỷ lệ đúng với sức chứa, MÀU chỉ dùng
-// để nói tình trạng (đạt = xanh · chờ QA = vàng · không đạt / quá hạn lưu = đỏ), con số luôn in cạnh hình.
+// để nói tình trạng, CÙNG màu tình trạng của danh sách mẻ (18/11 f — 'liên kết sơ đồ với tình trạng'): Chờ QA bồn = xanh dương · QA đạt =
+// xanh lá · QA loại / quá hạn lưu = đỏ; mỗi lớp tô theo tình trạng của CHÍNH mẻ đó. Con số luôn in cạnh hình.
 //   • mỗi MẺ trong bồn là một lớp (lớp nạp trước nằm dưới) — bồn nhiều mẻ nhìn ra ngay;
 //   • phần GẠCH CHÉO phía trên mực = mẻ đã đặt bồn này mà chưa nạp (sắp vào) — thấy luôn bồn còn nhận được bao nhiêu;
 //   • thang chia 25 / 50 / 75 / 100 % ở mép phải, số theo đơn vị bồn.
 // Dữ liệu = danh sách bồn đang sống (`useProductionTanks`, realtime qua production_tank / production_batch) — không gọi thêm API.
 import type { ReactNode } from 'react'
 import type { TankRow, TankQaState } from '@/api/productionHooks'
+import { STAGE_LIQUID, lotStage } from './BatchStage'
 
 const nf = (n: number) => Number(n).toLocaleString('vi-VN', { maximumFractionDigits: 1 })
-// hai sắc xen kẽ cho các lớp mẻ của cùng một tình trạng
-const TONE: Record<TankQaState, { a: string; b: string; text: string; label: string }> = {
-  EMPTY:    { a: '#e2e8f0', b: '#e2e8f0', text: 'text-slate-400', label: 'Trống' },
-  RELEASED: { a: '#0ea5e9', b: '#38bdf8', text: 'text-sky-700',   label: 'QA đạt' },
-  HOLD:     { a: '#f59e0b', b: '#fbbf24', text: 'text-amber-700', label: 'Chờ QA' },
-  REJECTED: { a: '#ef4444', b: '#f87171', text: 'text-red-700',   label: 'Không đạt' },
+// nhãn + màu chữ của cả bồn (theo lô xấu nhất) — cùng chữ với tình trạng mẻ (Chờ QA bồn · QA đạt · QA loại)
+export const TANK_TONE: Record<TankQaState, { text: string; label: string }> = {
+  EMPTY:    { text: 'text-slate-400', label: 'Trống' },
+  RELEASED: { text: 'text-green-700', label: 'QA đạt' },
+  HOLD:     { text: 'text-blue-700',  label: 'Chờ QA bồn' },
+  REJECTED: { text: 'text-red-700',   label: 'QA loại' },
+}
+/** màu một lớp (một mẻ) trong bồn: theo QA của mẻ đó; bồn quá hạn lưu ⇒ đỏ cả bồn */
+export function layerFill(qa: string | null | undefined, i: number, expired: boolean): string {
+  const c = STAGE_LIQUID[expired ? 'rejected' : lotStage(qa)]
+  return i % 2 ? c.b : c.a
 }
 // hình bồn: thân trụ đứng, hai đáy cong, bốn chân — toạ độ trong khung 120 × 150
 const X0 = 14, X1 = 86, TOP = 16, BOT = 126, DISH = 9
@@ -34,8 +41,8 @@ export function TankMimic({ tank, onOpenBatch, menu, footer }: {
   menu?: ReactNode; footer?: ReactNode
 }) {
   const cap = Number(tank.capacity) || 1
-  const tone = TONE[tank.expired && tank.qa_state !== 'EMPTY' ? 'REJECTED' : tank.qa_state]
-  const label = tank.expired && tank.qa_state !== 'EMPTY' && tank.qa_state !== 'REJECTED' ? 'Quá hạn lưu' : TONE[tank.qa_state].label
+  const tone = TANK_TONE[tank.expired && tank.qa_state !== 'EMPTY' ? 'REJECTED' : tank.qa_state]
+  const label = tank.expired && tank.qa_state !== 'EMPTY' && tank.qa_state !== 'REJECTED' ? 'Quá hạn lưu' : TANK_TONE[tank.qa_state].label
   const pct = Math.round(Number(tank.content) * 100 / cap)
   const clip = `tank-clip-${tank.id}`
   const hatch = `tank-hatch-${tank.id}`
@@ -45,7 +52,7 @@ export function TankMimic({ tank, onOpenBatch, menu, footer }: {
     const h = Math.max(Number(l.qty_remaining), 0) / cap * H
     const y = BOT - acc - h
     acc += h
-    return { key: l.id, y, h, fill: i % 2 ? tone.b : tone.a, title: `${l.batch?.batch_code ?? ''}: ${nf(Number(l.qty_remaining))} ${tank.unit}` }
+    return { key: l.id, y, h, fill: layerFill(l.batch?.qa_status, i, tank.expired), title: `${l.batch?.batch_code ?? ''}: ${nf(Number(l.qty_remaining))} ${tank.unit}` }
   })
   const level = acc
   const inH = Math.min(Number(tank.reserved) / cap * H, Math.max(H - level, 0))
@@ -103,7 +110,7 @@ export function TankMimic({ tank, onOpenBatch, menu, footer }: {
           <div className="mt-1 space-y-0.5">
             {tank.lots.map((l, i) => (
               <p key={l.id} className="flex items-center gap-1 min-w-0">
-                <span className="h-2 w-2 rounded-sm shrink-0" style={{ background: i % 2 ? tone.b : tone.a }} />
+                <span className="h-2 w-2 rounded-sm shrink-0" style={{ background: layerFill(l.batch?.qa_status, i, tank.expired) }} />
                 <button type="button" className="font-mono truncate hover:underline text-left" onClick={() => onOpenBatch?.(l.batch_id)}>{l.batch?.batch_code}</button>
                 <span className="ml-auto shrink-0 tabular-nums text-slate-500">{nf(Number(l.qty_remaining))}</span>
               </p>

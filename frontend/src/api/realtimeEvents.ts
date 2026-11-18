@@ -118,20 +118,23 @@ const TABLE_QUERY_MAP: Record<string, string[][]> = {
   packing_logs:             [['packing-board'], ['packing-logs'], ['packing-run-board'], ['packing-runs'], ['packing-run']],
   packing_runs:             [['packing-run-board'], ['packing-runs'], ['packing-run']],
   // Sản xuất — MES gđ1 (14/11): mẻ · sổ tiêu hao (rút NVL trừ InventoryEntry — bảng đó tự bắn tín hiệu tồn) · bồn · tồn trong bồn · sổ bồn
-  production_batch:         [['prod-batches'], ['prod-batch'], ['prod-tanks'], ['prod-genealogy']],
-  batch_consumption:        [['prod-batches'], ['prod-batch'], ['prod-stock'], ['prod-genealogy'], ['pallet-ledger'], ['prod-shift-report']],
+  // 18/11 f: sơ đồ bồn vẽ mẻ sắp vào kèm BƯỚC đang tới ⇒ mọi sổ đổi bước (cấp NVL · phiếu · tem · quét đổ bồn) đều chạm prod-tanks;
+  // báo cáo NVL theo chu kỳ (prod-cycle / prod-cycles) đọc cùng các sổ đó
+  production_batch:         [['prod-batches'], ['prod-batch'], ['prod-tanks'], ['prod-genealogy'], ['prod-cycles'], ['prod-cycle']],
+  batch_consumption:        [['prod-batches'], ['prod-batch'], ['prod-stock'], ['prod-genealogy'], ['pallet-ledger'], ['prod-shift-report'], ['prod-tanks'], ['prod-cycle']],
   // NVL hết hạn chờ QA duyệt (17/11) — trang mẻ (mục chờ duyệt) + form cấp ("Lấy ở đâu" nằm dưới prod-stock) đổi ngay khi QA bấm
   mes_expiry_approval:      [['prod-batch'], ['prod-stock']],
   production_tank:          [['prod-tanks'], ['prod-tanks-for-run']],
   tank_lot:                 [['prod-tanks'], ['prod-batch'], ['prod-batches']],
-  batch_requirement:        [['prod-batch']],
-  batch_process_log:        [['prod-batch']],
+  batch_requirement:        [['prod-batch'], ['prod-tanks'], ['prod-cycle']],
+  batch_process_log:        [['prod-batch'], ['prod-tanks'], ['prod-cycle']],
+  batch_pour_scan:          [['prod-batch'], ['prod-batches'], ['prod-tanks'], ['prod-cycle']],
   production_process_form:  [['prod-process-forms']],
   production_shift_report:  [['prod-shift-reports'], ['prod-shift-report']],
   production_shift_count:   [['prod-shift-report']],
   production_recipe:        [['prod-recipes'], ['prod-recipe']],
   production_recipe_line:   [['prod-recipe']],
-  tank_movement:            [['prod-tank-moves'], ['prod-batch'], ['prod-genealogy'], ['packing-run']],
+  tank_movement:            [['prod-tank-moves'], ['prod-batch'], ['prod-genealogy'], ['packing-run'], ['prod-cycles'], ['prod-cycle']],
   warehouse_machines:       [['machines']],
   // `Employee` ĐÃ GỠ KHỎI BẢN ĐỒ (04/08): bảng nhân sự CỐ Ý không nằm trong publication realtime và
   // không có policy đọc cho `authenticated` — dữ liệu HR chỉ ra ngoài qua API đã cắt scope. Giữ dòng

@@ -12,8 +12,8 @@
 // gói 37 bodyfuzz 355 route + gói 63 xanh). `picomatch` GHSA-fc5q-39xc-vjpf (high, ReDoS khi KẺ TẤN CÔNG viết được mẫu glob)
 // — range <=4.0.7 = MỌI bản đã phát hành, CHƯA có bản vá. Chỉ công cụ build/test: BE qua ts-node-dev + vitest (npm ls --omit=dev
 // rỗng), FE qua vite · tailwind 3 · vite-plugin-pwa (không có trong dist/assets). BE: braces đã hết, picomatch chiếm đúng chỗ
-// high 1 ⇒ baseline BE giữ nguyên. FE high 1→2 (vite + picomatch) là việc CHẤP NHẬN lỗ hổng ⇒ chỉ nâng khi user duyệt rõ;
-// picomatch ra bản vá thì hạ lại.
+// high 1 ⇒ baseline BE giữ nguyên. FE high 1→2 (vite + picomatch): user DUYỆT chấp nhận tạm 18/11 ("ok làm đi", sau khi được
+// giải thích công cụ nào, ai viết, chưa có bản vá, người dùng không bị ảnh hưởng) — picomatch ra bản vá thì nâng gói rồi hạ lại.
 // usage: node scripts/qa/44-npm-audit.mjs [--update-baseline]
 import { spawnSync } from 'child_process'
 import { readFileSync, writeFileSync } from 'fs'

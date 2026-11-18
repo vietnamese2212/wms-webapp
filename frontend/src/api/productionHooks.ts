@@ -161,6 +161,8 @@ export interface BatchDetail {
 export interface ScanEntry {
   id: string; pallet_code: string; material_id: string; cartons_remaining: number | null; cartons_imported: number | null; cartons_reserved: number | null
   production_date: string | null; expiry_date: string | null; batch: string | null
+  /** ngày nhập kho (18/11 — FIFO / LIFO so theo ngày này; hiện "nhập dd-mm-yyyy" trên thẻ tem vừa quét) */
+  import_date?: string | null
   qa_status_id?: string | null; qa_status: { code: string; name: string } | null; location: { location_code: string } | null
   material: ({ material_code: string; short_name: string | null } & MatUnits) | null
   /** 17/11: %Date + luân chuyển của tem (như quét xuất) · hạn + QA duyệt của mẻ */

@@ -5713,7 +5713,8 @@ export async function rotationSuggestionsFor(
           // `category` = khóa chọn chiến thuật tầng 2 (mỗi loại kho có thể chạy nguyên tắc riêng)
           // `pallet_code`/`batch`: quy tắc date kiểu CHỈ ĐỊNH khớp theo tem hoặc mã lô — thiếu 2 cột
           // này thì bộ lọc của caller sẽ loại sạch pallet và màn hình nói "không còn hàng đạt mức".
-          .select(`material_id, pallet_code, batch, qa_status_id, cartons_remaining, cartons_imported, cartons_reserved, production_date, expiry_date, ncc_id, shelf_life_days, location:Location${useWhFilter ? '!inner' : ''}(location_code, warehouse_id, sub_code, is_pick_face), material:Material!material_id(category, shelf_life_days, supplier_shelf_life_overrides)`)
+          // `import_date` = khoá của FIFO / LIFO (18/11) — thiếu là kho FIFO gợi ý sai thứ tự mà không báo gì
+          .select(`material_id, pallet_code, batch, qa_status_id, cartons_remaining, cartons_imported, cartons_reserved, production_date, import_date, expiry_date, ncc_id, shelf_life_days, location:Location${useWhFilter ? '!inner' : ''}(location_code, warehouse_id, sub_code, is_pick_face), material:Material!material_id(category, shelf_life_days, supplier_shelf_life_overrides)`)
           .in('material_id', chunk)
           .in('status', [...PICKABLE_STATUSES])
           // Pallet bị QA GIỮ thì lúc quét bị chặn thẳng ⇒ gợi ý mà còn liệt kê là đẩy người ta đi tới
@@ -5849,7 +5850,7 @@ async function rotationCheckOf(args: {
   // "QA giữ" = dấu QA khác `OK` (services/qaStatus.ts) — cùng luật với cửa quét xuất bên dưới.
   const [qaFilter, qaHold] = await Promise.all([qaNotHeldFilter(), qaHoldIds()])
   const rows = await fetchAllRowsParallel(() => supabase.from('InventoryEntry')
-    .select('id, pallet_code, batch, qa_status_id, cartons_remaining, cartons_imported, cartons_reserved, production_date, expiry_date, ncc_id, shelf_life_days, location:Location!inner(location_code, warehouse_id, is_pick_face)')
+    .select('id, pallet_code, batch, qa_status_id, cartons_remaining, cartons_imported, cartons_reserved, production_date, import_date, expiry_date, ncc_id, shelf_life_days, location:Location!inner(location_code, warehouse_id, is_pick_face)')
     .eq('material_id', materialId)
     .eq('location.warehouse_id', warehouseId)
     .in('status', [...PICKABLE_STATUSES])
@@ -6801,6 +6802,7 @@ export async function scanItem(req: Request, res: Response) {
           material_id:     inv.material_id,
           ncc_id:          inv.ncc_id ?? null,
           production_date: inv.production_date ?? null,
+          import_date:     inv.import_date ?? null,   // phần lẻ giữ ngày nhập của pallet gốc (kho FIFO so trộn date theo ngày nhập)
           expiry_date:     inv.expiry_date ?? null,
           shelf_life_days: inv.shelf_life_days ?? null,
         },

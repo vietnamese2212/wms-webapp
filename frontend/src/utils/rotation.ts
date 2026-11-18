@@ -9,8 +9,8 @@ export type RotationPrinciple = typeof ROTATION_PRINCIPLES[number]
 
 export const ROTATION_LABEL: Record<RotationPrinciple, string> = {
   FEFO: 'FEFO — hạn dùng ngắn nhất đi trước',
-  FIFO: 'FIFO — hàng vào trước đi trước',
-  LIFO: 'LIFO — hàng vào sau đi trước',
+  FIFO: 'FIFO — hàng nhập kho trước đi trước (theo ngày nhập)',
+  LIFO: 'LIFO — hàng nhập kho sau đi trước (theo ngày nhập)',
 }
 
 export const ROTATION_SHORT: Record<RotationPrinciple, string> = {
@@ -59,7 +59,7 @@ export interface RotationCheck {
   // Dòng cũ / bundle cũ không có field này → coi như 'WAREHOUSE'.
   source?:            'WAREHOUSE' | 'TYPE'
   violation:          boolean
-  date_label:         string           // 'HSD' | 'NSX'
+  date_label:         string           // 'HSD' (FEFO) | 'Ngày nhập' (FIFO / LIFO — 18/11)
   scanned_date:       string | null
   best_date:          string | null
   best_pallet_code:   string | null

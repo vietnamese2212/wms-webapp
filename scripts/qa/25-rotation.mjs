@@ -8,7 +8,7 @@
 // Fixture cố tình dựng ca mà FEFO và FIFO TRẢ LỜI KHÁC NHAU (pallet NSX mới nhưng HSD ngắn nhất):
 // nếu ai đó lỡ gộp hai khái niệm lại làm một, gói này đỏ ngay.
 //
-// 16 phép kiểm: FEFO chọn đúng HSD ngắn nhất · FIFO chọn đúng NSX cũ nhất (KHÁC pallet FEFO) ·
+// 16 phép kiểm: FEFO chọn đúng HSD ngắn nhất · FIFO chọn đúng NGÀY NHẬP sớm nhất (KHÁC pallet FEFO, KHÁC pallet NSX cũ nhất — 18/11) ·
 // [14..15] đơn có %Date yêu cầu: pallet không đạt bị LOẠI khỏi đề cử (không kẹt 2 luật) ·
 // pallet QA giữ không bao giờ được đề cử · quét đúng thứ tự = không vi phạm · kho chỉ-cảnh-báo
 // KHÔNG chặn · kho bắt-buộc chặn khi thiếu lý do · mã lý do bậy bị từ chối · có lý do thì qua và
@@ -120,23 +120,26 @@ try {
   const locNoIn2 = await mkLoc('NOIN2', { slot_no_in: true })
 
   // Pallet: cố tình để FEFO ≠ FIFO.
-  //   OLD  — NSX cũ nhất (2026-01-01) nhưng HSD xa (2027-06-01) → FIFO chọn cái này
-  //   SHORT— NSX mới (2026-06-01) nhưng HSD gần nhất (2026-12-01) → FEFO chọn cái này
+  //   OLD  — NSX 2026-01-01, HSD xa (2027-06-01), NHẬP SỚM NHẤT (2026-02-01) → FIFO chọn cái này (18/11: FIFO so NGÀY NHẬP)
+  //   SHORT— NSX mới (2026-06-01) nhưng HSD gần nhất (2026-12-01), nhập 2026-07-01 → FEFO chọn cái này
+  //   LATEIN — NSX CŨ NHẤT trong số lấy được (2025-12-15) nhưng NHẬP MUỘN NHẤT (2026-08-01), HSD xa nhất → FIFO-theo-NSX (luật cũ)
+  //            sẽ chọn nó; FIFO-theo-ngày-nhập thì KHÔNG ⇒ ai lỡ đưa FIFO về NSX là [3] đỏ
   //   HOLD — NSX + HSD đều sớm nhất NHƯNG bị QA giữ → KHÔNG bao giờ được đề cử
-  const mkPallet = async (code, qty, locId, prod, exp, qaId = null) => {
+  const mkPallet = async (code, qty, locId, prod, exp, qaId = null, imp = vnDate()) => {
     const [row] = await restWrite('InventoryEntry', 'POST', null, {
       id: randomUUID(), pallet_code: `${TAG}-${code}`, material_id: mat.id, warehouse_id: whId,
       location_id: locId, cartons_imported: qty, cartons_remaining: qty, cartons_reserved: 0,
       status: 'IN_STOCK', production_date: prod, expiry_date: exp, qa_status_id: qaId,
-      import_date: vnDate(), created_at: nowIso(), updated_at: nowIso(),
+      import_date: imp, created_at: nowIso(), updated_at: nowIso(),
     })
     created.entries.push(row.id)
     return row.id
   }
   const [qaHold] = await restAll('QAStatus', 'select=id,code&code=neq.OK&limit=1')
-  await mkPallet('OLD',   100, locMain, '2026-01-01', '2027-06-01')
-  await mkPallet('SHORT', 100, locMain, '2026-06-01', '2026-12-01')
-  if (qaHold) await mkPallet('HOLD', 100, locQa, '2025-01-01', '2026-01-05', qaHold.id)
+  await mkPallet('OLD',    100, locMain, '2026-01-01', '2027-06-01', null, '2026-02-01')
+  await mkPallet('SHORT',  100, locMain, '2026-06-01', '2026-12-01', null, '2026-07-01')
+  await mkPallet('LATEIN', 100, locMain, '2025-12-15', '2027-12-01', null, '2026-08-01')
+  if (qaHold) await mkPallet('HOLD', 100, locQa, '2025-01-01', '2026-01-05', qaHold.id, '2025-02-01')
 
   // Chuyến ĐANG XUẤT ngày HÔM NAY (luật 02/08: ngày tương lai bị chặn FUTURE_DATE)
   const [gdo] = await restWrite('GroupDeliveryOrder', 'POST', null, {
@@ -192,10 +195,13 @@ try {
   {
     const rShort = await checkScan(itemA, `${TAG}-SHORT`)
     const rOld   = await checkScan(itemA, `${TAG}-OLD`)
-    check('[3] FIFO: đảo kết luận — pallet NSX mới thành vi phạm, pallet NSX cũ thành hợp lệ',
+    const rLate  = await checkScan(itemA, `${TAG}-LATEIN`)
+    check('[3] FIFO theo NGÀY NHẬP (18/11): pallet nhập sau thành vi phạm, pallet NHẬP SỚM NHẤT hợp lệ — kể cả pallet NSX cũ nhất mà nhập muộn cũng là vi phạm',
       rShort.j?.data?.rotation?.violation === true && rShort.j?.data?.rotation?.best_pallet_code === `${TAG}-OLD`
-      && rShort.j?.data?.rotation?.date_label === 'NSX' && rOld.j?.data?.rotation?.violation === false,
-      `short=${JSON.stringify(rShort.j?.data?.rotation)} old=${JSON.stringify(rOld.j?.data?.rotation)}`)
+      && rShort.j?.data?.rotation?.date_label === 'Ngày nhập' && rShort.j?.data?.rotation?.best_date === '2026-02-01'
+      && rOld.j?.data?.rotation?.violation === false
+      && rLate.j?.data?.rotation?.violation === true && rLate.j?.data?.rotation?.best_pallet_code === `${TAG}-OLD`,
+      `short=${JSON.stringify(rShort.j?.data?.rotation)} old=${JSON.stringify(rOld.j?.data?.rotation)} late=${JSON.stringify(rLate.j?.data?.rotation)}`)
   }
 
   // ── [4] Pallet bị QA GIỮ không bao giờ được đề cử ──────────────────────────

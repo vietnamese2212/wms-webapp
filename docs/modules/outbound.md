@@ -7,6 +7,12 @@
 
 **Quyền (BE `ALL_PERMISSIONS`):** view · prepare · create · quick_export · import · edit · assign · unassign · start · unstart · scan · complete · uncomplete · cancel · reconcile · weigh_waive · gate_waive · rotation_override · set_date
 
+## FIFO / LIFO so theo NGÀY NHẬP KHO (18/11 — user chốt)
+User: "FEFO đã theo ngày SX rồi, FIFO cũng thế thì khác gì nhau?" → chốt **FIFO = hàng nhập kho trước đi trước, theo ngày nhập**, áp cho mọi kho (cả Xuất kho, kho thành phẩm nếu chọn FIFO), không theo lô, không theo NSX. LIFO đổi theo cho cùng nghĩa (nhập sau đi trước). FEFO giữ nguyên (HSD).
+- Một luật: `utils/rotation.ts` — `rotationSortKey` / `rotationDateOf` đọc `InventoryEntry.import_date` (ngày hàng thật sự vào kho; chuyển kho nội bộ, tách / dồn pallet, hàng dư kế thừa). So theo NGÀY (cùng ngày nhập = ngang nhau, lấy pallet nào cũng đúng); đọc phần ngày của chuỗi `timestamp without time zone`, không qua đồng hồ máy chủ (C45). Thiếu ngày nhập ⇒ không xếp hạng, không báo sai thứ tự. Nhãn cột ngày (`ROTATION_DATE_LABEL`) = "Ngày nhập".
+- Mọi câu đọc tồn đưa vào luật PHẢI chọn cột `import_date`: gợi ý "Vị trí lấy" + kiểm thứ tự khi quét (Xuất kho), Việc cần làm, Fill hàng, Sản xuất (Lấy ở đâu · tra tem · cấp theo tem), Cất hàng (pallet sắp cất mang ngày nhập — pallet mới quét nhập = hôm nay; ô trả khoảng ngày nhập `imin`/`imax` qua `putaway_slot_facts`, migration `20261118e`), Tối ưu vị trí (`dateKeyOf`). Thiếu cột = kho FIFO mất thứ tự mà không báo gì — lưới: gói QA 25 [3] (pallet NSX cũ nhất nhưng nhập muộn nhất KHÔNG được chọn), gói 29 [2a][2c], test `rotationImportDate.test.ts`.
+- Dòng quét cũ (trước 18/11) của kho FIFO mang ngày đại diện là NSX; dòng mới là ngày nhập (`OutboundScanEntry.rotation_best_date`).
+
 ## Nút đầu trang chi tiết chuyến (18/11)
 Theo nguyên tắc chung (skill table-format §17c, user chốt 18/11 "vận hành ra ngoài theo tuần tự công việc, quản trị vào 3 chấm"): "Xem pallet" / "Thu gọn" và "Xác nhận nhanh" là VẬN HÀNH (ngoài ⋮ cả trên điện thoại); Sửa đơn · Tạm dừng · Bỏ qua cổng / cân và hủy duyệt · Bỏ hoàn thành · Đẩy lại cho kho nhận · Gỡ bắt đầu · Gỡ giao đơn là QUẢN TRỊ (trong ⋮, máy tính cũng có ⋮). Điều kiện hiện từng nút không đổi. Tab "Đang làm:" có nút ✕ bỏ đánh dấu chuyến (dùng chung khuôn với mẻ chế biến).
 

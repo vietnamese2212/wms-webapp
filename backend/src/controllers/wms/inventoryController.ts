@@ -1030,7 +1030,7 @@ export async function bulkTransferLocation(req: Request, res: Response) {
   // Select đủ trường snapshot cho StocktakeLog (nhánh count_as_stocktake) — chụp TRƯỚC khi move
   // để còn biết vị trí CŨ; nhánh thường chỉ dùng 5 cột đầu, thừa vài cột không đáng kể.
   const moving = await fetchAllByIdChunks(ids, chunk => supabase.from('InventoryEntry')
-    .select(`id, pallet_code, location_id, warehouse_id, cartons_remaining, material_id, ncc_id, production_date,
+    .select(`id, pallet_code, location_id, warehouse_id, cartons_remaining, material_id, ncc_id, production_date, import_date,
       expiry_date, shelf_life_days,
       material:Material!material_id(material_code, short_name, base_unit, entry_unit, units_per_carton),
       location:Location!location_id(location_code, warehouse_id)`)

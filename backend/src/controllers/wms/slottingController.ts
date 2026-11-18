@@ -212,11 +212,12 @@ export async function getSlotting(req: Request, res: Response) {
 }
 
 // ─── Engine sinh gợi ý (preview) ─────────────────────────────────────────────
-interface EntryRow { id: string; material_id: string; location_id: string; production_date: string | null; expiry_date: string | null }
+interface EntryRow { id: string; material_id: string; location_id: string; production_date: string | null; import_date: string | null; expiry_date: string | null }
 
-// date đại diện theo nguyên tắc: FEFO = HSD (thiếu thì NSX); FIFO/LIFO = NSX
+// date đại diện theo nguyên tắc: FEFO = HSD (thiếu thì NSX); FIFO/LIFO = NGÀY NHẬP KHO (18/11 — cùng nghĩa FIFO của luật
+// luân chuyển utils/rotation.ts: user chốt "FIFO theo ngày nhập"). Đọc phần ngày của chuỗi, không qua đồng hồ máy chủ.
 function dateKeyOf(e: EntryRow, principle: Principle): string | null {
-  const raw = principle === 'FEFO' ? (e.expiry_date ?? e.production_date) : e.production_date
+  const raw = principle === 'FEFO' ? (e.expiry_date ?? e.production_date) : e.import_date
   return raw ? String(raw).slice(0, 10) : null
 }
 function flowNote(zone: StatsZone | undefined, principle: Principle): string | null {
@@ -314,7 +315,7 @@ export async function previewPlan(req: Request, res: Response) {
     for (const ids of chunk(matIds, 300)) {
       const rows = await fetchAllRowsParallel(() => supabase
         .from('InventoryEntry')
-        .select('id, material_id, location_id, production_date, expiry_date, cartons_reserved, cartons_remaining, cartons_imported, qa_status_id')
+        .select('id, material_id, location_id, production_date, import_date, expiry_date, cartons_reserved, cartons_remaining, cartons_imported, qa_status_id')
         .eq('warehouse_id', warehouse_id)
         .in('material_id', ids)
         .in('status', ['IN_STOCK', 'PARTIAL', 'QUARANTINE'])

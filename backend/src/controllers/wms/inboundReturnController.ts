@@ -453,7 +453,8 @@ export async function createReturnChild(req: Request, b: ChildIn): Promise<Child
     const canOverride = req.user?.is_superadmin === true || (req.user?.module_permissions ?? {})['inbound']?.includes('putaway_override') === true
     const put = await guardPutaway({
       warehouseId: imp.warehouse_id, locationId: b.location_id,
-      incoming: { material_id: mat.id, ncc_id: s?.ncc_id ?? null, production_date: prodDate, expiry_date: expiry, shelf_life_days: s?.shelf_life_days ?? null },
+      // import_date = ngày ghi vào dòng tồn trả về bên dưới (vnDate) — kho FIFO / LIFO so trộn date theo ngày nhập (18/11)
+      incoming: { material_id: mat.id, ncc_id: s?.ncc_id ?? null, production_date: prodDate, import_date: vnDate(), expiry_date: expiry, shelf_life_days: s?.shelf_life_days ?? null },
       overrideReason: b.putaway_override_reason, canOverride, loc: loc as unknown as PutawayLocRow, material: mat as unknown as MaterialShelfInfo,
     })
     if (put.error) return no(put.error.code === 'FORBIDDEN' ? 403 : 422, put.error.code, put.error.message)

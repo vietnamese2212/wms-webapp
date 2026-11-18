@@ -31,6 +31,9 @@ export const PICKABLE_STATUSES = ['IN_STOCK', 'PARTIAL', 'QUARANTINE', 'LOOSE_PI
 
 export interface RotationEntry {
   production_date?:   string | Date | null
+  /** NGÀY NHẬP KHO (ngày hàng thật sự vào kho; chuyển kho nội bộ kế thừa) — khoá của FIFO / LIFO (user chốt 18/11).
+   *  Mọi câu đọc tồn đưa vào luật luân chuyển PHẢI chọn cột này, thiếu là kho FIFO mất thứ tự (không báo gì). */
+  import_date?:       string | Date | null
   expiry_date?:       string | Date | null   // HSD tường minh trên tem V2
   shelf_life_days?:   number | null
   ncc_id?:            string | null
@@ -64,30 +67,39 @@ export function isPickEligible(e: RotationEntry, qaHold: ReadonlySet<string>): b
   return availableOf(e) > 0
 }
 
-function msOf(v: string | Date | null | undefined): number | null {
-  if (!v) return null
-  const t = new Date(v).getTime()
-  return isNaN(t) ? null : t
-}
-
 // HSD hiệu lực (ms) đến từ `shelfLife.ts` — MỘT nguồn dùng chung với "số ngày còn lại" của quy
 // tắc MIN_DAYS. Trước 11/09 file này giữ bản chép tay riêng: đúng khuôn lỗi mà chính đầu file
 // đang cảnh báo, chỉ là ở tầng sâu hơn một bậc.
 
+// NGÀY NHẬP (ngày, không giờ) → mốc ms của NGÀY đó. FIFO / LIFO so theo NGÀY nhập: cùng ngày = ngang nhau
+// (lấy pallet nào trong ngày cũng đúng). Cột import_date là `timestamp without time zone` — PostgREST trả chuỗi
+// KHÔNG múi giờ ⇒ đọc thẳng phần ngày 'YYYY-MM-DD', không đi qua đồng hồ của máy chủ (lớp lỗi C45).
+export function importDayMs(v: string | Date | null | undefined): number | null {
+  if (!v) return null
+  const s = v instanceof Date ? (isNaN(v.getTime()) ? '' : v.toISOString()) : String(v)
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s)
+  if (!m) return null
+  const t = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]))
+  return isNaN(t) ? null : t
+}
+
 // Khóa sắp xếp: NHỎ HƠN = nên lấy TRƯỚC. null = không đủ dữ liệu để xếp (đứng cuối, không kết luận
 // vi phạm — mã không khai NSX/HSD thì không có "thứ tự đúng" để mà sai).
+//   • FEFO — HSD hiệu lực sớm nhất trước (HSD tường minh trên tem, hoặc NSX + hạn dùng theo lô / NCC).
+//   • FIFO — NGÀY NHẬP KHO sớm nhất trước; LIFO — ngày nhập muộn nhất trước (user chốt 18/11: "FIFO theo ngày nhập", kể
+//     cả Xuất kho; trước đó FIFO / LIFO so NSX — trùng FEFO khi cùng hạn dùng nên hai lựa chọn gần như một).
 export function rotationSortKey(
   e: RotationEntry,
   material: MaterialShelfInfo | null | undefined,
   principle: RotationPrinciple,
 ): number | null {
   if (principle === 'FEFO') return effectiveExpiryMs(e, material)
-  const prod = msOf(e.production_date)
-  if (prod == null) return null
-  return principle === 'LIFO' ? -prod : prod   // LIFO: hàng MỚI đi trước ⇒ đảo dấu
+  const day = importDayMs(e.import_date)
+  if (day == null) return null
+  return principle === 'LIFO' ? -day : day   // LIFO: hàng nhập SAU đi trước ⇒ đảo dấu
 }
 
-// Ngày ĐẠI DIỆN để hiển thị cho người quét (FEFO nói chuyện HSD, FIFO/LIFO nói chuyện NSX).
+// Ngày ĐẠI DIỆN để hiển thị cho người quét (FEFO nói chuyện HSD, FIFO/LIFO nói chuyện NGÀY NHẬP).
 export function rotationDateOf(
   e: RotationEntry,
   material: MaterialShelfInfo | null | undefined,
@@ -97,18 +109,18 @@ export function rotationDateOf(
     const ms = effectiveExpiryMs(e, material)
     return ms == null ? null : new Date(ms).toISOString().slice(0, 10)
   }
-  const prod = msOf(e.production_date)
-  return prod == null ? null : new Date(prod).toISOString().slice(0, 10)
+  const day = importDayMs(e.import_date)
+  return day == null ? null : new Date(day).toISOString().slice(0, 10)
 }
 
 export const ROTATION_DATE_LABEL: Record<RotationPrinciple, string> = {
-  FEFO: 'HSD', FIFO: 'NSX', LIFO: 'NSX',
+  FEFO: 'HSD', FIFO: 'Ngày nhập', LIFO: 'Ngày nhập',
 }
 
 export const ROTATION_LABEL: Record<RotationPrinciple, string> = {
   FEFO: 'FEFO — hạn dùng ngắn nhất đi trước',
-  FIFO: 'FIFO — hàng vào trước đi trước',
-  LIFO: 'LIFO — hàng vào sau đi trước',
+  FIFO: 'FIFO — hàng nhập kho trước đi trước (theo ngày nhập)',
+  LIFO: 'LIFO — hàng nhập kho sau đi trước (theo ngày nhập)',
 }
 
 // Vi phạm = pallet vừa quét đứng SAU pallet tốt nhất còn trong kho.
@@ -142,7 +154,7 @@ export interface RotationCheck {
   // FE hiện thêm "(theo Loại kho)" — KHÔNG được tự suy từ cấu hình kho (bản luật chép tay thứ N).
   source:             'WAREHOUSE' | 'TYPE'
   violation:          boolean
-  date_label:         string           // 'HSD' | 'NSX' — để FE khỏi tự đoán
+  date_label:         string           // 'HSD' (FEFO) | 'Ngày nhập' (FIFO / LIFO) — để FE khỏi tự đoán
   scanned_date:       string | null
   best_date:          string | null
   best_pallet_code:   string | null

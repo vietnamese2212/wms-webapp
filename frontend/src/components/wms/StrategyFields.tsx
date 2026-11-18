@@ -146,7 +146,7 @@ function buildCtx({ mode, value, inherited, onPatch, idPrefix }: StrategyProps) 
   const isType = mode === 'type'
   // Câu diễn giải luôn nói về CHIẾN THUẬT HIỆU LỰC (sau kế thừa), không phải riêng phần khai thêm
   const eff = isType ? resolveStrategy(inherited, value) : value
-  const dateLabel = (eff.rotation_principle ?? 'FEFO') === 'FEFO' ? 'HSD' : 'NSX'
+  const dateLabel = (eff.rotation_principle ?? 'FEFO') === 'FEFO' ? 'HSD' : 'ngày nhập'   // FIFO / LIFO so NGÀY NHẬP KHO (18/11)
   const enforced = eff.putaway_enforced ?? []
   // Tầng KHO: bật/tắt trực tiếp (kho là gốc, không có gì để kế thừa)
   const toggleEnf = (code: string) => {
@@ -216,8 +216,8 @@ export function OutboundStrategyFields(props: StrategyProps & { guidedExtra?: Re
             triggerClassName="h-8"
             options={withInherit([
               { value: 'FEFO', label: 'FEFO — hạn dùng ngắn nhất đi trước', sub: 'mặc định, hợp hàng có HSD' },
-              { value: 'FIFO', label: 'FIFO — hàng vào trước đi trước',      sub: 'hợp bao bì/vật tư không HSD' },
-              { value: 'LIFO', label: 'LIFO — hàng vào sau đi trước',        sub: 'ít dùng, chỉ khi nghiệp vụ yêu cầu' },
+              { value: 'FIFO', label: 'FIFO — hàng nhập kho trước đi trước', sub: 'so theo ngày nhập kho (không theo NSX)' },
+              { value: 'LIFO', label: 'LIFO — hàng nhập kho sau đi trước',   sub: 'so theo ngày nhập kho · ít dùng' },
             ], inherited.rotation_principle)}
           />
         </SettingRow>
@@ -334,7 +334,7 @@ export function InboundStrategyFields(props: StrategyProps) {
           )}
         </SettingRow>
         <SettingRow label={<>Bước 2 — Trong các ô cùng mã, ưu tiên{own(value.putaway_same_mat_date_pref)}</>}
-          tip={<>So theo <b>thứ tự lấy</b> của kho nên phát biểu đúng cho cả FEFO (so HSD) lẫn FIFO/LIFO (so NSX). Chỉ có tác dụng khi ô đã có hàng cùng mã và pallet đang cất biết được {dateLabel}.</>}>
+          tip={<>So theo <b>thứ tự lấy</b> của kho nên phát biểu đúng cho cả FEFO (so HSD) lẫn FIFO/LIFO (so ngày nhập kho). Chỉ có tác dụng khi ô đã có hàng cùng mã và pallet đang cất biết được {dateLabel}.</>}>
           <SingleSelect value={sel(value.putaway_same_mat_date_pref)} onChange={put('putaway_same_mat_date_pref')}
             triggerClassName="h-8"
             options={withInherit(putawayDatePrefOpts(dateLabel), inherited.putaway_same_mat_date_pref)} />

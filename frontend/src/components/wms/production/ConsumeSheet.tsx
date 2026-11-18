@@ -287,6 +287,8 @@ export function ConsumeSheet({ open, onClose, batch, focusId }: {
               <div><span className="font-mono font-semibold">{entry.material?.material_code}</span> {entry.material?.short_name ?? ''}</div>
               <div className="text-slate-600">NSX {entry.production_date ? formatDate(String(entry.production_date).slice(0, 10)) : '—'}
                 {' · '}HSD {scanExp?.expiry_date ? formatDate(scanExp.expiry_date) : entry.expiry_date ? formatDate(String(entry.expiry_date).slice(0, 10)) : '—'}
+                {/* ngày nhập kho — khoá của FIFO / LIFO (user 18/11: "chọn ngày nhập đi, hiển thị lên cho tôi") */}
+                {entry.import_date ? <span data-testid="scan-import-date">{` · nhập ${formatDate(String(entry.import_date).slice(0, 10))}`}</span> : null}
                 {entry.batch ? ` · lô ${entry.batch}` : ''}{entry.location ? ` · ô ${entry.location.location_code}` : ''}
                 {entry.pct_date != null && <> · %Date <b className={`tabular-nums ${pctDateCls(entry.pct_date, pctBands)}`}>{Math.floor(entry.pct_date)}%</b></>}</div>
               <div>Trên tem còn: <span className="font-semibold tabular-nums">{unitText(avail(entry))}</span>

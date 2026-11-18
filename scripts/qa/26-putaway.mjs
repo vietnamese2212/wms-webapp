@@ -256,7 +256,7 @@ try {
     `mẫu số ${mine.filter(x => x.putaway_checked).length} · vi phạm ${mine.filter(x => x.putaway_checked && x.putaway_violation).length}`)
 
   // ── 5b. LUẬT TRỘN DATE — luật user nêu đích danh, chỉ kết luận được ở cửa quét ──────
-  // Phát biểu theo THỨ TỰ LẤY nên đúng cho cả FEFO (so HSD) lẫn FIFO/LIFO (so NSX):
+  // Phát biểu theo THỨ TỰ LẤY nên đúng cho cả FEFO (so HSD) lẫn FIFO/LIFO (so NGÀY NHẬP — 18/11):
   // OLDER_ONLY = ô chỉ được chứa hàng PHẢI LẤY TRƯỚC pallet mới ⇒ pallet mới không chôn ai.
   {
     const locD = await mkLoc('DATE')

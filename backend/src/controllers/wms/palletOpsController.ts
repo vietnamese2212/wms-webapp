@@ -87,7 +87,7 @@ export async function mergePallets(req: Request, res: Response) {
     if (tgt.parent_pallet_code) return fail(res, 'Pallet đích đang là pallet con của nhóm khác — chọn pallet đầu nhóm')
 
     const { data: kRows, error: kErr } = await supabase.from('InventoryEntry')
-      .select(`id, pallet_code, parent_pallet_code, location_id, material_id, ncc_id, production_date, expiry_date, shelf_life_days, ${WH_SELECT}`).in('pallet_code', children).in('status', ACTIVE)
+      .select(`id, pallet_code, parent_pallet_code, location_id, material_id, ncc_id, production_date, import_date, expiry_date, shelf_life_days, ${WH_SELECT}`).in('pallet_code', children).in('status', ACTIVE)
     if (kErr) return fail(res, kErr.message, 500)
     const kids = (kRows ?? []).filter((k: any) => matchWh(k, warehouse_id))
     const found = kids.map((k: any) => k.pallet_code)
@@ -106,7 +106,7 @@ export async function mergePallets(req: Request, res: Response) {
         locationId:  tgt.location_id,
         entries: movingKids.map((k: any): IncomingInput => ({
           material_id: k.material_id, ncc_id: k.ncc_id ?? null,
-          production_date: k.production_date ?? null, expiry_date: k.expiry_date ?? null,
+          production_date: k.production_date ?? null, import_date: k.import_date ?? null, expiry_date: k.expiry_date ?? null,
           shelf_life_days: k.shelf_life_days ?? null,
         })),
         overrideReason: (req.body as { putaway_override_reason?: unknown }).putaway_override_reason,
@@ -248,7 +248,7 @@ export async function splitPallet(req: Request, res: Response) {
         warehouseId: srcWh, locationId: location_id,
         entries: items.map((): IncomingInput => ({
           material_id: source.material_id, ncc_id: source.ncc_id ?? null,
-          production_date: source.production_date ?? null, expiry_date: source.expiry_date ?? null,
+          production_date: source.production_date ?? null, import_date: srcImportDate, expiry_date: source.expiry_date ?? null,
           shelf_life_days: source.shelf_life_days ?? null,
         })),
         overrideReason: (req.body as { putaway_override_reason?: unknown }).putaway_override_reason,

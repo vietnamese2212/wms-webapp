@@ -1294,6 +1294,7 @@ export async function checkScanQR(req: Request, res: Response) {
         material_id:     material.id,
         ncc_id:          (order as { ncc_id?: string | null }).ncc_id ?? null,
         production_date: parsed.production_date ?? null,
+        import_date:     vnDate(),   // pallet quét nhập hôm nay — cùng giá trị ghi vào dòng tồn bên dưới (kho FIFO so trộn date theo ngày nhập)
         expiry_date:     parsed.expiry_date ?? null,
       },
       overrideReason: null, canOverride: false,
@@ -1598,6 +1599,7 @@ export async function scanQR(req: Request, res: Response) {
         material_id:     material.id,
         ncc_id:          resolvedNcc,
         production_date: parsed.production_date ?? null,
+        import_date:     vnDate(),   // = import_date của dòng tồn sắp ghi (kho FIFO / LIFO so trộn date theo ngày nhập, 18/11)
         expiry_date:     parsed.expiry_date ?? null,
         shelf_life_days: resolvedShelf,
       },

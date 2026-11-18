@@ -55,7 +55,7 @@ export async function pickFaceAcceptor(warehouseId: string | null | undefined): 
 
 /**
  * Đưa VỊ TRÍ NHẶT LẺ giữ ĐÚNG LÔ lên đầu danh sách gợi ý. "Đúng lô" = cùng `rot_date` với gợi ý
- * đầu (FEFO nói HSD, FIFO/LIFO nói NSX) ⇒ lấy ô nào cũng KHÔNG phải sai thứ tự, nên chọn ô nhặt
+ * đầu (FEFO nói HSD, FIFO/LIFO nói NGÀY NHẬP) ⇒ lấy ô nào cũng KHÔNG phải sai thứ tự, nên chọn ô nhặt
  * lẻ: đó mới là chỗ nhặt bằng tay được. Không có ô nào như vậy ⇒ giữ nguyên thứ tự (và caller nói
  * "cần fill xuống"). MỘT hàm cho mọi cửa chỉ đường hàng lẻ — đừng chép lại phép so này.
  */

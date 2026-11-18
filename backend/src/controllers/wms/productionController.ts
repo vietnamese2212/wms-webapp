@@ -712,7 +712,8 @@ export async function scanCheck(req: Request, res: Response) {
     if (!(await inScope(req, b.warehouse_id))) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
     const code = normalizeQR(String((req.query as { code: string }).code))
     const { data: rows, error } = await db.from('InventoryEntry')
-      .select('id, pallet_code, material_id, cartons_remaining, cartons_imported, cartons_reserved, status, production_date, expiry_date, batch, ncc_id, shelf_life_days, qa_status_id, qa_status:QAStatus(code, name), location:Location(location_code), material:Material(material_code, short_name, base_unit, entry_unit, units_per_carton)')
+      // import_date: khoá FIFO / LIFO (18/11) + hiện "nhập dd-mm-yyyy" trên thẻ tem vừa quét
+      .select('id, pallet_code, material_id, cartons_remaining, cartons_imported, cartons_reserved, status, production_date, import_date, expiry_date, batch, ncc_id, shelf_life_days, qa_status_id, qa_status:QAStatus(code, name), location:Location(location_code), material:Material(material_code, short_name, base_unit, entry_unit, units_per_carton)')
       .eq('warehouse_id', b.warehouse_id).eq('pallet_code', code).in('status', ['IN_STOCK', 'PARTIAL']).limit(20)
     if (error) return fail(res, error)
     if (!rows?.length) {
@@ -747,7 +748,7 @@ export async function consumeScan(req: Request, res: Response) {
     const gateErr = await consumeGateError(b)
     if (gateErr) return fail(res, 409, 'MES_NOT_APPROVED', gateErr)
     const { data: e } = await db.from('InventoryEntry')
-      .select('id, pallet_code, material_id, production_date, expiry_date, shelf_life_days, ncc_id, qa_status_id, cartons_remaining, cartons_imported, cartons_reserved, material:Material(base_unit, entry_unit, units_per_carton)')
+      .select('id, pallet_code, material_id, production_date, import_date, expiry_date, shelf_life_days, ncc_id, qa_status_id, cartons_remaining, cartons_imported, cartons_reserved, material:Material(base_unit, entry_unit, units_per_carton)')
       .eq('id', body.entry_id).maybeSingle()
     if (!e) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy dòng tồn')
     const intErr = qtyIntegerError(body.qty, e.material as unknown as { base_unit: string | null; entry_unit: string | null; units_per_carton: number | null } | null)

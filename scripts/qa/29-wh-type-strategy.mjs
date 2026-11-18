@@ -114,22 +114,22 @@ try {
   const loc = await mkLoc('L1')
 
   // Mỗi mã 2 pallet dựng ca FEFO ≠ FIFO:
-  //   OLD  : NSX cũ (2026-01-01), HSD xa (2027-06-01) → FIFO chọn
-  //   SHORT: NSX mới (2026-06-01), HSD gần (2026-12-01) → FEFO chọn
-  const mkPallet = async (code, matId, prod, exp) => {
+  //   OLD  : NSX cũ (2026-01-01), HSD xa (2027-06-01), NHẬP sớm (2026-02-01) → FIFO chọn (18/11: FIFO so NGÀY NHẬP)
+  //   SHORT: NSX mới (2026-06-01), HSD gần (2026-12-01), nhập sau (2026-07-01) → FEFO chọn
+  const mkPallet = async (code, matId, prod, exp, imp) => {
     const [row] = await restWrite('InventoryEntry', 'POST', null, {
       id: randomUUID(), pallet_code: `${TAG}-${code}`, material_id: matId, warehouse_id: whId,
       location_id: loc, cartons_imported: 200, cartons_remaining: 200, cartons_reserved: 0,
       status: 'IN_STOCK', production_date: prod, expiry_date: exp,
-      import_date: vnDate(), created_at: nowIso(), updated_at: nowIso(),
+      import_date: imp, created_at: nowIso(), updated_at: nowIso(),
     })
     created.entries.push(row.id)
     return row.id
   }
-  await mkPallet('A-OLD',   matA.id, '2026-01-01', '2027-06-01')
-  await mkPallet('A-SHORT', matA.id, '2026-06-01', '2026-12-01')
-  await mkPallet('B-OLD',   matB.id, '2026-01-01', '2027-06-01')
-  await mkPallet('B-SHORT', matB.id, '2026-06-01', '2026-12-01')
+  await mkPallet('A-OLD',   matA.id, '2026-01-01', '2027-06-01', '2026-02-01')
+  await mkPallet('A-SHORT', matA.id, '2026-06-01', '2026-12-01', '2026-07-01')
+  await mkPallet('B-OLD',   matB.id, '2026-01-01', '2027-06-01', '2026-02-01')
+  await mkPallet('B-SHORT', matB.id, '2026-06-01', '2026-12-01', '2026-07-01')
 
   const [gdo] = await restWrite('GroupDeliveryOrder', 'POST', null, {
     id: randomUUID(), group_code: `${TAG}-GDO`, warehouse_id: whId, warehouse_type: `${catA}+${catB}`,
@@ -183,14 +183,14 @@ try {
   {
     const a = (await checkScan(itemA, `${TAG}-A-OLD`)).j?.data?.rotation
     const b = (await checkScan(itemB, `${TAG}-B-OLD`)).j?.data?.rotation
-    check(`[2a] Loại ${catB} khai FIFO ⇒ quét pallet NSX cũ nhất KHÔNG còn vi phạm (override ĂN)`,
-      b?.principle === 'FIFO' && b?.violation === false && b?.source === 'TYPE' && b?.date_label === 'NSX',
+    check(`[2a] Loại ${catB} khai FIFO ⇒ quét pallet NHẬP sớm nhất KHÔNG còn vi phạm (override ĂN), cột ngày = Ngày nhập`,
+      b?.principle === 'FIFO' && b?.violation === false && b?.source === 'TYPE' && b?.date_label === 'Ngày nhập',
       JSON.stringify(b))
     check(`[2b] Loại ${catA} KHÔNG bị lây — vẫn FEFO của kho`,
       a?.principle === 'FEFO' && a?.violation === true && a?.source === 'WAREHOUSE',
       JSON.stringify(a))
     const bShort = (await checkScan(itemB, `${TAG}-B-SHORT`)).j?.data?.rotation
-    check(`[2c] Loại ${catB}: quét pallet NSX mới thành VI PHẠM theo FIFO (đảo đúng chiều)`,
+    check(`[2c] Loại ${catB}: quét pallet NHẬP sau thành VI PHẠM theo FIFO (đảo đúng chiều)`,
       bShort?.violation === true && bShort?.best_pallet_code === `${TAG}-B-OLD`, JSON.stringify(bShort))
   }
 

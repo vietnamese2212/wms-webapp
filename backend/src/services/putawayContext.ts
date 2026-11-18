@@ -35,6 +35,8 @@ export interface IncomingInput {
   material_id:      string
   ncc_id?:          string | null
   production_date?: string | Date | null
+  /** ngày nhập kho của pallet (pallet mới nhập = hôm nay) — kho chạy FIFO / LIFO so "trộn date" theo ngày nhập (18/11) */
+  import_date?:     string | Date | null
   expiry_date?:     string | Date | null
   shelf_life_days?: number | null
   // Loại kho CỦA MÃ HÀNG (`Material.category`) — khóa chọn chiến thuật tầng 2 (21/08).
@@ -230,9 +232,9 @@ export async function guardPutawayBatch(opts: {
   const batch: IncomingPallet[] = opts.entries.map(e => ({
     material_id: e.material_id,
     ncc_id:      e.ncc_id ?? null,
-    key: (e.production_date || e.expiry_date)
+    key: (e.production_date || e.expiry_date || e.import_date)
       ? rotationSortKey(
-          { production_date: e.production_date ?? null, expiry_date: e.expiry_date ?? null,
+          { production_date: e.production_date ?? null, expiry_date: e.expiry_date ?? null, import_date: e.import_date ?? null,
             shelf_life_days: e.shelf_life_days ?? null, ncc_id: e.ncc_id ?? null },
           matById.get(e.material_id) ?? null,
           resolveRotation(cfg.wh, cfg.typeRows, catOf(e)).principle)
@@ -405,7 +407,10 @@ export async function loadPutawayContext(opts: {
 
   // Khóa luân chuyển của chính pallet sắp cất — tính bằng ĐÚNG rotationSortKey, không tự so ngày.
   let key: number | null = null
-  if (incoming.production_date || incoming.expiry_date) {
+  if (principle !== 'FEFO') {
+    // FIFO / LIFO so NGÀY NHẬP (18/11) — không cần hạn dùng của mã nên không hỏi Material
+    key = rotationSortKey({ import_date: incoming.import_date ?? null }, null, principle)
+  } else if (incoming.production_date || incoming.expiry_date) {
     const mat = opts.material ?? (await supabase.from('Material').select(MAT_SHELF_COLS)
       .eq('id', incoming.material_id).maybeSingle()).data
     key = rotationSortKey(

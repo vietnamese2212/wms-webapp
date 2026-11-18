@@ -381,7 +381,7 @@ async function planInner(gdoId: string, actor: string | null, opts: PlanOpts = {
   if (!matIds.length) return { created: 0, cancelled, unset_items: unset, warning }
   const [qaFilter, qaHold] = await Promise.all([qaNotHeldFilter(), qaHoldIds()])
   const candRaw = await fetchAllByIdChunks(matIds, chunk => supabase.from('InventoryEntry')
-    .select('id, pallet_code, material_id, location_id, batch, qa_status_id, cartons_remaining, cartons_imported, cartons_reserved, production_date, expiry_date, ncc_id, shelf_life_days')
+    .select('id, pallet_code, material_id, location_id, batch, qa_status_id, cartons_remaining, cartons_imported, cartons_reserved, production_date, import_date, expiry_date, ncc_id, shelf_life_days')
     .in('material_id', chunk)
     .eq('warehouse_id', whId)
     .in('status', [...PICKABLE_STATUSES])
@@ -784,7 +784,7 @@ export async function checkDateRuleStock(reqs: Array<{ item_id: string; rule: Da
   const qaHold = await qaHoldIds()
   for (const [wh, mats] of matsByWh) {
     const cand = await fetchAllByIdChunks([...mats], chunk => supabase.from('InventoryEntry')
-      .select('id, pallet_code, material_id, location_id, batch, qa_status_id, cartons_remaining, cartons_imported, cartons_reserved, production_date, expiry_date, ncc_id, shelf_life_days')
+      .select('id, pallet_code, material_id, location_id, batch, qa_status_id, cartons_remaining, cartons_imported, cartons_reserved, production_date, import_date, expiry_date, ncc_id, shelf_life_days')
       .in('material_id', chunk)
       .eq('warehouse_id', wh)
       .in('status', [...PICKABLE_STATUSES])

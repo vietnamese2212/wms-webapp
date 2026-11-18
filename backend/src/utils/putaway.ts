@@ -303,6 +303,8 @@ export interface SlotLot {
   m: string; n: string | null; s: number | null; no_exp: boolean
   pmin: string | null; pmax: string | null
   emin: string | null; emax: string | null
+  /** ngày nhập sớm / muộn nhất của nhóm (migration 20261118e) — kho FIFO / LIFO dựng khoảng ngày của ô theo ngày nhập */
+  imin?: string | null; imax?: string | null
 }
 export interface SlotFactsRaw {
   location_id: string; pallets: number; materials: number
@@ -338,11 +340,12 @@ export function slotFactsOf(
   for (const lot of raw.lots ?? []) {
     const mat = materialById.get(lot.m) ?? null
     // 2 mốc của nhóm: đầu và cuối. Nhóm có HSD tường minh dùng emin/emax, nhóm suy từ NSX dùng pmin/pmax.
+    // Ngày nhập đi kèm cả hai mốc: FIFO / LIFO chỉ đọc import_date, FEFO bỏ qua nó (một hàm rotationSortKey quyết).
     const ends: RotationEntry[] = lot.no_exp
-      ? [{ production_date: lot.pmin, shelf_life_days: lot.s, ncc_id: lot.n },
-         { production_date: lot.pmax, shelf_life_days: lot.s, ncc_id: lot.n }]
-      : [{ production_date: lot.pmin, expiry_date: lot.emin, shelf_life_days: lot.s, ncc_id: lot.n },
-         { production_date: lot.pmax, expiry_date: lot.emax, shelf_life_days: lot.s, ncc_id: lot.n }]
+      ? [{ production_date: lot.pmin, import_date: lot.imin ?? null, shelf_life_days: lot.s, ncc_id: lot.n },
+         { production_date: lot.pmax, import_date: lot.imax ?? null, shelf_life_days: lot.s, ncc_id: lot.n }]
+      : [{ production_date: lot.pmin, import_date: lot.imin ?? null, expiry_date: lot.emin, shelf_life_days: lot.s, ncc_id: lot.n },
+         { production_date: lot.pmax, import_date: lot.imax ?? null, expiry_date: lot.emax, shelf_life_days: lot.s, ncc_id: lot.n }]
     for (const e of ends) {
       const k = rotationSortKey(e, mat, principle)
       if (k == null) continue

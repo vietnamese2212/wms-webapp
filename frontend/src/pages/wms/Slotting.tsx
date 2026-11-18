@@ -82,8 +82,8 @@ const LEVEL_OPTS = [
 ]
 const PRINCIPLE_OPTS = [
   { value: 'FEFO', label: 'FEFO (HSD)' },
-  { value: 'FIFO', label: 'FIFO (NSX)' },
-  { value: 'LIFO', label: 'LIFO' },
+  { value: 'FIFO', label: 'FIFO (ngày nhập)' },
+  { value: 'LIFO', label: 'LIFO (ngày nhập)' },
 ]
 const LEVEL_LABEL: Record<string, string> = { EASY: 'Easy', NORMAL: 'Normal', HARD: 'Hard' }
 
@@ -468,7 +468,7 @@ function PlanCreateSheet({ open, onClose, warehouseId, categories, days, level, 
           {level === 'EASY' && 'Easy: gom mã đang rải nhiều vị trí về ít vị trí — giải phóng chỗ trống, không quan tâm date.'}
           {level === 'NORMAL' && (principle === 'LIFO'
             ? 'Normal · LIFO: dồn hàng cùng mã date DÀI vào vị trí đang chứa date ngắn.'
-            : `Normal · ${principle}: dồn hàng cùng mã date NGẮN vào vị trí đang chứa date dài${principle === 'FEFO' ? ' (so theo HSD)' : ' (so theo NSX)'}.`)}
+            : `Normal · ${principle}: dồn hàng cùng mã date NGẮN vào vị trí đang chứa date dài${principle === 'FEFO' ? ' (so theo HSD)' : ' (so theo ngày nhập kho)'}.`)}
           {level === 'HARD' && `Hard: đảo khu theo ABC (${days} ngày) + gom theo date ${principle} — cần chỗ trống đệm.`}
           {' '}Vị trí "không đưa hàng vào" không bao giờ làm đích và hàng ở đó luôn bị kéo đi trước; vị trí "không lấy hàng đi" bị loại khỏi nguồn (tab Cài đặt). Pallet đang giữ cho đơn xuất được bỏ qua.
           {' '}<b>Pallet: {palletKind === 'FULL' ? 'chỉ dồn HÀNG CHẴN (pallet đủ tải 1 pallet đầy = số thùng/pallet × quy cách — pallet lẻ để yên, vẫn tính chiếm chỗ)' : palletKind === 'PARTIAL' ? 'chỉ dồn HÀNG LẺ (pallet chưa đủ tải: nhập lẻ hoặc đã bốc dở)' : 'dồn cả hàng chẵn + lẻ'}</b> (đổi ở filter "Pallet"). Dòng = 1 lệnh gom (Mã + Date), đã kiểm sức chứa đích tại từng thời điểm.

@@ -186,7 +186,7 @@ async function withLotCheck(payload: FillDemandPayload, warehouseId: string, day
     // KHÔNG nhúng Material vào từng dòng tồn: `supplier_shelf_life_overrides` là jsonb lặp lại trên
     // MỌI pallet của mã (hàng nghìn dòng) — tra một lần rồi ghép ở JS.
     fetchAllByIdChunks(matIds, chunk => supabase.from('InventoryEntry')
-      .select('id, pallet_code, material_id, location_id, status, cartons_remaining, cartons_imported, cartons_reserved, production_date, expiry_date, shelf_life_days, ncc_id, qa_status_id, location:Location!inner(location_code, warehouse_id, is_pick_face)')
+      .select('id, pallet_code, material_id, location_id, status, cartons_remaining, cartons_imported, cartons_reserved, production_date, import_date, expiry_date, shelf_life_days, ncc_id, qa_status_id, location:Location!inner(location_code, warehouse_id, is_pick_face)')
       .in('material_id', chunk).eq('location.warehouse_id', warehouseId)
       .in('status', [...FILL_STATUSES]).gt('cartons_remaining', 0).order('id')) as unknown as Promise<FillEntry[]>,
     fetchAllByIdChunks(matIds, chunk => supabase.from('Material')

@@ -34,7 +34,7 @@ import { can, type ModulePermissions } from '@/config/permissions'
 import { hasEntry, qtyIntegerError, type MatUnits } from '@/utils/qtyUnits'
 import { qtyCode, qtyNum, matUnitCode } from '@/utils/unitCode'
 import { reqLineState } from '@/utils/reqTolerance'
-import { Check } from 'lucide-react'
+import { Check, ChevronDown, MapPin } from 'lucide-react'
 import { normalizeQR } from '@/utils/qr'
 import { formatDate } from '@/utils/formatters'
 import { MesStockGroups, pickSummary } from './MesStockGroups'
@@ -80,6 +80,8 @@ export function ConsumeSheet({ open, onClose, batch, focusId }: {
   const [rotReason, setRotReason] = useState('')
   const [detailId, setDetailId] = useState<string | null>(null)
   const [scanAt, setScanAt] = useState(0)
+  // "Lấy ở đâu" mặc định THU GỌN mỗi lần mở form; người dùng đã mở thì giữ mở suốt lượt quét liên tục
+  const [pickOpen, setPickOpen] = useState(false)
   const qc = useQueryClient()
   const perms = useAuthStore(s => s.user?.module_permissions) as ModulePermissions | null | undefined
   const canRotOverride = can(perms ?? null, 'outbound', 'rotation_override')
@@ -105,7 +107,7 @@ export function ConsumeSheet({ open, onClose, batch, focusId }: {
 
   useEffect(() => {
     if (!open) return
-    reset(); setDone(null); setMatTerm(''); setLotSel('')
+    reset(); setDone(null); setMatTerm(''); setLotSel(''); setPickOpen(false)
     // dòng có hàng KHÔNG tem và không còn tem nào ⇒ vào thẳng "Không có tem"; còn lại luôn bắt đầu bằng quét
     const lotFirst = !!focus && Number(focus.tem_pallets) === 0 && Number(focus.available_no_tem) > 0
     setMode(lotFirst ? 'LOT' : 'SCAN'); setMatId(lotFirst ? focus.material_id : '')
@@ -292,16 +294,6 @@ export function ConsumeSheet({ open, onClose, batch, focusId }: {
               {rot && !held && !expBlocked && <RotationLine rot={rot} what="tem" reason={rotReason} onReason={setRotReason} canOverride={canRotOverride} />}
             </div>
           )}
-          {list && temGroups.length > 0 && (
-            <div>
-              <p className="text-[11px] font-semibold text-slate-600 mb-0.5">Lấy ở đâu <span className="font-normal text-slate-500">· {pickSummary(list, temGroups, 'tem')}</span></p>
-              <MesStockGroups groups={temGroups} dateLabel={list.date_label} mat={pickMat} bands={pctBands}
-                highlightEntryId={entry?.id ?? null} onOpenPallet={setDetailId} testId="pick-list" />
-            </div>
-          )}
-          {list && list.best?.kind === 'LOT' && (
-            <p className="text-amber-700">Hàng nên lấy trước là hàng KHÔNG tem{list.best.batch_lot ? ` (lô ${list.best.batch_lot})` : ''} — cấp ở "Không có tem".</p>
-          )}
         </>)}
 
         {mode === 'LOT' && (<>
@@ -349,6 +341,30 @@ export function ConsumeSheet({ open, onClose, batch, focusId }: {
           </div>
         )}
         {err && <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-red-700">{err}</div>}
+
+        {/* "LẤY Ở ĐÂU" của cửa quét tem: DƯỚI CÙNG form, mặc định THU GỌN (user 18/11: "cho xuống dưới cùng … mặc định là thu gọn
+            hết, bấm vào mới hiện ra") — form chỉ còn quét → lượng → xác nhận; cần xem tồn theo date thì bấm thanh. Nhóm bên trong
+            cũng đóng sẵn (▸ từng nhóm). Dòng nhắc "nên lấy hàng KHÔNG tem trước" là luật luân chuyển ⇒ không giấu trong phần thu gọn.
+            Cửa "Không có tem" giữ bảng lô ở chỗ cũ: đó là ô CHỌN lô (bắt buộc, chọn sẵn hạng 1) — giấu đi thì không thấy đang trừ lô nào. */}
+        {mode === 'SCAN' && list && (temGroups.length > 0 || list.best?.kind === 'LOT') && (
+          <div className="space-y-1" data-testid="pick-section">
+            {temGroups.length > 0 && (<>
+              <button type="button" onClick={() => setPickOpen(v => !v)} aria-expanded={pickOpen} data-testid="pick-toggle"
+                className="touch-target w-full flex items-center gap-1.5 rounded-md border border-slate-200 bg-slate-50 px-3 py-1.5 text-left text-xs font-medium text-slate-600 hover:bg-slate-100">
+                <MapPin className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+                <span className="min-w-0 truncate">Lấy ở đâu <span className="font-normal text-slate-500">· {pickSummary(list, temGroups, 'tem')}</span></span>
+                <ChevronDown className={`h-3.5 w-3.5 ml-auto shrink-0 transition-transform ${pickOpen ? 'rotate-180' : ''}`} />
+              </button>
+              {pickOpen && (
+                <MesStockGroups groups={temGroups} dateLabel={list.date_label} mat={pickMat} bands={pctBands}
+                  highlightEntryId={entry?.id ?? null} onOpenPallet={setDetailId} testId="pick-list" />
+              )}
+            </>)}
+            {list.best?.kind === 'LOT' && (
+              <p className="text-amber-700">Hàng nên lấy trước là hàng KHÔNG tem{list.best.batch_lot ? ` (lô ${list.best.batch_lot})` : ''} — cấp ở "Không có tem".</p>
+            )}
+          </div>
+        )}
       </div>
       {detailId && <PalletDetailDialog entryId={detailId} onClose={() => setDetailId(null)} />}
       <QRScanDialog open={camOpen} onClose={() => setCamOpen(false)} warehouseId={batch.warehouse_id}

@@ -240,7 +240,8 @@ function ProductionBatchDetail() {
   const steps: FlowStep[] = stepDefs.map((s, i) => ({ key: s.key, label: s.label, detail: s.detail, mine: mineOf[s.key], state: s.bad ? 'bad' : s.done ? 'done' : i === cur ? 'now' : 'todo' }))
   // luồng chặt: chỉ BƯỚC ĐANG TỚI là nút chính (bước trước xong mới tới bước sau); không chặt: như trước (Cấp NVL + Nạp bồn)
   const prim = (k: string) => (strict ? curKey === k : k === 'rm' || k === 'fill')
-  const canConsume = open && P('consume') && (g?.can_consume ?? true)
+  // mẻ đã nạp BTP vào bồn ⇒ sổ nguyên liệu KHOÁ (user 18/11 "ok" khoá cấp / huỷ sau khi nạp — BE: mes_open_batch_wh, 409 MES_BATCH_FILLED)
+  const canConsume = open && !hasFill && P('consume') && (g?.can_consume ?? true)
   const canFill = b.status !== 'CANCELLED' && b.qa_status !== 'REJECTED' && P('tank_ops')
   const canEditTank = open && P('open_batch') && !b.movements.length
   const logged = (b.process_logs ?? []).map(l => l.form)
@@ -296,7 +297,7 @@ function ProductionBatchDetail() {
   // XEM TEM ĐÃ CẤP của CẢ MẺ — nút ở thanh "Nguyên liệu của mẻ", không nằm trong ⋮ (user 18/11: "cho nút mở rộng này ra khỏi ba chấm")
   const anyOpen = [...openMats].some(m => consByMat.has(m))
   const temTotal = consumedNoun(live)
-  const canReverse = open && can(perms, 'production', 'reverse')
+  const canReverse = open && !hasFill && can(perms, 'production', 'reverse')
 
   return (
     <div className="flex flex-col h-full sm:p-3">
@@ -336,7 +337,8 @@ function ProductionBatchDetail() {
             {b.note && <span className="hidden sm:inline text-slate-500">{b.note}</span>}
           </div>
           {strict && b.status !== 'CANCELLED' && <FlowStrip steps={steps} />}
-          {strict && open && !g?.can_consume && <p className="text-[11px] text-amber-700">Phiếu chưa đủ hai bước duyệt (trưởng ca → QA) — chưa cấp nguyên liệu được.</p>}
+          {strict && open && !hasFill && !g?.can_consume && <p className="text-[11px] text-amber-700">Phiếu chưa đủ hai bước duyệt (trưởng ca → QA) — chưa cấp nguyên liệu được.</p>}
+          {open && hasFill && (P('consume') || P('reverse')) && <p className="text-[11px] text-slate-500" data-testid="nvl-locked">Mẻ đã nạp BTP vào bồn — sổ nguyên liệu đã khoá: không cấp thêm, không huỷ dòng cấp.</p>}
           {open && b.label_ver > 0 && !b.label_at && (
             <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-1.5 text-xs text-amber-800 flex items-center gap-1.5 flex-wrap">
               <AlertTriangle className="h-3.5 w-3.5 shrink-0" /><span>Mã lô đã đổi — tem pallet in trước đó mất hiệu lực.</span>
@@ -384,7 +386,7 @@ function ProductionBatchDetail() {
               </button>
             )}
           </div>
-          <ExpiryApprovalsBlock b={b} canDecide={open && can(perms, 'production', 'approve_expired')} />
+          <ExpiryApprovalsBlock b={b} canDecide={open && !hasFill && can(perms, 'production', 'approve_expired')} />
           {/* ĐIỆN THOẠI: bảng thu nhỏ — nhãn cột in một lần, mỗi dòng mã · tên · ĐVT rồi chỉ CON SỐ (user 17/11 "hạn chế văn viết");
               nút Cấp thấy ngay, không phải cuộn ngang. Trạng thái bằng màu số: thiếu cam · đủ ✓ xanh · ngoài mức lệch đỏ. */}
           <div className="sm:hidden">

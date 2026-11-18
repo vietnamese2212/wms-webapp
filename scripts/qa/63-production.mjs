@@ -355,6 +355,15 @@ try {
   check('5c. Nạp 600 (mẻ 1) + 400 (mẻ 2) vào bồn 1000 L', f1.s === 200 && f2.s === 200, `http=${f1.s}/${f2.s} ${f1.j?.error?.message ?? ''}`)
   const f3 = await api(`/wms/production/tanks/${T1.id}/fill`, 'POST', { batch_id: B1.id, qty: 1 })
   check('5d. Nạp thêm khi đầy ⇒ 409 MES_OVER_CAPACITY', f3.s === 409 && f3.j?.error?.code === 'MES_OVER_CAPACITY', `http=${f3.s}`)
+  // (18/11 c) mẻ đã nạp BTP vào bồn ⇒ sổ NVL khoá: cấp thêm (quét / chọn lô) và huỷ dòng cấp đều 409 MES_BATCH_FILLED — một chỗ mes_open_batch_wh
+  const lkScan = await api(`/wms/production/batches/${B1.id}/consume-scan`, 'POST', { entry_id: 'QA63_E2', qty: 1, qty_semantics: 'base', rotation_override_reason: 'BLOCKED' })
+  const lkLot = await api(`/wms/production/batches/${B1.id}/consume-lot`, 'POST', { material_id: M_RM, production_date: '2026-11-01', qty: 1, qty_semantics: 'base', rotation_override_reason: 'BLOCKED' })
+  const lkRow = (await restAll('batch_consumption', `select=id&batch_id=eq.${B1.id}&reversed_at=is.null&limit=1`))[0]
+  const lkRev = lkRow ? await api(`/wms/production/consumption/${lkRow.id}/reverse`, 'POST', { reason: 'QA63 thử khoá sau nạp' }) : { s: 0, j: null }
+  check('5d2. Mẻ đã nạp BTP vào bồn ⇒ cấp thêm (quét · chọn lô) và huỷ dòng cấp đều 409 MES_BATCH_FILLED (user chốt 18/11)',
+    lkScan.s === 409 && lkScan.j?.error?.code === 'MES_BATCH_FILLED' && lkLot.s === 409 && lkLot.j?.error?.code === 'MES_BATCH_FILLED'
+      && lkRev.s === 409 && lkRev.j?.error?.code === 'MES_BATCH_FILLED',
+    `http=${lkScan.s}/${lkLot.s}/${lkRev.s} ${lkScan.j?.error?.code}/${lkLot.j?.error?.code}/${lkRev.j?.error?.code}`)
   const b3 = (await api('/wms/production/batches', 'POST', NEW({ material_id: M_BTP2, tank_id: T4.id }))).j?.data
   // bồn 2 nhận một mẻ M_BTP riêng (17/11: một mẻ chỉ vào ĐÚNG bồn đã đặt — không còn nạp mẻ 1 sang bồn 2)
   const B1b = (await api('/wms/production/batches', 'POST', NEW({ material_id: M_BTP, tank_id: T2.id, planned_qty: 100 }))).j?.data
@@ -427,15 +436,17 @@ try {
     E('QA63_E8', 'QA63_P8', 50, WC, '2026-11-20', '2027-04-01', { batch: 'QA63LX' }),     // cùng NSX, CÓ mã lô
     E('QA63_E9', 'QA63_P9', 5, WC, '2026-11-21', '2027-04-01', { status: 'EXPORTED' }),   // không còn là hàng trong kho
   ].map(e => ({ batch: null, ...e })))
-  const lotNull = await api(`/wms/production/batches/${B1.id}/consume-lot`, 'POST', { material_id: M_RM, production_date: '2026-11-20', qty: 40, qty_semantics: 'base' })
+  // mẻ 1 đã nạp bồn (sổ NVL khoá — 18/11 c) ⇒ các phép cấp từ đây dùng mẻ BL chưa nạp
+  const BL = (await api('/wms/production/batches', 'POST', NEW({ cycle: 'QL', material_id: M_BTP2, tank_id: T4.id }))).j?.data
+  const lotNull = await api(`/wms/production/batches/${BL?.id}/consume-lot`, 'POST', { material_id: M_RM, production_date: '2026-11-20', qty: 40, qty_semantics: 'base' })
   const e8 = (await restAll('InventoryEntry', 'select=cartons_remaining&id=eq.QA63_E8'))[0]
   check('6l. Chọn lô KHÔNG mã lô (hàng trên tem) ⇒ 409 MES_MUST_SCAN, không ăn sang lô có mã lô cùng NSX',
     lotNull.s === 409 && lotNull.j?.error?.code === 'MES_MUST_SCAN' && num(e8?.cartons_remaining) === 50, `http=${lotNull.s} ${lotNull.j?.error?.code} e8=${e8?.cartons_remaining}`)
-  const lotX = await api(`/wms/production/batches/${B1.id}/consume-scan`, 'POST', { entry_id: 'QA63_E8', qty: 40, qty_semantics: 'base' })
+  const lotX = await api(`/wms/production/batches/${BL?.id}/consume-scan`, 'POST', { entry_id: 'QA63_E8', qty: 40, qty_semantics: 'base' })
   const e78 = await restAll('InventoryEntry', 'select=id,cartons_remaining&id=in.(QA63_E7,QA63_E8)')
   check('6m. Quét tem lô QA63LX ⇒ trừ 40 ở tem đó, lô không mã lô giữ nguyên',
     lotX.s === 200 && num(e78.find(e => e.id === 'QA63_E8')?.cartons_remaining) === 10 && num(e78.find(e => e.id === 'QA63_E7')?.cartons_remaining) === 30, `http=${lotX.s} ${JSON.stringify(e78)}`)
-  const scanGone = await api(`/wms/production/batches/${B1.id}/consume-scan`, 'POST', { entry_id: 'QA63_E9', qty: 1, qty_semantics: 'base' })
+  const scanGone = await api(`/wms/production/batches/${BL?.id}/consume-scan`, 'POST', { entry_id: 'QA63_E9', qty: 1, qty_semantics: 'base' })
   check('6n. Quét dòng tồn không còn trong kho (EXPORTED) ⇒ 409 MES_NOT_IN_STOCK', scanGone.s === 409 && scanGone.j?.error?.code === 'MES_NOT_IN_STOCK', `http=${scanGone.s} ${scanGone.j?.error?.code}`)
 
   // ── [6s] sửa / khai bù lượng rút của trang ĐÃ ĐÓNG (migration 20261114e) ──
@@ -660,7 +671,7 @@ try {
   check('11c. Số đếm âm ⇒ 400; lưu nháp số đếm ⇒ 200, ca vẫn mở', svNeg.s === 400 && svDraft.s === 200 && svDraft.j?.data?.report?.status === 'OPEN'
     && num((svDraft.j?.data?.rows ?? []).find(r => r.material_id === M_RM)?.actual) === actual1, `http=${svNeg.s}/${svDraft.s}`)
   const svClose = await api(`/wms/production/shift-reports/${S1}`, 'PUT', { items: [], note: 'QA63 giao ca', close: true })
-  const afterScan = await api(`/wms/production/batches/${B1.id}/consume-scan`, 'POST', { entry_id: 'QA63_E2', qty: 1, qty_semantics: 'base' })
+  const afterScan = await api(`/wms/production/batches/${BL?.id}/consume-scan`, 'POST', { entry_id: 'QA63_E2', qty: 1, qty_semantics: 'base' })
   const rp1c = await api(`/wms/production/shift-reports/${S1}`)
   const rmClosed = (rp1c.j?.data?.rows ?? []).find(r => r.material_id === M_RM)
   check('11d. Chốt ca ⇒ CLOSED, chụp số; cấp thêm sau khi chốt KHÔNG làm đổi báo cáo đã chốt',
@@ -673,7 +684,7 @@ try {
   const rm2nd = (rp2.j?.data?.rows ?? []).find(r => r.material_id === M_RM)
   check('11e. Ca đã chốt không sửa (409); ca sau: tồn đầu = số đếm ca trước, chỉ tính 1 dùng sau lúc chốt',
     svAfter.s === 409 && svAfter.j?.error?.code === 'MES_SHIFT_CLOSED' && sh2.s === 201 && num(rm2nd?.opening) === actual1 && rm2nd?.opening_src === 'COUNT'
-      && num(rm2nd?.used) === 1 && num(rm2nd?.by_batch?.[B1.id]) === 1 && Math.abs(num(rm2nd?.book) - (sumStock - 1)) < 0.001,
+      && num(rm2nd?.used) === 1 && num(rm2nd?.by_batch?.[BL?.id]) === 1 && Math.abs(num(rm2nd?.book) - (sumStock - 1)) < 0.001,
     `http=${svAfter.s}/${sh2.s} opening=${rm2nd?.opening}(${rm2nd?.opening_src}) used=${rm2nd?.used} book=${rm2nd?.book}`)
   const shList = await api(`/wms/production/shift-reports?warehouse_id=${WC}`)
   check('11f. Danh sách báo cáo ca của kho: 2 ca, ca mở đứng đầu', shList.s === 200 && (shList.j?.data ?? []).length === 2 && shList.j?.data?.[0]?.status === 'OPEN', `http=${shList.s} n=${shList.j?.data?.length}`)

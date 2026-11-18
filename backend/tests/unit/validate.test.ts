@@ -59,6 +59,19 @@ describe('validate()', async () => {
     expect(r.req.body).toEqual({ name: 'Kho Ba Vì', n: 42 })
   })
 
+  it('zod 4 (18/11): enum · số nguyên · trường thiếu trong mảng · khoá record → câu tiếng Việt, không lọt câu tiếng Anh', () => {
+    const mw = validate({ body: z.object({
+      e: z.enum(['a', 'b']).optional(), n: z.number().int().optional(),
+      items: z.array(z.object({ qty: z.number() })).optional(),
+      data: z.record(z.string().regex(/^[a-z]+$/), z.string()).optional(),
+    }) })
+    const msg = (body: unknown) => (run(mw, { body }).res.body as { error: { message: string } }).error.message
+    expect(msg({ e: 'c' })).toBe('body.e: phải là một trong: a, b')
+    expect(msg({ n: 1.5 })).toBe('body.n: phải là số nguyên (nhận số)')
+    expect(msg({ items: [{ qty: 1 }, {}] })).toBe('body.items.1.qty: bắt buộc')
+    expect(msg({ data: { AB: 'x' } })).toBe('body.data.AB: khoá không đúng dạng')
+  })
+
   it('zText có trần: chuỗi quá dài → "tối đa n ký tự"', () => {
     const mw = validate({ body: z.object({ name: zText(1, 5) }) })
     expect((run(mw, { body: { name: 'quá dài rồi' } }).res.body as { error: { message: string } }).error.message).toBe('body.name: tối đa 5 ký tự')

@@ -7,6 +7,13 @@
 // 06/10/2026: advisory MỚI trên registry chặn push — `npm audit fix` (không --force) đã vá proxy-addr 2.0.8 (Express, chạy thật),
 // source-map-js 1.2.2, fast-glob. Còn `vitest` GHSA-82fw-gwwq-j7x9 + `tinypool` GHSA-5gmw-xhrv-c9v3 (critical) — CHỈ bộ chạy test BE
 // (devDependency, không vào bundle Vercel), bản vá ở vitest 5 (MAJOR, việc riêng) ⇒ nâng baseline BE critical 1→3 (tar cũ + 2 gói này).
+// 18/11/2026: hai advisory MỚI chặn push (user: "có lỗi thì sửa đi, và up lên"). `zod` GHSA-mrhx-c7xc-m3w5 (high, CHẠY THẬT —
+// mảng lớn làm cạn bộ nhớ lúc kiểm body) ⇒ ĐÃ VÁ: nâng zod 3.25.76 → 4.6.7, validate.ts đọc lỗi theo khuôn zod 4 (test validate +
+// gói 37 bodyfuzz 355 route + gói 63 xanh). `picomatch` GHSA-fc5q-39xc-vjpf (high, ReDoS khi KẺ TẤN CÔNG viết được mẫu glob)
+// — range <=4.0.7 = MỌI bản đã phát hành, CHƯA có bản vá. Chỉ công cụ build/test: BE qua ts-node-dev + vitest (npm ls --omit=dev
+// rỗng), FE qua vite · tailwind 3 · vite-plugin-pwa (không có trong dist/assets). BE: braces đã hết, picomatch chiếm đúng chỗ
+// high 1 ⇒ baseline BE giữ nguyên. FE high 1→2 (vite + picomatch) là việc CHẤP NHẬN lỗ hổng ⇒ chỉ nâng khi user duyệt rõ;
+// picomatch ra bản vá thì hạ lại.
 // usage: node scripts/qa/44-npm-audit.mjs [--update-baseline]
 import { spawnSync } from 'child_process'
 import { readFileSync, writeFileSync } from 'fs'

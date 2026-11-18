@@ -20,25 +20,44 @@ import { isDay } from '../utils/dates'
 type Parts = { body?: ZodTypeAny; params?: ZodTypeAny; query?: ZodTypeAny }
 
 // Câu lỗi tiếng Việt cho các mã zod hay gặp — người dùng đọc "phải là số", không đọc "Expected number".
-function viMessage(i: ZodIssue): string {
+// zod 4 (18/11/2026 — bản 3 dính GHSA-mrhx-c7xc-m3w5, mảng lớn làm cạn bộ nhớ): lỗi sai kiểu không còn mang
+// `received` ⇒ đọc kiểu đã nhận từ CHÍNH giá trị đầu vào tại `path` (`root` = req[part] lúc kiểm).
+function viMessage(i: ZodIssue, root: unknown): string {
   switch (i.code) {
-    case 'invalid_type':
-      if (i.received === 'undefined' || i.received === 'null') return 'bắt buộc'
-      return `phải là ${TYPE_VI[i.expected] ?? i.expected} (nhận ${TYPE_VI[i.received] ?? i.received})`
+    case 'invalid_type': {
+      const got = kindOf(valueAt(root, i.path))
+      if (got === 'undefined' || got === 'null') return 'bắt buộc'
+      return `phải là ${TYPE_VI[i.expected] ?? i.expected} (nhận ${TYPE_VI[got] ?? got})`
+    }
     case 'too_small':
-      return i.type === 'string' ? (i.minimum === 1 ? 'không được để trống' : `tối thiểu ${i.minimum} ký tự`)
-        : i.type === 'array' ? `cần ít nhất ${i.minimum} mục` : `tối thiểu ${i.minimum}`
+      return i.origin === 'string' ? (Number(i.minimum) === 1 ? 'không được để trống' : `tối thiểu ${i.minimum} ký tự`)
+        : i.origin === 'array' ? `cần ít nhất ${i.minimum} mục` : `tối thiểu ${i.minimum}`
     case 'too_big':
-      return i.type === 'string' ? `tối đa ${i.maximum} ký tự` : i.type === 'array' ? `tối đa ${i.maximum} mục` : `tối đa ${i.maximum}`
-    case 'invalid_enum_value': return `phải là một trong: ${i.options.join(', ')}`
-    case 'invalid_string': return i.validation === 'uuid' ? 'không phải id hợp lệ' : 'không đúng dạng'
+      return i.origin === 'string' ? `tối đa ${i.maximum} ký tự` : i.origin === 'array' ? `tối đa ${i.maximum} mục` : `tối đa ${i.maximum}`
+    case 'invalid_value': return `phải là một trong: ${i.values.map(String).join(', ')}`   // enum + literal
+    case 'invalid_format': return i.format === 'uuid' ? 'không phải id hợp lệ' : 'không đúng dạng'
+    case 'invalid_key': return 'khoá không đúng dạng'                                      // khoá của z.record
     case 'unrecognized_keys': return `trường không nhận: ${i.keys.join(', ')}`
     default: return i.message || 'không hợp lệ'
   }
 }
 const TYPE_VI: Record<string, string> = {
   string: 'chuỗi', number: 'số', boolean: 'đúng/sai', object: 'đối tượng', array: 'danh sách',
-  undefined: 'trống', null: 'null', nan: 'NaN', integer: 'số nguyên', date: 'ngày',
+  undefined: 'trống', null: 'null', nan: 'NaN', int: 'số nguyên', integer: 'số nguyên', date: 'ngày',
+}
+function valueAt(root: unknown, path: readonly PropertyKey[]): unknown {
+  let v = root
+  for (const k of path) {
+    if (v === null || typeof v !== 'object') return undefined
+    v = (v as Record<PropertyKey, unknown>)[k]
+  }
+  return v
+}
+function kindOf(v: unknown): string {
+  if (v === null) return 'null'
+  if (Array.isArray(v)) return 'array'
+  if (typeof v === 'number' && Number.isNaN(v)) return 'nan'
+  return typeof v
 }
 
 export function validate(schemas: Parts): RequestHandler {
@@ -50,7 +69,7 @@ export function validate(schemas: Parts): RequestHandler {
       if (!r.success) {
         const issue = r.error.issues[0]
         const where = issue?.path?.length ? `${part}.${issue.path.join('.')}` : part
-        return fail(res, 400, 'VALIDATION', `${where}: ${issue ? viMessage(issue) : 'không hợp lệ'}`)
+        return fail(res, 400, 'VALIDATION', `${where}: ${issue ? viMessage(issue, req[part]) : 'không hợp lệ'}`)
       }
       // Express 4: req.query/req.params là thuộc tính thường — gán bản đã ép kiểu để controller dùng thẳng
       ;(req as unknown as Record<string, unknown>)[part] = r.data

@@ -1,11 +1,11 @@
-// CHI TIẾT MẺ CHẾ BIẾN (MES giai đoạn 1, 14/11/2026). Header: mã lô + trạng thái + QA (chỉ HIỆN — 17/11 QA kết luận ở Bồn) + nút.
+// CHI TIẾT MẺ CHẾ BIẾN (MES giai đoạn 1, 14/11/2026). Header: mã lô + TÌNH TRẠNG theo bước (18/11 — hàm DB mes_batch_stage) + nút.
 // 17/11 — LUỒNG CỦA MẺ: dải bước dưới header; kho bật "chặn theo từng bước" thì NÚT CHÍNH là đúng bước đang tới (bước trước xong mới tới bước sau).
 // Khối NGUYÊN LIỆU ĐÃ RÚT (sổ tiêu hao: tem · NSX · lượng · cách ghi · huỷ dòng hoàn tồn) · khối RA BỒN (lô của mẻ trong từng bồn +
 // sổ nạp / rút). Số lượng NVL in CON SỐ TRẦN + cột ĐVT bằng mã danh mục (utils/unitCode — user 17/11 "hạn chế văn viết"), số bồn in theo đơn vị bồn.
 import { Fragment, useEffect, useState } from 'react'
-import { useLocation, useNavigate, useParams } from 'react-router-dom'
+import { useNavigate, useParams } from 'react-router-dom'
 import type { AxiosError } from 'axios'
-import { ArrowLeft, Plus, Pencil, Lock, Unlock, XCircle, ShieldCheck, Container, Undo2, Copy, AlertTriangle, ListChecks, Check, Printer, Timer, FileText, ArrowDownToLine, RotateCcw, Search, ChevronDown, ChevronRight, Bookmark } from 'lucide-react'
+import { ArrowLeft, Plus, Pencil, XCircle, ShieldCheck, Container, Undo2, Copy, AlertTriangle, ListChecks, Check, Printer, Play, FileText, ArrowDownToLine, RotateCcw, Search, ChevronDown, ChevronRight, Bookmark } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { MesStockDialog } from '@/components/wms/production/MesStockGroups'
@@ -26,7 +26,7 @@ import { BatchFormSheet } from '@/components/wms/production/BatchFormSheet'
 import { ConsumeSheet } from '@/components/wms/production/ConsumeSheet'
 import { RequirementSheet } from '@/components/wms/production/RequirementSheet'
 import { ProcessLogSheet } from '@/components/wms/production/ProcessLogSheet'
-import { formProgress, formsOfBatch, type ProcessField } from '@/config/processForms'
+import { formProgress, formsOfBatch } from '@/config/processForms'
 import { FlowStrip, BatchLabelSheet, PourSheet, type FlowStep } from '@/components/wms/production/BatchFlow'
 import { ScanIcon } from '@/components/shared/ScanIcon'
 import { BatchFillSheet, nfQty } from '@/components/wms/production/TankSheets'
@@ -34,12 +34,12 @@ import { MobileNumHead, MobileNumRow, type NumCol } from '@/components/wms/produ
 import { useAuthStore } from '@/stores/authStore'
 import { useCanSeePath } from '@/hooks/useCanSeePath'
 import { can, type ModulePermissions } from '@/config/permissions'
-import { rowText, statusText } from '@/lib/rowStatus'
+import { rowText } from '@/lib/rowStatus'
 import {
-  useProductionBatch, useBatchStatus, useApproveBatch, useStampLog, useReverseConsumption, BATCH_STATUS_VI, BATCH_QA_VI, TANK_MOVE_VI,
+  useProductionBatch, useBatchStatus, useApproveBatch, useLogStart, useReverseConsumption, TANK_MOVE_VI,
   useProcessForms, useSetBatchForms, useExpiryDecide, type BatchDetail, type ExpiryApproval,
 } from '@/api/productionHooks'
-import { BATCH_STATUS_TONE, BATCH_QA_TONE, batchRowKey } from './ProductionBatches'
+import { StageBadge, BATCH_STAGE, stageOf, stageText, stageTabMark } from '@/components/wms/production/BatchStage'
 import { qtyNum, qtyCode, matUnitCode, unitCode } from '@/utils/unitCode'
 import { formatDate, formatDateTime } from '@/utils/formatters'
 import { reqLineState, devLabel, type ReqLineResult } from '@/utils/reqTolerance'
@@ -91,16 +91,13 @@ function ProductionBatchDetail() {
   const b = q.data
   const setStatus = useBatchStatus()
   const approve = useApproveBatch()
-  const stamp = useStampLog()
+  const logStart = useLogStart()
   const setForms = useSetBatchForms()
   const reverse = useReverseConsumption()
   const [ask, confirmNode] = useConfirmDialog()
   const canSeeTanks = useCanSeePath()('/wms/production/tanks')
-  // Vừa mở mẻ xong (form Mở mẻ chuyển sang đây kèm cờ) ⇒ bật luôn form Rút NVL — việc kế tiếp gần như luôn là rút
-  const loc = useLocation()
-  const fromCreate = !!(loc.state as { consume?: boolean } | null)?.consume
-  const [consumeOpen, setConsumeOpen] = useState(fromCreate && can(perms, 'production', 'consume'))
-  useEffect(() => { if (fromCreate) navigate(loc.pathname, { replace: true, state: null }) }, []) // eslint-disable-line react-hooks/exhaustive-deps -- gỡ cờ một lần: tải lại trang không bật lại form
+  // mở mẻ xong KHÔNG tự bật form cấp NVL (user 18/11: "mở mẻ xong đừng tự động vào scan") — bước kế theo luồng là duyệt phiếu
+  const [consumeOpen, setConsumeOpen] = useState(false)
   const [focusId, setFocusId] = useState<string | null>(null)
   // bàn không nghe sổ tồn của cả app (quá nhiều sự kiện) ⇒ dòng "kho hết" vẫn bấm được: tải lại bàn rồi mở form — form tra tồn sống
   const openConsume = (materialId: string, stale: boolean) => { if (stale) void q.refetch(); setFocusId(materialId); setConsumeOpen(true) }
@@ -122,8 +119,8 @@ function ProductionBatchDetail() {
   const { batches: pinnedBatches, pin: pinBatch, unpin: unpinBatch, isPinned: isBatchPinned } = useActiveBatchesStore()
   // mẻ đang đánh dấu: ghi lại mã lô + tình trạng mới nhất (mã lô đổi khi đổi bồn / chu kỳ / số mẻ)
   useEffect(() => {
-    if (b && isBatchPinned(b.id)) pinBatch({ id: b.id, code: b.batch_code, status: b.status })
-  }, [b?.id, b?.batch_code, b?.status]) // eslint-disable-line react-hooks/exhaustive-deps
+    if (b && isBatchPinned(b.id)) pinBatch({ id: b.id, code: b.batch_code, stage: b.gate?.stage ?? '' })
+  }, [b?.id, b?.batch_code, b?.gate?.stage]) // eslint-disable-line react-hooks/exhaustive-deps
   // mẻ không còn (404) ⇒ gỡ khỏi dải
   useEffect(() => {
     if (q.isError && (q.error as AxiosError | null)?.response?.status === 404 && id) unpinBatch(id)
@@ -154,7 +151,8 @@ function ProductionBatchDetail() {
   const board = b.board ?? []
   const reqRows = board.filter(r => !r.removed && r.required != null)
   // trạng thái một dòng theo MỨC LỆCH cho phép (17/11) — một luật cho bảng máy tính, danh sách điện thoại và ô "NVL đã đủ"
-  const stOf = (r: (typeof board)[number]): ReqLineResult => reqLineState(r, b.status === 'CLOSED')
+  // mẻ đã nạp BTP vào bồn = xong phần sản xuất ⇒ phần còn thiếu là thiếu thật, tô đỏ (18/11 — thay cho "mẻ đã đóng")
+  const stOf = (r: (typeof board)[number]): ReqLineResult => reqLineState(r, filled > 0)
   const reqDone = reqRows.filter(r => ['ok', 'over'].includes(stOf(r).state)).length
   const offTol = reqRows.filter(r => stOf(r).outOfTol).length
   const nfq = (n: number) => Number(n).toLocaleString('vi-VN', { maximumFractionDigits: 3 })
@@ -183,20 +181,25 @@ function ProductionBatchDetail() {
     }
     await run(() => approve.mutateAsync({ id: b!.id, step, approve: ok }))
   }
-  // bấm một mốc của phiếu = ghi giờ máy chủ + người bấm (bấm nhầm thì mở phiếu sửa giờ — có lưu vết)
   // PHIẾU BỔ SUNG của mẻ (17/11): trưởng ca / QA thêm, bớt — phiếu đã ghi không bỏ được (BE chặn)
   const doForms = (forms: string[]) => run(() => setForms.mutateAsync({ id: b!.id, forms }))
   async function dropForm(code: string, title: string) {
     if (await ask({ title: `Bỏ phiếu "${title}" khỏi mẻ?`, body: 'Phiếu chưa ghi gì. Thêm lại được khi cần.', confirmLabel: 'Bỏ phiếu', danger: true }) === null) return
     await doForms((b!.extra_forms ?? []).filter(c => c !== code))
   }
-  const doStamp = (form: string, f: ProcessField) => run(() => stamp.mutateAsync({ batchId: b!.id, form, key: f.key }))
-  async function doStatus(action: 'close' | 'reopen' | 'cancel') {
-    const label = action === 'close' ? 'Đóng mẻ' : action === 'reopen' ? 'Mở lại mẻ' : 'Huỷ mẻ'
-    const ok = await ask({ title: `${label} ${b!.batch_code}?`, danger: action === 'cancel',
-      body: action === 'close' ? 'Mẻ đã đóng không rút thêm nguyên liệu được (mở lại khi cần).' : action === 'cancel' ? 'Chỉ huỷ được mẻ chưa rút nguyên liệu và chưa nạp bồn.' : undefined })
+  // PHIẾU THEO DÕI — MỘT nút (user 18/11): phiếu chưa ghi ⇒ "Bắt đầu" = ghi giờ bắt đầu (giờ máy chủ, mốc giờ đầu của phiếu) rồi mở phiếu;
+  // phiếu đã ghi ⇒ mở phiếu. Trong phiếu mỗi ô là một nút (ô giờ bấm là ghi giờ, ô khác hiện khung nhập).
+  async function openLog(form: string, start: boolean) {
+    if (start) {
+      setErr('')
+      try { await logStart.mutateAsync({ batchId: b!.id, form }); await q.refetch() } catch (e) { setErr(apiMsg(e)); return }
+    }
+    setLogForm(form)
+  }
+  async function doCancel() {
+    const ok = await ask({ title: `Huỷ mẻ ${b!.batch_code}?`, danger: true, body: 'Chỉ huỷ được mẻ chưa rút nguyên liệu và chưa nạp bồn.' })
     if (ok === null) return
-    await run(() => setStatus.mutateAsync({ id: b!.id, action }))
+    await run(() => setStatus.mutateAsync({ id: b!.id, action: 'cancel' }))
   }
   async function doReverse(cid: string, label: string) {
     const reason = await ask({ title: `Huỷ dòng rút ${label}?`, body: 'Lượng đã rút được hoàn lại đúng tem / dòng tồn đó. Dòng huỷ vẫn giữ trong sổ để truy vết.', danger: true,
@@ -245,48 +248,54 @@ function ProductionBatchDetail() {
   const canEditForms = open && (P('open_batch') || P('approve_lead') || P('approve_qa'))
   const addableForms = processForms.filter(d => d.optional && d.is_active && !(b.extra_forms ?? []).includes(d.code) && !logged.includes(d.code))
   const firstForm = g?.missing[0]?.form ?? batchForms.find(d => !logged.includes(d.code))?.code ?? batchForms[0]?.code ?? null
+  // ── NÚT CỦA MẺ (18/11 — user: "cái nào liên quan tới VẬN HÀNH đưa ra ngoài theo tuần tự công việc, cái nào liên quan tới QUẢN TRỊ
+  //    (sửa, đóng, duplicate…) thì để trong 3 chấm"). Vận hành (`ops`) xếp ĐÚNG thứ tự dải bước, luôn ngoài ⋮ kể cả điện thoại, có chữ;
+  //    nút nền xanh = bước đang tới (luồng chặt) / Cấp NVL + Nạp bồn (không chặt). Quản trị (`admin`) luôn trong ⋮, kể cả máy tính.
+  const opsOf = (k: string) => ({ ops: true, primary: prim(k), variant: prim(k) ? 'default' as const : undefined })
   const actions: ActionItem[] = []
   if (open && !b.lead_ok_at && P('approve_lead'))
-    actions.push({ key: 'ok-lead', icon: ShieldCheck, label: 'Duyệt phiếu', tip: 'Trưởng ca duyệt phiếu nguyên liệu của mẻ (bước 1)', primary: strict, variant: strict ? 'default' : undefined, onClick: () => void doApprove('lead', true), disabled: busy })
+    actions.push({ key: 'ok-lead', icon: ShieldCheck, label: 'Duyệt phiếu', tip: 'Trưởng ca duyệt phiếu nguyên liệu của mẻ (duyệt 1)', ...opsOf('lead'), onClick: () => void doApprove('lead', true), disabled: busy })
   if (open && !!b.lead_ok_at && !b.qa_ok_at && P('approve_qa'))
-    actions.push({ key: 'ok-qa', icon: ShieldCheck, label: 'QA duyệt', tip: 'QA duyệt phiếu của mẻ (bước 2) — duyệt xong phiếu khoá, mới cấp nguyên liệu', primary: strict, variant: strict ? 'default' : undefined, onClick: () => void doApprove('qa', true), disabled: busy })
+    actions.push({ key: 'ok-qa', icon: ShieldCheck, label: 'QA duyệt', tip: 'QA duyệt phiếu của mẻ (duyệt 2) — duyệt xong phiếu khoá, mới cấp nguyên liệu', ...opsOf('qa'), onClick: () => void doApprove('qa', true), disabled: busy })
   if (canConsume)
-    actions.push({ key: 'consume', icon: ScanIcon, label: 'Quét cấp NVL', tip: 'Quét tem nguyên liệu để cấp cho mẻ — app tự khớp vào đúng dòng của bàn và điền sẵn lượng còn thiếu', primary: prim('rm'), variant: prim('rm') ? 'default' : undefined, onClick: () => { setFocusId(null); setConsumeOpen(true) } })
-  if (strict && curKey === 'log' && firstForm && open && P('process_log'))
-    actions.push({ key: 'log', icon: FileText, label: 'Ghi phiếu', tip: 'Mở phiếu theo dõi còn ô bắt buộc chưa ghi', primary: true, variant: 'default', onClick: () => setLogForm(firstForm) })
+    actions.push({ key: 'consume', icon: ScanIcon, label: 'Quét cấp NVL', tip: 'Quét tem nguyên liệu để cấp cho mẻ — app tự khớp vào đúng dòng của bàn và điền sẵn lượng còn thiếu', ...opsOf('rm'), onClick: () => { setFocusId(null); setConsumeOpen(true) } })
+  // phiếu theo dõi: mở phiếu cần ghi trước (còn ô bắt buộc / chưa ghi); phiếu đó chưa ghi gì ⇒ "Bắt đầu phiếu" (ghi giờ bắt đầu)
+  if (open && firstForm && P('process_log')) {
+    const startLog = !logged.includes(firstForm)
+    const short = processForms.find(d => d.code === firstForm)?.short ?? firstForm
+    actions.push({ key: 'log', icon: startLog ? Play : FileText, label: startLog ? 'Bắt đầu phiếu' : 'Phiếu theo dõi',
+      tip: startLog ? `Bắt đầu phiếu ${short}: ghi giờ bắt đầu (giờ máy chủ) rồi mở phiếu để ghi từng ô` : `Mở phiếu ${short} — bấm từng ô để ghi`,
+      ...opsOf('log'), busy: logStart.isPending, onClick: () => void openLog(firstForm, startLog) })
+  }
   if (open && !!b.tank_id && P('print_label') && (!strict || !!b.qa_ok_at))
-    actions.push({ key: 'label', icon: Printer, label: labelsOk ? 'In lại tem' : 'In tem pallet', tip: 'In tem pallet của mẻ (QR 1/n … n/n) để dán lên pallet nguyên liệu đã cấp', primary: strict && curKey === 'label', variant: strict && curKey === 'label' ? 'default' : undefined, onClick: () => setLabelOpen(true) })
+    actions.push({ key: 'label', icon: Printer, label: labelsOk ? 'In lại tem' : 'In tem pallet', tip: 'In tem pallet của mẻ (QR 1/n … n/n) để dán lên pallet nguyên liệu đã cấp', ...opsOf('label'), onClick: () => setLabelOpen(true) })
   if (open && labelsOk && !hasFill && (P('pour') || P('tank_ops')))
-    actions.push({ key: 'pour', icon: ArrowDownToLine, label: 'Check trước khi đổ bồn', tip: `Đứng ở bồn ${b.tank?.code ?? ''}, quét từng tem pallet của mẻ — đúng mẻ, đúng bồn mới đổ`, primary: strict && curKey === 'pour', variant: strict && curKey === 'pour' ? 'default' : undefined, onClick: () => setPourOpen(true) })
-  // Nạp bồn là bước kế ⇒ nút có CHỮ (không chỉ icon). Cổng của mẻ chưa cho nạp (mes_batch_gate.fill_blockers — vd chưa đổ đủ
-  // tem pallet) ⇒ nút KHOÁ, lý do ở chú thích (18/11: không bấm được bước chưa tới; trước đây mở được form rồi mới thấy bị chặn)
+    actions.push({ key: 'pour', icon: ArrowDownToLine, label: 'Check trước khi đổ bồn', tip: `Đứng ở bồn ${b.tank?.code ?? ''}, quét từng tem pallet của mẻ — đúng mẻ, đúng bồn mới đổ`, ...opsOf('pour'), onClick: () => setPourOpen(true) })
+  // Nạp BTP vào bồn: cổng của mẻ chưa cho nạp (mes_batch_gate.fill_blockers — chỉ có ở luồng chặt) ⇒ nút KHOÁ kèm lý do và KHÔNG chiếm
+  // chỗ ngoài ⋮ (điện thoại xem lý do ở dòng menu; máy tính rê chuột) — tới bước thì ra ngoài như bước khác
   const fillBlock = g?.fill_blockers ?? []
   if (canFill)
     actions.push({ key: 'fill', icon: Container, label: 'Nạp BTP vào bồn', tip: fillBlock.length ? `Chưa nạp được: ${fillBlock.join(' · ')}` : 'Nạp bán thành phẩm của mẻ vào bồn đã chọn',
-      primary: prim('fill'), variant: strict && curKey === 'fill' ? 'default' : undefined, disabled: fillBlock.length > 0, onClick: () => setFillOpen(true) })
+      ...(fillBlock.length ? {} : opsOf('fill')), disabled: fillBlock.length > 0, onClick: () => setFillOpen(true) })
   // QA kết luận ở Bồn — nút chỉ cho người có quyền QA bồn (qa_release); người khác thấy bước "QA bồn · chờ" trên dải
   if (strict && curKey === 'tankqa' && canSeeTanks && P('qa_release'))
-    actions.push({ key: 'tankqa', icon: ShieldCheck, label: `Tới bồn ${b.tank?.code ?? ''}`, tip: 'QA kết luận đạt / không đạt ở trang Bồn (áp cho mọi mẻ đang trong bồn)', primary: true, onClick: () => navigate('/wms/production/tanks') })
-  // XEM TEM ĐÃ CẤP của CẢ MẺ (user 18/11: "nút expand cho cả đơn đâu?") — như "Xem pallet" của Xuất kho: mở / thu MỌI dòng đã cấp
-  const anyOpen = [...openMats].some(m => consByMat.has(m))
-  if (consByMat.size > 0)
-    actions.push({ key: 'expand', icon: ChevronDown, label: anyOpen ? 'Thu gọn' : 'Xem tem đã cấp',
-      tip: anyOpen ? 'Thu gọn danh sách tem / lô đã cấp' : 'Mở danh sách tem / lô đã cấp của mọi nguyên liệu',
-      className: `text-slate-500 ${anyOpen ? '[&_svg]:rotate-180' : ''}`,
-      onClick: () => setOpenMats(anyOpen ? new Set() : new Set(consByMat.keys())) })
-  if (open && !!b.qa_ok_at && !hasFill && P('approve_qa'))
-    actions.push({ key: 'no-qa', icon: RotateCcw, label: 'Bỏ duyệt QA', tip: 'QA bỏ duyệt để sửa phiếu của mẻ', onClick: () => void doApprove('qa', false), disabled: busy })
-  if (open && !!b.lead_ok_at && !b.qa_ok_at && P('approve_lead'))
-    actions.push({ key: 'no-lead', icon: RotateCcw, label: 'Bỏ duyệt', tip: 'Trưởng ca bỏ duyệt để sửa phiếu của mẻ', onClick: () => void doApprove('lead', false), disabled: busy })
+    actions.push({ key: 'tankqa', icon: ShieldCheck, label: `Tới bồn ${b.tank?.code ?? ''}`, tip: 'QA kết luận đạt / không đạt ở trang Bồn (áp cho mọi mẻ đang trong bồn)', ops: true, primary: true, onClick: () => navigate('/wms/production/tanks') })
+  // ── QUẢN TRỊ (⋮) ──
+  if (can(perms, 'production', 'open_batch') && b.status !== 'CANCELLED')
+    actions.push({ key: 'edit', icon: Pencil, label: 'Sửa / đổi bồn', tip: 'Sửa ngày / máy / ca / kế hoạch; đổi chu kỳ · số mẻ · bồn khi chưa nạp bồn (mã lô đổi theo)', admin: true, onClick: () => setEditOpen(true) })
   if (open && !b.qa_ok_at && can(perms, 'production', 'edit_requirement'))
-    actions.push({ key: 'req', icon: ListChecks, label: 'Sửa định mức', tip: 'Sửa định mức của riêng mẻ này: sửa số · thêm · bỏ · đổi mã · đổi công thức (bắt buộc lý do, giữ định mức gốc)', onClick: () => setReqOpen(true) })
+    actions.push({ key: 'req', icon: ListChecks, label: 'Sửa định mức', tip: 'Sửa định mức của riêng mẻ này: sửa số · thêm · bỏ · đổi mã · đổi công thức (bắt buộc lý do, giữ định mức gốc)', admin: true, onClick: () => setReqOpen(true) })
+  if (open && !!b.lead_ok_at && !b.qa_ok_at && P('approve_lead'))
+    actions.push({ key: 'no-lead', icon: RotateCcw, label: 'Bỏ duyệt', tip: 'Trưởng ca bỏ duyệt để sửa phiếu của mẻ', admin: true, onClick: () => void doApprove('lead', false), disabled: busy })
+  if (open && !!b.qa_ok_at && !hasFill && P('approve_qa'))
+    actions.push({ key: 'no-qa', icon: RotateCcw, label: 'Bỏ duyệt QA', tip: 'QA bỏ duyệt để sửa phiếu của mẻ — chưa duyệt lại thì chưa làm tiếp được', admin: true, onClick: () => void doApprove('qa', false), disabled: busy })
   if (can(perms, 'production', 'open_batch')) {
-    if (b.status !== 'CANCELLED') actions.push({ key: 'edit', icon: Pencil, label: 'Sửa / đổi bồn', tip: 'Sửa ngày / máy / ca / kế hoạch; đổi chu kỳ · số mẻ · bồn khi chưa nạp bồn (mã lô đổi theo)', onClick: () => setEditOpen(true) })
-    if (open) actions.push({ key: 'close', icon: Lock, label: 'Đóng mẻ', tip: 'Đóng mẻ — không rút thêm nguyên liệu', onClick: () => void doStatus('close'), disabled: busy })
-    if (b.status === 'CLOSED') actions.push({ key: 'reopen', icon: Unlock, label: 'Mở lại', tip: 'Mở lại mẻ để rút thêm / huỷ dòng rút', onClick: () => void doStatus('reopen'), disabled: busy })
-    actions.push({ key: 'clone', icon: Copy, label: 'Mở mẻ giống', tip: 'Mở mẻ mới cùng kho · mã bán thành phẩm · chu kỳ · bồn · máy · ca · kế hoạch (số mẻ kế tiếp)', onClick: () => setCloneOpen(true) })
-    if (b.status !== 'CANCELLED') actions.push({ key: 'cancel', icon: XCircle, label: 'Huỷ mẻ', tip: 'Huỷ mẻ mở nhầm (chưa rút, chưa nạp)', danger: true, onClick: () => void doStatus('cancel'), disabled: busy })
+    actions.push({ key: 'clone', icon: Copy, label: 'Mở mẻ giống', tip: 'Mở mẻ mới cùng kho · mã bán thành phẩm · chu kỳ · bồn · máy · ca · kế hoạch (số mẻ kế tiếp)', admin: true, onClick: () => setCloneOpen(true) })
+    if (b.status !== 'CANCELLED') actions.push({ key: 'cancel', icon: XCircle, label: 'Huỷ mẻ', tip: 'Huỷ mẻ mở nhầm (chưa rút, chưa nạp)', admin: true, danger: true, onClick: () => void doCancel(), disabled: busy })
   }
+  // XEM TEM ĐÃ CẤP của CẢ MẺ — nút ở thanh "Nguyên liệu của mẻ", không nằm trong ⋮ (user 18/11: "cho nút mở rộng này ra khỏi ba chấm")
+  const anyOpen = [...openMats].some(m => consByMat.has(m))
+  const temTotal = consumedNoun(live)
   const canReverse = open && can(perms, 'production', 'reverse')
 
   return (
@@ -298,10 +307,9 @@ function ProductionBatchDetail() {
               <button type="button" onClick={() => navigate('/wms/production')} className="p-1 rounded hover:bg-slate-100 text-slate-500 shrink-0 transition-colors" title="Về danh sách mẻ">
                 <ArrowLeft className="h-4 w-4" />
               </button>
-              <span className={`font-semibold font-mono text-xs sm:text-sm leading-tight break-all whitespace-normal sm:truncate min-w-0 ${statusText(batchRowKey(b))}`}>{b.batch_code}</span>
-              <StatusBadge tone={BATCH_STATUS_TONE[b.status]}>{BATCH_STATUS_VI[b.status]}</StatusBadge>
-              <StatusBadge tone={BATCH_QA_TONE[b.qa_status]} title={b.qa_note ?? undefined}>{BATCH_QA_VI[b.qa_status]}</StatusBadge>
-              <button type="button" onClick={() => isBatchPinned(b.id) ? unpinBatch(b.id) : pinBatch({ id: b.id, code: b.batch_code, status: b.status })}
+              <span data-stage={stageOf(g?.stage)} className={`font-semibold font-mono text-xs sm:text-sm leading-tight break-all whitespace-normal sm:truncate min-w-0 ${stageText(g?.stage)}`}>{b.batch_code}</span>
+              <StageBadge stage={g?.stage} title={stageOf(g?.stage) === 'rejected' && b.qa_note ? `QA loại: ${b.qa_note}` : undefined} />
+              <button type="button" onClick={() => isBatchPinned(b.id) ? unpinBatch(b.id) : pinBatch({ id: b.id, code: b.batch_code, stage: g?.stage ?? '' })}
                 className={`p-1 rounded transition-colors shrink-0 ${isBatchPinned(b.id) ? 'text-amber-500' : 'text-slate-300 hover:text-slate-500'}`}
                 title={isBatchPinned(b.id) ? 'Bỏ đánh dấu đang làm' : 'Đánh dấu đang làm mẻ này — hiện thành tab để chuyển nhanh giữa các mẻ'}
                 aria-label={isBatchPinned(b.id) ? 'Bỏ đánh dấu đang làm' : 'Đánh dấu đang làm'} aria-pressed={isBatchPinned(b.id)}>
@@ -347,9 +355,9 @@ function ProductionBatchDetail() {
         {pinnedBatches.length > 0 && (
           <PinnedTabsBar>
             {pinnedBatches.map(pb => (
-              <PinnedTab key={pb.id} label={pb.code} dot={batchTabDot(pb.status)} current={pb.id === b.id}
-                title={`${pb.code} · ${(BATCH_STATUS_VI as Record<string, string>)[pb.status] ?? pb.status}`}
-                onClick={() => { if (pb.id !== b.id) navigate(`/wms/production/${pb.id}`) }} />
+              <PinnedTab key={pb.id} label={pb.code} dot={batchTabDot(pb.stage)} mark={stageTabMark(pb.stage)} current={pb.id === b.id}
+                title={`${pb.code} · ${BATCH_STAGE[stageOf(pb.stage)].label}`}
+                onClick={() => { if (pb.id !== b.id) navigate(`/wms/production/${pb.id}`) }} onClose={() => unpinBatch(pb.id)} />
             ))}
           </PinnedTabsBar>
         )}
@@ -364,9 +372,17 @@ function ProductionBatchDetail() {
           { label: `Đã đóng gói (${u})`, value: nfQty(drawn), tip: 'Phần của mẻ đã rút khỏi bồn cho các trang Sổ đóng gói (bồn nhiều mẻ ⇒ chia theo tỷ lệ)' },
         ]} mobilePairs />
         <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
-          <div className="px-3 py-1.5 sm:px-4 sm:py-2 bg-slate-100 border-b border-slate-200 flex items-center gap-1.5">
+          <div className={`px-3 sm:px-4 bg-slate-100 border-b border-slate-200 flex items-center gap-1.5 ${consByMat.size ? 'py-1' : 'py-1.5 sm:py-2'}`}>
             <span className="h-3.5 w-1 rounded-full bg-sky-500" />
             <h2 className="text-xs font-semibold uppercase tracking-wide text-slate-600">Nguyên liệu của mẻ</h2>
+            {/* như "Xem pallet" của Xuất kho: mở / thu MỌI dòng đã cấp — nút ở ngay thanh của khối, không nằm trong ⋮ (user 18/11) */}
+            {consByMat.size > 0 && (
+              <button type="button" onClick={() => setOpenMats(anyOpen ? new Set() : new Set(consByMat.keys()))} aria-expanded={anyOpen} data-testid="expand-all"
+                title={anyOpen ? 'Thu gọn danh sách tem / lô đã cấp' : 'Mở danh sách tem / lô đã cấp của mọi nguyên liệu'}
+                className="ml-auto inline-flex h-7 items-center gap-1 rounded-md border border-slate-200 bg-white px-2 text-[11px] font-medium text-slate-700 hover:border-sky-300 hover:bg-sky-50 hover:text-sky-800">
+                <ChevronDown className={`h-3.5 w-3.5 transition-transform ${anyOpen ? 'rotate-180' : ''}`} />{anyOpen ? 'Thu gọn' : `Xem tem đã cấp · ${temTotal}`}
+              </button>
+            )}
           </div>
           <ExpiryApprovalsBlock b={b} canDecide={open && can(perms, 'production', 'approve_expired')} />
           {/* ĐIỆN THOẠI: bảng thu nhỏ — nhãn cột in một lần, mỗi dòng mã · tên · ĐVT rồi chỉ CON SỐ (user 17/11 "hạn chế văn viết");
@@ -388,7 +404,7 @@ function ProductionBatchDetail() {
                 const exp = openMats.has(r.material_id) && consRows.length > 0
                 return (
                   <div key={r.material_id} data-board-row={r.material_id}>
-                  <MobileNumRow className={r.removed ? 'opacity-60' : ''} template={MOBILE_BOARD_TPL} asideClass={canConsume ? 'w-16' : undefined}
+                  <MobileNumRow className={`${r.removed ? 'opacity-60' : ''} ${exp ? 'bg-sky-50' : ''}`} template={MOBILE_BOARD_TPL} asideClass={canConsume ? 'w-16' : undefined}
                     head={<>
                       <span className={`font-mono font-semibold shrink-0 ${r.removed ? 'line-through' : ''}`}>{r.material_code}</span>
                       <span className={`truncate text-slate-600 ${r.removed ? 'line-through' : ''}`} title={r.change_reason ?? undefined}>{r.material_name ?? ''}</span>
@@ -421,7 +437,7 @@ function ProductionBatchDetail() {
                         {byScan ? <ScanIcon className="h-4 w-4" /> : <Plus className="h-4 w-4" />}Cấp
                       </button>
                     ) : null} />
-                  {exp && <div className="px-3 pb-2"><ConsumedTems rows={consRows} mat={r} bands={bands} /></div>}
+                  {exp && <div className="ml-4 mr-3 mt-1 mb-2 pl-2.5 border-l-2 border-sky-300" data-board-expand={r.material_id}><ConsumedTems rows={consRows} mat={r} bands={bands} /></div>}
                   </div>
                 )
               })}
@@ -447,8 +463,8 @@ function ProductionBatchDetail() {
                 const exp = openMats.has(r.material_id) && consRows.length > 0
                 return (
                   <Fragment key={r.material_id}>
-                  <TableRow data-board-row={r.material_id} className={r.removed ? 'text-slate-400' : done ? rowText('full') : started ? rowText('inProgress') : ''}>
-                    <TableCell className={`${TD} sticky left-0 z-10 bg-white truncate ${r.removed ? 'line-through' : ''}`} title={[r.material_name, r.note, r.replaces_code ? `thay cho ${r.replaces_code}` : null].filter(Boolean).join(' · ')}>
+                  <TableRow data-board-row={r.material_id} className={`${r.removed ? 'text-slate-400' : done ? rowText('full') : started ? rowText('inProgress') : ''} ${exp ? 'bg-sky-50 hover:bg-sky-50' : ''}`}>
+                    <TableCell className={`${TD} sticky left-0 z-10 ${exp ? 'bg-sky-50' : 'bg-white'} truncate ${r.removed ? 'line-through' : ''}`} title={[r.material_name, r.note, r.replaces_code ? `thay cho ${r.replaces_code}` : null].filter(Boolean).join(' · ')}>
                       <div className="truncate"><span className="font-mono font-semibold">{r.material_code}</span> {r.material_name ?? ''}</div>
                       {consRows.length > 0 && (
                         <button type="button" onClick={() => toggleMat(r.material_id)} aria-expanded={exp} aria-label={`${exp ? 'Thu gọn' : 'Xem'} tem đã cấp ${r.material_code}`}
@@ -469,7 +485,7 @@ function ProductionBatchDetail() {
                     </TableCell>
                     <TableCell className={TD}>{noStock ? <span className="text-slate-300">—</span> : byScan ? <StatusBadge tone="sky">Quét tem</StatusBadge> : <StatusBadge tone="purple">Chọn lô</StatusBadge>}</TableCell>
                     <TableCell className={TD}>{statusBadge(r)}</TableCell>
-                    <TableCell className={`${TD} sticky right-0 z-10 bg-white text-right`}>
+                    <TableCell className={`${TD} sticky right-0 z-10 ${exp ? 'bg-sky-50' : 'bg-white'} text-right`}>
                       {canConsume && !r.removed && (
                         <button type="button" onClick={() => openConsume(r.material_id, noStock)}
                           className={`touch-target inline-flex items-center gap-1 rounded border border-blue-200 bg-blue-50 px-2 py-1 text-blue-700 hover:bg-blue-100 ${noStock ? 'opacity-60' : ''}`}
@@ -482,7 +498,7 @@ function ProductionBatchDetail() {
                   {exp && (
                     <TableRow className="hover:bg-transparent" data-board-expand={r.material_id}>
                       <TableCell colSpan={BOARD_COLS.length} className="p-0 border-b border-slate-100">
-                        <div className="sticky left-0 w-fit ml-3 my-1 pl-3 pr-3 py-1 border-l-2 border-slate-200"><ConsumedTems rows={consRows} mat={r} bands={bands} /></div>
+                        <div className="sticky left-0 w-fit ml-4 my-1 pl-3 pr-3 py-1 border-l-2 border-sky-300"><ConsumedTems rows={consRows} mat={r} bands={bands} /></div>
                       </TableCell>
                     </TableRow>
                   )}
@@ -505,7 +521,7 @@ function ProductionBatchDetail() {
               const lg = (b.process_logs ?? []).find(l => l.form === k)
               const pr = formProgress(lg?.blocks ?? d.blocks, lg?.data)
               const confirmed = !!lg?.confirmed_at
-              const canStamp = open && P('process_log') && !confirmed && !!pr.next
+              const canWriteLog = open && P('process_log') && !confirmed
               const doneActs = pr.actions.filter(f => String(lg?.data?.[f.key] ?? '').trim())
               return (
                 <div key={k} data-form={k} data-state={confirmed ? 'confirmed' : pr.state}
@@ -525,15 +541,17 @@ function ProductionBatchDetail() {
                     </p>
                   )}
                   <div className="flex items-center gap-1.5 min-w-0">
-                    {canStamp && (
-                      <button type="button" disabled={stamp.isPending} onClick={() => void doStamp(k, pr.next!)} title={`Bấm để ghi giờ: ${pr.next!.label}`}
-                        className="touch-target inline-flex items-center gap-1 rounded-md bg-blue-600 px-2.5 py-1.5 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-60 min-w-0">
-                        <Timer className="h-3.5 w-3.5 shrink-0" /><span className="truncate">{pr.next!.label}</span>
-                      </button>
-                    )}
-                    <button type="button" onClick={() => setLogForm(k)} className="touch-target inline-flex items-center gap-1 rounded-md border border-slate-200 px-2.5 py-1.5 text-xs text-slate-700 hover:bg-slate-50 shrink-0">
-                      <FileText className="h-3.5 w-3.5" />Mở phiếu
-                    </button>
+                    {/* MỘT nút (user 18/11): chưa ghi ⇒ "Bắt đầu" ghi giờ bắt đầu (giờ máy chủ) rồi mở phiếu; đã ghi ⇒ mở phiếu, trong phiếu bấm từng ô */}
+                    {!lg && canWriteLog
+                      ? <button type="button" disabled={logStart.isPending} onClick={() => void openLog(k, true)} data-start-form={k}
+                          title={pr.actions[0] ? `Ghi "${pr.actions[0].label}" = giờ hiện tại rồi mở phiếu` : 'Mở phiếu để ghi'}
+                          className="touch-target inline-flex items-center gap-1 rounded-md bg-blue-600 px-2.5 py-1.5 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-60 shrink-0">
+                          <Play className="h-3.5 w-3.5" />Bắt đầu
+                        </button>
+                      : <button type="button" onClick={() => setLogForm(k)} data-open-form={k}
+                          className={`touch-target inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs shrink-0 ${canWriteLog ? 'border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 font-semibold' : 'border border-slate-200 text-slate-700 hover:bg-slate-50'}`}>
+                          <FileText className="h-3.5 w-3.5" />{canWriteLog ? 'Mở phiếu' : 'Xem phiếu'}
+                        </button>}
                     {d.optional && !lg && canEditForms && (
                       <button type="button" disabled={setForms.isPending} onClick={() => void dropForm(k, d.short)} title="Bỏ phiếu bổ sung này khỏi mẻ"
                         className="touch-target inline-flex items-center gap-1 rounded-md px-2 py-1.5 text-xs text-slate-500 hover:bg-red-50 hover:text-red-600 shrink-0 disabled:opacity-60">
@@ -657,7 +675,7 @@ function ProductionBatchDetail() {
         canScan={P('pour')} canFill={canFill} />
       <BatchFormSheet open={editOpen} onClose={() => setEditOpen(false)} batch={b} />
       <BatchFormSheet open={cloneOpen} onClose={() => setCloneOpen(false)} template={b}
-        onSaved={nid => navigate(`/wms/production/${nid}`, { state: { consume: true } })} />
+        onSaved={nid => navigate(`/wms/production/${nid}`)} />
       {confirmNode}
     </div>
   )

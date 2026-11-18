@@ -52,7 +52,8 @@ export function useSemiFinishedSearch(term: string, enabled: boolean, activeOnly
 }
 export const SEMI_FINISHED_PLACEHOLDER = 'Tìm mã bán thành phẩm (mã hoặc tên dịch)'
 
-export type BatchStatus = 'OPEN' | 'CLOSED' | 'CANCELLED'
+/** (18/11) bỏ "Đóng mẻ" — mẻ chỉ còn OPEN · CANCELLED; tiến độ của mẻ đọc ở `stage` (hàm DB mes_batch_stage) */
+export type BatchStatus = 'OPEN' | 'CANCELLED'
 export type BatchQa = 'HOLD' | 'RELEASED' | 'REJECTED'
 
 export interface BatchRow {
@@ -61,11 +62,14 @@ export interface BatchRow {
   machine_code: string | null; shift: string | null; cycle?: string | null; prod_date: string; planned_qty: number | null
   batch_no: number | null; tank_id: string | null; tank_code: string | null; lead_ok_at: string | null; qa_ok_at: string | null
   status: BatchStatus; qa_status: BatchQa; qa_at: string | null; qa_by_name: string | null
-  note: string | null; opened_by_name: string | null; created_at: string; closed_at: string | null
+  /** tình trạng theo bước (18/11 — hàm DB mes_batch_stage): new · wait_lead · wait_qa · working · filled · released · rejected · cancelled */
+  stage: string
+  note: string | null; opened_by_name: string | null; created_at: string
   rm_lines: number; rm_materials: number; filled: number; in_tank: number
 }
-export interface BatchSummary { total: number; open: number; closed: number; cancelled: number; qa_hold: number; qa_released: number; qa_rejected: number }
-export interface BatchListParams { warehouse_id?: string; status?: string; qa?: string; date_from?: string; date_to?: string; search?: string; page?: number; pageSize?: number }
+/** ô tổng của danh sách mẻ: số mẻ theo từng tình trạng (trong bộ lọc ngày / kho / tìm) + total theo cả lọc tình trạng */
+export interface BatchSummary { total: number; new: number; wait_lead: number; wait_qa: number; working: number; filled: number; released: number; rejected: number; cancelled: number }
+export interface BatchListParams { warehouse_id?: string; stage?: string; date_from?: string; date_to?: string; search?: string; page?: number; pageSize?: number }
 
 export interface ConsumptionRow {
   id: string; batch_id: string; entry_id: string; pallet_code: string; material_id: string
@@ -115,6 +119,8 @@ export interface BatchGate {
   short: { material_code: string; name: string | null; required: number; issued: number }[]
   missing: { form: string; title: string; key: string; label: string }[]; need_log: boolean
   fill_blockers: string[]
+  /** tình trạng của mẻ (18/11) — cùng hàm mes_batch_stage với danh sách */
+  stage?: string
 }
 export interface BatchLabel { pallet_no: number; qr: string }
 /** NVL HẾT HẠN (17/11 — "chặn và cho qua khi QA duyệt"): yêu cầu / quyết định QA cho MỘT tem (entry_id) hoặc MỘT lô không tem, của MỘT mẻ */
@@ -323,8 +329,33 @@ export const useSetBatchForms = () => useProdMutation(({ id, forms }: { id: stri
 export const useApproveBatch = () => useProdMutation(({ id, step, approve }: { id: string; step: 'lead' | 'qa'; approve: boolean }) => post(`/wms/production/batches/${id}/approve-${step}`, { approve }))
 export const useBatchLabels = () => useProdMutation(({ id, count }: { id: string; count: number }) =>
   post<{ batch_code: string; count: number; ver: number; reprint: boolean; labels: BatchLabel[] }>(`/wms/production/batches/${id}/labels`, { count }))
-export const useStampLog = () => useProdMutation(({ batchId, form, key }: { batchId: string; form: string; key: string }) =>
-  post<{ key: string; value: string }>(`/wms/production/batches/${batchId}/process-log/${form}/stamp`, { key }))
+/** PHIẾU GHI TỪNG Ô (18/11 — user: "cho nút ở các input, bấm vào sẽ hiện lên yêu cầu Input, nếu thời gian thì tự lấy thời gian").
+ *  value vắng + ô Giờ ⇒ giờ máy chủ; value = '' ⇒ xoá ô. Hiện NGAY (vá cache trang mẻ), tải lại trang mẻ ở nền (cổng · ô bắt buộc). */
+export function useLogCell() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ batchId, form, key, value }: { batchId: string; form: string; key: string; value?: string }) =>
+      post<{ key: string; value: string | null; changed: boolean }>(`/wms/production/batches/${batchId}/process-log/${form}/cell`, { key, ...(value !== undefined ? { value } : {}) }),
+    onSuccess: (r, v) => {
+      qc.setQueryData<BatchDetail>([...K.batch, v.batchId], old => {
+        if (!old) return old
+        const has = old.process_logs.some(l => l.form === v.form)
+        const put = (d: Record<string, string>) => { const n = { ...d }; if (r.value == null || r.value === '') delete n[r.key]; else n[r.key] = r.value; return n }
+        return { ...old, process_logs: has ? old.process_logs.map(l => (l.form === v.form ? { ...l, data: put(l.data ?? {}) } : l)) : old.process_logs }
+      })
+    },
+    onSettled: (_r, _e, v) => { void qc.invalidateQueries({ queryKey: [...K.batch, v.batchId] }) },
+  })
+}
+/** BẮT ĐẦU phiếu: tạo phiếu (điền sẵn máy / kế hoạch) + giờ máy chủ vào mốc giờ đầu tiên (nếu còn trống) */
+export function useLogStart() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ batchId, form }: { batchId: string; form: string }) =>
+      post<{ key: string | null; value: string | null; changed: boolean }>(`/wms/production/batches/${batchId}/process-log/${form}/start`, {}),
+    onSettled: (_r, _e, v) => { void qc.invalidateQueries({ queryKey: [...K.batch, v.batchId] }) },
+  })
+}
 export const useTankQa = () => useProdMutation(({ tankId, qa_status, note }: { tankId: string; qa_status: BatchQa; note?: string }) =>
   post<{ batches: number; batch_codes: string }>(`/wms/production/tanks/${tankId}/qa`, { qa_status, note }))
 export interface PourView {
@@ -376,8 +407,9 @@ export const useSaveRecipe = () => useProdMutation(({ id, material_id, ...b }: R
     ? await apiClient.put(`/wms/production/recipes/${id}`, b)
     : await apiClient.post('/wms/production/recipes', { material_id, ...b })).data.data as { id: string; lines: number; is_default: boolean })())
 /** blocks: mảng = lưu bản sửa riêng · null = về theo mẫu chung · bỏ trống = giữ nguyên */
-export const useSaveProcessLog = () => useProdMutation(({ batchId, form, data, blocks }: { batchId: string; form: string; data: Record<string, string>; blocks?: FormBlock[] | null }) =>
-  (async () => (await apiClient.put(`/wms/production/batches/${batchId}/process-log/${form}`, { data, ...(blocks !== undefined ? { blocks } : {}) })).data.data as ProcessLog)())
+/** data vắng = chỉ lưu cấu trúc (18/11 — giá trị ghi từng ô qua useLogCell, lưu cấu trúc không đè giá trị người khác vừa ghi) */
+export const useSaveProcessLog = () => useProdMutation(({ batchId, form, data, blocks }: { batchId: string; form: string; data?: Record<string, string>; blocks?: FormBlock[] | null }) =>
+  (async () => (await apiClient.put(`/wms/production/batches/${batchId}/process-log/${form}`, { ...(data !== undefined ? { data } : {}), ...(blocks !== undefined ? { blocks } : {}) })).data.data as ProcessLog)())
 export const useConfirmProcessLog = () => useProdMutation(({ batchId, form, confirm }: { batchId: string; form: string; confirm: boolean }) =>
   post<ProcessLog>(`/wms/production/batches/${batchId}/process-log/${form}/confirm`, { confirm }))
 // ── Mẫu phiếu theo dõi (cấu hình ở Cài đặt MES) ──
@@ -436,7 +468,7 @@ export function useShiftReport(id: string | undefined) {
 export const useOpenShift = () => useProdMutation((b: { warehouse_id: string; report_date: string; shift: string }) => post<{ id: string }>('/wms/production/shift-reports', b))
 export const useSaveShift = () => useProdMutation(({ id, ...b }: { id: string; items: { material_id: string; qty_actual: number | null }[]; note?: string | null; close?: boolean }) =>
   (async () => (await apiClient.put(`/wms/production/shift-reports/${id}`, b)).data.data as ShiftReport)())
-export const useBatchStatus = () => useProdMutation(({ id, action }: { id: string; action: 'close' | 'reopen' | 'cancel' }) => post(`/wms/production/batches/${id}/${action}`))
+export const useBatchStatus = () => useProdMutation(({ id, action }: { id: string; action: 'cancel' }) => post(`/wms/production/batches/${id}/${action}`))
 export const useConsumeScan = () => useProdMutation(({ batchId, entry_id, qty, rotation_override_reason }: { batchId: string; entry_id: string; qty: number; rotation_override_reason?: string }) =>
   post<{ rows: { pallet_code: string; qty: number; remaining: number; rotation_violation?: boolean | null }[] }>(`/wms/production/batches/${batchId}/consume-scan`,
     { entry_id, qty, ...(rotation_override_reason ? { rotation_override_reason } : {}) }))
@@ -461,6 +493,6 @@ export const useTankAdjust = () => useProdMutation(({ tankId, level, reason }: {
 export const useTankTransfer = () => useProdMutation(({ tankId, to_tank_id, qty, reason }: { tankId: string; to_tank_id: string; qty: number; reason?: string }) => post(`/wms/production/tanks/${tankId}/transfer`, { to_tank_id, qty, reason }))
 export const useTankDiscard = () => useProdMutation(({ tankId, qty, reason }: { tankId: string; qty: number; reason: string }) => post(`/wms/production/tanks/${tankId}/discard`, { qty, reason }))
 
-export const BATCH_STATUS_VI: Record<BatchStatus, string> = { OPEN: 'Đang mở', CLOSED: 'Đã đóng', CANCELLED: 'Đã huỷ' }
+export const BATCH_STATUS_VI: Record<BatchStatus, string> = { OPEN: 'Đang mở', CANCELLED: 'Đã huỷ' }
 export const BATCH_QA_VI: Record<BatchQa, string> = { HOLD: 'Chờ QA', RELEASED: 'QA đạt', REJECTED: 'QA không đạt' }
 export const TANK_MOVE_VI: Record<TankMoveRow['kind'], string> = { FILL: 'Nạp từ mẻ', DRAW: 'Rút đóng gói', TRANSFER_OUT: 'Chuyển đi', TRANSFER_IN: 'Chuyển đến', ADJUST: 'Điều chỉnh', DISCARD: 'Xả bỏ' }

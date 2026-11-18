@@ -67,7 +67,7 @@ function mesFail(res: Response, e: unknown): Response {
   if (!m) return failAny(res, e)
   const [, code, text] = m
   const status = code === 'NOT_FOUND' ? 404 : ['QTY', 'REASON', 'UNIT', 'KIND', 'SAME_TANK', 'DUPLICATE', 'SELF', 'NAME', 'MISMATCH', 'RECIPE_MISMATCH', 'RECIPE_INACTIVE', 'CYCLE', 'BATCH_NO', 'TANK', 'NO_PLANT', 'FORM_INVALID',
-    'EXPIRED', 'EXPIRED_REJECTED', 'NOT_EXPIRED', 'DECISION', 'SUBJECT'].includes(code) ? 422 : 409
+    'EXPIRED', 'EXPIRED_REJECTED', 'NOT_EXPIRED', 'DECISION', 'SUBJECT', 'KEY', 'TIME', 'TOO_LONG'].includes(code) ? 422 : 409
   return fail(res, status, `MES_${code}`, text.trim())
 }
 
@@ -105,8 +105,8 @@ async function productionWhError(whId: string): Promise<string | null> {
 // GET /wms/production/batches — danh sách mẻ phân trang (dòng + tổng + ô band trong MỘT lời gọi)
 export const zBatchListQuery = z.object({
   warehouse_id: zText(1, 64).optional(),
-  status: z.enum(['OPEN', 'CLOSED', 'CANCELLED']).optional(),
-  qa: z.enum(['HOLD', 'RELEASED', 'REJECTED']).optional(),
+  // tình trạng của mẻ (18/11 — hàm SQL mes_batch_stage, một luật cho dòng · ô tổng · lọc) thay lọc Trạng thái + QA
+  stage: z.enum(['new', 'wait_lead', 'wait_qa', 'working', 'filled', 'released', 'rejected', 'cancelled']).optional(),
   date_from: zDay.optional(), date_to: zDay.optional(),
   search: zText(0, 80).optional(),
   page: z.coerce.number().int().min(1).max(100000).optional(),
@@ -128,7 +128,7 @@ export async function listBatches(req: Request, res: Response) {
     }
     if (!whIds.length) return ok(res, { rows: [], summary: { total: 0 }, page: 1, page_size: q.pageSize ?? 100 })
     const { data, error } = await db.rpc('mes_batch_page', { p: {
-      wh_ids: whIds, status: q.status ?? null, qa: q.qa ?? null, date_from: q.date_from ?? null, date_to: q.date_to ?? null,
+      wh_ids: whIds, stage: q.stage ?? null, date_from: q.date_from ?? null, date_to: q.date_to ?? null,
       search: q.search ?? null, page: q.page ?? 1, page_size: q.pageSize ?? 100,
     } })
     if (error) return fail(res, error)
@@ -502,7 +502,8 @@ export async function putProcessForm(req: Request, res: Response) {
 const zForm = zFormCode
 export const zProcessLogParams = z.object({ id: zText(1, 64), form: zForm })
 export const zProcessLogPut = z.object({
-  data: z.record(z.string().regex(/^[a-z0-9_]{1,40}$/), z.string().max(300)).refine(o => Object.keys(o).length <= 300, 'Phiếu quá nhiều ô'),
+  // vắng = chỉ lưu CẤU TRÚC (18/11: phiếu ghi từng ô qua /cell — lưu cấu trúc không được đè giá trị người khác vừa ghi)
+  data: z.record(z.string().regex(/^[a-z0-9_]{1,40}$/), z.string().max(300)).refine(o => Object.keys(o).length <= 300, 'Phiếu quá nhiều ô').optional(),
   blocks: zBlocks.nullable().optional(),
 })
 export async function putProcessLog(req: Request, res: Response) {
@@ -515,8 +516,9 @@ export async function putProcessLog(req: Request, res: Response) {
     const { data: raw, blocks } = req.body as z.infer<typeof zProcessLogPut>
     if (blocks) { const bad = processBlocksError(blocks); if (bad) return fail(res, 422, 'PROCESS_FORM_INVALID', bad) }
     const custom = blocks === undefined ? {} : { blocks }
-    // bỏ ô trống ⇒ phiếu chỉ giữ ô đã ghi
-    const data = Object.fromEntries(Object.entries(raw).map(([k, v]) => [k, v.trim()] as const).filter(([, v]) => v !== ''))
+    if (raw === undefined && blocks === undefined) return fail(res, 422, 'VALIDATION_ERROR', 'Không có gì để lưu')
+    // bỏ ô trống ⇒ phiếu chỉ giữ ô đã ghi. data vắng ⇒ chỉ lưu cấu trúc, giữ nguyên giá trị đang có
+    const data = raw === undefined ? undefined : Object.fromEntries(Object.entries(raw).map(([k, v]) => [k, v.trim()] as const).filter(([, v]) => v !== ''))
     const who = actor(req).actor_name
     for (let attempt = 0; attempt < 2; attempt++) {
       const { data: cur } = await db.from('batch_process_log').select('id, confirmed_at, data, stamps').eq('batch_id', b.id).eq('form', form).maybeSingle()
@@ -529,32 +531,44 @@ export async function putProcessLog(req: Request, res: Response) {
         // mốc giờ đã BẤM (stamps) mà nay sửa tay / xoá ⇒ ghi thêm người sửa + lúc sửa (lưu vết, user chốt 17/11)
         const old = (cur.data ?? {}) as Record<string, string>
         const stamps = { ...((cur.stamps ?? {}) as Record<string, Record<string, string>>) }
-        for (const k of Object.keys(stamps)) if ((old[k] ?? '') !== (data[k] ?? '')) stamps[k] = { ...stamps[k], edited_by: who ?? '', edited_at: nowIso() }
-        const { data: up, error } = await db.from('batch_process_log').update({ data, stamps, ...custom, updated_by_name: who, updated_at: nowIso() })
+        if (data) for (const k of Object.keys(stamps)) if ((old[k] ?? '') !== (data[k] ?? '')) stamps[k] = { ...stamps[k], edited_by: who ?? '', edited_at: nowIso() }
+        const { data: up, error } = await db.from('batch_process_log').update({ ...(data ? { data, stamps } : {}), ...custom, updated_by_name: who, updated_at: nowIso() })
           .eq('id', cur.id).is('confirmed_at', null).select('*')
         if (error) return fail(res, error)
         if (!up?.length) return fail(res, 409, 'PROCESS_LOG_CONFIRMED', 'Phiếu vừa được QA xác nhận — tải lại')
         return ok(res, up[0])
       }
       const { data: ins, error } = await db.from('batch_process_log')
-        .insert({ id: randomUUID(), batch_id: b.id, form, data, ...custom, created_by_name: who, updated_by_name: who, updated_at: nowIso() }).select('*').single()
+        .insert({ id: randomUUID(), batch_id: b.id, form, data: data ?? {}, ...custom, created_by_name: who, updated_by_name: who, updated_at: nowIso() }).select('*').single()
       if (!error) return ok(res, ins, 201)
       if (error.code !== '23505') return fail(res, error)   // hai người cùng ghi lần đầu ⇒ vòng lại thành cập nhật
     }
     return fail(res, 409, 'BUSY', 'Phiếu đang được người khác ghi — thử lại')
   } catch (e) { return failAny(res, e) }
 }
-// POST /wms/production/batches/:id/process-log/:form/stamp — BẤM GHI GIỜ một mốc của phiếu (giờ máy chủ + người bấm) — 17/11
-export const zProcessLogStamp = z.object({ key: z.string().regex(/^[a-z][a-z0-9_]{0,29}$/) })
-export async function stampProcessLog(req: Request, res: Response) {
+// PHIẾU GHI TỪNG Ô (18/11 — user: "chỉ để 1 nút mở phiếu ghi nhận tình trạng Bắt đầu, và cho nút ở các input, bấm vào sẽ hiện lên
+// yêu cầu Input, nếu thời gian thì tự lấy thời gian"). Một hàm DB mes_log_cell: gộp đúng MỘT khoá dưới khoá tư vấn (mẻ, phiếu) ⇒
+// nhiều người ghi các ô khác nhau không đè nhau (PUT trọn phiếu thì có thể đè).
+async function logCell(req: Request, res: Response, p: Record<string, unknown>) {
+  const { form } = req.params as unknown as z.infer<typeof zProcessLogParams>
+  const b = await loadBatch(req.params.id)
+  if (!b) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy mẻ')
+  if (!(await inScope(req, b.warehouse_id))) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
+  const { data, error } = await db.rpc('mes_log_cell', { p: { ...p, batch_id: b.id, form, actor_name: actor(req).actor_name } })
+  if (error) return mesFail(res, error)
+  return ok(res, data)
+}
+// POST /wms/production/batches/:id/process-log/:form/start — BẮT ĐẦU phiếu: tạo phiếu (điền sẵn máy / kế hoạch) + giờ máy chủ vào mốc giờ đầu
+export async function startProcessLog(req: Request, res: Response) {
+  try { return await logCell(req, res, { op: 'start' }) } catch (e) { return failAny(res, e) }
+}
+// POST /wms/production/batches/:id/process-log/:form/cell { key, value? } — ghi MỘT ô (ô nhóm hoặc ô bảng theo dõi).
+// Không gửi value + ô Giờ ⇒ giờ máy chủ + người bấm (ô đã có giờ ⇒ 409 ALREADY); gửi value ⇒ ghi giá trị ('' = xoá ô), ô đã có thì giữ vết người sửa.
+export const zProcessLogCell = z.object({ key: z.string().regex(/^[a-z0-9_]{1,40}$/), value: z.string().max(300).nullable().optional() })
+export async function setProcessLogCell(req: Request, res: Response) {
   try {
-    const { form } = req.params as unknown as z.infer<typeof zProcessLogParams>
-    const b = await loadBatch(req.params.id)
-    if (!b) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy mẻ')
-    if (!(await inScope(req, b.warehouse_id))) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
-    const { data, error } = await db.rpc('mes_log_stamp', { p: { batch_id: b.id, form, key: (req.body as z.infer<typeof zProcessLogStamp>).key, actor_name: actor(req).actor_name } })
-    if (error) return mesFail(res, error)
-    return ok(res, data)
+    const { key, value } = req.body as z.infer<typeof zProcessLogCell>
+    return await logCell(req, res, { op: 'set', key, ...(typeof value === 'string' ? { value } : {}) })
   } catch (e) { return failAny(res, e) }
 }
 // POST /wms/production/batches/:id/process-log/:form/confirm — QA xác nhận / bỏ xác nhận phiếu (quyền qa_release)
@@ -657,7 +671,8 @@ export async function putRecipe(req: Request, res: Response) {
   } catch (e) { return failAny(res, e) }
 }
 
-// POST /wms/production/batches/:id/(close|reopen|cancel) — CAS theo trạng thái: hai người cùng bấm ⇒ một người thắng
+// POST /wms/production/batches/:id/cancel — CAS theo trạng thái: hai người cùng bấm ⇒ một người thắng.
+// (18/11) không còn "Đóng mẻ" / "Mở lại" — mẻ chỉ OPEN · CANCELLED; "xong" = đã nạp BTP vào bồn (tình trạng mes_batch_stage).
 async function setBatchStatus(req: Request, res: Response, from: string[], to: string, extra: Record<string, unknown> = {}) {
   const b = await loadBatch(req.params.id)
   if (!b) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy mẻ')
@@ -669,14 +684,6 @@ async function setBatchStatus(req: Request, res: Response, from: string[], to: s
   if (!data?.length) return fail(res, 409, 'BATCH_STATUS', 'Mẻ vừa được người khác đổi trạng thái — tải lại')
   return ok(res, data[0])
 }
-export async function closeBatch(req: Request, res: Response) {
-  try { const a = actor(req); return await setBatchStatus(req, res, ['OPEN'], 'CLOSED', { closed_at: nowIso(), closed_by: a.actor_id, closed_by_name: a.actor_name }) }
-  catch (e) { return failAny(res, e) }
-}
-export async function reopenBatch(req: Request, res: Response) {
-  try { return await setBatchStatus(req, res, ['CLOSED'], 'OPEN', { closed_at: null, closed_by: null, closed_by_name: null }) }
-  catch (e) { return failAny(res, e) }
-}
 export async function cancelBatch(req: Request, res: Response) {
   try {
     const b = await loadBatch(req.params.id)
@@ -687,8 +694,8 @@ export async function cancelBatch(req: Request, res: Response) {
       db.from('tank_movement').select('id', { count: 'exact', head: true }).eq('batch_id', b.id),
     ])
     if ((nc ?? 0) > 0) return fail(res, 409, 'BATCH_HAS_CONSUMPTION', `Mẻ còn ${nc} dòng NVL đã rút — huỷ từng dòng rút (hoàn tồn) trước khi huỷ mẻ`)
-    if ((nm ?? 0) > 0) return fail(res, 409, 'BATCH_HAS_TANK', 'Mẻ đã nạp bồn — không huỷ được; xả bỏ phần trong bồn rồi đóng mẻ')
-    return await setBatchStatus(req, res, ['OPEN', 'CLOSED'], 'CANCELLED')
+    if ((nm ?? 0) > 0) return fail(res, 409, 'BATCH_HAS_TANK', 'Mẻ đã nạp bồn — không huỷ được; phần trong bồn xả bỏ ở trang Bồn')
+    return await setBatchStatus(req, res, ['OPEN'], 'CANCELLED')
   } catch (e) { return failAny(res, e) }
 }
 
@@ -1066,9 +1073,10 @@ export async function listTanks(req: Request, res: Response) {
     const out = (tanks ?? []).map(t => {
       const ls = lots.filter(l => l.tank_id === t.id)
       const content = ls.reduce((s, l) => s + Number(l.qty_remaining), 0)
-      const incoming = planned.filter(x => x.tank_id === t.id)
+      // mẻ GIỮ CHỖ tới lần nạp đầu tiên (18/11 — bỏ "đóng mẻ": trước đây đóng mẻ mới nhả phần chưa nạp; cùng luật hàm mes_tank_room_check)
+      const incoming = planned.filter(x => x.tank_id === t.id && !filled.has(x.id))
         .map(x => ({ batch_id: x.id, batch_code: x.batch_code, cycle: x.cycle, batch_no: x.batch_no, material_code: x.material?.material_code ?? null,
-          material_name: x.material?.short_name ?? null, qty: round3(Math.max(Number(x.planned_qty ?? 0) - (filled.get(x.id) ?? 0), 0)), started: (filled.get(x.id) ?? 0) > 0 }))
+          material_name: x.material?.short_name ?? null, qty: round3(Math.max(Number(x.planned_qty ?? 0), 0)), started: false }))
         .filter(x => x.qty > 0)
       const qa = ls.map(l => l.batch?.qa_status)
       return {

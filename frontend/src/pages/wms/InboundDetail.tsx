@@ -387,7 +387,7 @@ export default function InboundDetail() {
   const headerActionItems: ActionItem[] = []
   if (isOpen && entries.length === 0 && can(perms, 'inbound', 'cancel'))
     headerActionItems.push({
-      key: 'cancel', icon: XCircle, label: 'Hủy phiếu',
+      key: 'cancel', icon: XCircle, label: 'Hủy phiếu', admin: true,
       tip: 'Hủy phiếu nhập (chỉ khi chưa có pallet — không hoàn tác được)',
       danger: true, className: 'border-red-200 text-red-600 hover:bg-red-50', busy: cancelling,
       onClick: () => openConfirm(
@@ -405,7 +405,7 @@ export default function InboundDetail() {
     })
   if (isCompleted && can(perms, 'inbound', 'uncomplete'))
     headerActionItems.push({
-      key: 'uncomplete', icon: RotateCcw, label: 'Gỡ hoàn thành',
+      key: 'uncomplete', icon: RotateCcw, label: 'Gỡ hoàn thành', admin: true,
       tip: 'Gỡ hoàn thành — phiếu quay về Đang nhập, quét tiếp được',
       className: 'border-slate-300 text-slate-500 disabled:opacity-40', busy: uncompleting,
       onClick: () => setCompleteDlg('uncomplete'),

@@ -1,5 +1,5 @@
 // TRANG "MẺ CHẾ BIẾN" (MES giai đoạn 1, 14/11/2026 — docs/modules/production.md). Mỗi dòng một MẺ (lô bán thành phẩm):
-// ngày SX · mã lô · mã BTP · kho chế biến · máy/ca · trạng thái · QA · số dòng NVL đã rút · đã nạp bồn · còn trong bồn.
+// ngày SX · mã lô · mã BTP · kho chế biến · máy/ca · TÌNH TRẠNG (18/11 — theo bước, màu theo bước) · số dòng NVL đã rút · đã nạp bồn · còn trong bồn.
 // Phân trang SERVER: dòng + tổng + ô band trong MỘT lời gọi (RPC mes_batch_page). Lọc theo kho nhà máy ⇒ gồm kho chế biến trực thuộc.
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
@@ -9,7 +9,6 @@ import { Plus, FileDown, AlignJustify, Rows3, Container, Bookmark } from 'lucide
 import { useActiveBatchesStore } from '@/stores/activeBatchesStore'
 import { SavedViews } from '@/components/shared/SavedViews'
 import { useSavedViewsStore } from '@/stores/savedViewsStore'
-import { rowText, type RowStatusKey } from '@/lib/rowStatus'
 import { TableBody, TableCell, TableRow } from '@/components/ui/table'
 import { ResizableTable, type RtColDef } from '@/components/shared/ResizableTable'
 import { TableEmptyRow } from '@/components/shared/TableEmptyRow'
@@ -17,7 +16,6 @@ import { ListFooter, PagerNav } from '@/components/shared/ListPager'
 import { SearchInput } from '@/components/shared/SearchInput'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { SummaryBand } from '@/components/shared/SummaryBand'
-import { StatusBadge, type BadgeTone } from '@/components/shared/StatusBadge'
 import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { BatchFormSheet } from '@/components/wms/production/BatchFormSheet'
 import { useDebouncedValue } from '@/hooks/useDebouncedValue'
@@ -25,7 +23,8 @@ import { useCanSeePath } from '@/hooks/useCanSeePath'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
-import { useProductionBatches, useProductionWarehouses, BATCH_STATUS_VI, BATCH_QA_VI, type BatchRow, type BatchQa, type BatchStatus } from '@/api/productionHooks'
+import { useProductionBatches, useProductionWarehouses, type BatchRow } from '@/api/productionHooks'
+import { StageBadge, BATCH_STAGE, BATCH_STAGES, stageOf, stageRowText } from '@/components/wms/production/BatchStage'
 import { unitCode } from '@/utils/unitCode'
 import { formatDate } from '@/utils/formatters'
 import { saveWorkbook } from '@/utils/saveExcel'
@@ -37,14 +36,11 @@ const nf = (n: number | null | undefined) => Number(n ?? 0).toLocaleString('vi-V
 const apiMsg = (e: unknown) => (e as AxiosError<{ error?: { message?: string } }>)?.response?.data?.error?.message ?? 'Lỗi không xác định'
 const COLS: RtColDef[] = [
   { id: 'code', label: 'Mã lô', w: 150 }, { id: 'cyc', label: 'Chu kỳ · Mẻ', w: 86 }, { id: 'tank', label: 'Bồn', w: 70 }, { id: 'day', label: 'Ngày SX', w: 88 }, { id: 'mat', label: 'Bán thành phẩm', w: 200 },
-  { id: 'status', label: 'Trạng thái', w: 80 }, { id: 'qa', label: 'QA', w: 74 },
+  { id: 'stage', label: 'Tình trạng', w: 96 },
   { id: 'rm', label: 'NVL đã rút', w: 88, align: 'right' }, { id: 'filled', label: 'Đã nạp bồn', w: 96, align: 'right' },
   { id: 'intank', label: 'Còn trong bồn', w: 100, align: 'right' }, { id: 'plan', label: 'Kế hoạch', w: 86, align: 'right' },
   { id: 'wh', label: 'Kho chế biến', w: 150 }, { id: 'machine', label: 'Máy · Ca', w: 100 }, { id: 'by', label: 'Người mở', w: 130 },
 ]
-export const BATCH_STATUS_TONE: Record<BatchStatus, BadgeTone> = { OPEN: 'amber', CLOSED: 'blue', CANCELLED: 'slate' }
-export const BATCH_QA_TONE: Record<BatchQa, BadgeTone> = { HOLD: 'amber', RELEASED: 'green', REJECTED: 'red' }
-export const batchRowKey = (b: { status: BatchStatus }): RowStatusKey => (b.status === 'OPEN' ? 'inProgress' : b.status === 'CLOSED' ? 'full' : 'completed')
 
 export default function ProductionBatches() {
   const navigate = useNavigate()
@@ -59,7 +55,7 @@ export default function ProductionBatches() {
   const search = useDebouncedValue(f.search.trim(), 300)
   const page = f.page || 1, pageSize = f.pageSize || 100
   const q = useProductionBatches({
-    warehouse_id: f.warehouseId || undefined, status: f.status || undefined, qa: f.qa || undefined,
+    warehouse_id: f.warehouseId || undefined, stage: f.stage || undefined,
     date_from: f.dateFrom || undefined, date_to: f.dateTo || undefined, search: search || undefined, page, pageSize,
   })
   const rows = q.data?.rows ?? []
@@ -73,14 +69,13 @@ export default function ProductionBatches() {
   const defs: FilterDef[] = [
     { key: 'date', label: 'Ngày SX', type: 'daterange', from: f.dateFrom, to: f.dateTo, onChange: (a, b) => setF({ dateFrom: a, dateTo: b, page: 1 }), pinned: true },
     { key: 'wh', label: 'Kho', type: 'single', options: whOpts, value: f.warehouseId, onChange: v => setF({ warehouseId: v, page: 1 }) },
-    { key: 'status', label: 'Trạng thái', type: 'single', options: (['OPEN', 'CLOSED', 'CANCELLED'] as const).map(s => ({ value: s, label: BATCH_STATUS_VI[s] })), value: f.status, onChange: v => setF({ status: v, page: 1 }) },
-    { key: 'qa', label: 'QA', type: 'single', options: (['HOLD', 'RELEASED', 'REJECTED'] as const).map(s => ({ value: s, label: BATCH_QA_VI[s] })), value: f.qa, onChange: v => setF({ qa: v, page: 1 }) },
+    { key: 'stage', label: 'Tình trạng', type: 'single', options: BATCH_STAGES.map(s => ({ value: s, label: BATCH_STAGE[s].label })), value: f.stage, onChange: v => setF({ stage: v, page: 1 }) },
   ]
 
   function exportExcel() {
     const sheet = rows.map((r: BatchRow) => ({
       'Mã lô': r.batch_code, 'Ngày SX': r.prod_date, 'Mã BTP': r.material_code, 'Tên BTP': r.material_name ?? '', 'Đơn vị': unitCode(r.base_unit),
-      'Trạng thái': BATCH_STATUS_VI[r.status], 'QA': BATCH_QA_VI[r.qa_status], 'Dòng NVL đã rút': r.rm_lines, 'Số mã NVL': r.rm_materials,
+      'Tình trạng': BATCH_STAGE[stageOf(r.stage)].label, 'Dòng NVL đã rút': r.rm_lines, 'Số mã NVL': r.rm_materials,
       'Đã nạp bồn': Number(r.filled), 'Còn trong bồn': Number(r.in_tank), 'Kế hoạch': r.planned_qty ?? '', 'Kho chế biến': r.warehouse_name,
       'Máy': r.machine_code ?? '', 'Ca': r.shift ?? '', 'Người mở': r.opened_by_name ?? '', 'Ghi chú': r.note ?? '',
     }))
@@ -89,7 +84,7 @@ export default function ProductionBatches() {
     void saveWorkbook(wb, `me_che_bien_${f.dateFrom || 'all'}_${f.dateTo || ''}_trang${page}.xlsx`)
   }
 
-  const viewSnapshot = { search: f.search, warehouseId: f.warehouseId, dateFrom: f.dateFrom, dateTo: f.dateTo, status: f.status, qa: f.qa }
+  const viewSnapshot = { search: f.search, warehouseId: f.warehouseId, dateFrom: f.dateFrom, dateTo: f.dateTo, stage: f.stage }
   const savedViews = useSavedViewsStore(s => s.views['production'] ?? [])
   const activeViewId = savedViews.find(v => JSON.stringify(v.filters) === JSON.stringify(viewSnapshot))?.id ?? null
   const [dense, setDense] = useState(() => { try { return localStorage.getItem('production_density') !== 'comfortable' } catch { return true } })
@@ -122,16 +117,19 @@ export default function ProductionBatches() {
           <div className="hidden sm:flex"><FilterBar defs={defs} /></div>
         </div>
         <SummaryBand tiles={[
-          { label: 'Mẻ', value: nf(total), tip: 'Số mẻ khớp bộ lọc (cả trạng thái + QA)' },
-          { label: 'Đang mở', value: nf(sum?.open) },
-          { label: 'Đã đóng', value: nf(sum?.closed) },
-          { label: 'Chờ QA', value: nf(sum?.qa_hold), accent: Number(sum?.qa_hold ?? 0) > 0, tip: 'Lô bán thành phẩm chưa được QA thả (không tính mẻ đã huỷ)' },
-          { label: 'QA thả', value: nf(sum?.qa_released) },
-          { label: 'QA loại', value: nf(sum?.qa_rejected), danger: Number(sum?.qa_rejected ?? 0) > 0 },
+          // số mẻ theo TÌNH TRẠNG (18/11) — cùng hàm DB với cột Tình trạng; "Mẻ" theo cả lọc tình trạng
+          { label: 'Mẻ', value: nf(total), tip: 'Số mẻ khớp bộ lọc (cả lọc tình trạng)' },
+          ...(Number(sum?.new ?? 0) > 0 ? [{ label: 'Mới mở', value: nf(sum?.new), tip: BATCH_STAGE.new.tip }] : []),
+          { label: 'Chờ duyệt', value: nf(sum?.wait_lead), tip: BATCH_STAGE.wait_lead.tip },
+          { label: 'Chờ QA duyệt', value: nf(sum?.wait_qa), accent: Number(sum?.wait_qa ?? 0) > 0, tip: BATCH_STAGE.wait_qa.tip },
+          { label: 'Đang làm', value: nf(sum?.working), tip: BATCH_STAGE.working.tip },
+          { label: 'Chờ QA bồn', value: nf(sum?.filled), tip: BATCH_STAGE.filled.tip },
+          { label: 'QA đạt', value: nf(sum?.released) },
+          { label: 'QA loại', value: nf(sum?.rejected), danger: Number(sum?.rejected ?? 0) > 0, tip: BATCH_STAGE.rejected.tip },
           ...(totalPages > 1 ? [{ label: 'Trang', value: `${page}/${totalPages}` }] : []),
         ]} />
         <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
-          <ResizableTable storageKey="production_batches_cols_v2" cols={COLS}>
+          <ResizableTable storageKey="production_batches_cols_v3" cols={COLS}>
             <TableBody>
               {q.isError && <TableEmptyRow colSpan={COLS.length}><span className="text-red-600">{apiMsg(q.error)}</span></TableEmptyRow>}
               {!q.isError && q.isLoading && !rows.length && <TableEmptyRow colSpan={COLS.length}>Đang tải…</TableEmptyRow>}
@@ -140,11 +138,11 @@ export default function ProductionBatches() {
                 const u = unitCode(r.base_unit)
                 const pinned = isBatchPinned(r.id)
                 return (
-                  <TableRow key={r.id} className={`cursor-pointer ${rowText(batchRowKey(r))} ${dense ? '' : '[&_td]:py-2.5'}`}
+                  <TableRow key={r.id} data-stage={stageOf(r.stage)} className={`cursor-pointer ${stageRowText(r.stage)} ${dense ? '' : '[&_td]:py-2.5'}`}
                     onClick={() => navigate(`/wms/production/${r.id}`)} title="Mở mẻ">
                     <TableCell className={`${TD} sticky left-0 z-10 bg-white font-mono font-semibold`}>
                       {/* 🔖 = đánh dấu ĐANG LÀM ⇒ tab "Đang làm:" trên trang mẻ (như danh sách Xuất kho) */}
-                      <button type="button" onClick={e => { e.stopPropagation(); if (pinned) unpinBatch(r.id); else pinBatch({ id: r.id, code: r.batch_code, status: r.status }) }}
+                      <button type="button" onClick={e => { e.stopPropagation(); if (pinned) unpinBatch(r.id); else pinBatch({ id: r.id, code: r.batch_code, stage: r.stage }) }}
                         className={`p-1 -my-1 -ml-1 mr-0.5 rounded align-middle transition-colors ${pinned ? 'text-amber-500' : 'text-slate-300 hover:text-slate-500'}`}
                         title={pinned ? 'Bỏ đánh dấu đang làm' : 'Đánh dấu đang làm'} aria-label={`${pinned ? 'Bỏ đánh dấu' : 'Đánh dấu'} đang làm ${r.batch_code}`} aria-pressed={pinned}>
                         <Bookmark className="h-3 w-3" fill={pinned ? 'currentColor' : 'none'} />
@@ -155,8 +153,7 @@ export default function ProductionBatches() {
                     <TableCell className={`${TD} font-mono font-semibold`}>{r.tank_code ?? <span className="text-slate-300 font-normal">—</span>}</TableCell>
                     <TableCell className={`${TD} tabular-nums`}>{formatDate(r.prod_date)}</TableCell>
                     <TableCell className={`${TD} truncate`} title={r.material_name ?? ''}><span className="font-mono font-semibold">{r.material_code}</span> {r.material_name ?? ''}</TableCell>
-                    <TableCell className={TD}><StatusBadge tone={BATCH_STATUS_TONE[r.status]}>{BATCH_STATUS_VI[r.status]}</StatusBadge></TableCell>
-                    <TableCell className={TD}><StatusBadge tone={BATCH_QA_TONE[r.qa_status]}>{BATCH_QA_VI[r.qa_status]}</StatusBadge></TableCell>
+                    <TableCell className={TD}><StageBadge stage={r.stage} /></TableCell>
                     <TableCell className={NUM} title={`${r.rm_lines} dòng rút · ${r.rm_materials} mã nguyên liệu`}>{r.rm_lines ? <>{r.rm_lines} <span className="text-slate-400 font-normal">dòng</span></> : <span className="text-slate-300 font-normal">—</span>}</TableCell>
                     <TableCell className={NUM}>{Number(r.filled) ? <>{nf(r.filled)} <span className="text-slate-400 font-normal">{u}</span></> : <span className="text-slate-300 font-normal">—</span>}</TableCell>
                     <TableCell className={NUM}>{Number(r.in_tank) ? <>{nf(r.in_tank)} <span className="text-slate-400 font-normal">{u}</span></> : <span className="text-slate-300 font-normal">—</span>}</TableCell>
@@ -173,7 +170,8 @@ export default function ProductionBatches() {
         </div>
         <ListFooter page={page} pageSize={pageSize} total={total} unit="mẻ" onPageSize={n => setF({ pageSize: n, page: 1 })} />
       </div>
-      <BatchFormSheet open={formOpen} onClose={() => setFormOpen(false)} onSaved={id => navigate(`/wms/production/${id}`, { state: { consume: true } })} />
+      {/* mở mẻ xong vào trang mẻ, KHÔNG tự bật quét (user 18/11: "mở mẻ xong đừng tự động vào scan") — bước kế thường là duyệt phiếu */}
+      <BatchFormSheet open={formOpen} onClose={() => setFormOpen(false)} onSaved={id => navigate(`/wms/production/${id}`)} />
     </div>
   )
 }

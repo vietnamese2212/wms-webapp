@@ -261,12 +261,12 @@ export default function FillOrderDetail() {
                     onClick: () => { setVal(order.assignee_id ?? ''); setErr(''); setDlg('assign-order') },
                   } satisfies ActionItem] : []),
                   ...(canPlan ? [{
-                    key: 'close', icon: Lock, label: 'Chốt ngày', busy: closeOrder.isPending,
+                    key: 'close', icon: Lock, label: 'Chốt ngày', admin: true, busy: closeOrder.isPending,
                     tip: 'Đóng sổ lệnh của ngày: dòng chưa thực hiện sẽ bị hủy kèm lý do (giữ vết để báo cáo)',
                     onClick: doCloseOrder,
                   } satisfies ActionItem] : []),
                   ...(canCancel ? [{
-                    key: 'cancel', icon: X, label: 'Hủy lệnh', danger: true, busy: cancelOrder.isPending,
+                    key: 'cancel', icon: X, label: 'Hủy lệnh', admin: true, danger: true, busy: cancelOrder.isPending,
                     className: 'border-red-200 text-red-600 hover:bg-red-50',
                     tip: 'Hủy toàn bộ dòng còn treo của lệnh này (dòng đã hạ giữ nguyên)',
                     onClick: doCancelOrder,

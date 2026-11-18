@@ -1819,6 +1819,9 @@ const INBOUND_BADGE: Record<RowStatusKey, StatusInfo> = {
   scanDone:   { label: 'Đang nhập',  variant: 'warning' },
   assigned:   { label: 'Đang nhập',  variant: 'warning' },
   paused:     { label: 'Đang nhập',  variant: 'warning' },
+  // hai khoá thêm cho tình trạng mẻ MES (18/11) — phiếu nhập không bao giờ ra hai khoá này
+  review:     { label: 'Chưa nhập',  variant: 'slate' },
+  cancelled:  { label: 'Chưa nhập',  variant: 'slate' },
 }
 function inboundStatus(order: InboundOrder): StatusInfo {
   return INBOUND_BADGE[inboundKey(order)]

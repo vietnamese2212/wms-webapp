@@ -1,0 +1,39 @@
+// TÌNH TRẠNG MẺ (18/11 — user: "xem lại màu sắc của Mẻ thay đổi theo tình trạng — Duyệt 1 một màu, Chờ QA duyệt một màu, QA block
+// thì có symbol, đang làm, đã làm xong"). Tình trạng do DB tính — hàm mes_batch_stage (dòng danh sách `stage`, trang mẻ `gate.stage`),
+// một luật cho dòng · ô tổng · lọc · trang mẻ; ở đây CHỈ vẽ: nhãn + màu nhãn · màu chữ của dòng / mã lô · chấm tab "Đang làm".
+// Thứ tự = thứ tự công việc: chờ duyệt → chờ QA duyệt → đang làm → chờ QA bồn (đã nạp — xong phần sản xuất) → QA đạt / QA loại.
+import { ShieldX } from 'lucide-react'
+import { StatusBadge, type BadgeTone } from '@/components/shared/StatusBadge'
+import { rowText, statusText, type RowStatusKey } from '@/lib/rowStatus'
+
+export type BatchStage = 'new' | 'wait_lead' | 'wait_qa' | 'working' | 'filled' | 'released' | 'rejected' | 'cancelled'
+export const BATCH_STAGES: BatchStage[] = ['new', 'wait_lead', 'wait_qa', 'working', 'filled', 'released', 'rejected', 'cancelled']
+export const BATCH_STAGE: Record<BatchStage, { label: string; tone: BadgeTone; row: RowStatusKey; dot: string; tip: string }> = {
+  new:       { label: 'Mới mở',       tone: 'slate',  row: 'pending',    dot: 'bg-slate-400',  tip: 'Chưa cấp nguyên liệu' },
+  wait_lead: { label: 'Chờ duyệt',    tone: 'slate',  row: 'pending',    dot: 'bg-slate-400',  tip: 'Chờ trưởng ca duyệt phiếu (duyệt 1)' },
+  wait_qa:   { label: 'Chờ QA duyệt', tone: 'purple', row: 'review',     dot: 'bg-purple-500', tip: 'Trưởng ca đã duyệt (duyệt 1) — chờ QA duyệt phiếu (duyệt 2)' },
+  working:   { label: 'Đang làm',     tone: 'amber',  row: 'inProgress', dot: 'bg-amber-500',  tip: 'Đang cấp nguyên liệu · ghi phiếu · in tem · check trước khi đổ bồn' },
+  filled:    { label: 'Chờ QA bồn',   tone: 'blue',   row: 'full',       dot: 'bg-blue-500',   tip: 'Đã nạp BTP vào bồn (xong phần sản xuất) — chờ QA kết luận ở bồn' },
+  released:  { label: 'QA đạt',       tone: 'green',  row: 'assigned',   dot: 'bg-green-500',  tip: 'Đã nạp bồn, QA bồn đạt — mẻ xong' },
+  rejected:  { label: 'QA loại',      tone: 'red',    row: 'paused',     dot: 'bg-red-500',    tip: 'QA bồn không đạt — bồn chặn đóng gói tới khi xả bỏ' },
+  cancelled: { label: 'Đã huỷ',       tone: 'slate',  row: 'cancelled',  dot: 'bg-slate-300',  tip: 'Mẻ đã huỷ' },
+}
+/** chuỗi từ API / bộ nhớ tab (bản cũ chưa có tình trạng) ⇒ khoá hợp lệ */
+export const stageOf = (s: string | null | undefined): BatchStage => (s && s in BATCH_STAGE ? (s as BatchStage) : 'new')
+/** class cho <TableRow> (màu chữ + hover) và cho mã lô ở đầu trang mẻ */
+export const stageRowText = (s: string | null | undefined) => rowText(BATCH_STAGE[stageOf(s)].row)
+export const stageText = (s: string | null | undefined) => statusText(BATCH_STAGE[stageOf(s)].row)
+
+/** Nhãn tình trạng; QA loại mang khiên đỏ (user: "QA block thì có symbol") */
+export function StageBadge({ stage, title }: { stage: string | null | undefined; title?: string }) {
+  const k = stageOf(stage)
+  const s = BATCH_STAGE[k]
+  return (
+    <StatusBadge tone={s.tone} title={title ?? s.tip}>
+      {k === 'rejected' && <ShieldX className="inline h-2.5 w-2.5 -mt-px mr-0.5" aria-hidden />}{s.label}
+    </StatusBadge>
+  )
+}
+/** dấu của tab "Đang làm": QA loại = khiên đỏ thay chấm */
+export const stageTabMark = (s: string | null | undefined) =>
+  stageOf(s) === 'rejected' ? <ShieldX className="h-3 w-3 shrink-0 mr-0.5 text-red-600" aria-label="QA loại" /> : undefined

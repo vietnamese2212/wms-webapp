@@ -100,7 +100,7 @@ export function ConsumeSheet({ open, onClose, batch, focusId }: {
   /** phần còn thiếu của một mã theo yêu cầu của mẻ (0 = đủ trong mức lệch / không có yêu cầu) — CÙNG luật với bàn của mẻ (reqLineState) */
   const needOf = (materialId: string | undefined) => {
     const r = batch.board.find(x => x.material_id === materialId)
-    return r ? reqLineState(r, batch.status === 'CLOSED').need : 0
+    return r ? reqLineState(r).need : 0
   }
 
   useEffect(() => {

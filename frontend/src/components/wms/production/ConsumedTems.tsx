@@ -2,6 +2,10 @@
 // bên xuất"). CÙNG khuôn bảng "pallet đã quét" của Xuất kho (OutboundDetail): Mã · Lượng · %Date · Date · Date cũ nhất — mã ĐỎ và
 // "⚠ Date cũ nhất" khi lấy khác thứ tự luân chuyển. %Date và HSD là LÚC CẤP (server tính ở GET mẻ, cùng hàm của "Lấy ở đâu");
 // "Date cũ nhất" là ngày của hàng nên lấy trước lúc cấp (vết đã lưu trên dòng cấp). Ở đây CHỈ vẽ.
+// 18/11 (user: "khi mở ra thì nhìn rõ được các tem pallet được quét thuộc mã nào — tương tự như phần xuất, hiện tại hơi rối mắt"):
+// điện thoại cũng là BẢNG nhỏ như "Mã pallet" của Xuất kho — nhãn cột in một lần, mỗi tem MỘT dòng (mã · lượng · %Date · HSD); khung
+// thụt vào dưới dòng nguyên liệu có vạch trái (trang mẻ tô nền dòng nguyên liệu đang mở) — thay danh sách hai dòng / tem cũ.
+import { Fragment } from 'react'
 import { AlertTriangle } from 'lucide-react'
 import type { ConsumptionRow } from '@/api/productionHooks'
 import { formatDate } from '@/utils/formatters'
@@ -50,20 +54,22 @@ export function ConsumedTems({ rows, mat, bands }: { rows: ConsumptionRow[]; mat
     : <span className="text-slate-300">—</span>
   return (
     <div data-testid="consumed-tems">
-      {/* ĐIỆN THOẠI: mỗi tem hai dòng — mã + lượng · %Date + HSD (+ ⚠ hàng nên lấy trước) */}
-      <ul className="sm:hidden divide-y divide-slate-100 rounded-md border border-slate-200 bg-slate-50/60">
+      {/* ĐIỆN THOẠI: bảng nhỏ — một lưới chung cho nhãn + mọi dòng để cột thẳng hàng; lấy khác thứ tự ⇒ dòng "⚠ nên lấy trước" ngay dưới */}
+      <div className="sm:hidden grid grid-cols-[minmax(0,1fr)_auto_auto_auto] gap-x-2 items-baseline text-[11px]">
+        <span className="pb-0.5 text-[9px] text-slate-400">Tem / lô</span>
+        <span className="pb-0.5 text-[9px] text-slate-400 text-right">Lượng{uHead}</span>
+        <span className="pb-0.5 text-[9px] text-slate-400">%Date</span>
+        <span className="pb-0.5 text-[9px] text-slate-400">HSD</span>
         {rows.map(c => (
-          <li key={c.id} data-consumption={c.id} data-violation={c.rotation_violation ? '1' : undefined} className="px-2 py-1 text-[11px]">
-            <div className="flex items-start gap-2"><span className="min-w-0 flex-1">{code(c)}</span>
-              <span className="shrink-0 font-semibold tabular-nums">{qtyNum(Number(c.qty), mat)}</span></div>
-            <div className="flex flex-wrap gap-x-2 text-[10px] text-slate-500">
-              <span>%Date <b className={`tabular-nums ${pctDateCls(c.pct_date, bands)}`}>{pctText(c.pct_date)}</b></span>
-              <span>HSD {hsd(c)}</span>
-              {c.rotation_violation && <span>nên lấy trước {best(c)}</span>}
-            </div>
-          </li>
+          <Fragment key={c.id}>
+            <span data-consumption={c.id} data-violation={c.rotation_violation ? '1' : undefined} className="py-0.5 border-t border-slate-100 min-w-0 text-[10px]">{code(c)}</span>
+            <span className="py-0.5 border-t border-slate-100 text-right font-semibold tabular-nums">{qtyNum(Number(c.qty), mat)}</span>
+            <span className={`py-0.5 border-t border-slate-100 font-bold tabular-nums ${pctDateCls(c.pct_date, bands)}`}>{pctText(c.pct_date)}</span>
+            <span className="py-0.5 border-t border-slate-100 font-mono text-[10px]">{hsd(c)}</span>
+            {c.rotation_violation && <span className="col-span-4 -mt-0.5 pb-0.5 text-[10px] text-orange-600">nên lấy trước {best(c)}</span>}
+          </Fragment>
         ))}
-      </ul>
+      </div>
       {/* MÁY TÍNH: bảng nhỏ như "pallet đã quét" của Xuất kho */}
       <table className="hidden sm:table border-collapse">
         <thead><tr className="text-[9px] text-slate-400">

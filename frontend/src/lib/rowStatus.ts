@@ -12,6 +12,8 @@ export type RowStatusKey =
   | 'assigned'    // đã giao đơn — xanh lá
   | 'paused'      // tạm dừng — đỏ
   | 'pending'     // chưa xử lý — xám (chữ thường)
+  | 'review'      // chờ duyệt / chờ kiểm (vd mẻ chờ QA duyệt — 18/11) — tím
+  | 'cancelled'   // đã huỷ — xám nhạt + gạch ngang
 
 const TEXT: Record<RowStatusKey, string> = {
   completed:  'text-[#4A90D9] line-through',
@@ -21,6 +23,8 @@ const TEXT: Record<RowStatusKey, string> = {
   assigned:   'text-green-600',
   paused:     'text-red-500',
   pending:    'text-slate-700',
+  review:     'text-purple-600',
+  cancelled:  'text-slate-400 line-through',
 }
 
 /** Màu chữ thuần theo trạng thái (cho header detail, cell, badge text…). */

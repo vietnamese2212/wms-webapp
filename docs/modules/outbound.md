@@ -7,6 +7,9 @@
 
 **Quyền (BE `ALL_PERMISSIONS`):** view · prepare · create · quick_export · import · edit · assign · unassign · start · unstart · scan · complete · uncomplete · cancel · reconcile · weigh_waive · gate_waive · rotation_override · set_date
 
+## Nút đầu trang chi tiết chuyến (18/11)
+Theo nguyên tắc chung (skill table-format §17c, user chốt 18/11 "vận hành ra ngoài theo tuần tự công việc, quản trị vào 3 chấm"): "Xem pallet" / "Thu gọn" và "Xác nhận nhanh" là VẬN HÀNH (ngoài ⋮ cả trên điện thoại); Sửa đơn · Tạm dừng · Bỏ qua cổng / cân và hủy duyệt · Bỏ hoàn thành · Đẩy lại cho kho nhận · Gỡ bắt đầu · Gỡ giao đơn là QUẢN TRỊ (trong ⋮, máy tính cũng có ⋮). Điều kiện hiện từng nút không đổi. Tab "Đang làm:" có nút ✕ bỏ đánh dấu chuyến (dùng chung khuôn với mẻ chế biến).
+
 ## Giao thoa với
 <!-- giao-thoa:start -->
 - [`customers`](customers.md) — Khách hàng (hai chiều)

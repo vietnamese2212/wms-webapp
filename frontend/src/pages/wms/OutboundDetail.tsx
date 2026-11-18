@@ -1480,7 +1480,7 @@ function PinnedVehicleBtn({ v, isCurrent, onUnpin, onNavigate }: {
 
   // khuôn tab dùng chung với "mẻ đang làm" của Sản xuất (components/shared/PinnedTabs, 18/11)
   return (
-    <PinnedTab label={v.group_code} current={isCurrent} onClick={() => onNavigate(v.id)}
+    <PinnedTab label={v.group_code} current={isCurrent} onClick={() => onNavigate(v.id)} onClose={() => onUnpin(v.id)}
       dot={v.status === 'IN_PROGRESS' ? 'bg-amber-500'
         : v.status === 'COMPLETED'  ? 'bg-green-500'
         : v.status === 'PAUSED'     ? 'bg-red-500'
@@ -1767,7 +1767,7 @@ export default function OutboundDetail() {
   // Chuyến bất động: ẩn Sửa đơn/Giao đơn (BE cũng chặn 422) — chỉ còn xem + lịch sử + xóa để dọn
   if ((gdo.status === 'PENDING' || gdo.status === 'PAUSED') && !inertReason && can(perms, 'outbound', 'edit'))
     actionItems.push({
-      key: 'edit', icon: PenSquare, label: 'Sửa đơn', tip: 'Sửa đơn (ngày, khách, mã hàng, số lượng)',
+      key: 'edit', icon: PenSquare, label: 'Sửa đơn', admin: true, tip: 'Sửa đơn (ngày, khách, mã hàng, số lượng)',
       onClick: () => setShowEditGDO(true),
     })
   if (gdo.status === 'PENDING' && can(perms, 'outbound', 'cancel'))
@@ -1816,7 +1816,7 @@ export default function OutboundDetail() {
   // Kho QTY/NONE ẩn (đã có "Xuất luôn" bao trọn Bắt đầu + ghi nhận + Hoàn thành).
   if (!isQtyOrNone && gdo.status === 'IN_PROGRESS' && !!gdo.started_at && manualPendingItems.length > 0 && can(perms, 'outbound', 'scan'))
     actionItems.push({
-      key: 'bulk-manual', icon: PenSquare, label: 'Xác nhận nhanh',
+      key: 'bulk-manual', icon: PenSquare, label: 'Xác nhận nhanh', ops: true,
       tip: `Ghi nhận ${manualPendingItems.length} mã hàng không tem = đúng số kế hoạch (thực tế khác thì sửa kế hoạch)`,
       className: 'border-green-300 text-green-700 hover:bg-green-50', busy: bulkSaving,
       onClick: () => setPendingConfirm({
@@ -1838,7 +1838,7 @@ export default function OutboundDetail() {
     })
   if (canManagePause && gdo.status === 'IN_PROGRESS')
     actionItems.push({
-      key: 'pause', icon: Pause, label: 'Tạm dừng', tip: 'Tạm dừng chuyến — khóa quét/ghi nhận cho tới khi Tiếp tục',
+      key: 'pause', icon: Pause, label: 'Tạm dừng', admin: true, tip: 'Tạm dừng chuyến — khóa quét/ghi nhận cho tới khi Tiếp tục',
       danger: true, className: 'border-red-200 text-red-600 hover:bg-red-50', busy: patching,
       onClick: () => patchGDO({ id: gdo.id, status: 'PAUSED' }),
     })
@@ -1850,7 +1850,7 @@ export default function OutboundDetail() {
     })
   if (hasScanEntries)
     actionItems.push({
-      key: 'expand', icon: ChevronDown, label: hasAnyExpanded ? 'Thu gọn' : 'Xem pallet',
+      key: 'expand', icon: ChevronDown, label: hasAnyExpanded ? 'Thu gọn' : 'Xem pallet', ops: true,
       tip: hasAnyExpanded ? 'Thu gọn danh sách pallet đã quét' : 'Mở danh sách pallet đã quét của mọi mã hàng',
       className: `text-slate-500 ${hasAnyExpanded ? '[&_svg]:rotate-180' : ''}`,
       onClick: toggleExpandAll,
@@ -1860,7 +1860,7 @@ export default function OutboundDetail() {
   if (gdo.warehouse?.require_gate_on_start && !gdo.started_at && gdo.status !== 'CANCELLED' && can(perms, 'outbound', 'gate_waive')) {
     if (!gdo.gate_waived_at)
       actionItems.push({
-        key: 'gate-waive', icon: DoorOpen, label: 'Bỏ qua cổng',
+        key: 'gate-waive', icon: DoorOpen, label: 'Bỏ qua cổng', admin: true,
         tip: 'Duyệt bỏ qua RULE 1 (đăng ký cổng) — xe không đăng ký được: giao lẻ, xe máy, nhân viên nhận… Duyệt xong biển số thành tùy chọn; rule CÂN (nếu kho bật) vẫn phải chấp hành',
         className: 'border-amber-300 text-amber-700 hover:bg-amber-50', busy: gWaiving,
         onClick: () => setPendingConfirm({
@@ -1871,7 +1871,7 @@ export default function OutboundDetail() {
       })
     else
       actionItems.push({
-        key: 'gate-unwaive', icon: RotateCcw, label: 'Hủy bỏ qua cổng',
+        key: 'gate-unwaive', icon: RotateCcw, label: 'Hủy bỏ qua cổng', admin: true,
         tip: `Đã duyệt bỏ qua đăng ký cổng bởi ${gdo.gate_waived_by ?? '?'} — hủy duyệt để yêu cầu lại`,
         className: 'border-slate-300 text-slate-500', busy: gUnwaiving,
         onClick: () => unwaiveGate(gdo.id),
@@ -1880,7 +1880,7 @@ export default function OutboundDetail() {
   if (gdo.warehouse?.require_weigh_on_start && !gdo.started_at && gdo.status !== 'CANCELLED' && can(perms, 'outbound', 'weigh_waive')) {
     if (!gdo.weigh_waived_at)
       actionItems.push({
-        key: 'weigh-waive', icon: Scale, label: 'Bỏ qua cân',
+        key: 'weigh-waive', icon: Scale, label: 'Bỏ qua cân', admin: true,
         tip: 'Duyệt bỏ qua RULE 2 (cân) — xe không cân được: hỏng cân, giao lẻ không có xe… Rule ĐĂNG KÝ CỔNG (nếu kho bật) vẫn phải chấp hành',
         className: 'border-amber-300 text-amber-700 hover:bg-amber-50', busy: waiving,
         onClick: () => setPendingConfirm({
@@ -1891,7 +1891,7 @@ export default function OutboundDetail() {
       })
     else
       actionItems.push({
-        key: 'weigh-unwaive', icon: RotateCcw, label: 'Hủy bỏ qua cân',
+        key: 'weigh-unwaive', icon: RotateCcw, label: 'Hủy bỏ qua cân', admin: true,
         tip: `Đã duyệt bỏ qua cân bởi ${gdo.weigh_waived_by ?? '?'} — hủy duyệt để yêu cầu cân lại`,
         className: 'border-slate-300 text-slate-500', busy: unwaiving,
         onClick: () => unwaiveWeigh(gdo.id),
@@ -1919,7 +1919,7 @@ export default function OutboundDetail() {
     const tsLabel: Record<string, string> = { IN_TRANSIT: 'Đang vận chuyển', RECEIVING: 'Đang nhận', DELIVERED: 'Đã giao' }
     const blockedByTransfer = ts === 'RECEIVING' || ts === 'DELIVERED'
     actionItems.push({
-      key: 'uncomplete', icon: RotateCcw, label: 'Bỏ hoàn thành',
+      key: 'uncomplete', icon: RotateCcw, label: 'Bỏ hoàn thành', admin: true,
       tip: blockedByTransfer
         ? `Tình trạng bên Booking chuyển kho là "${tsLabel[ts!]}" — hủy phiếu nhập ở kho NPP để có thể bỏ HT`
         : ts === 'IN_TRANSIT' ? 'Bỏ hoàn thành để sửa — lệnh TMS + booking GIỮ NGUYÊN (hiện "Kho đang sửa"), hoàn thành lại sẽ đồng bộ vào chính lệnh đó'
@@ -1935,7 +1935,7 @@ export default function OutboundDetail() {
     const dest = gdo.dest_warehouse
     const alreadyPushed = !!gdo.transfer_status && gdo.transfer_status !== 'IN_TRANSIT'
     actionItems.push({
-      key: 'push-transfer', icon: Truck, label: 'Đẩy lại cho kho nhận',
+      key: 'push-transfer', icon: Truck, label: 'Đẩy lại cho kho nhận', admin: true,
       tip: !dest ? `Ship-to ${gdo.shipto_party ?? '?'} chưa trỏ kho nhận — khai ở Cài đặt WMS → Kho → Ship-to nhận (hoặc Khách hàng → Kho nhận) rồi bấm lại`
         : alreadyPushed ? 'Kho nhận đã bắt đầu nhận / nhận xong — không đẩy lại'
         : `Sinh (hoặc cập nhật) lệnh chuyển kho + kế hoạch nhập cho ${dest.name} — dùng khi chuyến hoàn thành TRƯỚC khi ship-to được trỏ kho. Lệnh đã có kho nhận thì BE từ chối.`,
@@ -1949,7 +1949,7 @@ export default function OutboundDetail() {
   }
   if (can(perms, 'outbound', 'unstart') && !!gdo.started_at && gdo.status !== 'COMPLETED' && gdo.status !== 'PAUSED')
     actionItems.push({
-      key: 'unstart', icon: RotateCcw, label: 'Gỡ bắt đầu',
+      key: 'unstart', icon: RotateCcw, label: 'Gỡ bắt đầu', admin: true,
       tip: hasBlockingScans ? 'Xóa hết QR đã quét trước rồi mới gỡ bắt đầu được' : 'Gỡ bắt đầu — đơn quay về Chờ xuất',
       className: 'border-slate-300 text-slate-500 disabled:opacity-40',
       disabled: hasBlockingScans, busy: unstarting,
@@ -1957,7 +1957,7 @@ export default function OutboundDetail() {
     })
   if (can(perms, 'outbound', 'unassign') && !!gdo.assigned_at && !gdo.started_at)
     actionItems.push({
-      key: 'unassign', icon: RotateCcw, label: 'Gỡ giao đơn', tip: 'Gỡ giao đơn — bỏ người phụ trách đã gán',
+      key: 'unassign', icon: RotateCcw, label: 'Gỡ giao đơn', admin: true, tip: 'Gỡ giao đơn — bỏ người phụ trách đã gán',
       className: 'border-slate-300 text-slate-500', busy: unassigning,
       onClick: () => doUndo((id, opts) => unassignGDO(id, opts)),
     })

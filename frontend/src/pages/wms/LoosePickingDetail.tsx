@@ -692,7 +692,7 @@ export default function LoosePickingDetail() {
     })
   if (hasScanEntries)
     actionItems.push({
-      key: 'expand', icon: ChevronDown, label: hasAnyExpanded ? 'Thu gọn' : 'Xem pallet',
+      key: 'expand', icon: ChevronDown, label: hasAnyExpanded ? 'Thu gọn' : 'Xem pallet', ops: true,
       tip: hasAnyExpanded ? 'Thu gọn danh sách pallet đã quét' : 'Mở danh sách pallet đã quét của mọi mã hàng',
       className: `text-slate-500 ${hasAnyExpanded ? '[&_svg]:rotate-180' : ''}`,
       onClick: toggleExpandAll,

@@ -10,7 +10,7 @@ import { Switch } from '@/components/ui/switch'
 import { StatusBadge } from '@/components/shared/StatusBadge'
 import { useConfirmDialog } from '@/components/shared/ConfirmDialog'
 import { ProcessFormEditor } from './ProcessFormEditor'
-import { ProcessLogBody } from './ProcessLogSheet'
+import { ProcessLogBody, CellPrompt, type CellReq } from './ProcessLogSheet'
 import { blockCellCount, blockKeys, blocksError, slugKey, type FormBlock } from '@/config/processForms'
 import { useProcessForms, useSaveProcessForm, useSemiFinishedSearch, SEMI_FINISHED_PLACEHOLDER, type ProcessFormDef } from '@/api/productionHooks'
 import { useMaterialsByIds } from '@/api/hooks'
@@ -69,6 +69,13 @@ export function ProcessFormSettings({ canConfigure }: { canConfigure: boolean })
   const [view, setView] = useState<'edit' | 'preview'>('edit')
   const [err, setErr] = useState('')
   const [preview, setPreview] = useState<Record<string, string>>({})
+  // xem thử giống hệt phiếu thật (18/11): bấm ô giờ trống ⇒ giờ hiện tại, bấm ô khác ⇒ khung nhập — không lưu gì
+  const [pcell, setPcell] = useState<CellReq | null>(null)
+  const tapPreview = (c: CellReq) => {
+    if (c.kind === 'time' && !(preview[c.key] ?? '').trim())
+      setPreview(s => ({ ...s, [c.key]: new Date().toLocaleTimeString('en-GB', { timeZone: 'Asia/Ho_Chi_Minh', hour: '2-digit', minute: '2-digit' }) }))
+    else setPcell(c)
+  }
 
   const server = forms.find(f => f.code === pick) ?? null
   const stamp = server ? `${server.code}|${server.updated_at}` : ''
@@ -172,8 +179,10 @@ export function ProcessFormSettings({ canConfigure }: { canConfigure: boolean })
           {view === 'edit'
             ? <ProcessFormEditor blocks={draft.blocks} onChange={b => setDraft({ ...draft, blocks: b })} lockedKeys={lockedKeys} disabled={!canConfigure} />
             : <div className="space-y-3 rounded-lg border border-dashed border-slate-300 bg-white p-2.5">
-                <p className="text-[11px] text-slate-500">Xem thử — gõ thử được, không lưu gì.</p>
-                <ProcessLogBody blocks={draft.blocks} values={preview} onValue={(k, val) => setPreview(s => ({ ...s, [k]: val }))} editable />
+                <p className="text-[11px] text-slate-500">Xem thử — bấm thử từng ô như ở phiếu thật, không lưu gì.</p>
+                <ProcessLogBody blocks={draft.blocks} values={preview} onTap={tapPreview} editable />
+                <CellPrompt cell={pcell} value={pcell ? (preview[pcell.key] ?? '') : ''} onClose={() => setPcell(null)}
+                  onSave={v => { const k = pcell?.key; if (k) setPreview(s => { const n = { ...s }; if (v) n[k] = v; else delete n[k]; return n }); setPcell(null) }} />
               </div>}
         </>)}
       </div>

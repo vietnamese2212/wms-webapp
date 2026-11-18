@@ -184,6 +184,12 @@ Nút thao tác nhanh trong cell (vd QR "Thêm pallet", icon nhỏ): **icon `h-3.
 - Nút quét QR = chủ lực mobile → primary, KHÔNG BAO GIỜ mobileHidden. Hàng chứa cụm phải `flex-wrap` (cụm xuống dòng thay vì bị cắt trên màn hẹp).
 - **1 cỡ control toolbar**: mobile `h-9` / desktop `h-7` — SearchInput, nút Lọc (`FilterSheetButton`), `SavedViews`, density đã theo; component toolbar MỚI phải dùng cặp `h-9 sm:h-7`.
 - Chip/nút inline trong cell bảng vẫn theo mục 17b (KHÔNG đưa vào ActionCluster); nút footer form/dialog (Lưu/Hủy) không thuộc chuẩn này.
+- **VẬN HÀNH ngoài ⋮, QUẢN TRỊ trong ⋮ (user chốt 18/11: "cái nào liên quan tới vận hành đưa ra ngoài theo tuần tự công việc, cái nào liên quan tới quản trị (sửa, đóng, duplicate…) thì để trong 3 chấm — áp nguyên tắc này cho các tình huống tương tự"):** trang chi tiết của một việc có trình tự (mẻ, chuyến xuất, phiếu nhập, lệnh fill, nhặt lẻ…) gắn cờ cho TỪNG nút:
+  - `ops: true` — bước công việc + nút xem phục vụ việc đang làm (Duyệt, Quét, Bắt đầu phiếu, In tem, Nạp, Xác nhận nhanh, Xem pallet / Xem tem đã cấp): luôn NGOÀI ⋮ ở mọi cỡ màn, có CHỮ; đẩy vào mảng ĐÚNG thứ tự công việc (cụm điện thoại tự xuống dòng, không tràn). Nút chính (`primary`, nền màu) = bước đang tới.
+  - `admin: true` — sửa · đóng / chốt · nhân bản · huỷ · gỡ / bỏ duyệt / bỏ hoàn thành · bỏ qua cổng / cân · tạm dừng: luôn TRONG ⋮ ở mọi cỡ màn (máy tính cũng có ⋮ cuối cụm).
+  - không gắn = như cũ (máy tính nút icon + tooltip, điện thoại vào ⋮) — dành cho công cụ phụ (In phiếu, Xếp xe 3D, Quy định date, Xuất Excel).
+  - Nút vận hành đang bị chặn bởi bước trước thì KHÔNG để ngoài dạng khoá (điện thoại không đọc được lý do) — bỏ `ops` để nó vào ⋮ kèm `tip` lý do (mẫu "Nạp BTP vào bồn" ở `ProductionBatchDetail`). Nút mở / thu cả bảng nên đặt ở thanh tiêu đề của khối bảng đó (mẫu "Xem tem đã cấp" ở thanh NGUYÊN LIỆU CỦA MẺ).
+  - Đã áp: trang mẻ (đủ), Xuất kho chi tiết, Nhặt lẻ chi tiết (Xem pallet), Nhập kho chi tiết (Hủy phiếu · Gỡ hoàn thành), Fill hàng (Chốt ngày · Hủy lệnh). Trang mới / trang đang sửa phải phân loại như vậy.
 
 ## 18. Phân quyền + loading (bắt buộc mọi nút action)
 - Mọi nút gọi API write bọc `can(perms, 'module', 'action')` (mỗi action = 1 permission riêng, không gộp `manage`). `perms` từ `useAuthStore(s => s.user)`.

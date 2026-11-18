@@ -632,9 +632,9 @@ try {
       && num(boardX2.find(r => r.material_id === M_RM)?.required) === 10 && num(boardX2.find(r => r.material_id === M_EA)?.required) === 4,
     `http=${bx.s}/${upMat.s}/${upBack.s} board=${boardX.length} → ${JSON.stringify(boardX2.map(r => [r.material_id, r.required]))}`)
   if (BX?.id) await api(`/wms/production/batches/${BX.id}/cancel`, 'POST', {})
-  await api(`/wms/production/batches/${BW.id}/close`, 'POST', {})
-  const rqClosed = await api(`/wms/production/batches/${BW.id}/requirements`, 'PUT', { items: [] })
-  check('10h. Mẻ đã đóng ⇒ sửa yêu cầu 409 MES_BATCH_NOT_OPEN', rqClosed.s === 409 && rqClosed.j?.error?.code === 'MES_BATCH_NOT_OPEN', `http=${rqClosed.s} ${rqClosed.j?.error?.code}`)
+  // (18/11) không còn "đóng mẻ" ⇒ mẻ KHÔNG MỞ duy nhất là mẻ đã huỷ (BX vừa huỷ ở trên)
+  const rqClosed = await api(`/wms/production/batches/${BX?.id ?? 'x'}/requirements`, 'PUT', { items: [] })
+  check('10h. Mẻ đã huỷ ⇒ sửa yêu cầu 409 MES_BATCH_NOT_OPEN', rqClosed.s === 409 && rqClosed.j?.error?.code === 'MES_BATCH_NOT_OPEN', `http=${rqClosed.s} ${rqClosed.j?.error?.code}`)
 
   // ── [11] BÁO CÁO SỬ DỤNG NVL THEO CA ──
   const shBad = await api('/wms/production/shift-reports', 'POST', { warehouse_id: WP, report_date: todayVN, shift: 'Ca 1' })
@@ -733,7 +733,7 @@ try {
   // ── [13x] PHIẾU BỔ SUNG theo mã BTP (17/11): JELLY chỉ có ở mẻ được chọn ──
   const jOpt = pfJelly?.optional === true
   const plJ0 = await api(`/wms/production/batches/${B1.id}/process-log/JELLY`, 'PUT', { data: { nuoc_bu: '1' } })
-  const stJ0 = await api(`/wms/production/batches/${B1.id}/process-log/JELLY/stamp`, 'POST', { key: 'abc' })
+  const stJ0 = await api(`/wms/production/batches/${B1.id}/process-log/JELLY/cell`, 'POST', { key: 'abc' })
   const fBad = await api(`/wms/production/batches/${B1.id}/forms`, 'PUT', { forms: ['MIX'] })
   const fAdd = await api(`/wms/production/batches/${B1.id}/forms`, 'PUT', { forms: ['JELLY'] })
   const b1Forms = (await api(`/wms/production/batches/${B1.id}`)).j?.data?.extra_forms
@@ -777,10 +777,23 @@ try {
   await api('/wms/production/process-forms/QA63X', 'PUT', { title: 'QA63 phiếu bổ sung', short: 'QA63X', is_active: false, blocks: [{ type: 'fields', title: 'A', fields: [{ key: 'x', label: 'X', kind: 'num' }] }] })
 
   check('9a. Huỷ mẻ còn dòng rút ⇒ 409 BATCH_HAS_CONSUMPTION', cx.s === 409 && cx.j?.error?.code === 'BATCH_HAS_CONSUMPTION', `http=${cx.s}`)
-  const clB = await api(`/wms/production/batches/${B1.id}/close`, 'POST', {})
-  const consClosed = await api(`/wms/production/batches/${B1.id}/consume-scan`, 'POST', { entry_id: 'QA63_E2', qty: 1, qty_semantics: 'base' })
-  const reB = await api(`/wms/production/batches/${B1.id}/reopen`, 'POST', {})
-  check('9b. Đóng mẻ ⇒ không rút được (409 MES_BATCH_NOT_OPEN); mở lại được', clB.s === 200 && consClosed.s === 409 && consClosed.j?.error?.code === 'MES_BATCH_NOT_OPEN' && reB.s === 200, `http=${clB.s}/${consClosed.s}/${reB.s}`)
+  // (18/11) bỏ "Đóng mẻ" (user: không phải bước cần để đổ bồn) — TÌNH TRẠNG mẻ do MỘT hàm DB mes_batch_stage: dòng danh sách · ô tổng ·
+  // lọc · trang mẻ (gate.stage). Mẻ đã nạp bồn ⇒ filled / released / rejected theo kết luận QA bồn.
+  const clGone = await api(`/wms/production/batches/${B1.id}/close`, 'POST', {})
+  const lsSt = await api(`/wms/production/batches?warehouse_id=${WC}&pageSize=200`)
+  const rB1 = (lsSt.j?.data?.rows ?? []).find(r => r.id === B1.id)
+  const wantSt = rB1?.qa_status === 'REJECTED' ? 'rejected' : rB1?.qa_status === 'RELEASED' ? 'released' : 'filled'
+  const lsF = await api(`/wms/production/batches?warehouse_id=${WC}&pageSize=200&stage=${wantSt}`)
+  const lsW = await api(`/wms/production/batches?warehouse_id=${WC}&pageSize=200&stage=wait_lead`)
+  const lsBad = await api(`/wms/production/batches?warehouse_id=${WC}&stage=CLOSED`)
+  const sumSt = lsSt.j?.data?.summary ?? {}
+  const sumAll = ['new', 'wait_lead', 'wait_qa', 'working', 'filled', 'released', 'rejected', 'cancelled'].reduce((s, k) => s + num(sumSt[k]), 0)
+  const gB1 = (await api(`/wms/production/batches/${B1.id}`)).j?.data?.gate?.stage
+  check('9b. Bỏ "Đóng mẻ" (đường đóng mẻ 404); mẻ đã nạp ⇒ tình trạng theo QA bồn, dòng danh sách = trang mẻ; lọc tình trạng đúng; ô tổng cộng đủ',
+    clGone.s === 404 && rB1?.stage === wantSt && gB1 === wantSt && (lsF.j?.data?.rows ?? []).some(r => r.id === B1.id)
+      && (lsF.j?.data?.rows ?? []).every(r => r.stage === wantSt) && !(lsW.j?.data?.rows ?? []).some(r => r.id === B1.id)
+      && lsBad.s === 400 && sumAll === num(sumSt.total) && num(sumSt.total) > 0,
+    `close=${clGone.s} stage=${rB1?.stage}/${gB1} want=${wantSt} bad=${lsBad.s} sum=${JSON.stringify(sumSt)}`)
   const lockEdit = await api(`/wms/production/batches/${B1.id}`, 'PATCH', { material_id: M_BTP2 })
   const lockTank = await api(`/wms/production/batches/${B1.id}`, 'PATCH', { tank_id: T2.id })
   check('9c. Đổi mã BTP khi đã rút NVL ⇒ 409 BATCH_LOCKED; đổi bồn khi đã nạp ⇒ 409 MES_FILLED', lockEdit.s === 409 && lockEdit.j?.error?.code === 'BATCH_LOCKED' && lockTank.s === 409 && lockTank.j?.error?.code === 'MES_FILLED', `http=${lockEdit.s}/${lockTank.s} ${lockTank.j?.error?.code}`)
@@ -860,9 +873,10 @@ try {
     check('16j. Đã quét đủ 3/3 nhưng phiếu còn ô bắt buộc ⇒ 409 MES_NOT_READY; cổng của mẻ liệt kê đúng ô thiếu',
       plReq.s < 300 && num(gate1?.scanned) === 3 && (gate1?.missing ?? []).length === 1 && gate1.missing[0].key === 'qa63_start' && fNoLog.s === 409 && fNoLog.j?.error?.code === 'MES_NOT_READY' && /bắt buộc/.test(fNoLog.j?.error?.message ?? ''),
       `http=${plReq.s}/${fNoLog.s} gate=${JSON.stringify(gate1 ?? null)}`)
-    const st1 = await api(`/wms/production/batches/${FB.id}/process-log/MIX/stamp`, 'POST', { key: 'qa63_start' })
-    const st2 = await api(`/wms/production/batches/${FB.id}/process-log/MIX/stamp`, 'POST', { key: 'qa63_start' })
-    const stBad = await api(`/wms/production/batches/${FB.id}/process-log/MIX/stamp`, 'POST', { key: 'qa63_temp' })
+    // (18/11) phiếu ghi TỪNG Ô: bấm ô giờ (không gửi giá trị) = giờ máy chủ + người bấm
+    const st1 = await api(`/wms/production/batches/${FB.id}/process-log/MIX/cell`, 'POST', { key: 'qa63_start' })
+    const st2 = await api(`/wms/production/batches/${FB.id}/process-log/MIX/cell`, 'POST', { key: 'qa63_start' })
+    const stBad = await api(`/wms/production/batches/${FB.id}/process-log/MIX/cell`, 'POST', { key: 'qa63_temp' })
     const logRow = (await restAll('batch_process_log', `select=data,stamps&batch_id=eq.${FB.id}&form=eq.MIX`))[0]
     check('16k. Bấm mốc giờ ⇒ ghi HH:MM + người bấm; bấm lần 2 ⇒ 409 MES_ALREADY; ô không phải mốc giờ ⇒ 422',
       st1.s === 200 && /^\d\d:\d\d$/.test(st1.j?.data?.value ?? '') && logRow?.data?.qa63_start === st1.j?.data?.value && !!logRow?.stamps?.qa63_start?.by && logRow?.data?.qa63_temp === '45'
@@ -871,6 +885,20 @@ try {
     const edit = await api(`/wms/production/batches/${FB.id}/process-log/MIX`, 'PUT', { data: { qa63_temp: '45', qa63_start: '07:30' } })
     const logRow2 = (await restAll('batch_process_log', `select=data,stamps&batch_id=eq.${FB.id}&form=eq.MIX`))[0]
     check('16l. Sửa giờ đã bấm tại phiếu ⇒ lưu giờ mới + giữ vết người sửa', edit.s === 200 && logRow2?.data?.qa63_start === '07:30' && !!logRow2?.stamps?.qa63_start?.edited_by && !!logRow2?.stamps?.qa63_start?.by, JSON.stringify(logRow2 ?? null))
+    // ghi MỘT ô có giá trị (khung nhập): sửa giờ đúng dạng · giờ sai dạng 422 · ô lạ 422 · xoá ô · ô số; cấu trúc lưu riêng không đè giá trị
+    const cTime = await api(`/wms/production/batches/${FB.id}/process-log/MIX/cell`, 'POST', { key: 'qa63_start', value: '07:45' })
+    const cBadT = await api(`/wms/production/batches/${FB.id}/process-log/MIX/cell`, 'POST', { key: 'qa63_start', value: '7h' })
+    const cKey = await api(`/wms/production/batches/${FB.id}/process-log/MIX/cell`, 'POST', { key: 'khong_co_o', value: '1' })
+    const cNum = await api(`/wms/production/batches/${FB.id}/process-log/MIX/cell`, 'POST', { key: 'qa63_temp', value: '52,5' })
+    const cDel = await api(`/wms/production/batches/${FB.id}/process-log/MIX/cell`, 'POST', { key: 'qa63_temp', value: '' })
+    const cStart = await api(`/wms/production/batches/${FB.id}/process-log/MIX/start`, 'POST', {})
+    const onlyBlocks = await api(`/wms/production/batches/${FB.id}/process-log/MIX`, 'PUT', { blocks })
+    const logRow3 = (await restAll('batch_process_log', `select=data,stamps,blocks&batch_id=eq.${FB.id}&form=eq.MIX`))[0]
+    check('16l2. Ghi từng ô: sửa giờ ⇒ giờ mới + vết người sửa; giờ sai dạng / ô lạ ⇒ 422; ô số ghi rồi xoá; Bắt đầu lần 2 không ghi đè; lưu cấu trúc không gửi giá trị ⇒ giữ nguyên giá trị',
+      cTime.s === 200 && cBadT.s === 422 && cBadT.j?.error?.code === 'MES_TIME' && cKey.s === 422 && cKey.j?.error?.code === 'MES_KEY'
+        && cNum.s === 200 && cNum.j?.data?.value === '52,5' && cDel.s === 200 && cStart.s === 200 && cStart.j?.data?.changed === false
+        && onlyBlocks.s === 200 && logRow3?.data?.qa63_start === '07:45' && !('qa63_temp' in (logRow3?.data ?? {})) && !!logRow3?.stamps?.qa63_start?.edited_by,
+      `http=${cTime.s}/${cBadT.s}/${cKey.s}/${cNum.s}/${cDel.s}/${cStart.s}/${onlyBlocks.s} ${JSON.stringify(logRow3?.data ?? null)}`)
     // thiếu NVL ⇒ chưa nạp: huỷ dòng cấp rồi cấp lại
     const consId = (await restAll('batch_consumption', `select=id&batch_id=eq.${FB.id}&reversed_at=is.null`))[0]?.id
     await api(`/wms/production/consumption/${consId}/reverse`, 'POST', { reason: 'QA63 thử thiếu NVL' })

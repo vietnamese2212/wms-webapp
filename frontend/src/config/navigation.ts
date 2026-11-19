@@ -7,7 +7,7 @@ import {
   Settings2, BarChart2, ClipboardList, UserCog, Scissors,
   ClipboardCheck, ShieldCheck, Tag, QrCode, CalendarRange, CalendarCheck, Network, KeyRound, Scale, Activity, Boxes, Database, Forklift,
   ArrowDownToLine, BellRing, NotebookPen, Move, Wallet, PackageSearch, ListChecks, CalendarClock, Store, Banknote, Waypoints, Undo2,
-  Factory, Container,
+  Factory, Container, LifeBuoy,
 } from 'lucide-react'
 // Icon của MỤC MENU quét (Quét loạt, Lịch sử quét) — dùng chung symbol quét toàn app.
 // `QrCode` phía trên GIỮ NGUYÊN vì mục "In tem pallet" nói về TEM QR, không phải hành động quét.
@@ -158,6 +158,14 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [
       { to: '/masterdata/users',            icon: UserCog,  label: 'Quản lý người dùng', module: 'user_admin' },
       { to: '/masterdata/integration-keys', icon: KeyRound, label: 'Kết nối ERP',        adminOnly: true },
+    ],
+  },
+  // MODULE HỖ TRỢ (19/11 — user: "tạo module hỗ trợ, hướng dẫn MES chỉ là 1 hạng mục"): không gate module — ai cũng vào;
+  // từng bài hướng dẫn tự ẩn khi thiếu quyền module của bài (help/registry.ts).
+  {
+    label: 'Hỗ trợ',
+    items: [
+      { to: '/help', icon: LifeBuoy, label: 'Hướng dẫn sử dụng' },
     ],
   },
 ]

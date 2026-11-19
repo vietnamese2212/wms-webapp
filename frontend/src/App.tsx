@@ -10,7 +10,7 @@ import { Pages } from '@/routes/lazyPages'
 import Login from '@/pages/Login'
 
 const {
-  Dashboard, Inventory, Inbound, InboundDetail, InboundReturns, ProductionBatches, ProductionBatchDetail, ProductionTanks, ProductionSettings, ProductionRecipes, ProductionUsageReport,
+  Dashboard, Inventory, Inbound, InboundDetail, InboundReturns, ProductionBatches, ProductionBatchDetail, ProductionTanks, ProductionSettings, ProductionRecipes, ProductionUsageReport, HelpCenter, HelpGuide,
   Outbound, OutboundDetail, OutboundItemDetail, OutboundScanLog, OutboundPrepare, WeighTickets, ControlTower, Alerts,
   Slotting, SlottingPlanDetail, DirectedWork, DateRules, WarehouseCosts, WarehouseCostVoucher, LotTrace, Forklift, Packing, FillPicking, FillOrderDetail,
   LoosePicking, LoosePickingDetail, LoosePickingItemDetail,
@@ -224,6 +224,9 @@ export default function App() {
         />
 
         <Route path="/settings" element={<Settings />} />
+        {/* Hỗ trợ (19/11): ai đăng nhập cũng vào; từng bài tự ẩn khi thiếu quyền module của bài (help/registry.ts) */}
+        <Route path="/help" element={<HelpCenter />} />
+        <Route path="/help/:id" element={<HelpGuide />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>

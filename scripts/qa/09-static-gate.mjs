@@ -1353,7 +1353,7 @@ const RULES = [
   // (trang test). Thêm route KHÔNG gate mới → tăng số → CI đỏ, buộc khai quyền đủ 5 việc.
   {
     key: 'route_without_permission',
-    label: 'route trang trong App.tsx KHÔNG bọc PermissionRoute — view mới phải được phân quyền (3 route mở là chủ đích)',
+    label: 'route trang trong App.tsx KHÔNG bọc PermissionRoute — view mới phải được phân quyền (5 route mở là chủ đích: Thông báo · Quét loạt thử · Cài đặt tài khoản · Hỗ trợ /help + /help/:id — 19/11, từng bài tự lọc theo quyền module ở help/registry.ts)',
     count: (s) => countMatches(['frontend/src/App.tsx'], ['.tsx'],
       l => /<Route path=/.test(l) && /element=\{/.test(l)
         && !/(PermissionRoute|ExternalRoute|DashboardRoute|<Login|Navigate)/.test(l), s),

@@ -16,6 +16,7 @@
 - [`wms_settings`](wms_settings.md) — Cài đặt WMS (chữ nhà máy trong mã lô = "Mã NMSX" của kho chế biến, trống thì của kho cha; kho chế biến = kho phụ nội bộ; cột `production_qa_gate` nằm ở Kho / Loại kho nhưng CỬA GHI là Cài đặt MES — cửa Loại kho của Cài đặt WMS không được đè)
 - [`pallet_print`](pallet_print.md) — In tem pallet (tem pallet CỦA MẺ dùng chung khổ tem 1/4 A4 + CSS in `PALLET_PRINT_CSS` + `QRImg` của `components/shared/palletLabel.tsx`; QR tiền tố `MEB;` để không lẫn tem pallet nhập kho)
 - [`materials`](materials.md) — Mã hàng (`tank_hold_hours` hạn lưu bồn — sửa ở Cài đặt MES, form Mã hàng chỉ hiển thị; `batch_prefix` làm tiền tố mã lô gợi ý)
+- [`help`](help.md) — Hỗ trợ (bài hướng dẫn MES `frontend/src/help/guides/mes.ts` + ảnh `public/guide/mes/` — đổi giao diện / tên nút MES thì chụp lại ảnh + sửa chữ bài)
 <!-- giao-thoa:end -->
 
 ## LUỒNG LÀM VIỆC CỦA MẺ (17/11 đêm — user chốt 10 điểm; migration `20261117b_mes_workflow`)

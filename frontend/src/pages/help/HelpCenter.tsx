@@ -65,12 +65,12 @@ export default function HelpCenter() {
                         {isOpen && (
                           <div className="pl-[4.25rem] pr-3 pb-2.5 -mt-0.5">
                             <p className="text-xs text-slate-500 mb-1.5">{g.summary}</p>
-                            <ul className="space-y-0.5">
+                            <ul>
                               {g.sections.map((s, j) => (
                                 <li key={s.id}>
-                                  <Link to={`/help/${g.id}#${s.id}`} className="inline-flex items-baseline gap-1.5 text-[13px] text-slate-700 hover:text-sky-700">
-                                    <span className="text-[11px] text-slate-400 tabular-nums">{i + 1}.{j + 1}</span>{s.title}
-                                    <span className="text-[11px] text-slate-400">· {s.steps.length} bước</span>
+                                  <Link to={`/help/${g.id}#${s.id}`} className="block py-1 sm:py-0.5 text-[13px] text-slate-700 hover:text-sky-700">
+                                    <span className="mr-1.5 text-[11px] text-slate-400 tabular-nums">{i + 1}.{j + 1}</span>{s.title}
+                                    <span className="ml-1.5 text-[11px] text-slate-400 whitespace-nowrap">· {s.steps.length} bước</span>
                                   </Link>
                                 </li>
                               ))}

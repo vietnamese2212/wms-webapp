@@ -62,7 +62,7 @@ export const IN_TEM_GUIDE: Guide = {
             'Bấm **In (4)** ở góc phải trên. Hộp in của trình duyệt mở ra: chọn khổ **A4**, lề **Không (None)**, tỷ lệ **100%**.',
             'Dán mỗi tem lên đúng pallet có số pallet đó.',
           ],
-          images: [d('05-xem-truoc', 'Xem trước 4 tem, nút In (4)')],
+          images: [d('05-xem-truoc', 'Xem trước 4 tem, nút In (4)'), d('11-da-in-chua', 'Hộp in đóng: Tem đã in ra giấy chưa? — Đã in / Chưa in')],
           note: 'Bấm In là app ghi Lịch sử in. Hộp in đóng lại, app hỏi "Tem đã in ra giấy chưa?" — đã bấm Huỷ hoặc máy in không ra tem thì chọn "Chưa in" để lần này không tính vào lịch sử.',
         },
         {
@@ -83,7 +83,7 @@ export const IN_TEM_GUIDE: Guide = {
             'Pallet đã từng in hiện nhãn "đã in N" — in lại là có hai tem cùng mã, nhớ bỏ tem cũ.',
             'Bấm **In lại (N)**.',
           ],
-          images: [d('09-in-lai', 'In lại tem pallet 100326_210000262_23_TTC_12')],
+          images: [d('09-in-lai', 'In lại tem một pallet Đường trắng')],
         },
         {
           title: 'Lịch sử in',

@@ -153,7 +153,7 @@ export const MA_HANG_GUIDE: Guide = {
             '- Mã **chưa có** ⇒ thêm mới: phải đủ ô như form — Tên hàng, Loại hàng, Base Unit, Thùng/Pallet, và HSD / Pallet/EA nếu loại hàng bắt.',
             '- Mã **đã có** ⇒ chỉ cập nhật ô có giá trị; ô để trống giữ nguyên.',
           ],
-          images: [d('16-nut-upload', 'Nút Upload Excel'), d('17-upload', 'Hộp Upload Mã hàng từ Excel, nút Tải mẫu')],
+          images: [d('16-nut-upload', 'Nút Upload Excel'), d('17-upload', 'Hộp Upload Mã hàng từ Excel, nút Tải mẫu'), d('17b-da-luu', 'Lưu file mẫu xong: app báo Đã lưu mau_ma_hang.xlsx')],
         },
         {
           title: 'Chọn file — app kiểm trước, chưa ghi gì',

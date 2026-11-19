@@ -49,7 +49,7 @@ export const TRUY_XUAT_GUIDE: Guide = {
             'Mỗi mẻ đã dùng tem này hiện một thẻ: mã lô mẻ (bấm để mở mẻ), BTP, ngày SX, QA của mẻ; bảng **Nguyên liệu vào mẻ** (dòng tô vàng = tem đang tra) và **Đã đóng gói** (các tem thành phẩm đi ra từ mẻ).',
             'Phải nhập **đúng mã tem** (không phải số lô của NCC).',
           ],
-          images: [d('03-nvl-vao-me', 'Tem 010626_210000301_2_W_1 đã vào mẻ B260001BD62')],
+          images: [d('03-nvl-vao-me', 'Tem dầu cọ đã vào mẻ B260001BD62')],
         },
         {
           title: 'Từ mã lô mẻ / tem thành phẩm',

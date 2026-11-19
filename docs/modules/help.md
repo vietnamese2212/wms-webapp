@@ -38,9 +38,9 @@
 
 | Bài | Module | Ảnh | Ghi chú |
 |---|---|---|---|
-| `ma-hang` — Mã hàng: tìm, thêm, sửa, nạp Excel | `materials` | `public/guide/ma-hang/` (18 ảnh) | mã mẫu 210000416 đã xoá |
+| `ma-hang` — Mã hàng: tìm, thêm, sửa, nạp Excel | `materials` | `public/guide/ma-hang/` (19 ảnh) | mã mẫu 210000416 đã xoá |
 | `nhap-kho` — Nhập kho: nhận hàng vào kho chế biến | `inbound` | `public/guide/nhap-kho/` (16 ảnh) | phiếu TF mẫu CBBV_N_191126_01 đã xoá; kho chế biến chỉ nhận qua chuyển kho |
-| `in-tem` — In tem pallet nguyên liệu, bao bì | `pallet_print` | `public/guide/in-tem/` (10 ảnh) | 4 tem mẫu + lịch sử in đã xoá |
+| `in-tem` — In tem pallet nguyên liệu, bao bì | `pallet_print` | `public/guide/in-tem/` (11 ảnh) | 4 tem mẫu + lịch sử in đã xoá |
 | `ton-kho` — Tồn kho | `inventory` | `public/guide/ton-kho/` (21 ảnh) | |
 | `don-tach` — Dồn / Tách pallet | `pallet_ops` | `public/guide/don-tach/` (7 ảnh) | |
 | `kiem-ke` — Kiểm kê | `stocktake` | `public/guide/kiem-ke/` (14 ảnh) | |

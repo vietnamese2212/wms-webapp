@@ -1,5 +1,6 @@
 // BÀI HƯỚNG DẪN: Nhập kho — đưa hàng vào kho chế biến (tự tạo phiếu hoặc nhận chuyển kho): chọn vị trí, quét tem, hoàn thành (19/11).
-// 19/11 tối: kho phụ được tự tạo phiếu nhập (user chốt "cứ cho nhập đi thôi") ⇒ thêm mục "Tạo phiếu nhập".
+// 19/11 tối: kho phụ được tự tạo phiếu nhập (user chốt "cứ cho nhập đi thôi") ⇒ thêm mục "Tạo phiếu nhập" (ảnh 17–18: phiếu SX mẫu
+// CBBV_N_191126_01 của tài khoản mẫu, đã xoá cùng pallet quét thử).
 // Ảnh chụp trên Preview bằng tài khoản chức danh "Phó phòng QA", kho Chế biến Ba Vì; phiếu mẫu CBBV_N_191126_01 (Đường trắng,
 // 3 tem L2611) đã xoá sau khi chụp. Ảnh quét = camera giả nhìn vào tem thật in từ app (app đọc mã thật).
 // Ảnh ở public/guide/nhap-kho/. Đổi giao diện Nhập kho ⇒ chụp lại + sửa chữ ở đây.
@@ -71,6 +72,7 @@ export const NHAP_KHO_GUIDE: Guide = {
             '- **+ Thêm NCC (tùy chọn)**: chọn NCC của lô. Bỏ trống thì khi quét app đọc mã NCC trên tem.',
             'Bấm **Tạo phiếu** ⇒ phiếu mới hiện ở danh sách, nhãn **SX**. Mở phiếu, quét tem từng pallet như mục "Nhận hàng" bên dưới, xong bấm **Hoàn thành**.',
           ],
+          images: [d('17-tao-phieu', 'Nhập SX: Đường trắng, ô CBBV_X1_TEST1, Ca 1, NCC Thành Thành Công'), d('18-phieu-sx', 'Phiếu mới nhãn SX trong danh sách')],
         },
       ],
     },

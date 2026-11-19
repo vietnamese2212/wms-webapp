@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { BarChart3, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -16,6 +16,9 @@ export default function Login() {
   const [error,    setError]    = useState('')
   const { login } = useAuthStore()
   const navigate  = useNavigate()
+  // 19/11: bị đăng xuất vì mật khẩu tài khoản vừa đổi (client.ts gắn ?reason=) ⇒ nói rõ, không để người dùng tưởng app lỗi
+  const [params] = useSearchParams()
+  const pwdChanged = params.get('reason') === 'password_changed'
   // KHÔNG có nút "Hiển thị mật khẩu" (user chốt 07/09). Lịch sử: trên PC dùng chung ở kho, Edge tự điền mật
   // khẩu người đăng nhập trước và con mắt của app làm lộ nó không cần PIN. Đã thử hai lớp gác (chỉ lộ ký tự
   // người đang gõ; tắt con mắt riêng của Edge bằng CSS) — người dùng thật vẫn thấy mật khẩu qua giao diện
@@ -61,6 +64,11 @@ export default function Login() {
           </CardHeader>
           <CardContent>
             <form onSubmit={handleSubmit} className="space-y-4">
+              {pwdChanged && !error && (
+                <div data-testid="login-pwd-changed" className="rounded-md bg-amber-50 border border-amber-200 px-3 py-2 text-sm text-amber-800">
+                  Mật khẩu tài khoản đã được đổi — đăng nhập lại bằng mật khẩu mới.
+                </div>
+              )}
               <div className="space-y-2">
                 <Label htmlFor="email">Tên đăng nhập</Label>
                 <Input

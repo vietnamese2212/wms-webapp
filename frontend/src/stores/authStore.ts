@@ -13,6 +13,8 @@ interface AuthState {
   token: string | null
   realtimeToken: string | null   // vé Supabase Realtime (role authenticated) cho RLS đóng-hẳn
   login: (email: string, password: string) => Promise<void>
+  /** Nhận phiên server vừa phát (đăng nhập · tự đổi mật khẩu — 19/11: đổi mật khẩu làm phiên cũ hết hiệu lực, phiên đang dùng nhận token mới) */
+  applySession: (s: { token: string; user: User; realtime_token: string | null }) => void
   logout: () => void
   updateUser: (partial: Partial<User>) => void
   refreshUser: () => Promise<void>
@@ -28,7 +30,10 @@ export const useAuthStore = create<AuthState>()(
 
       login: async (email: string, password: string) => {
         const res = await apiClient.post('/auth/login', { email, password })
-        const { token, user, realtime_token } = res.data.data as { token: string; user: User; realtime_token: string | null }
+        useAuthStore.getState().applySession(res.data.data as { token: string; user: User; realtime_token: string | null })
+      },
+
+      applySession: ({ token, user, realtime_token }) => {
         set({ user, isAuthenticated: true, token, realtimeToken: realtime_token ?? null })
         setRealtimeAuth(realtime_token ?? null)
       },

@@ -1,9 +1,11 @@
 // 43 — CHÍNH SÁCH MẬT KHẨU + MỞ KHOÁ ĐĂNG NHẬP (03/09). Trước đó chỉ `length < 8` ở BE, `< 6` ở FE ⇒ "12345678" đặt được;
 // mở khoá tài khoản bị khoá phải xoá tay dòng auth_attempts trong DB. Nay: utils/passwordPolicy MỘT nguồn (admin đặt lẫn
 // người dùng tự đổi), route DELETE /masterdata/employees/:id/lock (quyền user_admin.unlock), list phân trang trả locked_until.
+//   [4] (19/11) ĐỔI MẬT KHẨU ⇒ PHIÊN CŨ HẾT HIỆU LỰC: token phát trước lần đổi bị /auth/me từ chối 401 PASSWORD_CHANGED (admin đặt lẫn
+//       tự đổi); tự đổi trả token mới cho phiên đang dùng; gõ sai mật khẩu hiện tại ⇒ 400 (401 làm FE đăng xuất).
 // Fixture: 1 tài khoản tạm (tag QAPWD), tự dọn.
 import { randomUUID } from 'crypto'
-import { login, api, check, finish, restAll, restWrite, BASE } from './lib.mjs'
+import { login, api, check, finish, restAll, restWrite, BASE, utcMs } from './lib.mjs'
 
 const TAG = 'QAPWD'
 const CODE = `${TAG}01`
@@ -30,8 +32,9 @@ const rawLogin = async (email, pw) => {
 const userApi = async (token, path, method, body) => {
   const r = await fetch(`${BASE}/api${path}`, { method, headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: body ? JSON.stringify(body) : undefined })
   let j = null; try { j = JSON.parse(await r.text()) } catch { /* */ }
-  return { s: r.status, msg: j?.error?.message ?? '' }
+  return { s: r.status, msg: j?.error?.message ?? '', code: j?.error?.code, data: j?.data ?? null }
 }
+const sleep = (ms) => new Promise(r => setTimeout(r, ms))
 
 await clean()
 await login()
@@ -83,5 +86,32 @@ try {
   const evs = await restAll('auth_login_events', `select=reason&email=eq.${EMAIL}&reason=like.UNLOCKED_BY*`)
   check('Nhật ký ghi vết ai mở khoá (UNLOCKED_BY:<id>)', evs.length === 1 && /^UNLOCKED_BY:.+/.test(evs[0].reason), evs.map(e => e.reason).join(','))
   check('Mở khoá id ma → 404 sạch', (await api(`/masterdata/employees/${randomUUID()}/lock`, 'DELETE')).s === 404)
+
+  // ── [4] Đổi mật khẩu ⇒ phiên cũ hết hiệu lực (19/11 — "đổi pass Hà Thị Thu Hương nhưng đăng nhập cũ vẫn được") ────────
+  // iat của JWT tính bằng giây ⇒ chờ > 1 giây giữa lúc đăng nhập và lúc đổi (token cùng giây với lần đổi được coi là phiên mới)
+  const tokOld = (await rawLogin(EMAIL, pw2)).token
+  const meBefore = await userApi(tokOld, '/auth/me', 'GET')
+  await sleep(1200)
+  const pw3 = 'Ad' + randomUUID().slice(0, 9) + '31'
+  const adminSet = await api(`/masterdata/employees/${eid}/set-password`, 'PATCH', { password: pw3 })
+  const meOld = await userApi(tokOld, '/auth/me', 'GET')
+  const tokNew = (await rawLogin(EMAIL, pw3)).token
+  const meNew = await userApi(tokNew, '/auth/me', 'GET')
+  check('Admin đặt mật khẩu mới ⇒ phiên mở TRƯỚC đó bị /auth/me từ chối 401 PASSWORD_CHANGED; đăng nhập mật khẩu mới ⇒ 200',
+    meBefore.s === 200 && adminSet.s === 200 && meOld.s === 401 && meOld.code === 'PASSWORD_CHANGED' && meNew.s === 200,
+    `me trước=${meBefore.s} đặt=${adminSet.s} me phiên cũ=${meOld.s} ${meOld.code ?? ''} me phiên mới=${meNew.s}`)
+  const wrongCur = await userApi(tokNew, '/auth/change-password', 'POST', { old_password: 'sai-' + randomUUID().slice(0, 6), new_password: 'Zz' + randomUUID().slice(0, 9) + '55' })
+  check('Tự đổi mà gõ sai mật khẩu hiện tại ⇒ 400 WRONG_PASSWORD (không 401 — 401 làm app đăng xuất người đang gõ)',
+    wrongCur.s === 400 && wrongCur.code === 'WRONG_PASSWORD', `http=${wrongCur.s} ${wrongCur.code ?? ''}`)
+  await sleep(1200)
+  const pw4 = 'Se' + randomUUID().slice(0, 9) + '42'
+  const selfCh = await userApi(tokNew, '/auth/change-password', 'POST', { old_password: pw3, new_password: pw4 })
+  const meSelfOld = await userApi(tokNew, '/auth/me', 'GET')
+  const meSelfNew = selfCh.data?.token ? await userApi(selfCh.data.token, '/auth/me', 'GET') : { s: 0 }
+  check('Tự đổi mật khẩu ⇒ trả token MỚI cho phiên đang dùng (me 200); token trước lần đổi ⇒ 401',
+    selfCh.s === 200 && !!selfCh.data?.token && meSelfNew.s === 200 && meSelfOld.s === 401,
+    `http=${selfCh.s} token=${!!selfCh.data?.token} me mới=${meSelfNew.s} me cũ=${meSelfOld.s}`)
+  const pca = (await restAll('Employee', `select=password_changed_at&id=eq.${eid}`))[0]?.password_changed_at
+  check('Mốc đổi mật khẩu do DB ghi (trigger) ở Employee.password_changed_at', !!pca && Date.now() - utcMs(pca) < 120_000, `password_changed_at=${pca}`)
 } finally { await clean() }
 finish('PASSWORD-POLICY')

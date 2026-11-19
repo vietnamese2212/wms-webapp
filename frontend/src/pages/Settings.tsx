@@ -17,6 +17,7 @@ import { toast } from '@/components/ui/use-toast'
 import { apiClient } from '@/api/client'
 import { usePushNotifications } from '@/hooks/usePushNotifications'
 import { passwordError, PASSWORD_HINT } from '@/utils/passwordPolicy'
+import type { User as UserT } from '@/types'
 
 type Theme = 'light' | 'dark' | 'system'
 
@@ -28,7 +29,7 @@ const themeOptions: { value: Theme; label: string; icon: React.ElementType }[] =
 
 export default function Settings() {
   const { theme, setTheme } = useUIStore()
-  const { user, updateUser } = useAuthStore()
+  const { user, updateUser, applySession } = useAuthStore()
 
   const [name, setName] = useState(user?.name ?? '')
   const [email, setEmail] = useState(user?.email ?? '')
@@ -48,7 +49,10 @@ export default function Settings() {
     if (newPwd !== confPwd) { setPwdError('Xác nhận mật khẩu không khớp'); return }
     setPwdSaving(true)
     try {
-      await apiClient.post('/auth/change-password', { old_password: oldPwd, new_password: newPwd })
+      const r = await apiClient.post('/auth/change-password', { old_password: oldPwd, new_password: newPwd })
+      // đổi mật khẩu làm mọi phiên cũ hết hiệu lực (19/11) — phiên đang dùng nhận token mới server vừa phát
+      const s = r.data?.data as { token?: string; user?: UserT; realtime_token?: string | null } | undefined
+      if (s?.token && s.user) applySession({ token: s.token, user: s.user, realtime_token: s.realtime_token ?? null })
       setOldPwd(''); setNewPwd(''); setConfPwd('')
       setPwdOk(true)
       toast({ title: 'Đổi mật khẩu thành công', variant: 'success' })

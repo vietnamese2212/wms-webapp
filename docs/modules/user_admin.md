@@ -26,3 +26,12 @@ view, create, edit, set_password, **unlock**=Mở khoá đăng nhập (tài kho�
 - Form Sửa chức danh (chỉ superadmin) đổi được Phòng ban: `PUT /masterdata/job-titles/:id` đọc `department_id` (trước 19/11 server bỏ qua trường này — trả 200 mà phòng ban giữ nguyên; lớp C5). Gửi trống ⇒ 400 "Phòng ban là bắt buộc"; phòng ban không có ⇒ 400.
 - Đổi phòng ban đi MỘT giao dịch `jobtitle_set_department(id, dept, actor)`: chức danh sang phòng mới + **nhân viên mang chức danh này đang ở phòng ban CŨ chuyển theo** (form Nhân viên lọc chức danh theo phòng ban — để họ ở lại thì ô Chức danh của họ không còn trong danh sách). Nhân viên ở phòng khác / chưa có phòng ban: giữ nguyên. Phản hồi trả `employees_moved`; nhật ký quản trị ghi `department_id` before→after + `employees_moved`. Form hiện dòng nhắc khi đổi phòng ban.
 - Lưới: gói 49 [77b][77c].
+
+## Đổi mật khẩu ⇒ phiên cũ hết hiệu lực (19/11)
+
+- User: "đổi pass Hà Thị Thu Hương nhưng mà đăng nhập cũ vẫn được". Gốc: token JWT không trạng thái và `/auth/me` cấp token mới cho mọi token còn hạn ⇒ phiên mở trước lần đổi sống mãi (lớp C122).
+- `Employee.password_changed_at` do trigger `trg_employee_password_changed` đặt khi cột `password` đổi giá trị (migration `20261119c`) ⇒ admin đặt mật khẩu · người dùng tự đổi · mọi cửa sau này cùng một luật.
+- `/auth/me` từ chối token có `iat` (giây) trước mốc đó: 401 `PASSWORD_CHANGED` ⇒ FE đưa về `/login?reason=password_changed`, trang đăng nhập hiện "Mật khẩu tài khoản đã được đổi — đăng nhập lại bằng mật khẩu mới". Máy đang mở bị đăng xuất ở lần làm mới kế tiếp (Shell gọi `/me` lúc tải trang và mỗi 5 phút) — cùng nhịp với đổi quyền / vô hiệu hoá tài khoản. Các API khác vẫn chỉ kiểm chữ ký token (không thêm một lượt đọc DB mỗi request); token tự hết hạn sau 24 giờ.
+- Tự đổi mật khẩu (`POST /auth/change-password`) trả kèm token mới ⇒ phiên đang dùng không bị đăng xuất (`authStore.applySession`). Gõ sai mật khẩu hiện tại ⇒ **400 `WRONG_PASSWORD`** (trước đây 401 làm app đăng xuất người đang gõ). Lỗi ghi mật khẩu không còn bị bỏ qua.
+- Phát phiên (đăng nhập · `/me` · tự đổi) qua MỘT hàm `issueSession` ở `authController` (trước đây chép hai bản).
+- Lưới: test `backend/tests/unit/sessionAge.test.ts` · gói 43 mục [4].

@@ -12,6 +12,7 @@ export interface JwtPayload {
   module_permissions: Record<string, string[]>
   ncc_id:             string | null
   is_superadmin?:     boolean   // NGUỒN = cột Employee.is_superadmin (migration 20260813f), authController nhét lúc phát token
+  iat?:               number    // giây — thư viện jwt tự gắn lúc ký; /auth/me so với Employee.password_changed_at (19/11)
 }
 
 // Bypass phân quyền đọc cờ is_superadmin trong token — KHÔNG so tên (audit hardcode 13/08:

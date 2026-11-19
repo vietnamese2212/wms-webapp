@@ -6,6 +6,7 @@ import { ok, fail } from '../../utils/response'
 import { JWT_SECRET, type JwtPayload } from '../../middlewares/auth'
 import { ALL_PERMISSIONS } from '../../config/permissions'
 import { passwordError } from '../../utils/passwordPolicy'
+import { tokenBeforePasswordChange, PASSWORD_CHANGED_MSG } from '../../utils/sessionAge'
 
 // 24h thay vì 7d: giảm cửa sổ token-bị-trộm-của-tài-khoản-đã-vô-hiệu-hóa gọi API trực tiếp
 // (từ ≤7 ngày xuống ≤1 ngày). FE refreshUser (5' + on-load) tái cấp token mới → phiên đang
@@ -148,33 +149,37 @@ export async function login(req: Request, res: Response) {
     // Đã chứng minh biết đúng mật khẩu → giờ mới báo trạng thái tài khoản (an toàn tiết lộ)
     if (!emp.is_active) { await throttle('log', 'INACTIVE', emp.id); return fail(res, 'Tài khoản đã bị vô hiệu hóa. Liên hệ quản trị viên.', 403) }
     await throttle('ok', null, emp.id)
-
-    // Run all 3 independent post-auth queries in parallel
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const [warehouseIds, jtData, whData] = await Promise.all([
-      getWarehouseIds(emp.id),
-      emp.job_title_id
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        ? supabase.from('JobTitle').select('module_permissions, name, is_driver, landing_page, department_id, Department:department_id(name, is_carrier)').eq('id', emp.job_title_id).single().then((r: any) => r.data)
-        : Promise.resolve(null),
-      emp.warehouse_id
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        ? supabase.from('Warehouse').select('name').eq('id', emp.warehouse_id).single().then((r: any) => r.data)
-        : Promise.resolve(null),
-    ])
-
-    // Resolve module_permissions: superadmin (cột Employee.is_superadmin) gets all; else dùng job_title
-    let modulePerms: Record<string, string[]> = {}
-    const isSuperAdmin = emp.is_superadmin === true
-    if (isSuperAdmin) {
-      modulePerms = ALL_PERMISSIONS as Record<string, string[]>
-    } else if (jtData?.module_permissions && Object.keys(jtData.module_permissions).length > 0) {
-      modulePerms = jtData.module_permissions
-    }
-
-    const token = buildToken(emp, warehouseIds, modulePerms)
-    return ok(res, { token, realtime_token: buildRealtimeToken(emp.id), user: buildUserObj(emp, warehouseIds, modulePerms, whData?.name, jtData) })
+    return ok(res, await issueSession(emp))
   } catch (e) { return fail(res, String(e)) }
+}
+
+// Cột Employee mà một phiên cần (login · me · tự đổi mật khẩu dùng chung)
+const SESSION_EMP_COLS = 'id, name, employee_code, email, warehouse_scope, warehouse_id, allowed_categories, is_active, module_permissions, job_title_id, ncc_id, is_superadmin'
+
+/** Phát phiên: kho được giao + chức danh + kho chính chạy song song ⇒ quyền (superadmin = mọi quyền, còn lại theo chức danh)
+ *  ⇒ { token, realtime_token, user }. MỘT chỗ cho đăng nhập, làm mới (/me) và tự đổi mật khẩu — trước 19/11 chép hai bản. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function issueSession(emp: any) {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [warehouseIds, jtData, whData] = await Promise.all([
+    getWarehouseIds(emp.id),
+    emp.job_title_id
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ? supabase.from('JobTitle').select('module_permissions, name, is_driver, landing_page, department_id, Department:department_id(name, is_carrier)').eq('id', emp.job_title_id).single().then((r: any) => r.data)
+      : Promise.resolve(null),
+    emp.warehouse_id
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ? supabase.from('Warehouse').select('name').eq('id', emp.warehouse_id).single().then((r: any) => r.data)
+      : Promise.resolve(null),
+  ])
+  let modulePerms: Record<string, string[]> = {}
+  if (emp.is_superadmin === true) modulePerms = ALL_PERMISSIONS as Record<string, string[]>
+  else if (jtData?.module_permissions && Object.keys(jtData.module_permissions).length > 0) modulePerms = jtData.module_permissions
+  return {
+    token: buildToken(emp, warehouseIds, modulePerms),
+    realtime_token: buildRealtimeToken(emp.id),
+    user: buildUserObj(emp, warehouseIds, modulePerms, whData?.name, jtData),
+  }
 }
 
 // ─── GET /api/auth/me ──────────────────────────────────────────────────────
@@ -186,37 +191,18 @@ export async function me(req: Request, res: Response) {
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: emps } = await supabase.from('Employee')
-      .select('id, name, employee_code, email, warehouse_scope, warehouse_id, allowed_categories, is_active, module_permissions, job_title_id, ncc_id, is_superadmin')
+      .select(`${SESSION_EMP_COLS}, password_changed_at`)
       .eq('id', userId).limit(1)
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const emp = (emps as any[])?.[0]
     if (!emp || !emp.is_active) return fail(res, 'Tài khoản không tồn tại hoặc đã bị vô hiệu hóa', 401)
+    // (19/11) mật khẩu đổi SAU lúc phát token này ⇒ phiên cũ hết hiệu lực (máy khác đang mở bị đăng xuất ở lần làm mới kế tiếp).
+    // Trước đây /me cấp token MỚI cho mọi token còn hạn ⇒ đổi mật khẩu không đá được phiên nào.
+    if (tokenBeforePasswordChange(req.user?.iat, emp.password_changed_at)) return fail(res, 401, 'PASSWORD_CHANGED', PASSWORD_CHANGED_MSG)
 
     // Re-resolve permissions fresh from DB (same as login) so permission changes take effect on next refresh
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const [warehouseIds, jtData, whData] = await Promise.all([
-      getWarehouseIds(emp.id),
-      emp.job_title_id
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        ? supabase.from('JobTitle').select('module_permissions, name, is_driver, landing_page, department_id, Department:department_id(name, is_carrier)').eq('id', emp.job_title_id).single().then((r: any) => r.data)
-        : Promise.resolve(null),
-      emp.warehouse_id
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        ? supabase.from('Warehouse').select('name').eq('id', emp.warehouse_id).single().then((r: any) => r.data)
-        : Promise.resolve(null),
-    ])
-
-    let modulePerms: Record<string, string[]> = {}
-    const isSuperAdmin = emp.is_superadmin === true
-    if (isSuperAdmin) {
-      modulePerms = ALL_PERMISSIONS as Record<string, string[]>
-    } else if (jtData?.module_permissions && Object.keys(jtData.module_permissions).length > 0) {
-      modulePerms = jtData.module_permissions
-    }
-
-    const token = buildToken(emp, warehouseIds, modulePerms)
-    return ok(res, { user: buildUserObj(emp, warehouseIds, modulePerms, whData?.name, jtData), token, realtime_token: buildRealtimeToken(emp.id) })
+    return ok(res, await issueSession(emp))
   } catch (e) { return fail(res, String(e)) }
 }
 
@@ -241,14 +227,17 @@ export async function changePassword(req: Request, res: Response) {
     if (policyErr) return fail(res, policyErr, 400)
 
     const valid = await bcrypt.compare(old_password, emp.password)
-    if (!valid) return fail(res, 'Mật khẩu hiện tại không đúng', 401)
+    // 400 chứ không 401: FE coi MỌI 401 có token là "phiên hết hạn" và đăng xuất — gõ sai mật khẩu hiện tại từng văng ra trang đăng nhập
+    if (!valid) return fail(res, 400, 'WRONG_PASSWORD', 'Mật khẩu hiện tại không đúng')
 
     const hash = await bcrypt.hash(new_password, 10)
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await supabase.from('Employee')
+    // trigger DB đặt password_changed_at ⇒ mọi phiên KHÁC của tài khoản hết hiệu lực ở lần làm mới kế tiếp (19/11)
+    const { data: upd, error: updErr } = await supabase.from('Employee')
       .update({ password: hash, updated_at: new Date().toISOString() })
-      .eq('id', userId)
-
-    return ok(res, { message: 'Đổi mật khẩu thành công' })
+      .eq('id', userId).select(SESSION_EMP_COLS)
+    if (updErr) return fail(res, updErr)   // trước 19/11 lỗi ghi bị bỏ qua ⇒ báo "thành công" mà mật khẩu không đổi
+    if (!upd?.length) return fail(res, 'Không tìm thấy tài khoản', 404)
+    // phiên ĐANG dùng nhận token mới (phát sau lần đổi) ⇒ người vừa đổi không bị đăng xuất
+    return ok(res, { message: 'Đổi mật khẩu thành công', ...(await issueSession(upd[0])) })
   } catch (e) { return fail(res, String(e)) }
 }

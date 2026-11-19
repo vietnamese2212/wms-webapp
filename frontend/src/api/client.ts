@@ -58,7 +58,9 @@ apiClient.interceptors.response.use(
       // Dọn cache + hàng đợi quét khỏi IndexedDB khi phiên hết hạn (máy dùng chung).
       // import động để tránh phụ thuộc vòng ở tầng client thấp.
       import('@/offline/persist').then(m => m.clearOfflineData()).catch(() => {})
-      window.location.href = '/login'
+      // 19/11: phiên bị đá vì mật khẩu vừa đổi ⇒ trang đăng nhập nói rõ lý do (không thì người dùng tưởng app lỗi)
+      const code = (error.response?.data as { error?: { code?: string } } | undefined)?.error?.code
+      window.location.href = code === 'PASSWORD_CHANGED' ? '/login?reason=password_changed' : '/login'
     }
     return Promise.reject(error)
   }

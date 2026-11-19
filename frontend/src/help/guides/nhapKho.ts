@@ -1,4 +1,5 @@
-// BÀI HƯỚNG DẪN: Nhập kho — nhận hàng chuyển kho vào kho chế biến: chọn vị trí, quét tem, hoàn thành (19/11).
+// BÀI HƯỚNG DẪN: Nhập kho — đưa hàng vào kho chế biến (tự tạo phiếu hoặc nhận chuyển kho): chọn vị trí, quét tem, hoàn thành (19/11).
+// 19/11 tối: kho phụ được tự tạo phiếu nhập (user chốt "cứ cho nhập đi thôi") ⇒ thêm mục "Tạo phiếu nhập".
 // Ảnh chụp trên Preview bằng tài khoản chức danh "Phó phòng QA", kho Chế biến Ba Vì; phiếu mẫu CBBV_N_191126_01 (Đường trắng,
 // 3 tem L2611) đã xoá sau khi chụp. Ảnh quét = camera giả nhìn vào tem thật in từ app (app đọc mã thật).
 // Ảnh ở public/guide/nhap-kho/. Đổi giao diện Nhập kho ⇒ chụp lại + sửa chữ ở đây.
@@ -13,7 +14,7 @@ export const NHAP_KHO_GUIDE: Guide = {
   category: 'Kho (WMS)',
   module: 'inbound',
   updated: '19-11-2026',
-  summary: 'Nhận phiếu chuyển kho từ kho tổng: chọn vị trí, quét tem từng pallet bằng điện thoại, sửa pallet quét nhầm, hoàn thành phiếu.',
+  summary: 'Tự tạo phiếu nhập hoặc nhận phiếu chuyển kho từ kho tổng; chọn vị trí, quét tem từng pallet bằng điện thoại, sửa pallet quét nhầm, hoàn thành phiếu.',
   sections: [
     {
       id: 'bat-dau',
@@ -22,12 +23,12 @@ export const NHAP_KHO_GUIDE: Guide = {
         {
           title: 'Hàng vào kho chế biến đi đường nào',
           text: [
-            'Kho chế biến (vd **Chế biến Ba Vì**) là kho phụ của kho tổng (Kho Ba Vì). Nguyên liệu chỉ vào kho chế biến bằng **chuyển kho**, pallet giữ nguyên tem gốc:',
-            '- Kho tổng xuất chuyển kho cho kho chế biến.',
-            '- Người nhận ở **Kế hoạch VC → tab Chuyển kho** bấm **Nhận hàng** ⇒ app tự tạo **phiếu nhập TF** (mỗi mã hàng một phiếu) ở Nhập kho của kho chế biến.',
-            '- Người ở kho chế biến mở phiếu TF: chọn vị trí → quét tem từng pallet → **Hoàn thành**.',
-            'Ở kho chế biến không dùng nút **Tạo phiếu** — app báo "Kho phụ nội bộ chỉ nhận hàng qua chuyển kho từ kho parent".',
+            'Kho chế biến (vd **Chế biến Ba Vì**) là kho phụ của kho tổng (Kho Ba Vì). Hàng vào kho chế biến theo một trong hai đường:',
+            '- **Tự tạo phiếu nhập**: Nhập kho → **Tạo phiếu** → tab **Nhập SX** (mục "Tạo phiếu nhập" ngay dưới).',
+            '- **Nhận chuyển kho** (khi kho tổng xuất chuyển kho trên app): người nhận ở **Kế hoạch VC → tab Chuyển kho** bấm **Nhận hàng** ⇒ app tự tạo **phiếu nhập TF** (mỗi mã hàng một phiếu).',
+            'Từ đó hai đường làm giống nhau: mở phiếu → chọn vị trí → quét tem từng pallet → **Hoàn thành**.',
           ],
+          note: 'Một lô chỉ nhập một lần: hàng kho tổng đã xuất chuyển kho trên app thì nhận phiếu TF, đừng tạo thêm phiếu cho cùng lô đó.',
         },
         {
           title: 'Mở trang Nhập kho',
@@ -46,6 +47,30 @@ export const NHAP_KHO_GUIDE: Guide = {
             'Máy tính: bấm vào dòng → khung phải → **Mở chi tiết**. Điện thoại: chạm vào dòng là mở phiếu.',
           ],
           images: [d('02-danh-sach', 'Phiếu TF CBBV_N_191126_01 và nút Mở chi tiết'), m('06-m-danh-sach', 'Danh sách phiếu trên điện thoại')],
+        },
+      ],
+    },
+    {
+      id: 'tao-phieu',
+      title: 'Tạo phiếu nhập',
+      intro: 'Pallet chưa có tem thì in tem trước (bài "In tem pallet"), rồi mới tạo phiếu và quét.',
+      steps: [
+        {
+          title: 'Mở form Tạo phiếu, chọn tab Nhập SX',
+          text: [
+            'Trang Nhập kho → nút **Tạo phiếu** (góc phải trên) → tab **Nhập SX**.',
+            'Không dùng tab **Nhập NCC** ở kho chế biến: tab đó bắt chọn xe đã đăng ký vào cổng.',
+          ],
+        },
+        {
+          title: 'Điền và tạo phiếu',
+          text: [
+            '- **Kho***: kho chế biến (vd Chế biến Ba Vì) · **Loại kho***: RM01 nguyên liệu / PK01 bao bì.',
+            '- **Material***: mã hàng của lô · **Vị trí nhập***: ô sẽ cất (★ = ô nên cất).',
+            '- **Ca nhập*** · **Ngày nhập*** (mặc định hôm nay).',
+            '- **+ Thêm NCC (tùy chọn)**: chọn NCC của lô. Bỏ trống thì khi quét app đọc mã NCC trên tem.',
+            'Bấm **Tạo phiếu** ⇒ phiếu mới hiện ở danh sách, nhãn **SX**. Mở phiếu, quét tem từng pallet như mục "Nhận hàng" bên dưới, xong bấm **Hoàn thành**.',
+          ],
         },
       ],
     },
@@ -73,7 +98,7 @@ export const NHAP_KHO_GUIDE: Guide = {
             'Đưa camera vào tem QR trên pallet. Đọc được mã, khung xanh hiện quanh mã và nút **Lưu 1.000 kilogram** hiện giữa màn.',
             '- **Số lượng nhập**: app điền sẵn theo tem / phiếu; pallet không đầy thì sửa trước khi bấm Lưu (hàng tính kg gõ được số lẻ, vd 995,5).',
             '- **Tầng chồng**: pallet đặt trên sàn = Tầng 1; chồng lên pallet khác = Tầng 2, 3.',
-            '- **NCC**: phiếu chuyển kho tự lấy NCC của pallet gốc, không cần chọn.',
+            '- **NCC**: phiếu chuyển kho tự lấy NCC của pallet gốc; phiếu tự tạo lấy NCC chọn ở phiếu, không chọn thì đọc mã NCC trên tem.',
             'Bấm **Lưu**. Pallet vào tồn kho ngay lúc này.',
           ],
           images: [m('08-m-quet', 'Camera đọc tem Đường trắng, nút Lưu 1.000 kilogram')],
@@ -135,9 +160,8 @@ export const NHAP_KHO_GUIDE: Guide = {
       id: 'hoi-dap',
       title: 'Lỗi hay gặp',
       steps: [
-        { title: '"Kho phụ nội bộ chỉ nhận hàng qua chuyển kho…"', text: ['Kho chế biến không tạo phiếu nhập trực tiếp. Chờ phiếu TF sinh ra khi kho tổng chuyển hàng và người ở Kế hoạch VC bấm Nhận hàng.'] },
         { title: 'Nút "Chọn vị trí trước" bị khoá', text: ['Phiếu chưa có vị trí. Bấm Chọn vị trí ở đầu phiếu.'] },
-        { title: '"Sai mã hàng — QR: …, phiếu: …"', text: ['Tem thuộc mã hàng khác. Mỗi phiếu TF chỉ nhận một mã — mở đúng phiếu của mã trên tem.'] },
+        { title: '"Sai mã hàng — QR: …, phiếu: …"', text: ['Tem thuộc mã hàng khác. Mỗi phiếu chỉ nhận một mã — mở đúng phiếu của mã trên tem (hoặc tạo phiếu cho mã đó).'] },
         { title: '"Vị trí … đã đầy"', text: ['Chọn Tầng chồng 2 / 3 nếu chồng được, hoặc Đổi vị trí sang ô khác.'] },
         { title: '"Mất kết nối mạng — phiếu CHUYỂN KHO cần mạng…"', text: ['Phiếu chuyển kho phải đối chiếu số xuất với kho tổng. Ra chỗ có mạng rồi quét lại.'] },
         { title: '"Không xoá được pallet" / "Không sửa được pallet"', text: ['App ghi rõ lý do ngay dưới đầu phiếu (hoặc trong form Sửa): pallet đã được cấp vào mẻ, đã xuất, đang được giữ chỗ hay đã điều chỉnh tồn thì không xoá / sửa ở phiếu nữa. Hỏi người phụ trách kho trước khi xử lý.'] },

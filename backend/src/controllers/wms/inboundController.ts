@@ -630,7 +630,7 @@ export async function createOrder(req: Request, res: Response) {
     // Mã no-QR (hoặc kho QTY ép no-QR hiệu lực) → location_id tự = null, nhập số lượng thủ công ở trang chi tiết.
     const [{ data: matCheck }, { data: whMode }] = await Promise.all([
       supabase.from('Material').select('no_qr_tracking, base_unit, entry_unit, units_per_carton').eq('id', material_id).maybeSingle(),
-      supabase.from('Warehouse').select('inventory_mode, parent_warehouse_id').eq('id', warehouse_id).maybeSingle(),
+      supabase.from('Warehouse').select('inventory_mode').eq('id', warehouse_id).maybeSingle(),
     ])
     // BASE UNIT: planned_cartons từ FE = SỐ BASE — mã có entry phải là số nguyên
     if (planned_cartons != null && planned_cartons !== '') {
@@ -641,10 +641,8 @@ export async function createOrder(req: Request, res: Response) {
     if ((whMode as { inventory_mode?: string | null } | null)?.inventory_mode === 'NONE') {
       return fail(res, 400, 'VALIDATION_ERROR', 'Kho không theo dõi tồn (NONE) — không thể tạo phiếu nhập kho')
     }
-    // Kho phụ nội bộ chỉ nhận hàng qua "Nhận chuyển kho" từ kho parent — không tạo phiếu nhập NCC/SX trực tiếp.
-    if ((whMode as { parent_warehouse_id?: string | null } | null)?.parent_warehouse_id && resolvedSourceType !== 'TRANSFER') {
-      return fail(res, 400, 'VALIDATION_ERROR', 'Kho phụ nội bộ chỉ nhận hàng qua chuyển kho từ kho parent — không tạo phiếu nhập trực tiếp')
-    }
+    // Kho phụ nội bộ (kho chế biến) TẠO PHIẾU NHẬP TRỰC TIẾP ĐƯỢC như kho thường — user chốt 19/11 ("cứ cho nhập đi thôi,
+    // không sao"; trước đó 10/07 → 19/11 chỉ nhận qua chuyển kho từ kho parent). Nhận chuyển kho từ parent vẫn chạy như cũ.
     const noQrEffective = effectiveNoQr(matCheck?.no_qr_tracking, (whMode as { inventory_mode?: string | null } | null)?.inventory_mode)
     const resolvedLocationId = noQrEffective ? null : (location_id ?? null)
 

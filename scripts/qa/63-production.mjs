@@ -1,6 +1,7 @@
 // GÓI 63 — MES GIAI ĐOẠN 1: MẺ CHẾ BIẾN · RÚT NVL · BỒN · SỔ ĐÓNG GÓI RÚT TỪ BỒN · TRUY XUẤT SẢN XUẤT
 // (14/11, user chốt — docs/plans/MES_PHASE1_PLAN.md, memory mes-phase1-design-2026-11-14).
 // Điều phải giữ:
+//   [0] Kho phụ tạo phiếu nhập trực tiếp được (Nhập SX / Nhập NCC — user chốt 19/11), ngoài nhận chuyển kho từ kho cha
 //   [1] Mẻ chỉ mở ở KHO PHỤ nội bộ; mã lô app gợi ý (không lấp chỗ trống), trùng mã gõ tay ⇒ 409; BTP phải tính L/KG
 //   [2] Quét tem: chỉ tem CÒN TỒN ở kho của mẻ; tem ở kho khác nói tên kho; mã tồn gộp nhiều lô ⇒ bắt đi đường "Không có tem"
 //   [3] Rút theo tem trừ ĐÚNG số; thiếu cờ qty_semantics ⇒ 400; QA giữ ⇒ 409; 5 người cùng rút một tem không vượt tồn
@@ -92,6 +93,7 @@ async function cleanup() {
   await restWrite('Material', 'DELETE', 'material_code=eq.QA63BTPX')
   if (tanks.length) await restWrite('production_tank', 'DELETE', `id=in.(${tanks.map(t => t.id).join(',')})`)
   await restWrite('InventoryEntry', 'DELETE', `warehouse_id=in.(${whs.join(',')})`)
+  await restWrite('ProductionImport', 'DELETE', `warehouse_id=in.(${whs.join(',')})`)   // phiếu nhập trực tiếp ở kho phụ ([0a])
   await restWrite('warehouse_type_configs', 'DELETE', `warehouse_id=in.(${whs.join(',')})`)
   await restWrite('Material', 'DELETE', `id=in.(${[M_RM, M_BTP, M_BTP2, M_EA, M_RM2].join(',')})`)
   await restWrite('Warehouse', 'DELETE', `id=in.(${WC},${WC2})`)
@@ -137,8 +139,16 @@ try {
   const T6 = (await api('/wms/production/tanks', 'POST', { warehouse_id: WC, code: 'QA63-T6', capacity: 500, unit: 'L' })).j?.data    // mẻ đổi mã (10j)
   const NEW = (o) => ({ warehouse_id: WC, prod_date: todayVN, cycle: 'Q1', ...o })
 
+  // ── [0] kho phụ TẠO PHIẾU NHẬP trực tiếp được (user chốt 19/11 "cứ cho nhập đi thôi" — trước đó 400 "Kho phụ nội bộ chỉ
+  //        nhận hàng qua chuyển kho từ kho parent"): cả Nhập SX lẫn Nhập NCC ──
+  const ncc0 = (await restAll('TransportCompany', 'select=id&limit=1'))[0]
+  const r0a = await api('/wms/inbound-orders', 'POST', { warehouse_id: WC, material_id: M_RM, source_type: 'FACTORY', import_date: todayVN, planned_cartons: 100 })
+  const r0b = ncc0 ? await api('/wms/inbound-orders', 'POST', { warehouse_id: WC, material_id: M_RM, source_type: 'NCC', ncc_id: ncc0.id, import_date: todayVN, planned_cartons: 100 }) : null
+  check('0a. Kho phụ tạo phiếu nhập trực tiếp: Nhập SX + Nhập NCC ⇒ tạo được (không còn chặn "chỉ nhận qua chuyển kho")',
+    r0a.s < 300 && (!r0b || r0b.s < 300), `SX http=${r0a.s} ${r0a.j?.error?.message ?? ''} · NCC http=${r0b?.s ?? 'bỏ (không có NCC)'} ${r0b?.j?.error?.message ?? ''}`)
+
   // ── [1] mở mẻ ──
-  const r1a = await api('/wms/production/batches', 'POST', NEW({ warehouse_id: WP, material_id: M_BTP, tank_id: T1.id }))
+  const r1a =await api('/wms/production/batches', 'POST', NEW({ warehouse_id: WP, material_id: M_BTP, tank_id: T1.id }))
   check('1a. Mở mẻ ở kho KHÔNG phải kho phụ ⇒ 422 NOT_PRODUCTION_WAREHOUSE', r1a.s === 422 && r1a.j?.error?.code === 'NOT_PRODUCTION_WAREHOUSE', `http=${r1a.s} ${r1a.j?.error?.code}`)
   const r1b = await api('/wms/production/batches', 'POST', NEW({ material_id: M_EA, tank_id: T1.id }))
   check('1b. Mã tính theo EA (không phải BTP) ⇒ 422 NOT_SEMI_FINISHED', r1b.s === 422 && r1b.j?.error?.code === 'NOT_SEMI_FINISHED', `http=${r1b.s} ${r1b.j?.error?.code}`)

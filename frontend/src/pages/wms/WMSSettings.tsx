@@ -1024,7 +1024,7 @@ function WarehouseDialog({ wh, open, onClose, onGotoTypes }: {
           <div className="space-y-1">
             <span className="flex items-center gap-1">
               <Label className="text-xs">Trực thuộc kho (kho phụ nội bộ)</Label>
-              <InfoTip tip={<>Kho phụ (tổ sản xuất tại site) chỉ giao dịch với kho parent: nhận chuyển kho từ parent, xuất trả parent, xuất tiêu hao. Chuyển nội bộ không cần biển số/booking ĐVVT.</>} />
+              <InfoTip tip={<>Kho phụ (tổ sản xuất tại site): nhận hàng qua chuyển kho từ parent hoặc tự tạo phiếu nhập như kho thường; xuất chỉ được xuất trả parent hoặc xuất tiêu hao. Chuyển nội bộ không cần biển số/booking ĐVVT.</>} />
             </span>
             <SingleSelect options={parentOpts} value={parentId} onChange={setParentId}
               placeholder="— Kho thường (không trực thuộc) —" searchPlaceholder="Tìm kho…" triggerClassName="h-8 w-full text-sm" />

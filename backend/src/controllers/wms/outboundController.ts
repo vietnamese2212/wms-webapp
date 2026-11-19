@@ -1412,8 +1412,8 @@ async function autoDateRuleFor(
 }
 
 // ─── Kho phụ nội bộ (Warehouse.parent_warehouse_id) — luật quỹ đạo ───────────
-// Kho phụ CHỈ giao dịch với kho parent của nó: nhận chuyển kho từ parent, xuất trả parent,
-// hoặc xuất tiêu hao (không gắn ship-to). Cặp parent↔con được nới biển số khi Bắt đầu/Xuất luôn.
+// Kho phụ CHỈ XUẤT tới kho parent của nó (xuất trả) hoặc xuất tiêu hao (không gắn ship-to). Chiều NHẬP: nhận chuyển kho
+// từ parent, hoặc tự tạo phiếu nhập như kho thường (user chốt 19/11). Cặp parent↔con được nới biển số khi Bắt đầu/Xuất luôn.
 type OrbitWh = { id: string; name: string; parent_warehouse_id: string | null }
 type ShiptoWh = { id: string; code: string; name: string; inventory_mode?: string | null; parent_warehouse_id?: string | null }
 

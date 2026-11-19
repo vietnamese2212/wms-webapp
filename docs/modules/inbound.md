@@ -20,6 +20,10 @@
 
 Nhập kho
 
+## 19/11 — Kho phụ nội bộ tạo phiếu nhập trực tiếp được
+
+Trước đó (10/07 → 19/11) `createOrder` chặn kho phụ (`Warehouse.parent_warehouse_id`) tạo phiếu không phải TRANSFER — 400 "Kho phụ nội bộ chỉ nhận hàng qua chuyển kho từ kho parent" (mà form vẫn mở, điền xong mới báo). User chốt 19/11 (kho chế biến chạy app trước, Kho Ba Vì chưa chạy): "cứ cho nhập đi thôi, không sao" — bỏ hẳn chặn cho MỌI kho phụ. Rủi ro đã nói với user: khi kho cha cũng chạy app, một lô có thể bị nhập hai lần (kho cha nhập NCC + kho phụ nhập lại thay vì nhận chuyển kho). Chiều XUẤT của kho phụ giữ luật cũ (chỉ xuất trả kho cha hoặc xuất tiêu hao). Gói 63 [0a] gác.
+
 ## 26/10 — NHẬP HÀNG TRẢ VỀ (user chốt 25–26/10)
 
 - **Ai / ở đâu:** THỦ KHO, nút **"Nhập trả về"** ở toolbar Nhập kho (quyền `inbound.create`). Form trượt phải `components/wms/InboundReturnSheet.tsx`:

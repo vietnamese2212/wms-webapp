@@ -420,7 +420,7 @@ export function GdoScanSheet({ gdo, mode, onClose, pdaMode = false, initialScan 
                 <label className="text-sm font-medium text-slate-700 shrink-0">{mode === 'loose' ? 'Lấy (lẻ):' : 'Số lượng:'}</label>
                 {/* BASE UNIT: cả quét thường lẫn quét lẻ đều nhập 2 ô Thùng+Hộp (lấy N thùng + M hộp từ pallet, trừ base) */}
                 <QtyInput compact className="w-44"
-                  value={Math.max(0, parseInt(pendingCartons) || 0)}
+                  value={Math.max(0, Number(pendingCartons) || 0)}
                   mat={activeItem?.material}
                   onChange={b => setPendingCartons(String(b))}
                 />

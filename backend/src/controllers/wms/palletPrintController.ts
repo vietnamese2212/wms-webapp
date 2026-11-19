@@ -74,7 +74,27 @@ export async function logPrints(req: Request, res: Response) {
 
     const { error } = await supabase.from('PalletLabelPrint').insert(rows)
     if (error) return fail(res, error.message, 500)
-    return ok(res, { logged: rows.length })
+    return ok(res, { logged: rows.length, batch_id: batchId })
+  } catch (e) {
+    return fail(res, (e as Error).message, 500)
+  }
+}
+
+// DELETE /wms/pallet-prints/batch/:batchId — gỡ MỘT lần ghi in khi người in xác nhận "chưa in ra giấy" (19/11, C127).
+// Lịch sử ghi TRƯỚC khi mở hộp in (không lần in thật nào lọt sổ); bấm Huỷ hộp in thì trước đây vẫn nằm trong sổ ⇒ "đã in 2 lần"
+// sai, cảnh báo tem trùng oan. Chỉ gỡ được lần in CỦA CHÍNH MÌNH và trong 30 phút — sổ truy vết không thành chỗ ai cũng xoá được.
+export const PRINT_CANCEL_WINDOW_MIN = 30
+export async function cancelPrintBatch(req: Request, res: Response) {
+  try {
+    const batchId = String(req.params.batchId)
+    const me = req.user?.sub
+    if (!me) return fail(res, 'Chưa đăng nhập', 401)
+    const since = new Date(Date.now() - PRINT_CANCEL_WINDOW_MIN * 60_000).toISOString()
+    const { data, error } = await supabase.from('PalletLabelPrint').delete()
+      .eq('batch_id', batchId).eq('printed_by', me).gte('created_at', since).select('id')
+    if (error) return fail(res, error.message, 500)
+    if (!data?.length) return fail(res, `Không tìm thấy lần in của bạn trong ${PRINT_CANCEL_WINDOW_MIN} phút gần nhất`, 404)
+    return ok(res, { removed: data.length })
   } catch (e) {
     return fail(res, (e as Error).message, 500)
   }

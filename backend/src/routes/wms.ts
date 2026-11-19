@@ -157,6 +157,9 @@ router.delete('/lookup-unit/:id',  requirePerm('wms_settings', 'manage_unit'), l
 
 // In tem pallet — log truy vết (in mấy lần, ai in)
 router.post('/pallet-prints', requireAnyPerm(['pallet_print', 'generate'], ['pallet_print', 'reprint']), palletPrint.logPrints)
+// Gỡ MỘT lần ghi in của CHÍNH mình (trong 30 phút) khi hộp in bị huỷ / chưa in ra giấy — C127 (19/11)
+router.delete('/pallet-prints/batch/:batchId', requireAnyPerm(['pallet_print', 'generate'], ['pallet_print', 'reprint']),
+  validate({ params: z.object({ batchId: z.string().uuid() }) }), palletPrint.cancelPrintBatch)
 // list dùng cho tab Lịch sử in + Truy cứu + chọn tem In lại — anyOf theo tab
 // (phải khai TRƯỚC '/pallet-prints' để không bị nuốt bởi route cùng prefix)
 router.get('/pallet-prints/facets', requireAnyPerm(['pallet_print', 'view'], ['pallet_print', 'history'], ['pallet_print', 'audit'], ['pallet_print', 'reprint']), palletPrint.listPrintFacets)

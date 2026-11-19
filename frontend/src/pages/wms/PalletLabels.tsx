@@ -15,14 +15,15 @@ import { SearchInput } from '@/components/shared/SearchInput'
 import { useColumnResize } from '@/components/shared/useColumnResize'
 import { SummaryBand } from '@/components/shared/SummaryBand'
 import { isNccCategory, batchCharOf, temSegLabels } from '@/utils/cargoCategory'
-import { PrintArea, printWhenReady } from '@/components/shared/PrintArea'
+import { PrintArea } from '@/components/shared/PrintArea'
+import { usePalletPrintLog } from '@/hooks/usePalletPrintLog'
 import { useWhTypeMetaMapFor, useIsNccAt } from '@/hooks/useWhTypeMeta'
 import { parseCodeFields, batchNoOptions } from '@/components/shared/palletLabel'
 import { normalizeQR } from '@/utils/qr'
 import { qtyLabel, hasEntry, type MatUnits } from '@/utils/qtyUnits'
 import {
   useWarehouses, useMaterials, useMaterialsByCodes, useMaterialsByIds, useInventoryEntries, useInventoryFacets, type MaterialLite,
-  useLogPalletPrints, usePalletPrints, usePalletPrintsPaged, usePalletPrintFacets,
+  usePalletPrints, usePalletPrintsPaged, usePalletPrintFacets,
   useTransportCompanies, useSystemSettings, useMachines, type PalletPrintRow,
 } from '@/api/hooks'
 import { PagerNav, ListFooter } from '@/components/shared/ListPager'
@@ -259,7 +260,8 @@ export default function PalletLabels() {
   const canReprint  = can(perms, 'pallet_print', 'reprint')    // tab In lại từ tồn kho (+ nút In lại trong Lịch sử)
   const canAudit    = can(perms, 'pallet_print', 'audit')      // tab Truy cứu
   const canHistory  = can(perms, 'pallet_print', 'history')    // tab Lịch sử in
-  const logPrints = useLogPalletPrints()
+  // ghi Lịch sử in + mở hộp in + hỏi "đã in chưa" — MỘT chỗ cho mọi cửa in tem pallet (hooks/usePalletPrintLog, C127)
+  const printLog = usePalletPrintLog()
   // Cờ định dạng tem của ĐƠN VỊ (SystemSetting per-DB). Sinh tem mới ở đây theo format `_` (ĐV cũ);
   // ĐV dùng tem `;` → tem do hệ thống SX sinh, dùng tab "In lại từ tồn kho".
   const { data: sysSettings = [] } = useSystemSettings()
@@ -691,10 +693,8 @@ export default function PalletLabels() {
 
   function doPrint(mode: 'GENERATE' | 'REPRINT', items: LabelData[]) {
     if (!items.length) return
-    // Ghi log truy vết (in mấy lần, ai in) — không chặn việc in nếu log lỗi
-    logPrints.mutate({
-      mode,
-      labels: items.map(l => ({
+    // Ghi Lịch sử in (in mấy lần, ai in) rồi mở hộp in — luật ghi / hỏi "đã in chưa" ở hooks/usePalletPrintLog
+    const logRows = items.map(l => ({
         // Log theo pallet_code CHUẨN HÓA (trim) để Truy cứu khớp tồn kho; QR in ra vẫn giữ đệm (l.qr). V1 no-op.
         qr_code: normalizeQR(l.qr), material_code: l.materialCode, material_id: l.materialId ?? null,
         category: l.category, cycle: l.cycle, machine: l.machine, seq: l.seq, nmsx: l.nmsx,
@@ -704,10 +704,9 @@ export default function PalletLabels() {
         // is_ncc_goods theo kho khi in lại, (b) guard scope kho ở BE `if (l.warehouse_id && …)`
         // không bao giờ nổ.
         warehouse_id: l.warehouseId ?? null,
-      })),
-    })
+      }))
     setPrintLabels(items)
-    printWhenReady(items.length)   // chờ ảnh QR vẽ xong — canh 150 ms là cuộc đua, nhiều tem thì in ra ô trống
+    printLog.logAndPrint(mode, logRows, items.length)
   }
   function handlePrint() { doPrint(tab === 'reprint' ? 'REPRINT' : 'GENERATE', labels) }
 
@@ -958,6 +957,7 @@ export default function PalletLabels() {
         </div>
         {/* Hàng 2: FilterBar chuẩn (desktop/tablet); mobile gom vào nút "Lọc" ở trên */}
         {tabDefs && <FilterBar defs={tabDefs} />}
+        {printLog.node}
       </div>
 
       {/* Summary band — theo tab */}

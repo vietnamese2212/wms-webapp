@@ -16,10 +16,11 @@ import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/share
 import { useColumnResize } from '@/components/shared/useColumnResize'
 import { PagerNav, ListFooter } from '@/components/shared/ListPager'
 import { PalletPrintArea, PALLET_PRINT_CSS, qrToLabel, parseCodeFields, type LabelData } from '@/components/shared/palletLabel'
-import { printWhenReady } from '@/components/shared/PrintArea'
+import { usePalletPrintLog } from '@/hooks/usePalletPrintLog'
+import { useConfirmDialog } from '@/components/shared/ConfirmDialog'
 import { useIsNccAt } from '@/hooks/useWhTypeMeta'
 import {
-  useInventoryEntries, useMergePallets, useUngroupPallets, useSplitPallet, useLogPalletPrints,
+  useInventoryEntries, useMergePallets, useUngroupPallets, useSplitPallet,
   usePalletOps, usePalletOpsPaged, useUndoPalletOp, useMaterials, useMaterialsByCodes, useWarehouses, useLocationsReal, useLocationsByIds, useTransportCompanies, type LocationLite, type PalletOpRow, type MaterialLite,
 } from '@/api/hooks'
 import { useScopedWhTypes } from '@/hooks/useUserScope'
@@ -128,7 +129,8 @@ export default function PalletOps() {
   const totalSplit = splitQtys.reduce((s, q) => s + (Number(q) || 0), 0)
   const keepLeft = remaining - totalSplit
   const split = useSplitPallet()
-  const logPrints = useLogPalletPrints()
+  const printLog = usePalletPrintLog()   // ghi Lịch sử in + hỏi "đã in chưa" — cùng luật trang In tem pallet (C127)
+  const [askUndo, askUndoNode] = useConfirmDialog()
   const [printLabels, setPrintLabels] = useState<LabelData[]>([])
   // Vị trí pallet con — danh sách theo Kho + Loại hàng; mặc định = vị trí pallet gốc
   const [splitLoc, setSplitLoc] = useState('')
@@ -206,6 +208,12 @@ export default function PalletOps() {
     printTems(labels, 'REPRINT')
   }
   async function doUndo(o: PalletOpRow) {
+    // Hoàn tác xoá pallet con / gỡ nhóm ngay — trước 19/11 bấm là chạy, không hỏi lại (C128)
+    const what = o.type === 'SPLIT'
+      ? `Xoá ${(o.target_codes ?? []).length} pallet con và cộng lại số lượng vào pallet gốc ${(o.source_codes ?? [])[0] ?? ''}.`
+      : o.type === 'MERGE' ? 'Các pallet con trở lại như trước khi dồn (vị trí cũ, không còn trong nhóm).' : 'Trả các pallet về như trước thao tác.'
+    const go = await askUndo({ title: `Hoàn tác thao tác ${opLabel(o.type)}?`, body: what, confirmLabel: 'Hoàn tác', danger: true })
+    if (go === null) return
     setMsg(null)
     try { await undo.mutateAsync(o.id); setMsg({ ok: true, text: `Đã hoàn tác thao tác ${opLabel(o.type)}` }) }
     catch (e: any) { setMsg({ ok: false, text: e?.response?.data?.error?.message ?? 'Không hoàn tác được' }) }
@@ -214,12 +222,10 @@ export default function PalletOps() {
   const [splitDone, setSplitDone] = useState<LabelData[] | null>(null)   // tem con vừa tách — chờ in (có thể in ngay hoặc in sau ở Lịch sử)
   function printTems(labels: LabelData[], mode: 'GENERATE' | 'REPRINT') {
     if (!labels.length) return
-    logPrints.mutate({
-      mode,
-      labels: labels.map(l => ({ qr_code: l.qr, material_code: l.materialCode, material_id: l.materialId ?? null, category: l.category, cycle: l.cycle, machine: l.machine, seq: l.seq, nmsx: l.nmsx, qty: l.qty === '' ? null : l.qty })),
-    })
     setPrintLabels(labels)
-    printWhenReady(labels.length)   // chờ ảnh QR vẽ xong (canh 150 ms là cuộc đua)
+    printLog.logAndPrint(mode,
+      labels.map(l => ({ qr_code: l.qr, material_code: l.materialCode, material_id: l.materialId ?? null, category: l.category, cycle: l.cycle, machine: l.machine, seq: l.seq, nmsx: l.nmsx, qty: l.qty === '' ? null : l.qty })),
+      labels.length)
   }
   async function doSplit() {
     setMsg(null); setSplitDone(null)
@@ -272,6 +278,8 @@ export default function PalletOps() {
           /* Ô tổng đếm TRÊN TOÀN BỘ bộ lọc (server) — đếm trên `ops` là chỉ đếm trang đang xem */
           : [{ label: 'Số thao tác', value: hist?.total ?? 0, accent: (hist?.total ?? 0) > 0 }, { label: 'Dồn', value: hist?.merge_n ?? 0 }, { label: 'Tách', value: hist?.split_n ?? 0 }, { label: 'Đã hoàn tác', value: hist?.undone_n ?? 0 }]} />
 
+        {printLog.node}
+        {askUndoNode}
         {/* 1 tầng cuộn duy nhất per tab (bỏ overflow-auto ở wrapper — tab Lịch sử có scroller riêng) */}
         <div className="flex-1 min-h-0 flex flex-col">
          {tab === 'history' ? (

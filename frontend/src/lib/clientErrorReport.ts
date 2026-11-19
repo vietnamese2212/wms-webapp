@@ -12,6 +12,9 @@ const IGNORE = [
   /Failed to fetch|NetworkError|Load failed/i, // offline/mất mạng — PWA đã có hàng đợi riêng, đừng spam
 ]
 
+/** Báo một lỗi đã BẮT ĐƯỢC (không văng ra ngoài) — vd lưu Excel thất bại — để vẫn thấy được ở error_logs. */
+export function reportClientError(message: string) { report(message) }
+
 function report(message: string) {
   const msg = String(message ?? '').trim()
   if (!msg || budget <= 0 || seen.has(msg) || IGNORE.some(re => re.test(msg))) return

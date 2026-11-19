@@ -63,7 +63,7 @@ export const IN_TEM_GUIDE: Guide = {
             'Dán mỗi tem lên đúng pallet có số pallet đó.',
           ],
           images: [d('05-xem-truoc', 'Xem trước 4 tem, nút In (4)')],
-          note: 'Bấm In là app ghi vào Lịch sử in, kể cả khi sau đó bạn bấm Huỷ trong hộp in của trình duyệt.',
+          note: 'Bấm In là app ghi Lịch sử in. Hộp in đóng lại, app hỏi "Tem đã in ra giấy chưa?" — đã bấm Huỷ hoặc máy in không ra tem thì chọn "Chưa in" để lần này không tính vào lịch sử.',
         },
         {
           title: 'Trên điện thoại',

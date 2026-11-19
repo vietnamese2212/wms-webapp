@@ -1524,6 +1524,14 @@ const RULES = [
     label: 'cửa upload Excel KHÔNG trải ô gộp — mọi chỗ đọc workbook phải gọi `expandMergedCells(ws)` trước khi parse (utils/excelHeader)',
     count: (s) => countUploadsMissingMergeExpand(s),
   },
+  // Ô số lượng (QtyInput) nhận value = SỐ BASE; mã không entry (KG/L/BAG) là THẬP PHÂN. `parseInt(state)` cắt phần lẻ rồi
+  // ô vẽ lại theo số đã cắt ⇒ gõ 995,5 kg ô quay về 995 — không nhập được số lẻ (19/11, C123b: 9 chỗ — quét nhập, xuất,
+  // nhặt lẻ, tách pallet…). Dùng Number(state).
+  {
+    key: 'qtyinput_value_parseint',
+    label: 'ô số lượng `value={…parseInt(…)}` — cắt phần lẻ hàng KG/L ⇒ không gõ được số lẻ; dùng Number(…)',
+    count: (s) => countMatches(['frontend/src'], ['.tsx'], (l) => /value=\{[^}]*\bparseInt\(/.test(l), s),
+  },
 ]
 
 // Vi phạm = hàm có `readWorkbookSafe(`/`XLSX.read(` mà trong 40 dòng kế KHÔNG có `expandMergedCells`.

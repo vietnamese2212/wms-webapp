@@ -172,7 +172,7 @@ export const TON_KHO_GUIDE: Guide = {
       id: 'hoi-dap',
       title: 'Lỗi hay gặp',
       steps: [
-        { title: 'Bảng trống "Không tìm thấy pallet nào"', text: ['Bộ lọc đang hẹp quá (sai kho, loại, vị trí) hoặc từ khoá quá ngắn. Bấm "Xóa bộ lọc" rồi tìm lại.'] },
+        { title: 'Bảng trống "Không tìm thấy pallet nào"', text: ['Bộ lọc đang hẹp quá (sai kho, loại, vị trí). Bấm "Xóa bộ lọc" rồi tìm lại. Có băng đỏ phía trên bảng (vd từ khoá quá chung) thì làm theo câu báo — gõ cụ thể hơn.'] },
         { title: '"Tồn kho không thể âm"', text: ['Số bớt lớn hơn số đang có trên pallet. Kiểm lại số thực tế.'] },
         { title: '"Pallet không thuộc kho trong phạm vi của bạn"', text: ['Pallet ở kho bạn không được giao. Nhờ người phụ trách kho đó.'] },
         { title: '"Vị trí đích thuộc KHO KHÁC…" / "Vị trí … không đủ chỗ"', text: ['Chỉ chuyển được trong cùng kho; ô đầy thì chọn ô khác.'] },

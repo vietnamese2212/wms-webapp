@@ -369,7 +369,7 @@ function ScanDialog({ item, gdoId, warehouseId, cartonScanEnabled, onClose, pdaM
               <div className="flex items-center gap-3">
                 <label className="text-sm font-medium text-slate-700 shrink-0">Số lượng xuất:</label>
                 <QtyInput compact className="w-44"
-                  value={Math.max(0, parseInt(pendingCartons) || 0)}
+                  value={Math.max(0, Number(pendingCartons) || 0)}
                   mat={item.material}
                   onChange={b => setPendingCartons(String(b))}
                 />
@@ -867,7 +867,7 @@ export default function OutboundItemDetail() {
               <p className="text-xs text-slate-600">Số lượng xuất</p>
               <QtyInput autoFocus
                 className={`${overPlan ? '[&_input]:border-red-400' : overStock ? '[&_input]:border-amber-400' : ''}`}
-                value={Math.max(0, parseInt(loscamCartons) || 0)}
+                value={Math.max(0, Number(loscamCartons) || 0)}
                 mat={item.material}
                 onChange={b => { setLoscamCartons(String(b)); setLoscamError('') }}
               />

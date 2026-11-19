@@ -250,8 +250,20 @@ export function useLogPalletPrints() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (body: { mode: 'GENERATE' | 'REPRINT'; labels: Record<string, unknown>[] }) =>
-      apiClient.post('/wms/pallet-prints', body).then(r => r.data.data),
+      apiClient.post('/wms/pallet-prints', body).then(r => r.data.data as { logged: number; batch_id?: string }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['pallet-prints'] }),
+  })
+}
+/** Gỡ MỘT lần ghi in của chính mình (≤ 30 phút) khi hộp in bị huỷ / chưa in ra giấy — C127 */
+export function useCancelPalletPrintBatch() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (batchId: string) => apiClient.delete(`/wms/pallet-prints/batch/${batchId}`).then(r => r.data.data as { removed: number }),
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: ['pallet-prints'] })
+      qc.invalidateQueries({ queryKey: ['pallet-prints-paged'] })
+      qc.invalidateQueries({ queryKey: ['pallet-print-facets'] })
+    },
   })
 }
 // Lịch sử in tem — phân trang theo PHIẾU IN. Mọi bộ lọc phải đi xuống server: lọc trên tập đã

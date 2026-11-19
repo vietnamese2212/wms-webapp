@@ -186,11 +186,11 @@ const NccRowItem = React.memo(function NccRowItem({
       </td>
       {/* BASE UNIT tách 2 cột Thùng | Hộp (mã có entry); mã không entry → cột Hộp là ô base thập phân. value/onChange = BASE */}
       <td className="px-1.5 py-1 align-top" onPaste={e => onQtyPaste(idx, e)}>
-        <QtyInput compact part="entry" value={Math.max(0, parseInt(row.planned_qty) || 0)} mat={row.mat_units}
+        <QtyInput compact part="entry" value={Math.max(0, Number(row.planned_qty) || 0)} mat={row.mat_units}
           onChange={b => onField(idx, 'planned_qty', String(b))} />
       </td>
       <td className="px-1.5 py-1 align-top">
-        <QtyInput compact part="base" value={Math.max(0, parseInt(row.planned_qty) || 0)} mat={row.mat_units}
+        <QtyInput compact part="base" value={Math.max(0, Number(row.planned_qty) || 0)} mat={row.mat_units}
           onChange={b => onField(idx, 'planned_qty', String(b))} />
       </td>
       <td className="px-1 py-1 text-center">

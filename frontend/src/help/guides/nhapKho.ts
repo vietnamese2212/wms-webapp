@@ -71,7 +71,7 @@ export const NHAP_KHO_GUIDE: Guide = {
           title: 'Quét tem pallet → Lưu',
           text: [
             'Đưa camera vào tem QR trên pallet. Đọc được mã, khung xanh hiện quanh mã và nút **Lưu 1.000 kilogram** hiện giữa màn.',
-            '- **Số lượng nhập**: app điền sẵn theo tem / phiếu; pallet không đầy thì sửa trước khi bấm Lưu.',
+            '- **Số lượng nhập**: app điền sẵn theo tem / phiếu; pallet không đầy thì sửa trước khi bấm Lưu (hàng tính kg gõ được số lẻ, vd 995,5).',
             '- **Tầng chồng**: pallet đặt trên sàn = Tầng 1; chồng lên pallet khác = Tầng 2, 3.',
             '- **NCC**: phiếu chuyển kho tự lấy NCC của pallet gốc, không cần chọn.',
             'Bấm **Lưu**. Pallet vào tồn kho ngay lúc này.',
@@ -136,12 +136,11 @@ export const NHAP_KHO_GUIDE: Guide = {
       title: 'Lỗi hay gặp',
       steps: [
         { title: '"Kho phụ nội bộ chỉ nhận hàng qua chuyển kho…"', text: ['Kho chế biến không tạo phiếu nhập trực tiếp. Chờ phiếu TF sinh ra khi kho tổng chuyển hàng và người ở Kế hoạch VC bấm Nhận hàng.'] },
-        { title: '"Cần đánh giá chuyến giao (chấm sao) trước khi hoàn thành phiếu nhận"', text: ['Phiếu chuyển kho phải được chấm sao chuyến giao trước khi hoàn thành. Nhờ người nhận hàng ở Kế hoạch VC → tab Chuyển kho chấm sao, rồi bấm Hoàn thành lại.'] },
         { title: 'Nút "Chọn vị trí trước" bị khoá', text: ['Phiếu chưa có vị trí. Bấm Chọn vị trí ở đầu phiếu.'] },
         { title: '"Sai mã hàng — QR: …, phiếu: …"', text: ['Tem thuộc mã hàng khác. Mỗi phiếu TF chỉ nhận một mã — mở đúng phiếu của mã trên tem.'] },
         { title: '"Vị trí … đã đầy"', text: ['Chọn Tầng chồng 2 / 3 nếu chồng được, hoặc Đổi vị trí sang ô khác.'] },
         { title: '"Mất kết nối mạng — phiếu CHUYỂN KHO cần mạng…"', text: ['Phiếu chuyển kho phải đối chiếu số xuất với kho tổng. Ra chỗ có mạng rồi quét lại.'] },
-        { title: 'Bấm xoá pallet nhưng dòng hiện lại', text: ['Pallet không xoá được (đã được cấp vào mẻ, xuất hoặc điều chỉnh tồn). Hỏi người phụ trách kho trước khi xử lý.'] },
+        { title: '"Không xoá được pallet" / "Không sửa được pallet"', text: ['App ghi rõ lý do ngay dưới đầu phiếu (hoặc trong form Sửa): pallet đã được cấp vào mẻ, đã xuất, đang được giữ chỗ hay đã điều chỉnh tồn thì không xoá / sửa ở phiếu nữa. Hỏi người phụ trách kho trước khi xử lý.'] },
         { title: '"Không thể mở camera"', text: ['Cho trình duyệt dùng camera (bấm biểu tượng ổ khoá cạnh đường dẫn → Camera → Cho phép), rồi tải lại trang.'] },
       ],
     },

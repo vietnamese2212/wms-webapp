@@ -258,6 +258,9 @@ export default function InboundDetail() {
   const [manualFeedback,    setManualFeedback]    = useState<{ type: 'success' | 'error'; msg: string } | null>(null)
 
   const [editState, setEditState] = useState<{ entry: PalletEntry; cartons: number; stack: number } | null>(null)
+  // Sửa pallet bị BE từ chối (đã xuất / giữ chỗ / quá hạn sửa…) phải NÓI ra ngay trong form — bản cũ chỉ đóng form khi
+  // thành công, lỗi thì form đứng im không một lời (C126)
+  const [editError, setEditError] = useState<string | null>(null)
   const [editingPlannedCartons, setEditingPlannedCartons] = useState(false)
   const [plannedCartonsInput,   setPlannedCartonsInput]   = useState('')
 
@@ -485,7 +488,7 @@ export default function InboundDetail() {
             <div className="space-y-1.5">
               <p className="text-xs text-slate-500">Số lượng thực nhập</p>
               <QtyInput autoFocus
-                value={Math.max(0, parseInt(manualCartons) || 0)}
+                value={Math.max(0, Number(manualCartons) || 0)}
                 mat={order?.material}
                 onChange={b => setManualCartons(String(b))}
               />
@@ -531,7 +534,8 @@ export default function InboundDetail() {
                       stack_layer: editState.stack,
                       employee_id: user?.id,
                     },
-                    { onSuccess: () => setEditState(null) }
+                    { onSuccess: () => { setEditError(null); setEditState(null) },
+                      onError: (e: unknown) => setEditError((e as AxiosError<{ error?: { message?: string } }>).response?.data?.error?.message ?? 'Không sửa được pallet') }
                   )
                 }}
               >
@@ -559,6 +563,7 @@ export default function InboundDetail() {
                 onChange={(e) => setEditState(s => s && ({ ...s, stack: Number(e.target.value) }))}
               />
             </div>
+            {editError && <div className="rounded-md bg-red-50 border border-red-200 px-3 py-1.5 text-xs text-red-700">{editError}</div>}
           </div>
         </FormSheet>
       )}
@@ -865,14 +870,14 @@ export default function InboundDetail() {
                 ) : editingPlannedCartons ? (
                   <span className="flex items-center gap-1">
                     <QtyInput compact autoFocus className="w-40"
-                      value={Math.max(0, parseInt(plannedCartonsInput) || 0)}
+                      value={Math.max(0, Number(plannedCartonsInput) || 0)}
                       mat={order.material}
                       onChange={b => setPlannedCartonsInput(String(b))}
                     />
                     <button
                       className="text-[10px] text-green-600 hover:text-green-700"
                       onClick={() => {
-                        updateOrder({ id: order.id, planned_cartons: plannedCartonsInput === '' ? null : Number(plannedCartonsInput) })
+                        updateOrder({ id: order.id, planned_cartons: plannedCartonsInput === '' ? null : Number(plannedCartonsInput) }, actOpts('Không sửa được số kế hoạch'))
                         setEditingPlannedCartons(false)
                       }}
                     >✓</button>
@@ -931,7 +936,7 @@ export default function InboundDetail() {
                 `Xác nhận xóa ${selectedIds.size} pallet? Thao tác này không thể hoàn tác.`,
                 () => deleteEntries(
                   { orderId: order.id, entryIds: [...selectedIds], employeeId: user?.id },
-                  { onSuccess: () => setSelectedIds(new Set()) }
+                  actOpts('Không xoá được các pallet đã chọn', () => setSelectedIds(new Set()))
                 )
               )}>
               <Trash2 className="h-3.5 w-3.5" /> Xóa ({selectedIds.size})
@@ -1091,7 +1096,7 @@ export default function InboundDetail() {
                               {canEditEntry(entry) && (
                                 <button
                                   className="text-slate-400 hover:text-blue-500 transition-colors p-0.5"
-                                  onClick={() => setEditState({ entry, cartons: entry.cartons_imported, stack: entry.stack_layer })}
+                                  onClick={() => { setEditError(null); setEditState({ entry, cartons: entry.cartons_imported, stack: entry.stack_layer }) }}
                                   title="Sửa"
                                 >
                                   <Pencil className="h-3 w-3" />
@@ -1103,7 +1108,7 @@ export default function InboundDetail() {
                                   onClick={() => openConfirm(
                                     'Xóa pallet',
                                     `Xác nhận xóa pallet "${entry.pallet_code}"?`,
-                                    () => deleteEntry({ orderId: order.id, entryId: entry.id, employeeId: user?.id })
+                                    () => deleteEntry({ orderId: order.id, entryId: entry.id, employeeId: user?.id }, actOpts('Không xoá được pallet'))
                                   )}
                                   title="Xóa"
                                 >

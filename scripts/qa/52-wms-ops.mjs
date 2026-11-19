@@ -853,6 +853,23 @@ console.log('\n── K. Ô lọc trang In tem ──')
     r.s === 200 && num(r.j?.data?.logged) === 2 && db.length === 2 && db[0].batch_id === db[1].batch_id,
     `s=${r.s} ghi=${r.j?.data?.logged} · DB=${db.length}`)
 
+  // [79b] Hộp in bị huỷ ⇒ người in gỡ đúng LẦN GHI của mình (C127); lần 2 ⇒ 404; lần in của NGƯỜI KHÁC không gỡ được
+  {
+    const r1 = await api('/wms/pallet-prints', 'POST', { mode: 'GENERATE', labels: [{ qr_code: `${T}HUY1`, material_code: MAT.material_code, category: MAT.category, qty: 1, warehouse_id: FIX.WH_QR.id }] })
+    const bid = r1.j?.data?.batch_id
+    const d1 = bid ? await api(`/wms/pallet-prints/batch/${bid}`, 'DELETE') : { s: 0 }
+    const left = (await restAll('PalletLabelPrint', `select=id&qr_code=eq.${T}HUY1`)).length
+    const d2 = bid ? await api(`/wms/pallet-prints/batch/${bid}`, 'DELETE') : { s: 0 }
+    const otherBid = randomUUID()
+    await restWrite('PalletLabelPrint', 'POST', null, [{ id: randomUUID(), batch_id: otherBid, qr_code: `${T}HUY2`, mode: 'GENERATE',
+      printed_by: randomUUID(), printed_by_name: `${T} người khác`, created_at: now(), updated_at: now() }])
+    const d3 = await api(`/wms/pallet-prints/batch/${otherBid}`, 'DELETE')
+    const otherLeft = (await restAll('PalletLabelPrint', `select=id&qr_code=eq.${T}HUY2`)).length
+    check('[79b] Huỷ hộp in ⇒ gỡ được lần ghi in CỦA MÌNH (trả batch_id lúc ghi); gỡ lần 2 ⇒ 404; lần in của người khác ⇒ 404, vẫn nằm trong sổ',
+      !!bid && d1.s === 200 && num(d1.j?.data?.removed) === 1 && left === 0 && d2.s === 404 && d3.s === 404 && otherLeft === 1,
+      `batch=${bid ? 'có' : 'THIẾU'} · gỡ=${d1.s}/${d1.j?.data?.removed} còn=${left} · lần2=${d2.s} · người khác=${d3.s} còn=${otherLeft}`)
+  }
+
   r = await api(`/wms/pallet-prints/facets?date_from=${TODAY}&date_to=${TODAY}&search=${T}TEM`, 'GET')
   const fc = r.j?.data ?? {}
   check('[80] Ô lọc trang In tem có đúng mã hàng / chu kỳ / máy vừa in',

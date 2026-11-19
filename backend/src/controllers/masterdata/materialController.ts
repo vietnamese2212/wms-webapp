@@ -11,6 +11,7 @@ import { parseListParam } from '../../utils/httpQuery'
 import { parseSheetByHeader, expandMergedCells, readWorkbookSafe, BAD_EXCEL_MSG, type FieldDef } from '../../utils/excelHeader'
 import { isPreflight, buildPreflight } from '../../utils/uploadPreflight'
 import { semiFinishedFlagError } from '../../utils/semiFinished'
+import { materialMissingFields, type MaterialRequiredInput } from '../../utils/materialRequired'
 
 // Màu pallet vẽ trên sơ đồ xếp xe (26/08) — chỉ có nghĩa với mã is_pallet_carrier.
 // null = màu mặc định; chuỗi lạ → 400 (DB cũng có CHECK hex, đây là lưới trước để lỗi ra tiếng Việt).
@@ -691,6 +692,14 @@ export async function uploadExcel(req: Request, res: Response) {
     for (const [code, rec] of [...upsertByCode, ...insertByCode]) {
       const btpErr = semiFinishedFlagError(rec as Parameters<typeof semiFinishedFlagError>[0])
       if (btpErr) errors.push(`${code} — ${btpErr}`)
+    }
+    // Mã MỚI phải đủ ô bắt buộc như form Thêm mã hàng (C125) — mã đã có thì không ép (sửa từng ô bằng file vẫn được)
+    if (insertByCode.size) {
+      const catRules = new Map((await getMaterialCategoryRules()).map(r => [r.c, r]))
+      for (const [code, rec] of insertByCode) {
+        const miss = materialMissingFields(rec as MaterialRequiredInput, catRules.get(String(rec.category ?? '')))
+        if (miss.length) errors.push(`${code} — mã mới thiếu ${miss.join(', ')} (bắt buộc như khi thêm mã ở form)`)
+      }
     }
 
     // ALL-OR-NOTHING (user chốt 27/07): còn 1 dòng lỗi là KHÔNG ghi gì.

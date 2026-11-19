@@ -17,14 +17,25 @@ export function PrintArea({ className = 'pl-print-area', children }: { className
   return createPortal(<div className={className} aria-hidden>{children}</div>, document.body)
 }
 
-/** Mở hộp in khi đủ `expected` ảnh QR trong vùng in đã tải xong (quá hạn chờ vẫn in — như trước). */
-export function printWhenReady(expected: number, selector = '.pl-print-area'): void {
+/** Mở hộp in khi đủ `expected` ảnh QR trong vùng in đã tải xong (quá hạn chờ vẫn in — như trước).
+ *  `onClosed`: gọi MỘT lần khi hộp in đóng (in xong hoặc bấm Huỷ — trình duyệt không cho biết là cái nào). */
+export function printWhenReady(expected: number, selector = '.pl-print-area', onClosed?: () => void): void {
   const t0 = Date.now()
   const limit = Math.min(15_000, 3_000 + expected * 40)
   const tick = () => {
     const imgs = Array.from(document.querySelectorAll<HTMLImageElement>(`${selector} img`))
     const ready = imgs.length >= expected && imgs.every(i => i.complete && i.naturalWidth > 0)
-    if (ready || Date.now() - t0 > limit) { window.print(); return }
+    if (ready || Date.now() - t0 > limit) {
+      if (onClosed) {
+        let done = false
+        const fire = () => { if (!done) { done = true; window.removeEventListener('afterprint', fire); onClosed() } }
+        window.addEventListener('afterprint', fire)
+        window.print()
+        if (!('onafterprint' in window)) setTimeout(fire, 500)   // trình duyệt không có sự kiện afterprint (hiếm) vẫn hỏi
+        return
+      }
+      window.print(); return
+    }
     window.setTimeout(tick, 60)
   }
   window.setTimeout(tick, 60)

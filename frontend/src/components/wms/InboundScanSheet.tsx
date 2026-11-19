@@ -507,7 +507,7 @@ export function InboundScanSheet({ order, onClose, employeeId, allLocations, onL
               <div className="space-y-1">
                 <Label className="text-xs font-medium text-slate-700">Số lượng nhập</Label>
                 {/* BASE UNIT: 2 ô Thùng + Hộp — value/onChange = BASE (hộp), quy đổi tại rìa như mọi sheet quét */}
-                <QtyInput value={Math.max(0, parseInt(cartons) || 0)} mat={order.material}
+                <QtyInput value={Math.max(0, Number(cartons) || 0)} mat={order.material}
                   onChange={b => setCartons(String(b))} />
                 {outboundCartons != null && (
                   <p className="text-[10px] text-slate-500">Phiếu xuất: <span className="font-semibold text-slate-700">{qtyLabel(outboundCartons ?? 0, order.material)}</span></p>

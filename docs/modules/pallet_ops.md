@@ -21,6 +21,8 @@ Dồn / Tách pallet
 
 **Tách — pallet con kế thừa lý lịch lô (19/11, C123):** mã hàng · NCC · NMSX · lô / chu kỳ · máy · NSX · HSD · HSD theo NCC · QA chép nguyên từ tem gốc qua MỘT danh sách `CHILD_INHERITED_COLS` (`utils/palletChild.ts`); số lượng = số tách, ngày nhập = ngày nhập của gốc. Trước 19/11 con mất NCC / NMSX / HSD theo NCC (gói 27 [4c] gác). Ô số lượng tách giữ phần lẻ (hàng tính KG).
 
+**Hoàn tác hỏi lại (19/11, C128):** nút "Hoàn tác" ở tab Lịch sử mở hộp xác nhận nêu rõ hệ quả (xoá pallet con + cộng lại gốc / trả pallet về như trước dồn). In tem con đi chung luật ghi Lịch sử in của In tem pallet (C127).
+
 ## Actions
 
 view, merge, ungroup, split 

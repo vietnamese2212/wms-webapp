@@ -21,6 +21,8 @@ Mã hàng (+ Nhà sản xuất)
 
 **Cờ "Bán thành phẩm" (16/11, C117):** `is_semi_finished` — dịch trộn từ NVL theo định mức, vào bồn (MES). Form (ô tím dưới "pallet mang hàng"; ẩn khi phi hàng hoá / pallet), file Excel (cột "Bán thành phẩm (1/0)"), API cùng luật `utils/semiFinished.ts` `semiFinishedFlagError`: base L / KG, không phi hàng hoá, không pallet; DB CHECK `material_semi_finished_chk` làm lưới cuối. Mã BTP không bắt buộc Loại hàng / Thùng-pallet / HSD / Pallet-EA (không nằm ở vị trí kho). Hạn lưu bồn (`tank_hold_hours`) chỉ KHAI được cho mã BTP. Trang Mã hàng: nhãn "BTP" ở cột Cờ, bộ lọc Cờ = Bán thành phẩm. Tìm mã `GET /masterdata/materials?semi_finished=1`.
 
+**Nạp Excel — mã MỚI đủ ô như form (19/11, C125):** mã chưa có phải có Loại hàng · Base Unit · Thùng/Pallet (+ HSD, Pallet/EA nếu Loại kho bắt), trừ phi hàng hoá / bán thành phẩm / pallet mang hàng — một helper `materialMissingFields` (utils/materialRequired); mã đã có vẫn sửa từng ô. File mẫu: sheet "MaHang" chỉ 2 dòng tên cột, ví dụ + giải thích ở sheet "Hướng dẫn". Cửa API tạo mã (POST) giữ luật cũ (gói QA / tích hợp tạo mã tối giản) — form tự kiểm phía trình duyệt.
+
 ## Actions
 
 view, create, edit, delete 

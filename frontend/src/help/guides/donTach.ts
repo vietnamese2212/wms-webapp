@@ -42,7 +42,7 @@ export const DON_TACH_GUIDE: Guide = {
           title: 'Quét pallet gốc, nhập số tách',
           text: [
             'Tab **Tách số lượng**. Ô **Pallet gốc cần tách**: quét (**Quét QR**) hoặc gõ mã tem rồi Enter — app hiện tên hàng và tồn.',
-            '**Số lượng mỗi pallet con tách ra**: nhập số cho **Con 1** (vd 200 kg). Cần nhiều pallet con thì bấm **+ Thêm pallet con**.',
+            '**Số lượng mỗi pallet con tách ra**: nhập số cho **Con 1** (vd 200 kg; hàng tính kg gõ được số lẻ như 12,5). Cần nhiều pallet con thì bấm **+ Thêm pallet con**.',
             '**Vị trí pallet con**: mặc định cùng ô với pallet gốc, đổi được.',
           ],
           images: [d('02-tach', 'Tách 200 kg từ pallet 995 kg')],
@@ -85,7 +85,7 @@ export const DON_TACH_GUIDE: Guide = {
           text: [
             'Mỗi dòng một thao tác: thời gian · Dồn / Tách · pallet nguồn → đích · số lượng · người làm · Hiệu lực / Đã hoàn tác.',
             '- **In tem**: in (lại) tem con của lần tách.',
-            '- **Hoàn tác**: trả lại như trước thao tác (tách: xoá pallet con, cộng lại vào gốc). Bấm là chạy ngay, không hỏi lại — xem kỹ dòng trước khi bấm. Pallet con đã bị xuất / cấp vào mẻ thì không hoàn tác được.',
+            '- **Hoàn tác**: trả lại như trước thao tác (tách: xoá pallet con, cộng lại vào gốc). App hỏi lại kèm hệ quả, bấm **Hoàn tác** để chạy. Pallet con đã bị xuất / cấp vào mẻ thì không hoàn tác được.',
           ],
           images: [d('06-lich-su', 'Lịch sử: một lần Dồn, một lần Tách')],
         },

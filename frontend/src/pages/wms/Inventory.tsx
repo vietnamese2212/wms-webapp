@@ -815,10 +815,13 @@ export default function Inventory() {
     import_date_from:   f.importDateFrom || undefined,
     import_date_to:     f.importDateTo   || undefined,
   }
-  const { data, isLoading } = useInventoryEntries({ ...queryParams, page: f.page, limit }, !aggregate)
+  const { data, isLoading, error: listErr } = useInventoryEntries({ ...queryParams, page: f.page, limit }, !aggregate)
   // Tổng hợp phân trang SERVER: trước đây nhận HẾT nhóm rồi tự `slice` — 41.107 nhóm = 18MB,
   // vượt trần 4,5MB của Vercel (pager trông đúng nhưng payload vẫn chết).
-  const { data: summaryData, isLoading: summaryLoading } = useInventorySummary({ ...queryParams, page: f.page, limit }, aggregate)
+  const { data: summaryData, isLoading: summaryLoading, error: summaryErr } = useInventorySummary({ ...queryParams, page: f.page, limit }, aggregate)
+  // Tải danh sách lỗi (vd từ khoá quá chung SEARCH_TOO_BROAD, quá tải) phải NÓI ra — bản cũ chỉ hiện "Không tìm thấy pallet nào" (C126)
+  const loadErr = aggregate ? summaryErr : listErr
+  const loadErrMsg = loadErr ? ((loadErr as AxiosError<{ error?: { message?: string } }>).response?.data?.error?.message ?? 'Không tải được danh sách tồn kho — thử lại') : ''
 
   const displayEntries    = data?.entries               ?? []
   const pagedGroups       = summaryData?.groups          ?? []
@@ -1159,6 +1162,9 @@ Gồm: ${unitBreakdown.join(' · ')}` : QTY_CONVERTED_TIP,
         </div>
         {exportError && (
           <div className="text-[11px] text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1">{exportError}</div>
+        )}
+        {loadErrMsg && (
+          <div data-testid="inv-load-error" className="text-[11px] text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1">{loadErrMsg}</div>
         )}
 
         {/* Row 2: Filter chip bar (desktop) */}

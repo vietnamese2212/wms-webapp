@@ -298,7 +298,7 @@ function ScanDialog({ item, gdoId, warehouseId, onClose, pdaMode = false, initia
               <div className="flex items-center gap-3">
                 <label className="text-sm font-medium text-slate-700 shrink-0">Số lượng lẻ:</label>
                 <QtyInput compact className="w-44"
-                  value={Math.max(0, parseInt(pendingCartons) || 0)}
+                  value={Math.max(0, Number(pendingCartons) || 0)}
                   mat={item.material}
                   onChange={b => setPendingCartons(String(b))}
                 />

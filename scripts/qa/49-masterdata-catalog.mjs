@@ -285,7 +285,7 @@ const M1 = `${P}M1`, M2 = `${P}M2`, M3 = `${P}M3`
     `s=${r.s} · DB loại = "${c?.category}" · danh mục hợp lệ = ${CATS.join(', ')}`)
 
   // ── UPLOAD EXCEL ──────────────────────────────────────────────────────────
-  const H = ['Mã hàng', 'Tên hàng', 'Loại hàng', 'Entry Unit', 'Base Unit', 'Đv/Thùng', 'Thùng/Pallet', 'Ghi chú']
+  const H = ['Mã hàng', 'Tên hàng', 'Loại hàng', 'Entry Unit', 'Base Unit', 'Đv/Thùng', 'Thùng/Pallet', 'Ghi chú', 'HSD (ngày)', 'Pallet/EA']
   const MNEW = `${P}MUP`
 
   // [17] File sai mẫu (thiếu hẳn cột "Mã hàng") — phải nói RÕ thiếu cột nào, không nuốt im
@@ -301,7 +301,8 @@ const M1 = `${P}M1`, M2 = `${P}M2`, M3 = `${P}M3`
   u = await upload('/masterdata/materials/upload', [
     H,
     [M1, '', '', '', '', '', '', `${P} ghi chú ĐÃ ĐỔI`],
-    [MNEW, `${P} Hàng mới`, '', '', '', '', '', ''],
+    // mã MỚI phải đủ ô bắt buộc như form (C125): Loại hàng · Base Unit · Thùng/Pallet (+ HSD, Pallet/EA nếu Loại kho bắt)
+    [MNEW, `${P} Hàng mới`, CAT, '', 'HOP', '', 40, '', 180, 0.025],
   ], { preflight: true })
   const sau17 = await one('Material', `select=notes&material_code=eq.${M1}`)
   const daTao17 = await cnt('Material', `material_code=eq.${MNEW}`)
@@ -317,6 +318,13 @@ const M1 = `${P}M1`, M2 = `${P}M2`, M3 = `${P}M3`
     u.s === 200 && (u.j?.data?.errors ?? []).some(e => e.includes(MNEW) && /Tên hàng/i.test(e))
       && Number(u.j?.data?.inserted ?? 0) === 0 && (await cnt('Material', `material_code=eq.${MNEW}`)) === 0,
     `s=${u.s} · lỗi="${(u.j?.data?.errors ?? [])[0] ?? '—'}"`)
+
+  // [19b] Mã MỚI chỉ có Mã + Tên (C125 — form bắt Loại hàng · Base Unit · Thùng/Pallet, file từng cho qua ⇒ mã cụt)
+  u = await upload('/masterdata/materials/upload', [H, [MNEW, `${P} Hàng thiếu ô`, '', '', '', '', '', '']], { preflight: true })
+  const err19b = (u.j?.data?.errors ?? []).find(e => e.includes(MNEW)) ?? ''
+  check('[19b] Tải mã MỚI chỉ có Mã + Tên → báo thiếu Loại hàng, Base Unit, Thùng/Pallet (cùng luật form), không thêm',
+    u.s === 200 && /Loại hàng/.test(err19b) && /Base Unit/.test(err19b) && /Thùng\/Pallet/.test(err19b) && Number(u.j?.data?.to_insert ?? 0) === 0,
+    `s=${u.s} · lỗi="${err19b.slice(0, 120) || '—'}" · sẽ thêm=${u.j?.data?.to_insert}`)
 
   // [20] BẪY "upsert ghi NULL đè": cột Entry Unit chỉ điền ở DÒNG 1, dòng 2 để trống
   //      ⇒ mã ở dòng 2 PHẢI GIỮ NGUYÊN đơn vị nhập liệu cũ. Oracle = giá trị đọc trước khi tải.

@@ -263,36 +263,54 @@ export default function Materials() {
     return null
   }
 
-  // Mẫu Excel Mã hàng — BE map theo TÊN cột (đảo cột vẫn đúng). Dòng 1 nhãn, dòng 2 key, dòng 3 ví dụ. `*` = bắt buộc điền.
+  // Mẫu Excel Mã hàng — BE map theo TÊN cột (đảo cột vẫn đúng). Dòng 1 nhãn, dòng 2 key (ví dụ ở sheet "Hướng dẫn"). `*` = bắt buộc điền với mã mới.
   // ĐV tem `;` (isV2Format): mẫu tự thêm cột 13 batch_prefix (Mã tắt mã lô); ĐV tem `_` giữ 12 cột như cũ.
   function downloadMaterialTemplate() {
     // Cột 4 ('(bỏ trống)') = filler VỊ TRÍ của ĐVT cũ (đã bỏ) — giữ để file cũ không lệch cột. Đơn vị nay = Base/Entry Unit (2 cột cuối).
     const labels = ['Mã hàng *', 'Tên hàng *', 'Loại hàng *', '(bỏ trống)', 'Thùng/Pallet *', 'Đv/Thùng', 'Pallet/EA', 'KL (kg)', 'HSD (ngày)', 'Loại SP', 'Tên rút gọn', 'Ghi chú']
     const keys = ['material_code', 'material_description', 'category', 'unit', 'cartons_per_pallet', 'units_per_carton', 'pallet_per_ea', 'weight_kg', 'shelf_life_days', 'product_type', 'custom_short_name', 'notes']
-    const ex = ['210000262', 'Sữa tươi tiệt trùng 180ml', 'Thành phẩm', '', 80, 48, '', 9.6, 180, 'UHT', '', '']
-    if (isV2Format) { labels.push('Mã tắt (mã lô)'); keys.push('batch_prefix'); ex.push('TA') }
-    else { labels.push('(bỏ trống)'); keys.push('batch_prefix'); ex.push('') }   // giữ VỊ TRÍ cột khớp M_KEYS BE — dims nằm SAU batch_prefix
+    if (isV2Format) { labels.push('Mã tắt (mã lô)'); keys.push('batch_prefix') }
+    else { labels.push('(bỏ trống)'); keys.push('batch_prefix') }   // giữ VỊ TRÍ cột khớp M_KEYS BE — dims nằm SAU batch_prefix
     labels.push('Thùng dài (mm)', 'Thùng rộng (mm)', 'Thùng cao (mm)', 'Số lớp tối đa', 'Xếp trên hàng khác (1/0)')
     keys.push('carton_length_mm', 'carton_width_mm', 'carton_height_mm', 'max_stack_layers', 'stack_on_top')
-    ex.push(380, 285, 240, 8, 0)
     labels.push('Base Unit *', 'Entry Unit')
     keys.push('base_unit', 'entry_unit')
-    ex.push('HOP', 'CAR')
     // 3 cờ nghiệp vụ (1/0) — ô trống = giữ nguyên với mã đã có, = tắt với mã mới
     labels.push('Không quản QR (1/0)', 'Mã phi hàng hóa (1/0)', 'Pallet mang hàng (1/0)')
     keys.push('no_qr_tracking', 'is_non_stock', 'is_pallet_carrier')
-    ex.push(0, 0, 0)
     // Xe xá chồng khác pallet — trống = như "Số lớp tối đa"
     labels.push('Chồng xá (lớp)')
     keys.push('loose_stack_layers')
-    ex.push('')
     // Bán thành phẩm (dịch trộn vào bồn — Sản xuất chỉ nhận mã này) — trống = giữ nguyên / tắt với mã mới
     labels.push('Bán thành phẩm (1/0)')
     keys.push('is_semi_finished')
-    ex.push(0)
-    const ws = XLSX.utils.aoa_to_sheet([labels, keys, ex])
+    // 19/11 (C125): sheet dữ liệu CHỈ có 2 dòng tên cột — ví dụ cũ nằm ngay dòng 3 (mã thật 210000262, loại "Thành phẩm")
+    // nên quên xoá là cả file bị chặn "ngoài phạm vi" hoặc ghi đè mã thật. Ví dụ + giải thích chuyển sang sheet "Hướng dẫn".
+    const ws = XLSX.utils.aoa_to_sheet([labels, keys])
+    ws['!cols'] = labels.map(l => ({ wch: Math.max(12, Math.min(28, l.length + 2)) }))
+    // Loại hàng của ví dụ = loại trong phạm vi người tải (ưu tiên loại bắt Pallet/EA — kiểu nguyên liệu), không viết cứng mã loại
+    const exCat = warehouseTypes.find(t => needsPalletPerEa(t.value, whTypeMeta))?.value ?? warehouseTypes[0]?.value ?? ''
+    const exNvl = keys.map(k => ({ material_code: '210009999', material_description: 'Bột cacao kiềm hoá 10-12% (ví dụ)', category: exCat,
+      cartons_per_pallet: 1000, pallet_per_ea: '0,001', shelf_life_days: 720, base_unit: 'KG', no_qr_tracking: 0, is_non_stock: 0,
+      is_pallet_carrier: 0, is_semi_finished: 0 } as Record<string, string | number>)[k] ?? '')
+    const guide = XLSX.utils.aoa_to_sheet([
+      ['NẠP MÃ HÀNG TỪ EXCEL — app chỉ đọc sheet ĐẦU TIÊN ("MaHang"), theo TÊN cột ở dòng 1 / dòng 2 (giữ nguyên 2 dòng này)'],
+      [],
+      ['• Mã CHƯA có ⇒ thêm mới: bắt buộc Mã hàng, Tên hàng, Loại hàng, Base Unit, Thùng/Pallet; thêm HSD (ngày) và Pallet/EA nếu Loại kho bắt (Cài đặt WMS → Loại kho) — như form Thêm mã hàng.'],
+      ['• Mã ĐÃ có ⇒ cập nhật ô có giá trị, ô để trống giữ nguyên.'],
+      ['• Thùng/Pallet: số đơn vị gốc trên một pallet đầy (mã tính KG thì ghi số kg / pallet). Pallet/EA = 1 ÷ số đó (1.000 kg/pallet ⇒ 0,001).'],
+      ['• Có Entry Unit (vd CAR) thì bắt buộc Đv/Thùng = số Base Unit trong 1 Entry; Entry phải khác Base.'],
+      ['• Cột (1/0): 1 = bật, 0 = tắt, trống = giữ nguyên (mã mới: tắt).'],
+      ['• File còn một dòng lỗi thì KHÔNG ghi gì; trước khi ghi app hiện bảng kiểm để bạn xem và bấm Xác nhận.'],
+      [],
+      ['VÍ DỤ (chép sang sheet "MaHang" từ dòng 3, thay bằng mã thật):'],
+      labels,
+      exNvl,
+    ])
+    guide['!cols'] = labels.map(() => ({ wch: 16 }))
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'MaHang')
+    XLSX.utils.book_append_sheet(wb, guide, 'Hướng dẫn')
     saveWorkbook(wb, 'mau_ma_hang.xlsx')
   }
 
@@ -1455,7 +1473,7 @@ export default function Materials() {
         <UploadExcelDialog
           title="Upload Mã hàng từ Excel"
           hint={'Còn 1 dòng lỗi là KHÔNG ghi gì — sửa file rồi upload lại (không sợ nhập dở dang). '
-              + 'Mã mới → thêm (Tên hàng bắt buộc). Mã đã có → cập nhật ô có giá trị, ô trống giữ nguyên. '
+              + 'Mã mới → thêm (đủ ô bắt buộc như form: Tên hàng, Loại hàng, Base Unit, Thùng/Pallet, HSD / Pallet-EA nếu Loại kho bắt). Mã đã có → cập nhật ô có giá trị, ô trống giữ nguyên. '
               + 'Mã có Entry Unit thì bắt buộc điền "Đv/Thùng"; Loại hàng phải có sẵn trong danh mục Loại kho.'}
           onClose={() => setShowUpload(false)}
           onDownloadTemplate={downloadMaterialTemplate}

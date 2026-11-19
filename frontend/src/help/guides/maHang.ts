@@ -148,8 +148,9 @@ export const MA_HANG_GUIDE: Guide = {
           title: 'Mở Upload Excel, tải file mẫu',
           text: [
             'Bấm biểu tượng **mũi tên lên** cạnh nút Thêm mã hàng → hộp "Upload Mã hàng từ Excel" → **Tải mẫu**.',
-            'Trong file mẫu: **giữ nguyên dòng 1 và dòng 2** (tên cột), **xoá dòng ví dụ** rồi điền mỗi mã một dòng. Cột có dấu * là bắt buộc với mã mới.',
-            '- Mã **chưa có** ⇒ thêm mới (phải có Tên hàng).',
+            'Hộp chọn chỗ lưu hiện ra: chọn thư mục rồi bấm **Lưu** — app báo "Đã lưu mau_ma_hang.xlsx". Không ghi được vào thư mục đó thì app báo đỏ và tải file về thư mục **Tải xuống**.',
+            'File mẫu có 2 sheet: **MaHang** chỉ có 2 dòng tên cột (giữ nguyên, điền mỗi mã một dòng từ dòng 3) và **Hướng dẫn** (giải thích từng cột + một dòng ví dụ).',
+            '- Mã **chưa có** ⇒ thêm mới: phải đủ ô như form — Tên hàng, Loại hàng, Base Unit, Thùng/Pallet, và HSD / Pallet/EA nếu loại hàng bắt.',
             '- Mã **đã có** ⇒ chỉ cập nhật ô có giá trị; ô để trống giữ nguyên.',
           ],
           images: [d('16-nut-upload', 'Nút Upload Excel'), d('17-upload', 'Hộp Upload Mã hàng từ Excel, nút Tải mẫu')],
@@ -171,7 +172,9 @@ export const MA_HANG_GUIDE: Guide = {
       steps: [
         { title: '"HSD (ngày) là bắt buộc cho loại RM01" / "Pallet/EA là bắt buộc"', text: ['Nguyên liệu và bao bì phải có HSD và Pallet/EA. Pallet/EA = 1 ÷ số đơn vị gốc trên một pallet (1.000 kg/pallet ⇒ 0,001).'] },
         { title: '"Mã hàng đã tồn tại"', text: ['Mã đã có (có thể đang ẩn). Bỏ lọc Trạng thái để tìm, rồi sửa mã đó thay vì thêm mới.'] },
-        { title: '"Loại hàng … ngoài phạm vi của bạn"', text: ['Tài khoản chỉ được khai mã của loại hàng được giao. Trong file Excel, kiểm tra cột Loại hàng và xoá dòng ví dụ của file mẫu.'] },
+        { title: '"Loại hàng … ngoài phạm vi của bạn"', text: ['Tài khoản chỉ được khai mã của loại hàng được giao. Trong file Excel, kiểm tra cột Loại hàng.'] },
+        { title: '"… mã mới thiếu Loại hàng, Base Unit, Thùng/Pallet…"', text: ['Mã chưa có trong danh mục phải đủ ô bắt buộc như khi thêm ở form. Điền các ô app nêu tên rồi chọn lại file.'] },
+        { title: 'Bấm Tải mẫu / Xuất Excel mà không thấy file', text: ['File lưu vào thư mục bạn chọn trong hộp chọn chỗ lưu (lần đầu mở ở Documents) và app báo "Đã lưu …". App báo đỏ "Không ghi được vào thư mục đã chọn" thì file đã được tải về thư mục Tải xuống; đóng file cùng tên đang mở trong Excel hoặc chọn thư mục khác rồi tải lại.'] },
         { title: 'Vừa ẩn mã thì mã biến mất', text: ['Danh sách mặc định lọc "Đang dùng". Đổi bộ lọc Trạng thái sang "Đã ẩn" để thấy lại.'] },
         { title: 'Nạp Excel báo lỗi nên không ghi gì', text: ['Đúng như thiết kế: một dòng lỗi là cả file không ghi, để không bị nhập dở dang. Bấm "Tải danh sách lỗi", sửa file rồi nạp lại.'] },
       ],

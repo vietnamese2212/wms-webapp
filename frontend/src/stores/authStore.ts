@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type { AxiosError } from 'axios'
-import { apiClient } from '@/api/client'
+import { apiClient, rejectedStaleToken } from '@/api/client'
 import { clearOfflineData } from '@/offline/persist'
 import { setRealtimeAuth } from '@/lib/supabase'
 import { disconnectRealtimeEvents } from '@/api/realtimeEvents'
@@ -63,6 +63,8 @@ export const useAuthStore = create<AuthState>()(
           // phiên — giữ user/token đã persist để user vẫn dùng được, lần load
           // sau tự refresh lại. Trước đây catch-all xóa sạch → refresh là "văng".
           if ((err as AxiosError)?.response?.status === 401) {
+            // token gửi đi đã cũ hơn token đang lưu (tab khác cùng trình duyệt vừa nhận token mới) ⇒ nhận lại phiên, KHÔNG xoá (19/11)
+            if (rejectedStaleToken((err as AxiosError).config as { headers?: Record<string, unknown> } | undefined)) { await useAuthStore.persist.rehydrate(); return }
             set({ user: null, isAuthenticated: false, token: null })
           }
         }

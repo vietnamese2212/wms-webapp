@@ -20,6 +20,18 @@ export class OfflineError extends Error {
   }
 }
 
+/** Token đang lưu (localStorage dùng chung MỌI tab cùng trình duyệt) — mỗi request đọc lại nên tab nào lưu token mới thì tab khác dùng ngay. */
+export function storedToken(): string | null {
+  try { return (JSON.parse(localStorage.getItem('wms-auth') ?? 'null') as { state?: { token?: string | null } } | null)?.state?.token ?? null } catch { return null }
+}
+/** Request bị 401 có gửi token KHÁC token đang lưu ⇒ tab khác cùng trình duyệt vừa nhận token mới (vd vừa tự đổi mật khẩu):
+ *  không phải phiên hết hạn — KHÔNG được xoá phiên (xoá là đá luôn tab kia). 19/11. */
+export function rejectedStaleToken(config: { headers?: Record<string, unknown> } | undefined): boolean {
+  const sent = String(config?.headers?.Authorization ?? '').replace(/^Bearer /, '')
+  const cur = storedToken()
+  return !!sent && !!cur && sent !== cur
+}
+
 apiClient.interceptors.request.use((config) => {
   // Trình duyệt biết chắc offline + request GHI → chặn ngay (GET để React Query tự xử:
   // query đang cache vẫn hiển thị, không cần bắn request chết).
@@ -34,15 +46,8 @@ apiClient.interceptors.request.use((config) => {
       && (config.data as Record<string, unknown>).qty_semantics === undefined) {
     ;(config.data as Record<string, unknown>).qty_semantics = 'base'
   }
-  const stored = localStorage.getItem('wms-auth')
-  if (stored) {
-    try {
-      const { state } = JSON.parse(stored)
-      if (state?.token) {
-        config.headers.Authorization = `Bearer ${state.token}`
-      }
-    } catch {}
-  }
+  const tok = storedToken()
+  if (tok) config.headers.Authorization = `Bearer ${tok}`
   return config
 })
 
@@ -53,7 +58,10 @@ apiClient.interceptors.response.use(
     // Nếu 401 đến từ request bắn TRƯỚC lúc token kịp gắn (race khi tải lại trang nặng),
     // token trong localStorage vẫn hợp lệ → KHÔNG được xóa, để React Query thử lại.
     const hadToken = !!(error.config?.headers?.Authorization)
-    if (error.response?.status === 401 && hadToken) {
+    if (error.response?.status === 401 && hadToken && rejectedStaleToken(error.config)) {
+      // tab khác đã lưu token mới ⇒ tab này nhận lại phiên từ bộ nhớ chung thay vì đăng xuất (import động: tránh vòng phụ thuộc)
+      import('@/stores/authStore').then(m => m.useAuthStore.persist.rehydrate()).catch(() => {})
+    } else if (error.response?.status === 401 && hadToken) {
       localStorage.removeItem('wms-auth')
       // Dọn cache + hàng đợi quét khỏi IndexedDB khi phiên hết hạn (máy dùng chung).
       // import động để tránh phụ thuộc vòng ở tầng client thấp.

@@ -192,16 +192,32 @@ export async function updateJobTitle(req: Request, res: Response) {
   try {
     if (!isSuperadmin(req)) return fail(res, ADMIN_ONLY_MSG, 403)
     const { id } = req.params
-    const { name, is_active, module_permissions, is_driver, is_forklift_driver, landing_page } = req.body as {
+    const { name, is_active, module_permissions, is_driver, is_forklift_driver, landing_page, department_id } = req.body as {
       name?: string; is_active?: boolean; is_driver?: boolean; is_forklift_driver?: boolean
       landing_page?: string | null
       module_permissions?: Record<string, string[]>
+      department_id?: string | null
     }
     const escErr = escalationError(req, module_permissions)
     if (escErr) return fail(res, escErr, 403)
     const lp = landingPageOf(landing_page)
     if ('error' in lp) return fail(res, lp.error, 400)
-    const { data: before } = await supabase.from('JobTitle').select('name, is_active, module_permissions, is_driver, is_forklift_driver, landing_page').eq('id', id).maybeSingle()
+    // 19/11: form Sửa chức danh gửi department_id mà trước đây hàm này KHÔNG đọc ⇒ trả 200, phòng ban giữ nguyên (user: "đổi phòng ban
+    // không làm được"). Gửi trường này thì phải có giá trị (chức danh luôn thuộc một phòng ban — cùng luật lúc tạo).
+    if (department_id !== undefined && (typeof department_id !== 'string' || !department_id.trim()))
+      return fail(res, 'Phòng ban là bắt buộc', 400)
+    const { data: before } = await supabase.from('JobTitle').select('name, is_active, module_permissions, is_driver, is_forklift_driver, landing_page, department_id').eq('id', id).maybeSingle()
+    if (!before) return fail(res, 'Không tìm thấy chức danh', 404)
+    let movedEmployees = 0
+    if (department_id !== undefined && department_id !== (before as { department_id: string | null }).department_id) {
+      const { data: dept } = await supabase.from('Department').select('id').eq('id', department_id).maybeSingle()
+      if (!dept) return fail(res, 'Phòng ban không tồn tại', 400)
+      // MỘT giao dịch: đổi phòng ban của chức danh + chuyển theo nhân viên mang chức danh này đang ở phòng ban CŨ
+      // (form Nhân viên lọc chức danh theo phòng ban — để họ ở lại thì ô Chức danh của họ không còn trong danh sách)
+      const { data: mv, error: mvErr } = await supabase.rpc('jobtitle_set_department', { p_id: id, p_dept: department_id, p_actor: req.user?.name || null })
+      if (mvErr) return fail(res, mvErr)
+      movedEmployees = Number((mv as { employees?: number } | null)?.employees ?? 0)
+    }
     const { data, error } = await supabase
       .from('JobTitle')
       .update({
@@ -216,11 +232,12 @@ export async function updateJobTitle(req: Request, res: Response) {
     if (!data) return fail(res, 'Không tìm thấy chức danh', 404)
     // Sổ quản trị: ĐỔI QUYỀN chức danh là thao tác IT hỏi đầu tiên ("ai cấp quyền này, khi nào?")
     const d = diffFields(before as Record<string, unknown> | null, {
-      name, is_active, module_permissions, is_driver, is_forklift_driver,
+      name, is_active, module_permissions, is_driver, is_forklift_driver, department_id,
       ...('skip' in lp ? {} : { landing_page: lp.value }),
     })
+    if (movedEmployees) d.after = { ...d.after, employees_moved: movedEmployees }
     if (Object.keys(d.after).length)
       await logAdmin(req, { action: 'JOBTITLE_UPDATE', target_type: 'JobTitle', target_id: id, target_label: (before as { name?: string } | null)?.name ?? name ?? id, ...d })
-    return ok(res, data)
+    return ok(res, { ...(data as Record<string, unknown>), employees_moved: movedEmployees })
   } catch (e) { return fail(res, String(e)) }
 }

@@ -778,6 +778,11 @@ function JobTitleFormDialog({ jt, open, onClose }: { jt: JobTitle | null; open: 
               searchPlaceholder="Tìm phòng ban…"
               options={[{ value: '__none__', label: '— Chọn phòng ban —' }, ...departments.map(d => ({ value: d.id, label: d.name }))]}
             />
+            {isEdit && deptId && deptId !== jt?.department_id && (
+              <p className="text-[11px] text-amber-700" data-testid="jt-dept-move-hint">
+                Nhân viên đang mang chức danh này ở phòng ban {jt?.department?.name ?? 'cũ'} sẽ chuyển sang phòng ban mới khi Lưu.
+              </p>
+            )}
           </div>
 
           <div className="space-y-2">

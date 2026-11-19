@@ -3212,11 +3212,17 @@ export function useUpdateJobTitle() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: ({ id, ...body }: {
-      id: string; name?: string; is_driver?: boolean; landing_page?: string | null
+      id: string; name?: string; is_driver?: boolean; is_forklift_driver?: boolean; landing_page?: string | null
+      /** 19/11: đổi phòng ban — nhân viên mang chức danh này đang ở phòng ban cũ chuyển theo (server trả employees_moved) */
+      department_id?: string
       allowed_categories?: string[]; warehouse_scope?: string; is_active?: boolean
       module_permissions?: Record<string, string[]>
-    }) => apiClient.put(`/masterdata/job-titles/${id}`, body).then(r => r.data.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['job-titles'] }),
+    }) => apiClient.put(`/masterdata/job-titles/${id}`, body).then(r => r.data.data as { employees_moved?: number }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['job-titles'] })
+      qc.invalidateQueries({ queryKey: ['employee-records'] })
+      qc.invalidateQueries({ queryKey: ['employee-records-paged'] })
+    },
   })
 }
 

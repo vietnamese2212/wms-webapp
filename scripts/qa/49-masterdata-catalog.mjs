@@ -785,6 +785,27 @@ let WH1 = null, ZONE = null
   check('[77] Đặt cấp trên là chức danh KHÔNG CÓ THẬT → báo lỗi sạch 4xx, không "Lỗi hệ thống"',
     r.s >= 400 && r.s < 500, `s=${r.s} · "${(r.j?.error?.message ?? '').slice(0, 50)}"`)
   await api(`/masterdata/job-titles/${j1.id}/parent`, 'PATCH', { parent_id: null })
+
+  // [77b][77c] ĐỔI PHÒNG BAN CỦA CHỨC DANH (19/11 — user: "đổi phòng ban không làm được": form gửi department_id, server trả 200 mà
+  // không đọc trường đó ⇒ phòng ban giữ nguyên). Đúng đường form gọi: PUT /job-titles/:id. Nhân viên mang chức danh ở phòng CŨ chuyển theo.
+  const deptB = (await api('/masterdata/departments', 'POST', { name: `${P} Phòng K2`, code: `${P}DK2` })).j?.data
+  const mkJ = async (n, dep) => (await api('/masterdata/employees', 'POST', {
+    name: `${P} NV chức danh ${n}`, employee_code: `${P}J${n}`, email: `qa49.j${n}@qa49.local`, department_id: dep, job_title_id: j1.id,
+    warehouse_scope: 'ASSIGNED', warehouse_ids: WH1 ? [WH1.id] : [], allowed_categories: [CAT],
+  })).j?.data
+  const eSame = await mkJ(1, dept.id), eNone = await mkJ(2, null)
+  r = await api(`/masterdata/job-titles/${j1.id}`, 'PUT', { name: `${P} Chức danh 1`, department_id: deptB?.id })
+  const jDb = await one('JobTitle', `select=department_id&id=eq.${j1.id}`)
+  const e1 = await one('Employee', `select=department_id&id=eq.${eSame?.id}`), e2 = await one('Employee', `select=department_id&id=eq.${eNone?.id}`)
+  check('[77b] Sửa chức danh ĐỔI PHÒNG BAN → lưu đúng; nhân viên mang chức danh ở phòng cũ chuyển theo, nhân viên chưa có phòng ban giữ nguyên',
+    r.s === 200 && !!deptB && jDb?.department_id === deptB.id && e1?.department_id === deptB.id && e2?.department_id == null && Number(r.j?.data?.employees_moved) === 1,
+    `s=${r.s} · chức danh ${jDb?.department_id === deptB?.id ? 'ĐÃ' : 'CHƯA'} sang phòng mới · nv cùng phòng=${e1?.department_id === deptB?.id ? 'chuyển' : e1?.department_id} · nv chưa phòng=${e2?.department_id ?? 'trống'} · moved=${r.j?.data?.employees_moved}`)
+  const rEmpty = await api(`/masterdata/job-titles/${j1.id}`, 'PUT', { department_id: '' })
+  const rBad = await api(`/masterdata/job-titles/${j1.id}`, 'PUT', { department_id: `${P}-KHONG-CO-THAT` })
+  if (rBad.s >= 500) note500('PUT /api/masterdata/job-titles/:id', 'đổi sang phòng ban không tồn tại')
+  const jDb2 = await one('JobTitle', `select=department_id&id=eq.${j1.id}`)
+  check('[77c] Đổi sang phòng ban TRỐNG / KHÔNG CÓ THẬT → 400, phòng ban giữ nguyên',
+    rEmpty.s === 400 && rBad.s === 400 && jDb2?.department_id === deptB?.id, `s=${rEmpty.s}/${rBad.s} · ${jDb2?.department_id === deptB?.id ? 'giữ' : jDb2?.department_id}`)
 }
 
 // ════════════════════════════════════════════════════════════════════════════

@@ -4,7 +4,7 @@ import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { fetchAllRowsParallel, fetchAllByIdChunks } from '../../utils/pagination'
 import { normalizeQR } from '../../utils/qrParser'
-import { childBaseOf, childLikePattern, childIndexOf, childCodeOf } from '../../utils/palletChild'
+import { childBaseOf, childLikePattern, childIndexOf, childCodeOf, childInheritedFields } from '../../utils/palletChild'
 import { wrongFormatHint } from './systemSettingController'
 import { qtyLabel, qtyIntegerError, type MatUnits } from '../../utils/qtyUnits'
 import { requireBaseQty } from '../../utils/qtySemantics'
@@ -198,7 +198,7 @@ export async function splitPallet(req: Request, res: Response) {
 
     // Scope theo KHO qua location (cột warehouse_id thường NULL ở pallet nhập SX)
     const { data: sRows, error: sErr } = await supabase.from('InventoryEntry')
-      .select(`id, pallet_code, location_id, material_id, manufacturer_id, cycle, machine_code, pallet_sequence_no, qa_status_id, stack_layer, cartons_imported, cartons_remaining, cartons_reserved, production_date, batch, expiry_date, import_date, ncc_id, shelf_life_days, material:Material!material_id(base_unit, entry_unit, units_per_carton), ${WH_SELECT}`)
+      .select(`id, pallet_code, location_id, material_id, manufacturer_id, nmsx, cycle, machine_code, pallet_sequence_no, qa_status_id, stack_layer, cartons_imported, cartons_remaining, cartons_reserved, production_date, batch, expiry_date, import_date, ncc_id, shelf_life_days, material:Material!material_id(base_unit, entry_unit, units_per_carton), ${WH_SELECT}`)
       .eq('pallet_code', src).in('status', ACTIVE)
     if (sErr) return fail(res, sErr.message, 500)
     const sMatch = (sRows ?? []).filter((r: any) => matchWh(r, warehouse_id))
@@ -281,19 +281,12 @@ export async function splitPallet(req: Request, res: Response) {
         pallet_code: childCode,
         location_id: location_id || source.location_id,   // vị trí chọn, mặc định = vị trí pallet nguồn
         warehouse_id: source.warehouse_id ?? null,
-        material_id: source.material_id,
-        manufacturer_id: source.manufacturer_id ?? null,
-        cycle: source.cycle ?? null,
-        machine_code: source.machine_code ?? null,
-        pallet_sequence_no: source.pallet_sequence_no ?? null,
-        qa_status_id: source.qa_status_id ?? null,
+        // Lý lịch lô (mã · NCC · NMSX · lô · NSX · HSD · QA …) chép nguyên từ tem gốc — một danh sách ở utils/palletChild (C123)
+        ...childInheritedFields(source),
         stack_layer: source.stack_layer ?? 1,
         cartons_imported: qty,         // hiển thị trên tồn; KHÔNG vào báo cáo nhập vì import_order_id=NULL + origin=SPLIT
         cartons_remaining: qty,
         cartons_reserved: 0,
-        production_date: source.production_date ?? null,
-        batch: source.batch ?? null,          // tem V2: giữ mã lô gốc (con cùng lô → khớp kế toán)
-        expiry_date: source.expiry_date ?? null,  // tem V2: giữ HSD gốc
         import_order_id: null,          // ⚠️ tách KHÔNG thuộc phiếu nhập → báo cáo nhập không bị thổi phồng
         origin: 'SPLIT',
         parent_pallet_code: null,

@@ -498,7 +498,7 @@ export default function PalletOps() {
                     <div key={i} className="flex items-center gap-1.5">
                       <span className="text-[11px] text-slate-400 w-12">Con {i + 1}</span>
                       <QtyInput compact className="flex-1"
-                        value={Math.max(0, parseInt(q) || 0)}
+                        value={Math.max(0, Number(q) || 0)}
                         mat={srcEntry?.material}
                         onChange={b => setSplitQtys(p => p.map((x, j) => j === i ? String(b) : x))} />
                       {splitQtys.length > 1 && <button onClick={() => setSplitQtys(p => p.filter((_, j) => j !== i))} className="text-slate-400 hover:text-red-500"><X className="h-4 w-4" /></button>}

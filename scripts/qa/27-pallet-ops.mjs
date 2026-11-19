@@ -186,6 +186,23 @@ try {
       `http=${r.s} gốc=${CU} con=${ngayCon || '(trống)'} hôm-nay=${vnDate()}`)
   }
 
+  // ── [4c] TÁCH phải GIỮ NCC · nơi nhận (NMSX) · HSD theo NCC của pallet gốc (19/11, C123) ──
+  // Hàng NVL của NCC: NCC quyết định HSD (ngoại lệ theo NCC) ⇒ %Date. Trước đây con mất cả ba ⇒ HSD con tính theo
+  // HSD mặc định của mã, tem con in trống ô NCC. Cửa sinh tem con còn lại (nhận hàng lẻ trả về) vốn đã chép đủ.
+  {
+    const [ncc] = await restAll('TransportCompany', 'select=id&limit=1')
+    const SRCN = v1('910')
+    await mkPallet(SRCN, 40, WHQ, locA, { ncc_id: ncc?.id ?? null, nmsx: 'B', shelf_life_days: 200 })
+    const r = await api('/wms/pallet-ops/split', 'POST', { source_pallet_code: SRCN, children: [{ qty: 10 }], warehouse_id: WHQ })
+    const childCode = r.j?.data?.children?.[0]?.pallet_code
+    if (childCode) allCodes.push(childCode)
+    const [child] = childCode ? await restAll('InventoryEntry',
+      `select=ncc_id,nmsx,shelf_life_days&pallet_code=eq.${encodeURIComponent(childCode)}&warehouse_id=eq.${WHQ}`) : []
+    check('[4c] Tách: pallet con GIỮ NCC + NMSX + HSD theo NCC của gốc',
+      r.s === 200 && !!ncc?.id && child?.ncc_id === ncc.id && child?.nmsx === 'B' && Number(child?.shelf_life_days) === 200,
+      `http=${r.s} ncc=${child?.ncc_id === ncc?.id ? 'giữ' : child?.ncc_id ?? 'MẤT'} nmsx=${child?.nmsx ?? 'MẤT'} hsd=${child?.shelf_life_days ?? 'MẤT'}`)
+  }
+
   // ── [5] Thiếu qty_semantics → 409 APP_OUTDATED (chặn bundle cũ) ────────────
   {
     // api() tự gắn qty_semantics — gọi fetch trần qua api() với body mảng? Không: gửi cờ SAI giá trị

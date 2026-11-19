@@ -10,6 +10,7 @@
 ## Giao thoa với
 <!-- giao-thoa:start -->
 - [`inventory`](inventory.md) — Tồn kho (hai chiều)
+- [`help`](help.md) — Hỗ trợ (bài hướng dẫn `frontend/src/help/guides/donTach.ts` + ảnh `public/guide/don-tach/` — đổi giao diện / tên nút thì chụp lại ảnh + sửa chữ bài)
 <!-- giao-thoa:end -->
 
 ## Trang / nghiệp vụ
@@ -17,6 +18,8 @@
 Dồn / Tách pallet
 
 - In tem pallet con (sau Tách / từ Lịch sử): hàng NCC (cờ Loại kho tại kho đang thao tác) in ô **Lot · NCC (tên NCC)** như trang In tem pallet (18/11); hộp in mở khi ảnh QR vẽ xong (`printWhenReady`).
+
+**Tách — pallet con kế thừa lý lịch lô (19/11, C123):** mã hàng · NCC · NMSX · lô / chu kỳ · máy · NSX · HSD · HSD theo NCC · QA chép nguyên từ tem gốc qua MỘT danh sách `CHILD_INHERITED_COLS` (`utils/palletChild.ts`); số lượng = số tách, ngày nhập = ngày nhập của gốc. Trước 19/11 con mất NCC / NMSX / HSD theo NCC (gói 27 [4c] gác). Ô số lượng tách giữ phần lẻ (hàng tính KG).
 
 ## Actions
 

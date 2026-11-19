@@ -42,6 +42,21 @@ export function childIndexOf(b: ChildBase, code: string): number | null {
   return null
 }
 
+/** Các cột "lý lịch lô" pallet con KẾ THỪA nguyên văn từ tem gốc khi TÁCH (19/11, C123 — trước đây con mất NCC / NMSX /
+ *  HSD theo NCC ⇒ HSD con tính theo mặc định của mã, tem con in trống ô NCC). Thêm cột lý lịch lô mới vào InventoryEntry
+ *  ⇒ thêm vào đây. Cửa nhận hàng lẻ trả về (inboundReturnController) có luật dự phòng riêng từ QR nên tự chép, cùng bộ cột. */
+export const CHILD_INHERITED_COLS = [
+  'material_id', 'manufacturer_id', 'nmsx', 'cycle', 'machine_code', 'pallet_sequence_no', 'qa_status_id',
+  'production_date', 'batch', 'expiry_date', 'ncc_id', 'shelf_life_days',
+] as const
+type ChildCol = (typeof CHILD_INHERITED_COLS)[number]
+/** Bản sao các cột lý lịch lô của tem gốc (thiếu ⇒ null). Nguồn phải select ĐỦ các cột này — kiểu bắt chỗ quên. */
+export function childInheritedFields<T extends { [K in ChildCol]: unknown }>(src: T): { [K in ChildCol]: T[K] } {
+  const out = {} as { [K in ChildCol]: T[K] }
+  for (const c of CHILD_INHERITED_COLS) (out as Record<string, unknown>)[c] = src[c] ?? null
+  return out
+}
+
 /** Mã con thứ N của tem gốc. */
 export function childCodeOf(b: ChildBase, n: number): string {
   if (b.isV2) { const s = [...b.segs]; s[2] = `${b.baseMalo}.${n}`; return s.join(';') }

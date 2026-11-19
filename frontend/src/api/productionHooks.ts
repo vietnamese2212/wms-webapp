@@ -4,7 +4,7 @@
 import { useMemo } from 'react'
 import { useMutation, useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import { apiClient } from './client'
-import { useWarehouses, useImportShifts, useMaterials } from './hooks'
+import { useWarehouses, useImportShifts, useMaterials, excelUploadBody, type UploadResult, type UploadPreflight } from './hooks'
 import { useAuthStore } from '@/stores/authStore'
 import type { MatUnits } from '@/utils/qtyUnits'
 import type { RawEvent, RawSummary, RawReq, RawFill } from '@/utils/consumptionRaw'
@@ -437,6 +437,21 @@ export const useSaveRecipe = () => useProdMutation(({ id, material_id, ...b }: R
   (async () => (id
     ? await apiClient.put(`/wms/production/recipes/${id}`, b)
     : await apiClient.post('/wms/production/recipes', { material_id, ...b })).data.data as { id: string; lines: number; is_default: boolean })())
+/** Nạp định mức từ Excel (19/11): preflight = chỉ kiểm, không ghi (khỏi nạp lại danh sách); lần ghi thật làm mới Định mức */
+export function useImportRecipes() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async ({ file, preflight }: { file: File; preflight: boolean }): Promise<UploadResult & Partial<UploadPreflight>> => {
+      const { body, headers } = await excelUploadBody(file)
+      return (await apiClient.post(`/wms/production/recipes/import${preflight ? '?preflight=1' : ''}`, body, { headers, timeout: 120000 })).data.data
+    },
+    onSuccess: (_d, v) => {
+      if (v.preflight) return
+      void qc.invalidateQueries({ queryKey: ['prod-recipes'] })
+      void qc.invalidateQueries({ queryKey: ['prod-recipe'] })
+    },
+  })
+}
 /** blocks: mảng = lưu bản sửa riêng · null = về theo mẫu chung · bỏ trống = giữ nguyên */
 /** data vắng = chỉ lưu cấu trúc (18/11 — giá trị ghi từng ô qua useLogCell, lưu cấu trúc không đè giá trị người khác vừa ghi) */
 export const useSaveProcessLog = () => useProdMutation(({ batchId, form, data, blocks }: { batchId: string; form: string; data?: Record<string, string>; blocks?: FormBlock[] | null }) =>

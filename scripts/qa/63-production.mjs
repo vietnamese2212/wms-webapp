@@ -11,6 +11,8 @@
 //   [7] Điều chỉnh / chuyển / xả bồn; [8] truy xuất: pallet TP → mẻ → NVL, pallet NVL → mẻ → trang sổ → pallet TP; sổ pallet có "Rút vào mẻ"
 //   [6s] Sửa / khai bù lượng rút của trang ĐÃ ĐÓNG: tăng = rút thêm, giảm = trả về đúng mẻ, bắt lý do, trang mở ⇒ 409 (14/11 tối)
 //   [6t] Cài đặt MES là cửa ghi DUY NHẤT của công tắc QA + hạn lưu bồn; cửa Loại kho của Cài đặt WMS không đè mất khai riêng
+//   [10q] NẠP ĐỊNH MỨC TỪ EXCEL (19/11): kiểm trước không ghi · gộp dòng cùng mã + tên · đã có ⇒ thay trọn, giữ mặc định · lỗi báo theo số dòng Excel,
+//        một lỗi là không ghi gì · thiếu cột bắt buộc 400 · [14e] cần quyền manage_recipe
 //   [10] Bàn làm việc của mẻ (14/11 đêm): định mức ⇒ yêu cầu của mẻ × kế hoạch; hàng CÓ TEM không đi đường chọn lô (MUST_SCAN);
 //        bàn trả yêu cầu · đã cấp · tồn có tem / không tem; sửa yêu cầu không đụng phần đã cấp;
 //        sửa kế hoạch ⇒ yêu cầu nhân theo tỷ lệ, đổi mã BTP ⇒ chép định mức mã mới (C114)
@@ -37,7 +39,9 @@
 //        manage_tank + phạm vi kho của hai cửa mới.
 // Fixture QA63: kho cha QA63_PARENT + kho phụ QA63_CB (+ QA63_CB2 để thử chéo kho) · mã NVL/BTP QA63* · tem QA63_* — dọn bằng PostgREST.
 import { randomUUID } from 'crypto'
-import { login, api, rawFetch, restAll, restWrite, check, finish, BASE } from './lib.mjs'
+import { login, api, rawFetch, restAll, restWrite, check, finish, BASE, authToken } from './lib.mjs'
+import { createRequire } from 'module'
+const XLSX = createRequire(new URL('../../backend/package.json', import.meta.url))('xlsx')
 
 const PACK = '63-production'
 await login()
@@ -50,6 +54,16 @@ const JT_OPEN = 'QA63_JT_OPEN', JT_VIEW = 'QA63_JT_VIEW'
 let bcrypt = null
 try { bcrypt = await import('../../backend/node_modules/bcrypt/bcrypt.js').then(m => m.default ?? m) } catch { /* chưa npm i backend */ }
 const num = (v) => Number(v ?? 0)
+// nạp Excel (19/11): dựng .xlsx trong bộ nhớ (dòng đầu = nhãn cột) rồi gửi multipart như form "Nạp Excel"
+async function uploadXlsx(route, aoa, { preflight = false, token = null } = {}) {
+  const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), 'Định mức')
+  const fd = new FormData()
+  fd.append('file', new Blob([Buffer.from(XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }))], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), 'qa63.xlsx')
+  const r = await fetch(`${BASE}/api${route}${preflight ? '?preflight=1' : ''}`, { method: 'POST', headers: { Authorization: `Bearer ${token ?? authToken()}` }, body: fd })
+  let j = null; try { j = JSON.parse(await r.text()) } catch { /* không JSON */ }
+  return { s: r.status, j }
+}
+const RIMP_HEAD = ['Mã BTP *', 'Tên BTP', 'Tên công thức *', 'Cỡ mẻ chuẩn *', 'Mã NVL *', 'Số lượng *', 'ĐVT', 'Mức lệch ± %', 'Mặc định']
 
 async function cleanup() {
   const whs = [WP, WC, WC2]
@@ -630,6 +644,46 @@ try {
   const r2Now = (await api(`/wms/production/recipes/${RCP2}`)).j?.data
   check('10p. Đặt lại mặc định cho công thức 1 ⇒ công thức 2 thôi mặc định', back.s === 200 && back.j?.data?.is_default === true && r2Now?.is_default === false,
     `http=${back.s} ${JSON.stringify(back.j?.error ?? null)} r2=${r2Now?.is_default}`)
+  // ── [10q] NẠP ĐỊNH MỨC TỪ EXCEL (19/11): mỗi dòng một NVL · cùng mã + tên = một công thức · đã có ⇒ thay trọn · tất cả hoặc không gì ──
+  const IMP = '/wms/production/recipes/import'
+  const goodFile = [RIMP_HEAD,
+    ['QA63BTP2', 'QA63 dịch khác', 'QA63 nạp Excel', '1.000', 'QA63RM1', '12,5', 'kg', '1', ''],
+    ['QA63BTP2', 'QA63 dịch khác', 'qa63 NẠP excel', '', 'QA63EA1', '3', 'EA', '', ''],
+    ['QA63BTP2', 'QA63 dịch khác', 'QA63 bản 2', '100', 'QA63RM1', '7', '', '', ''],
+  ]
+  const nBefore = (await restAll('production_recipe', `select=id&material_id=eq.${M_BTP2}`)).length
+  const pf = await uploadXlsx(IMP, goodFile, { preflight: true })
+  const nAfterPf = (await restAll('production_recipe', `select=id&material_id=eq.${M_BTP2}`)).length
+  const pd = pf.j?.data
+  check('10q. Nạp định mức — KIỂM TRƯỚC: 1 công thức mới (2 dòng cùng tên khác hoa thường gộp một) + 1 công thức đã có sẽ thay; không ghi gì vào DB',
+    pf.s === 200 && pd?.preflight === true && pd?.to_insert === 1 && pd?.to_update === 1 && pd?.will_write === 2 && pd?.errors_total === 0
+      && (pd?.warnings ?? []).some(w => /QA63 bản 2.*đã có \(1 nguyên liệu\)/.test(w)) && nAfterPf === nBefore,
+    `http=${pf.s} ${JSON.stringify(pd ?? pf.j?.error ?? null).slice(0, 300)} n=${nBefore}→${nAfterPf}`)
+  const wr = await uploadXlsx(IMP, goodFile)
+  const impNew = (await restAll('production_recipe', `select=id,name,base_qty,is_default,updated_by&material_id=eq.${M_BTP2}&name=eq.QA63 nạp Excel`))[0]
+  const impLines = impNew ? await restAll('production_recipe_line', `select=material_id,qty,tol_pct,sort_order&recipe_id=eq.${impNew.id}&order=sort_order`) : []
+  const r2Lines = await restAll('production_recipe_line', `select=material_id,qty&recipe_id=eq.${RCP2}`)
+  const btp2Defs = (await restAll('production_recipe', `select=id&material_id=eq.${M_BTP2}&is_default=eq.true`)).map(r => r.id)
+  check('10r. Nạp định mức — GHI: công thức mới đúng cỡ mẻ 1.000 + 2 dòng (12,5 kg ±1% · 3 EA); công thức đã có thay trọn (còn 1 dòng 7); mặc định giữ nguyên',
+    wr.s === 200 && wr.j?.data?.inserted === 1 && wr.j?.data?.updated === 1 && num(impNew?.base_qty) === 1000 && impNew?.is_default === false
+      && impLines.length === 2 && impLines[0].material_id === M_RM && num(impLines[0].qty) === 12.5 && num(impLines[0].tol_pct) === 1
+      && impLines[1].material_id === M_EA && num(impLines[1].qty) === 3 && impLines[1].tol_pct == null
+      && r2Lines.length === 1 && r2Lines[0].material_id === M_RM && num(r2Lines[0].qty) === 7 && btp2Defs.length === 1 && btp2Defs[0] === RCP1,
+    `http=${wr.s} ${JSON.stringify(wr.j?.data ?? wr.j?.error ?? null)} new=${JSON.stringify(impNew ?? null)} lines=${JSON.stringify(impLines)} r2=${JSON.stringify(r2Lines)} defs=${JSON.stringify(btp2Defs)}`)
+  const badFile = [RIMP_HEAD,
+    ['QA63BTP2', '', 'QA63 lỗi A', '100', 'QA63RM1', '1', '', '', ''],
+    ['QA63BTP2', '', 'QA63 lỗi A', '', 'QA63EA1', '2', 'KG', '', ''],
+    ['QA63BTP2', '', 'QA63 lỗi A', '', 'QA63KHONGCO', '2', '', '', ''],
+  ]
+  const bpf = await uploadXlsx(IMP, badFile, { preflight: true })
+  const bwr = await uploadXlsx(IMP, badFile)
+  const errTxt = (bpf.j?.data?.errors ?? []).join(' | ')
+  const leaked = (await restAll('production_recipe', `select=id&material_id=eq.${M_BTP2}&name=eq.QA63 lỗi A`)).length
+  const noQty = await uploadXlsx(IMP, [RIMP_HEAD.filter(h => h !== 'Số lượng *'), ['QA63BTP2', '', 'QA63 lỗi B', '100', 'QA63RM1', '', '', '']], { preflight: true })
+  check('10s. File lỗi ⇒ báo theo SỐ DÒNG Excel (dòng 3 sai ĐVT · dòng 4 mã không có), nút ghi tắt; gửi ghi vẫn KHÔNG ghi gì; thiếu cột Số lượng ⇒ 400',
+    bpf.s === 200 && bpf.j?.data?.will_write === 0 && /Dòng 3 — ĐVT "KG" khác đơn vị gốc EA/.test(errTxt) && /Dòng 4 — không có mã NVL "QA63KHONGCO"/.test(errTxt)
+      && bwr.s === 200 && bwr.j?.data?.inserted === 0 && leaked === 0 && noQty.s === 400 && /Số lượng/.test(noQty.j?.error?.message ?? ''),
+    `http=${bpf.s}/${bwr.s}/${noQty.s} errs=${errTxt.slice(0, 240)} leaked=${leaked} ${noQty.j?.error?.message ?? ''}`)
   // sửa mẻ ⇒ bàn tính lại yêu cầu (C114, 16/11)
   const upPlan = await api(`/wms/production/batches/${BW.id}`, 'PATCH', { planned_qty: 600 })
   const board4 = (await api(`/wms/production/batches/${BW.id}`)).j?.data?.board ?? []
@@ -1088,6 +1142,9 @@ try {
     const sLayView = tkView ? await putLay(tkView, [{ id: T1.id, x: 0, y: 0 }]) : 0
     const sLayScope = tkOpen ? await putLay(tkOpen, [{ id: T3.id, x: 0, y: 0 }]) : 0
     const sLayOk = tkOpen ? await putLay(tkOpen, [{ id: T1.id, x: 20, y: 40 }]) : 0
+    const sImpView = tkView ? (await uploadXlsx('/wms/production/recipes/import', [RIMP_HEAD, ['QA63BTP2', '', 'QA63 vai', '100', 'QA63RM1', '1', '', '', '']], { preflight: true, token: tkView })).s : 0
+    const sImpOpen = tkOpen ? (await uploadXlsx('/wms/production/recipes/import', [RIMP_HEAD, ['QA63BTP2', '', 'QA63 vai', '100', 'QA63RM1', '1', '', '', '']], { preflight: true, token: tkOpen })).s : 0
+    check('14e. Nạp định mức từ Excel cần quyền "Khai định mức" (manage_recipe): chức danh chỉ xem 403 · chức danh mở mẻ 403', sImpView === 403 && sImpOpen === 403, `view=${sImpView} open=${sImpOpen}`)
     check('14d. Dữ liệu thô: chức danh chỉ xem đọc kho mình 200 · xuất file 403 (cần quyền export) · kho ngoài phạm vi 403; sơ đồ 2D: không có "Quản lý bồn" 403 · bồn kho ngoài phạm vi 403 · bồn kho mình 200',
       sRawView === 200 && sRawExp === 403 && sRawScope === 403 && sLayView === 403 && sLayScope === 403 && sLayOk === 200,
       `raw=${sRawView}/${sRawExp}/${sRawScope} layout=${sLayView}/${sLayScope}/${sLayOk}`)

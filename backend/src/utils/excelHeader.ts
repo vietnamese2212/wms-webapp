@@ -54,6 +54,8 @@ export function expandMergedCells(ws: XLSX.WorkSheet): number {
 export type ParsedSheet = {
   rows: Record<string, unknown>[]
   missingRequired: string[]   // NHÃN của field required không tìm thấy cột
+  /** Số DÒNG EXCEL (1 = dòng đầu của sheet) của từng phần tử `rows` — để báo lỗi "dòng 12" đúng như người dùng thấy trong Excel */
+  rowNums: number[]
 }
 
 const HEADER_SCAN_ROWS = 8
@@ -99,7 +101,9 @@ export function parseSheetByHeader(ws: XLSX.WorkSheet, fields: FieldDef[]): Pars
     if (cols.size > 0 && cols.size > bestScore) { bestScore = cols.size; headerIdx = i; headerCols = cols }
   }
 
-  if (headerIdx < 0) return { rows: [], missingRequired: fields.filter(f => f.required).map(f => f.label) }
+  if (headerIdx < 0) return { rows: [], missingRequired: fields.filter(f => f.required).map(f => f.label), rowNums: [] }
+  // `defval: ''` giữ cả dòng trống ⇒ phần tử thứ i của `raw` = dòng (đầu vùng !ref + i) của sheet
+  const firstRow = ws['!ref'] ? XLSX.utils.decode_range(ws['!ref']).s.r : 0
 
   const found = new Set(headerCols.values())
   const missingRequired = fields.filter(f => f.required && !found.has(f.key)).map(f => f.label)
@@ -112,12 +116,13 @@ export function parseSheetByHeader(ws: XLSX.WorkSheet, fields: FieldDef[]): Pars
   }
 
   const rows: Record<string, unknown>[] = []
+  const rowNums: number[] = []
   for (let i = headerIdx + 1; i < raw.length; i++) {
     const row = raw[i] || []
     if (isHeaderLike(row)) continue
     const obj: Record<string, unknown> = {}
     for (const [c, key] of headerCols) obj[key] = row[c]
-    if (Object.values(obj).some(v => String(v ?? '').trim())) rows.push(obj)
+    if (Object.values(obj).some(v => String(v ?? '').trim())) { rows.push(obj); rowNums.push(firstRow + i + 1) }
   }
-  return { rows, missingRequired }
+  return { rows, missingRequired, rowNums }
 }

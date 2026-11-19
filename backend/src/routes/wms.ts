@@ -240,7 +240,7 @@ router.get('/inventory/pallet-ledger',             requireAnyPerm(['inventory', 
 router.get('/inventory',                          inventory.listInventory)
 router.get('/inventory/:id',                      inventory.getInventoryEntry)
 // 29/09: vé đẩy file Excel > 4MB thẳng lên Storage (Vercel chặn thân > 4,5MB) — ai có quyền nạp bất kỳ cửa Excel nào thì xin được vé
-router.post('/uploads/sign', requireAnyPerm(['outbound', 'import'], ['external_do_sap', 'create'], ['external_khvc', 'create'], ['inventory', 'import'], ['materials', 'import'], ['locations', 'import'], ['freight', 'manage'], ['warehouse_cost', 'edit']),
+router.post('/uploads/sign', requireAnyPerm(['outbound', 'import'], ['external_do_sap', 'create'], ['external_khvc', 'create'], ['inventory', 'import'], ['materials', 'import'], ['locations', 'import'], ['freight', 'manage'], ['warehouse_cost', 'edit'], ['production', 'manage_recipe']),
   validate({ body: z.object({ filename: zText(1, 200) }) }), signExcelUpload)
 router.post('/inventory/upload',                  requirePerm('inventory', 'import'), upload.single('file'), excelFromStorage, inventory.uploadExcel)
 // Tra pallet theo QR — dùng chung 2 màn: Kiểm kê (stocktake.scan) + Chuyển vị trí quét QR
@@ -424,6 +424,8 @@ router.get('/production/consumption-raw',          P('view'),         validate({
 router.get('/production/consumption-raw/export',   P('export'),       validate({ query: production.zRawExportQuery }), production.consumptionRawExport)
 router.get('/production/recipes',                  P('view'),       validate({ query: production.zRecipeListQuery }), production.listRecipes)
 router.get('/production/recipes/:id',              P('view'),       production.getRecipe)
+// nạp định mức từ Excel (19/11) — kiểm trước ?preflight=1 rồi ghi; file lớn đi qua vé Storage như mọi cửa Excel
+router.post('/production/recipes/import',          P('manage_recipe'), validate({ query: production.zRecipeImportQuery }), upload.single('file'), excelFromStorage, production.importRecipes)
 router.post('/production/recipes',                 P('manage_recipe'), validate({ body: production.zRecipeCreate }), production.createRecipe)
 router.put('/production/recipes/:id',              P('manage_recipe'), validate({ body: production.zRecipePut }), production.putRecipe)
 router.post('/production/batches/:id/approve-lead', P('approve_lead'), validate({ body: production.zApprove }), production.approveLead)

@@ -28,6 +28,11 @@ import {
   type RotationEntry, type RotationPrinciple,
 } from '../../utils/rotation'
 import { vnDayOf, utcMs } from '../../utils/dates'
+import { parseSheetByHeader, expandMergedCells, readWorkbookSafe, BAD_EXCEL_MSG } from '../../utils/excelHeader'
+import { isPreflight, buildPreflight } from '../../utils/uploadPreflight'
+import {
+  RECIPE_IMPORT_FIELDS, RECIPE_IMPORT_MAX_ROWS, RECIPE_IMPORT_MAX_RECIPES, codeKey, planRecipeImport, type ImpMaterial, type ImpExisting,
+} from '../../utils/recipeImport'
 
 const nowIso = () => new Date().toISOString()
 const scopeOf = (req: Request): string[] | null => (req.user?.warehouse_scope === 'NATIONAL' ? null : (req.user?.warehouse_ids ?? []))
@@ -668,6 +673,64 @@ export async function putRecipe(req: Request, res: Response) {
     const { data: cur } = await db.from('production_recipe').select('id, material_id').eq('id', req.params.id).maybeSingle()
     if (!cur) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy công thức')
     return await saveRecipe(req, res, cur.material_id, cur.id)
+  } catch (e) { return failAny(res, e) }
+}
+
+// POST /wms/production/recipes/import[?preflight=1] — NẠP ĐỊNH MỨC TỪ EXCEL (19/11), quyền manage_recipe (cùng quyền Thêm / Sửa công thức).
+// Mỗi dòng một nguyên liệu; cùng Mã BTP + Tên công thức = một công thức; đã có ⇒ thay trọn. TẤT CẢ HOẶC KHÔNG GÌ.
+// Luật kiểm ở `utils/recipeImport.ts` (hàm thuần, có test) — preflight và lần ghi chạy CÙNG một đoạn kiểm.
+export const zRecipeImportQuery = z.object({ preflight: z.enum(['1']).optional() })
+export async function importRecipes(req: Request, res: Response) {
+  try {
+    if (!req.file) return fail(res, 400, 'VALIDATION_ERROR', 'Không có file upload')
+    const wb = readWorkbookSafe(req.file.buffer)
+    if (!wb) return fail(res, 400, 'VALIDATION_ERROR', BAD_EXCEL_MSG)
+    const ws = wb.Sheets[wb.SheetNames[0]]
+    expandMergedCells(ws)   // file định mức hay gộp ô Mã BTP / Tên công thức / Cỡ mẻ cho cả cụm nguyên liệu
+    const { rows, missingRequired, rowNums } = parseSheetByHeader(ws, RECIPE_IMPORT_FIELDS)
+    if (missingRequired.length)
+      return fail(res, 400, 'VALIDATION_ERROR', `File thiếu cột bắt buộc: ${missingRequired.join(', ')} — tải file mẫu ở nút "Nạp Excel" của trang Định mức`)
+    if (!rows.length) return fail(res, 400, 'VALIDATION_ERROR', 'Sheet đầu tiên không có dòng dữ liệu nào')
+    if (rows.length > RECIPE_IMPORT_MAX_ROWS) return fail(res, 400, 'VALIDATION_ERROR', `File có ${rows.length.toLocaleString('vi-VN')} dòng — tối đa ${RECIPE_IMPORT_MAX_ROWS.toLocaleString('vi-VN')}, hãy tách file`)
+
+    // tra danh mục: mọi mã trong file (BTP + NVL), lô 300 mã / lần
+    const codes = [...new Set(rows.flatMap(r => [codeKey(r.btp_code), codeKey(r.nvl_code)]).filter(Boolean))]
+    const matByCode = new Map<string, ImpMaterial>()
+    for (let i = 0; i < codes.length; i += 300) {
+      const { data, error } = await db.from('Material').select('id, material_code, short_name, base_unit, category, is_semi_finished, is_active')
+        .in('material_code', codes.slice(i, i + 300))
+      if (error) return fail(res, error)
+      for (const m of data ?? []) matByCode.set(codeKey(m.material_code), m)
+    }
+    const btpIds = [...new Set(rows.map(r => matByCode.get(codeKey(r.btp_code))?.id).filter((x): x is string => !!x))]
+    const existing: ImpExisting[] = []
+    for (let i = 0; i < btpIds.length; i += 300) {
+      const { data, error } = await db.from('production_recipe').select('id, material_id, name, note, is_active, is_default, lines:production_recipe_line(count)')
+        .in('material_id', btpIds.slice(i, i + 300))
+      if (error) return fail(res, error)
+      for (const { lines, ...r } of data ?? []) existing.push({ ...r, line_count: (lines as unknown as { count: number }[] | null)?.[0]?.count ?? 0 })
+    }
+    const plan = planRecipeImport(rows, rowNums, { matByCode, existing, categoryOk: cat => categoryAllowed(req, cat) })
+    if (plan.recipes.length > RECIPE_IMPORT_MAX_RECIPES)
+      plan.errors.push(`File có ${plan.recipes.length} công thức — tối đa ${RECIPE_IMPORT_MAX_RECIPES} mỗi lần nạp, hãy tách file`)
+
+    if (isPreflight(req)) return ok(res, buildPreflight({
+      unit: 'công thức', total: plan.recipes.length, toInsert: plan.toInsert, toUpdate: plan.toUpdate,
+      errors: plan.errors, warnings: plan.warnings, mode: 'all_or_nothing',
+      extra: [{ label: 'Mã bán thành phẩm', value: plan.btpCount }, { label: 'Dòng nguyên liệu', value: plan.lineCount }],
+    }))
+    if (plan.errors.length) return ok(res, { inserted: 0, updated: 0, errors: plan.errors })
+    if (!plan.recipes.length) return fail(res, 400, 'VALIDATION_ERROR', 'File không có công thức nào dùng được')
+
+    const { data, error } = await db.rpc('mes_recipe_import', { p: { recipes: plan.recipes, actor_name: actor(req).actor_name } })
+    if (error) {
+      // hai lượt nạp / hai người lưu cùng lúc: trùng tên (chỉ mục) hoặc kẹt chéo ⇒ cả lượt đã huỷ, nạp lại là xong
+      if (['23505', '40P01'].includes(String((error as { code?: string }).code)))
+        return fail(res, 409, 'MES_RECIPE_RACE', 'Có người vừa lưu công thức của cùng mã — không ghi gì; tải lại trang rồi nạp lại file')
+      return mesFail(res, error)
+    }
+    const d = data as { created: number; updated: number; lines: number } | null
+    return ok(res, { inserted: d?.created ?? 0, updated: d?.updated ?? 0, lines: d?.lines ?? 0, errors: [] })
   } catch (e) { return failAny(res, e) }
 }
 

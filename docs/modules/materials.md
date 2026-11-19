@@ -10,6 +10,7 @@
 ## Giao thoa với
 <!-- giao-thoa:start -->
 - [`production`](production.md) — Sản xuất (tank_hold_hours hạn lưu bồn — từ 14/11 tối SỬA ở Cài đặt MES, form Mã hàng chỉ hiển thị; batch_prefix làm tiền tố mã lô — 14/11)
+- [`help`](help.md) — Hỗ trợ (bài hướng dẫn `frontend/src/help/guides/maHang.ts` + ảnh `public/guide/ma-hang/` — đổi giao diện / tên nút thì chụp lại ảnh + sửa chữ bài)
 <!-- giao-thoa:end -->
 
 ## Trang / nghiệp vụ

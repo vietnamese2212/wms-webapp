@@ -1,12 +1,11 @@
 // Module Hỗ trợ (19/11): bài hướng dẫn là dữ liệu thuần — test này gác ảnh hỏng (đổi tên / quên chép ảnh), neo trùng,
-// kích thước giữ chỗ sai (ảnh tải sau đẩy nội dung ⇒ cuộn tới bước dừng lệch). Thêm bài mới ⇒ thêm vào GUIDES dưới đây.
+// kích thước giữ chỗ sai (ảnh tải sau đẩy nội dung ⇒ cuộn tới bước dừng lệch). Đọc thẳng GUIDES của registry ⇒ bài mới tự được kiểm.
 import { describe, it, expect } from 'vitest'
 import fs from 'fs'
 import path from 'path'
-import { MES_GUIDE } from '../../../frontend/src/help/guides/mes'
+import { ALL_GUIDES as GUIDES } from '../../../frontend/src/help/guides'
 
 const PUBLIC = path.resolve(__dirname, '../../../frontend/public')
-const GUIDES = [MES_GUIDE]
 
 /** kích thước điểm ảnh của file JPG (đọc khung SOF) */
 function jpgSize(file: string): [number, number] | null {
@@ -20,6 +19,21 @@ function jpgSize(file: string): [number, number] | null {
   }
   return null
 }
+
+describe('danh sách bài', () => {
+  it('mọi file bài trong help/guides/ đều được đăng ký ở ALL_GUIDES; mã bài không trùng', () => {
+    const dir = path.resolve(__dirname, '../../../frontend/src/help/guides')
+    const files = fs.readdirSync(dir).filter(f => f.endsWith('.ts') && f !== 'index.ts')
+    const index = fs.readFileSync(path.join(dir, 'index.ts'), 'utf8')
+    expect(files.filter(f => !index.includes(`'./${f.replace(/\.ts$/, '')}'`))).toEqual([])
+    const ids = GUIDES.map(g => g.id)
+    expect(new Set(ids).size).toBe(ids.length)
+  })
+  it('ảnh của mỗi bài nằm trong thư mục public/guide/<mã bài>/', () => {
+    const wrong = GUIDES.flatMap(g => g.sections.flatMap(s => s.steps.flatMap(st => (st.images ?? []).filter(i => !i.src.startsWith(`/guide/${g.id}/`)).map(i => `${g.id}: ${i.src}`))))
+    expect(wrong).toEqual([])
+  })
+})
 
 describe.each(GUIDES.map(g => [g.id, g] as const))('bài hướng dẫn %s', (_id, g) => {
   it('mã bài và neo các mục: chữ thường-gạch nối, không trùng', () => {

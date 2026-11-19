@@ -10,6 +10,7 @@
 ## Giao thoa với
 <!-- giao-thoa:start -->
 _(chưa ghi nhận)_
+- [`help`](help.md) — Hỗ trợ (bài hướng dẫn `frontend/src/help/guides/lichSuQuet.ts` + ảnh `public/guide/lich-su-quet/` — đổi giao diện / tên nút thì chụp lại ảnh + sửa chữ bài)
 <!-- giao-thoa:end -->
 
 ## Trang / nghiệp vụ

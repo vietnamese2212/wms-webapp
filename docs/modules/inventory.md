@@ -20,6 +20,7 @@
 - [`stocktake`](stocktake.md) — Kiểm kho (hai chiều)
 - [`traceability`](traceability.md) — Truy xuất lô (được nhắc tới từ đó)
 - [`production`](production.md) — Sản xuất (rút NVL vào mẻ trừ tồn kho chế biến; sổ pallet nguồn 10 "Rút vào mẻ" — 14/11)
+- [`help`](help.md) — Hỗ trợ (bài hướng dẫn `frontend/src/help/guides/tonKho.ts` + ảnh `public/guide/ton-kho/` — đổi giao diện / tên nút thì chụp lại ảnh + sửa chữ bài)
 <!-- giao-thoa:end -->
 
 ## Trang / nghiệp vụ

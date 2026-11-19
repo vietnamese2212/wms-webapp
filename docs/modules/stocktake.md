@@ -11,6 +11,7 @@
 <!-- giao-thoa:start -->
 - [`inventory`](inventory.md) — Tồn kho (hai chiều)
 - [`slotting`](slotting.md) — Tối ưu vị trí (Slotting) (file này nhắc tới)
+- [`help`](help.md) — Hỗ trợ (bài hướng dẫn `frontend/src/help/guides/kiemKe.ts` + ảnh `public/guide/kiem-ke/` — đổi giao diện / tên nút thì chụp lại ảnh + sửa chữ bài)
 <!-- giao-thoa:end -->
 
 ## Trang / nghiệp vụ

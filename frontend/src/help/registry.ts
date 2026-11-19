@@ -1,10 +1,10 @@
-// Danh sách bài hướng dẫn của module Hỗ trợ. THÊM BÀI: viết file trong ./guides (theo kiểu Guide ở ./types) rồi thêm vào GUIDES.
+// Danh sách bài hướng dẫn của module Hỗ trợ. THÊM BÀI: viết file trong ./guides (theo kiểu Guide ở ./types) rồi thêm vào ALL_GUIDES ở ./guides/index.ts.
 // Bài gắn `module` chỉ hiện cho người có quyền xem module đó (superadmin thấy hết) — cùng luật menu.
 import { canAccess, type ModulePermissions } from '@/config/permissions'
 import type { Guide, GuideStep } from './types'
-import { MES_GUIDE } from './guides/mes'
+import { ALL_GUIDES } from './guides'
 
-export const GUIDES: Guide[] = [MES_GUIDE]
+export const GUIDES: Guide[] = ALL_GUIDES
 
 export function visibleGuides(perms: ModulePermissions | null, admin: boolean): Guide[] {
   return GUIDES.filter(g => !g.module || admin || canAccess(perms, g.module))

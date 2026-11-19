@@ -13,6 +13,7 @@
 - [`packing`](packing.md) — Sổ đóng gói (hai chiều)
 - [`outbound`](outbound.md) — Xuất kho (nhập hàng trả về đọc chuyến xuất gốc · tem đã quét đi)
 - [`traceability`](traceability.md) — Truy xuất lô (phần trả về trừ khỏi "đã giao khách")
+- [`help`](help.md) — Hỗ trợ (bài hướng dẫn `frontend/src/help/guides/nhapKho.ts` + ảnh `public/guide/nhap-kho/` — đổi giao diện / tên nút thì chụp lại ảnh + sửa chữ bài)
 <!-- giao-thoa:end -->
 
 ## Trang / nghiệp vụ

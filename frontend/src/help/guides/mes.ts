@@ -66,7 +66,7 @@ export const MES_GUIDE: Guide = {
           who: ['Quản lý danh mục'],
           text: [
             'Bán thành phẩm là dịch trộn từ nhiều nguyên liệu theo định mức, vào bồn chờ chiết rót. Chỉ mã đã đánh dấu mới chọn được khi Mở mẻ, khai Định mức, Hạn lưu bồn.',
-            '- Vào **Cấu hình → Mã hàng**, gõ mã vào ô tìm, bấm đúp vào dòng để mở chi tiết, bấm **Sửa**.',
+            '- Vào **Cấu hình → Mã hàng**, gõ mã vào ô tìm, bấm vào dòng để mở chi tiết, bấm **Sửa** (chi tiết: bài "Mã hàng").',
             '- Tick **"Mã là BÁN THÀNH PHẨM (dịch trộn, vào bồn)"**. Base Unit phải là **L** hoặc **KG**.',
             '- Bấm **Lưu**.',
           ],

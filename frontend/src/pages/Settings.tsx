@@ -18,6 +18,7 @@ import { apiClient } from '@/api/client'
 import { usePushNotifications } from '@/hooks/usePushNotifications'
 import { passwordError, PASSWORD_HINT } from '@/utils/passwordPolicy'
 import type { User as UserT } from '@/types'
+import { markSelfPasswordChange } from '@/lib/selfPasswordChange'
 
 type Theme = 'light' | 'dark' | 'system'
 
@@ -48,6 +49,7 @@ export default function Settings() {
     if (policyErr)          { setPwdError(policyErr); return }
     if (newPwd !== confPwd) { setPwdError('Xác nhận mật khẩu không khớp'); return }
     setPwdSaving(true)
+    markSelfPasswordChange(true)   // tín hiệu "đá phiên" của chính lần đổi này không được đá máy đang đổi (Shell chờ cờ tắt)
     try {
       const r = await apiClient.post('/auth/change-password', { old_password: oldPwd, new_password: newPwd })
       // đổi mật khẩu làm mọi phiên cũ hết hiệu lực (19/11) — phiên đang dùng nhận token mới server vừa phát
@@ -61,6 +63,7 @@ export default function Settings() {
         ?.response?.data?.error?.message ?? 'Lỗi đổi mật khẩu'
       setPwdError(msg)
     } finally {
+      markSelfPasswordChange(false)
       setPwdSaving(false)
     }
   }

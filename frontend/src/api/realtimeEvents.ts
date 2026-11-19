@@ -172,7 +172,7 @@ const TABLE_QUERY_MAP: Record<string, string[][]> = {
 // đã biến vé thành chìa khoá đọc trọn DB cho mọi tài khoản đăng nhập).
 interface ChangeMsg {
   table: string
-  op: 'INSERT' | 'UPDATE' | 'DELETE' | 'TRUNCATE'
+  op: 'INSERT' | 'UPDATE' | 'DELETE' | 'TRUNCATE' | 'REVOKE'   // REVOKE: {table:'session'} — mật khẩu vừa đổi (kênh cá nhân, 19/11)
   row_id?: string                 // DeliverySlot · ProductionImport (trigger mức dòng)
   booked_count?: number | null    // DeliverySlot UPDATE — patch cache khung giờ tức thì, không chờ refetch
 }
@@ -327,8 +327,13 @@ function scheduleDispatchInputsCheck(): void {
   }, COALESCE_MS)
 }
 
+// Đổi mật khẩu ⇒ trigger DB phát {table:'session', op:'REVOKE'} lên kênh CÁ NHÂN (migration 20261119d). Shell đăng ký việc cần
+// làm (kiểm lại phiên) — đăng ký từ ngoài để file này không phải import authStore (authStore đã import file này ⇒ vòng).
+let sessionRevokedHandler: (() => void) | null = null
+export function setSessionRevokedHandler(fn: (() => void) | null): void { sessionRevokedHandler = fn }
 function onChange(msg: ChangeMsg): void {
   if (!msg?.table) return
+  if (msg.table === 'session') { if (msg.op === 'REVOKE') sessionRevokedHandler?.(); return }
   if (msg.table === 'DeliverySlot') patchSlotCache(msg)
   if (DISPATCH_PLAN_TABLES.has(msg.table)) scheduleDispatchStampCheck()
   if (DISPATCH_INPUT_TABLES.has(msg.table)) scheduleDispatchInputsCheck()

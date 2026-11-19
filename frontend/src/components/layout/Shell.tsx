@@ -9,7 +9,8 @@ import { PageErrorBoundary } from '@/components/shared/PageErrorBoundary'
 import { Toaster } from '@/components/ui/toaster'
 import { apiClient } from '@/api/client'
 import { inboundPagedQueryOptions, inboundListParamsOf } from '@/api/hooks'
-import { connectRealtimeEvents } from '@/api/realtimeEvents'
+import { connectRealtimeEvents, setSessionRevokedHandler } from '@/api/realtimeEvents'
+import { waitSelfPasswordChangeIdle } from '@/lib/selfPasswordChange'
 import { useAuthStore } from '@/stores/authStore'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { setRealtimeAuth } from '@/lib/supabase'
@@ -28,10 +29,19 @@ export function Shell() {
   useEffect(() => {
     // Refresh user permissions from DB on every app load so permission
     // changes made by admin take effect without requiring a re-login.
-    refreshUser()
+    let lastMe = Date.now()
+    const doRefresh = () => { lastMe = Date.now(); return refreshUser() }
+    void refreshUser()
     // Quyền nhúng trong JWT → tab SPA mở suốt sẽ giữ quyền cũ (kể cả quyền ĐÃ GỠ) vô hạn.
     // Refresh định kỳ: /me trả token mới → cấp/gỡ quyền có hiệu lực trong ≤5 phút không cần reload.
-    const permSync = setInterval(refreshUser, 5 * 60_000)
+    const permSync = setInterval(doRefresh, 5 * 60_000)
+    // (19/11) ĐỔI MẬT KHẨU ⇒ ĐÁ NGAY: tín hiệu realtime cá nhân ⇒ kiểm lại phiên; token phát trước lần đổi ⇒ /me 401
+    // PASSWORD_CHANGED ⇒ về trang đăng nhập. Chờ 2,5 giây + chờ máy đang TỰ đổi lưu xong token mới (tab khác cùng trình duyệt
+    // đọc chung localStorage nên cũng dùng token mới).
+    setSessionRevokedHandler(() => { setTimeout(() => { void waitSelfPasswordChangeIdle().then(doRefresh) }, 2500) })
+    // Máy ngủ / mất mạng đúng lúc có tín hiệu (Broadcast không phát lại) ⇒ mở lại app sau ≥ 1 phút thì kiểm lại phiên ngay
+    const onVisible = () => { if (document.visibilityState === 'visible' && Date.now() - lastMe > 60_000) void doRefresh() }
+    document.addEventListener('visibilitychange', onVisible)
 
     // Nạp NHÃN đơn vị tính từ danh mục (LookupValue unit_of_measure) cho formatter số lượng —
     // ĐVT do người dùng tự thêm (SET/ROL/M2…) trước đây hiện ra mã thô vì helper chỉ biết 6 mã cứng.
@@ -77,6 +87,8 @@ export function Shell() {
     window.addEventListener('online', onBackOnline)
     return () => {
       clearInterval(permSync)
+      setSessionRevokedHandler(null)
+      document.removeEventListener('visibilitychange', onVisible)
       window.removeEventListener('online', onBackOnline)
     }
   }, [qc, refreshUser])

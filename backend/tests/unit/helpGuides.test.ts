@@ -29,6 +29,10 @@ describe('danh sách bài', () => {
     const ids = GUIDES.map(g => g.id)
     expect(new Set(ids).size).toBe(ids.length)
   })
+  it('bài 1 là "Bắt đầu" và không gắn module — người mới nào cũng thấy nó đầu tiên (user 19/11: thứ tự theo việc người mới cần làm)', () => {
+    expect(GUIDES[0].id).toBe('bat-dau')
+    expect(GUIDES[0].module).toBeUndefined()
+  })
   it('ảnh của mỗi bài nằm trong thư mục public/guide/<mã bài>/', () => {
     const wrong = GUIDES.flatMap(g => g.sections.flatMap(s => s.steps.flatMap(st => (st.images ?? []).filter(i => !i.src.startsWith(`/guide/${g.id}/`)).map(i => `${g.id}: ${i.src}`))))
     expect(wrong).toEqual([])

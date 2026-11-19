@@ -1,8 +1,10 @@
 // MODULE HỖ TRỢ — đọc MỘT bài hướng dẫn (/help/:id). Máy tính: mục lục dính bên trái + nội dung; điện thoại: mục lục gập ở đầu.
 // Ảnh máy tính trải hết bề rộng nội dung, ảnh điện thoại xếp cạnh nhau khổ hẹp; bấm ảnh để phóng to. Neo #mục / #mục-bước trên URL.
+// Số bài = vị trí trong danh sách bài người này được thấy (cùng số ở trang Hỗ trợ); cuối bài có Bài trước / Bài tiếp để người mới
+// đọc lần lượt (user 19/11: thứ tự theo việc người mới cần làm).
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Link, useLocation, useParams } from 'react-router-dom'
-import { ArrowLeft, ListTree, ChevronDown, Lightbulb, Smartphone, Monitor } from 'lucide-react'
+import { ArrowLeft, ArrowRight, ListTree, ChevronDown, Lightbulb, Smartphone, Monitor } from 'lucide-react'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import { useAuthStore } from '@/stores/authStore'
 import { isAdmin, type ModulePermissions } from '@/config/permissions'
@@ -91,7 +93,10 @@ export default function HelpGuide() {
   const user = useAuthStore(s => s.user)
   const allowed = useMemo(() => visibleGuides(user?.module_permissions as ModulePermissions | null ?? null, isAdmin(user)), [user])
   const guide = guideById(id)
-  const canSee = !!guide && allowed.some(g => g.id === guide.id)
+  const pos = guide ? allowed.findIndex(g => g.id === guide.id) : -1
+  const canSee = pos >= 0
+  const prev = pos > 0 ? allowed[pos - 1] : null
+  const next = pos >= 0 && pos < allowed.length - 1 ? allowed[pos + 1] : null
   const [zoom, setZoom] = useState<GuideImage | null>(null)
   const [tocOpen, setTocOpen] = useState(false)
   const scroller = useRef<HTMLDivElement>(null)
@@ -140,7 +145,7 @@ export default function HelpGuide() {
         <div className="border-b bg-white px-3 py-2 shrink-0 sm:rounded-t-xl flex items-center gap-2">
           <Link to="/help" className="grid place-items-center h-9 w-9 sm:h-7 sm:w-7 rounded-md hover:bg-slate-100 shrink-0" aria-label="Về danh sách hướng dẫn"><ArrowLeft className="h-4 w-4" /></Link>
           <div className="min-w-0 flex-1">
-            <h1 className="text-sm font-semibold text-slate-800 truncate">{guide.title}</h1>
+            <h1 className="text-sm font-semibold text-slate-800 truncate">{pos + 1}. {guide.title}</h1>
             <p className="text-[11px] text-slate-500 truncate">{guide.category} · cập nhật {guide.updated}</p>
           </div>
           <button type="button" onClick={() => setTocOpen(o => !o)} className="lg:hidden inline-flex items-center gap-1 h-9 rounded-md border border-slate-200 px-2.5 text-xs text-slate-700 shrink-0">
@@ -160,6 +165,22 @@ export default function HelpGuide() {
                   {s.steps.map((st, i) => <Step key={i} step={st} n={i + 1} anchor={stepAnchor(s.id, i)} onOpen={setZoom} />)}
                 </section>
               ))}
+              {(prev || next) && (
+                <nav className="grid gap-2 sm:grid-cols-2 border-t border-slate-200 pt-4" aria-label="Bài trước, bài tiếp">
+                  {prev ? (
+                    <Link to={`/help/${prev.id}`} data-testid="guide-prev" className="rounded-lg border border-slate-200 bg-white px-3 py-2 hover:border-sky-300">
+                      <span className="flex items-center gap-1 text-[11px] text-slate-500"><ArrowLeft className="h-3 w-3" />Bài trước</span>
+                      <span className="block text-sm font-medium text-slate-800">{pos}. {prev.title}</span>
+                    </Link>
+                  ) : <span className="hidden sm:block" />}
+                  {next && (
+                    <Link to={`/help/${next.id}`} data-testid="guide-next" className="rounded-lg border border-sky-200 bg-sky-50/60 px-3 py-2 hover:border-sky-400 sm:text-right">
+                      <span className="flex items-center gap-1 text-[11px] text-sky-700 sm:justify-end">Bài tiếp<ArrowRight className="h-3 w-3" /></span>
+                      <span className="block text-sm font-medium text-slate-800">{pos + 2}. {next.title}</span>
+                    </Link>
+                  )}
+                </nav>
+              )}
             </div>
           </div>
         </div>

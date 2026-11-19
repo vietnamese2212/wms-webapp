@@ -23,8 +23,8 @@
 ## Cấu trúc
 
 - Bài = DỮ LIỆU thuần (`frontend/src/help/types.ts`: Guide → sections → steps {title, text[], images[], note, who}), không JSX. Chữ hỗ trợ `**đậm**` và dòng bắt đầu `- ` = gạch đầu dòng.
-- Danh sách bài: `frontend/src/help/guides/index.ts` (`ALL_GUIDES` — thứ tự công việc; không import gì của app để test backend đọc được) → `help/registry.ts` (`GUIDES`, `visibleGuides`, tìm trong từng bước không dấu `searchSteps`).
-- Trang: `pages/help/HelpCenter.tsx` (bài gom theo nhóm + ô tìm trong mọi bước) · `pages/help/HelpGuide.tsx` (mục lục dính trái trên máy tính / gập trên điện thoại; ảnh máy tính trải bề rộng, ảnh điện thoại khung hẹp xếp cạnh nhau; bấm ảnh phóng to).
+- Danh sách bài: `frontend/src/help/guides/index.ts` (`ALL_GUIDES` — **thứ tự một người mới cần học**: Bắt đầu → Mã hàng → In tem → Nhập kho → Tồn kho → Dồn/Tách → Kiểm kê → MES → Truy xuất lô → Lịch sử quét; không import gì của app để test backend đọc được) → `help/registry.ts` (`GUIDES`, `visibleGuides`, tìm trong từng bước không dấu `searchSteps`). Bài 1 luôn là `bat-dau`, không gắn module (test gác).
+- Trang: `pages/help/HelpCenter.tsx` — danh sách GỌN (user 19/11: "cho nó dạng đầu mục trước, vào bên trong thì mới hướng dẫn các bước làm" · "danh mục này chiếm dụng không gian quá"): mỗi bài một dòng có số thứ tự (số = vị trí trong các bài người đó được thấy), dải tên nhóm mỏng khi đổi nhóm, ▸ mở đầu mục của bài (tóm tắt + các mục, bấm mục nhảy tới mục đó), bấm tên bài vào các bước; ô tìm tìm trong mọi bước · `pages/help/HelpGuide.tsx` (tiêu đề có số bài; mục lục dính trái trên máy tính / gập trên điện thoại; ảnh máy tính trải bề rộng, ảnh điện thoại khung hẹp xếp cạnh nhau; bấm ảnh phóng to; cuối bài **Bài trước / Bài tiếp** để đọc lần lượt).
 - Ảnh: `frontend/public/guide/<id bài>/*.jpg` — đuôi **.jpg** cố ý: PWA chỉ lưu offline `js,css,html,svg,png,woff2,wasm` (vite.config) nên ảnh hướng dẫn không làm nặng bộ nhớ app; ảnh `loading="lazy"`.
 
 ## Thêm một bài hướng dẫn
@@ -38,6 +38,7 @@
 
 | Bài | Module | Ảnh | Ghi chú |
 |---|---|---|---|
+| `bat-dau` — Bắt đầu: đăng nhập, đổi mật khẩu, làm quen màn hình | _(không — ai cũng thấy)_ | `public/guide/bat-dau/` (11 ảnh) | bài 1; ảnh đăng nhập chuyển từ bài MES sang đây (bài MES chỉ trỏ tới); quyền thông báo khi chụp giả "chưa hỏi" (máy chụp headless luôn trả denied) |
 | `ma-hang` — Mã hàng: tìm, thêm, sửa, nạp Excel | `materials` | `public/guide/ma-hang/` (19 ảnh) | mã mẫu 210000416 đã xoá |
 | `nhap-kho` — Nhập kho: nhận hàng vào kho chế biến | `inbound` | `public/guide/nhap-kho/` (16 ảnh) | phiếu TF mẫu CBBV_N_191126_01 đã xoá; kho chế biến chỉ nhận qua chuyển kho |
 | `in-tem` — In tem pallet nguyên liệu, bao bì | `pallet_print` | `public/guide/in-tem/` (11 ảnh) | 4 tem mẫu + lịch sử in đã xoá |
@@ -46,4 +47,4 @@
 | `kiem-ke` — Kiểm kê | `stocktake` | `public/guide/kiem-ke/` (14 ảnh) | |
 | `truy-xuat` — Truy xuất lô | `traceability` | `public/guide/truy-xuat/` (8 ảnh) | mẻ thật B260001BD62 (chỉ đọc) |
 | `lich-su-quet` — Lịch sử quét xuất kho | `scanlog` | `public/guide/lich-su-quet/` (3 ảnh) | kho chế biến không xuất theo chuyến ⇒ trang trống, bài nói rõ |
-| `mes` — Sản xuất (MES): cài đặt và vận hành mẻ | `production` | `public/guide/mes/` (48 ảnh, ~3,5 MB) | Chụp 19/11 trên Preview (chức danh Phó phòng QA, Chế biến Ba Vì, mẻ mẫu B260003BD66 + bồn BD66 đã xoá) |
+| `mes` — Sản xuất (MES): cài đặt và vận hành mẻ | `production` | `public/guide/mes/` (46 ảnh, ~3,6 MB) | Chụp 19/11 trên Preview (chức danh Phó phòng QA, Chế biến Ba Vì, mẻ mẫu B260003BD66 + bồn BD66 đã xoá) |

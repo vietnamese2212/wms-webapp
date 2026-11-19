@@ -37,13 +37,8 @@ export const MES_GUIDE: Guide = {
           ],
         },
         {
-          title: 'Đăng nhập trên máy tính và điện thoại',
-          text: [
-            'Mở đường dẫn app bằng Chrome (máy tính) hoặc Chrome / Safari (điện thoại), nhập **Tên đăng nhập** và **Mật khẩu** do quản trị cấp.',
-            'Trên điện thoại nên chọn "Thêm vào màn hình chính" để mở app như một ứng dụng.',
-            'Đổi mật khẩu: bấm tên mình ở góc phải trên → **Cài đặt tài khoản** (điện thoại: cuối menu ☰ → Cài đặt). Đổi mật khẩu xong, các máy khác đang mở tài khoản này tự về trang đăng nhập.',
-          ],
-          images: [d('01-dang-nhap', 'Trang đăng nhập trên máy tính'), m('02-m-dang-nhap', 'Trang đăng nhập trên điện thoại')],
+          title: 'Đăng nhập, đổi mật khẩu, chọn kho',
+          text: ['Người mới: đọc bài **1. Bắt đầu** trước (đăng nhập trên máy tính và điện thoại, đổi mật khẩu được cấp, chọn kho làm việc, cài app lên điện thoại).'],
         },
         {
           title: 'Menu Sản xuất (MES)',

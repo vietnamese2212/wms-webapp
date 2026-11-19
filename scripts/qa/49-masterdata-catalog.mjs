@@ -162,8 +162,9 @@ const CAT = CATS[0]
     `s=${r.s} · "${(r.j?.error?.message ?? '').slice(0, 70)}"`)
 
   r = await api('/auth/change-password', 'POST', { old_password: `${P}saiMatKhau789`, new_password: NEWPW })
-  check('[2] Gõ SAI mật khẩu hiện tại → từ chối, không đổi gì',
-    r.s === 401, `s=${r.s} · "${(r.j?.error?.message ?? '').slice(0, 60)}"`)
+  // 400 chứ không 401 (19/11, C122): app coi mọi 401 có token là "hết phiên" và đăng xuất người đang gõ
+  check('[2] Gõ SAI mật khẩu hiện tại → từ chối 400 WRONG_PASSWORD, không đổi gì',
+    r.s === 400 && r.j?.error?.code === 'WRONG_PASSWORD', `s=${r.s} ${r.j?.error?.code ?? ''} · "${(r.j?.error?.message ?? '').slice(0, 60)}"`)
 
   r = await api('/auth/change-password', 'POST', { old_password: CRED.password, new_password: NEWPW })
   const doiOk = r.s === 200

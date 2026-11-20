@@ -18,8 +18,16 @@
 // trong OneDrive — Chrome không ghi nhận lần chọn, thư mục vẫn ghi được bằng chương trình khác). Bản 19/11 vẫn coi mọi
 // AbortError ở hộp chọn là "bấm Huỷ" ⇒ im lặng. Nay chỉ coi là Huỷ khi đúng câu "The user aborted a request." (câu
 // Chrome / Edge dùng khi bấm Huỷ, đo 20/11); AbortError khác = lỗi: báo + tải về Tải xuống + ghi error_logs kèm câu gốc.
+//
+// 20/11 chiều (C124 LẶP lần 2 — user vẫn "không tải được", 0 dòng error_logs): thử thật trên máy user bằng Chrome 157
+// + hộp lưu Windows thật (bấm Desktop ở cột trái → Save, giữ tên gợi ý) thì lưu ĐÚNG vào OneDrive\Desktop ⇒ lỗi chỉ ở
+// phiên Chrome của user, và Chrome ở đó trả đúng câu "user aborted" như khi bấm Huỷ (nên không có lỗi nào được ghi).
+// App KHÔNG phân biệt được "bấm Huỷ" với "Chrome tự huỷ sau khi bấm Save" ⇒ không còn im lặng ở nhánh Huỷ: báo
+// "Chưa lưu file" + nút "Tải về" (tải thẳng về Tải xuống) + ghi error_logs `saveExcel picker cancel <n>s` để đọc nguyên nhân.
 import * as XLSX from 'xlsx'
+import { createElement } from 'react'
 import { toast } from '@/components/ui/use-toast'
+import { ToastAction } from '@/components/ui/toast'
 import { reportClientError } from '@/lib/clientErrorReport'
 
 const PICKER_ID = 'wmsExcelExport'
@@ -61,8 +69,9 @@ export async function saveWorkbook(wb: XLSX.WorkBook, filename: string): Promise
   const picker = (window as unknown as { showSaveFilePicker?: SaveFilePicker }).showSaveFilePicker
   if (typeof picker !== 'function') return downloadDirect(wb, name) ? 'downloaded' : 'failed'
 
-  // Giai đoạn 1 — HỘP CHỌN: huỷ = im lặng; không mở được (môi trường / quyền) = tải thẳng như trình duyệt không hỗ trợ.
+  // Giai đoạn 1 — HỘP CHỌN: huỷ = báo "Chưa lưu file" + nút Tải về; không mở được (môi trường / quyền) = tải thẳng.
   let handle: Awaited<ReturnType<SaveFilePicker>>
+  const openedAt = Date.now()
   try {
     handle = await picker({
       suggestedName: name,
@@ -71,7 +80,17 @@ export async function saveWorkbook(wb: XLSX.WorkBook, filename: string): Promise
       types: [{ description: 'Excel', accept: { [XLSX_MIME]: ['.xlsx'] } }],
     })
   } catch (e) {
-    if (isUserCancel(e)) return 'cancelled'   // người dùng bấm Huỷ hộp chọn
+    if (isUserCancel(e)) {
+      // Bấm Huỷ — HOẶC Chrome tự huỷ sau khi đã bấm Save (cùng một câu lỗi). Không im lặng: cho lối lấy file ngay.
+      reportClientError(`saveExcel picker cancel ${Math.round((Date.now() - openedAt) / 1000)}s`)
+      toast({
+        title: 'Chưa lưu file',
+        description: 'Chrome báo hộp lưu đã bị huỷ. Bấm Tải về để lấy file vào thư mục Tải xuống.',
+        duration: 15000,
+        action: createElement(ToastAction, { altText: 'Tải về thư mục Tải xuống', onClick: () => { downloadDirect(wb, name) } }, 'Tải về'),
+      })
+      return 'cancelled'
+    }
     reportClientError(`saveExcel picker ${errText(e)}`)
     const ok = downloadDirect(wb, name)
     // Hộp chọn ĐÃ hiện và người dùng đã chọn chỗ (AbortError không phải Huỷ) ⇒ phải nói rõ file không nằm ở chỗ đã chọn.

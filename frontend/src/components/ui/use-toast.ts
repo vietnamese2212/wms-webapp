@@ -9,6 +9,8 @@ type ToasterToast = {
   description?: React.ReactNode
   action?: React.ReactElement
   variant?: 'default' | 'destructive' | 'success'
+  /** ms trước khi tự đóng (mặc định Radix 5000) — toast có nút bấm cần lâu hơn */
+  duration?: number
   open?: boolean
   onOpenChange?: (open: boolean) => void
 }

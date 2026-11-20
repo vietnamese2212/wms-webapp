@@ -18,6 +18,8 @@
 
 Vị trí kho
 
+**Upload Excel (20/11):** vị trí ĐÃ CÓ ⇒ chỉ ô có giá trị được cập nhật, ô trống (Sức chứa, Số mã tối đa, Kiểu) GIỮ giá trị đang lưu — mặc định Sức chứa = 1 chỉ cho vị trí mới (`utils/locationUpload.ts`, C128). File mẫu: sheet dữ liệu chỉ có 2 dòng tên cột, ví dụ ở sheet Hướng dẫn (`downloadTemplate`, C125).
+
 ## Actions
 
 view, create, **edit** (14/09, user "thêm rồi không sửa được khá nhiều — không hợp lý": ô **TRỐNG** đổi được Khu / Dãy / Tầng — `PUT` nhận `sub_code/row/shelf`, mã ghép lại theo tiền tố kho, GIỮ id nên toạ độ Sơ đồ kho + cờ + lịch sử còn nguyên, form nhắc in lại tem; ô có hàng ⇒ 409 `LOCATION_NOT_EMPTY`, còn việc treo trỏ vào ⇒ 409 `LOCATION_HAS_TASKS`, form NÓI lý do thay vì ẩn ô; **Kho không bao giờ đổi** — pallet thuộc kho; gói 57 [26a–26e]), delete, **import**=Upload Excel tạo vị trí hàng loạt (dựng kho mới; Loại hàng + Tên khu lấy từ `WarehouseZone`, khu chưa khai → chặn cả file), **export**=Xuất Excel danh sách, **ĐK bảo quản riêng của ô** (26/09, `Location.storage_condition`, NULL = theo Loại kho; cột + ô form + hàng loạt, gate `edit`; thông tin WMS — **điều vận KHÔNG đọc** từ 27/09, xe chọn theo Loại kho của mã hàng), **print_label**=In tem QR vị trí dán lên kệ (in theo BỘ LỌC đang áp, 8 tem/A4, `components/wms/locationLabel.tsx`) 

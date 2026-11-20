@@ -1377,7 +1377,7 @@ Gồm: ${unitBreakdown.join(' · ')}` : QTY_CONVERTED_TIP,
       {showUpload && (
         <UploadExcelDialog
           title="Upload Tồn kho từ Excel"
-          hint={'Kiểm toàn bộ file trước — có bất kỳ lỗi nào thì KHÔNG ghi gì. Mỗi dòng = 1 pallet; pallet ĐÃ CÓ trong đúng kho đó sẽ được CẬP NHẬT theo file (số thùng, vị trí, ngày SX, NCC, QA — có log điều chỉnh). NCC tham chiếu theo mã (ưu tiên) hoặc tên. '
+          hint={'Kiểm toàn bộ file trước — có bất kỳ lỗi nào thì KHÔNG ghi gì. Mỗi dòng = 1 pallet; pallet ĐÃ CÓ trong đúng kho đó sẽ được CẬP NHẬT theo file (số thùng, vị trí, ngày SX, NCC, QA — có log điều chỉnh; ô NCC / HSD / QA để trống giữ nguyên). NCC tham chiếu theo mã (ưu tiên) hoặc tên. '
             + '“Ngày nhập” = ngày hàng VÀO KHO (bê tồn cũ thì khai ngày thật, để trống = hôm nay) — mọi báo cáo “nhập trong ngày” đọc theo cột này. '
             + '“Người nhập” điền mã nhân viên hoặc tên (để trống = người đang upload).'}
           onClose={() => setShowUpload(false)}

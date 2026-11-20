@@ -1241,7 +1241,7 @@ export default function Locations() {
               + 'dòng dữ liệu #1 = dòng 3 trong Excel. Kho điền MÃ hoặc TÊN. '
               + 'Mã vị trí tự ghép: <tiền tố kho>_Khu_Dãy_Tầng (tầng bỏ trống được). '
               + 'Khu phải có sẵn trong Cài đặt WMS → Khu vực — Loại hàng & Tên khu lấy theo khu, không lấy từ file. '
-              + 'Vị trí đã có sẽ được CẬP NHẬT sức chứa/kiểu. Còn 1 dòng lỗi là KHÔNG ghi gì.'}
+              + 'Vị trí đã có: ô có giá trị được CẬP NHẬT, ô trống giữ nguyên. Còn 1 dòng lỗi là KHÔNG ghi gì.'}
           onClose={() => setShowUpload(false)}
           onDownloadTemplate={downloadLocationTemplate}
           onUpload={(file, preflight) => uploadLocations.mutateAsync({ file, preflight })}

@@ -12,6 +12,12 @@
 // chặn ghi vào thư mục đó) ⇒ file không được ghi mà màn hình im lặng. Nay tách hai giai đoạn: lỗi ở HỘP CHỌN
 // (huỷ = im; không mở được = tải thẳng) và lỗi ở BƯỚC GHI (luôn báo + tải thẳng về Tải xuống + ghi error_logs).
 // Lưu được thì báo "Đã lưu …" — lưu qua hộp chọn không hiện thanh tải xuống của trình duyệt nên trước đây không có gì xác nhận.
+//
+// 20/11 (C124 LẶP — user: "download Mẫu về mà không được, chọn đổi thử qua Desktop ⇒ không tải được"): Chrome còn trả
+// AbortError NGAY Ở HỘP CHỌN khi người dùng đã chọn chỗ và bấm Save nhưng Chrome không tạo được file ở đó (vd Desktop
+// trong OneDrive — Chrome không ghi nhận lần chọn, thư mục vẫn ghi được bằng chương trình khác). Bản 19/11 vẫn coi mọi
+// AbortError ở hộp chọn là "bấm Huỷ" ⇒ im lặng. Nay chỉ coi là Huỷ khi đúng câu "The user aborted a request." (câu
+// Chrome / Edge dùng khi bấm Huỷ, đo 20/11); AbortError khác = lỗi: báo + tải về Tải xuống + ghi error_logs kèm câu gốc.
 import * as XLSX from 'xlsx'
 import { toast } from '@/components/ui/use-toast'
 import { reportClientError } from '@/lib/clientErrorReport'
@@ -39,6 +45,13 @@ function downloadDirect(wb: XLSX.WorkBook, name: string): boolean {
   try { XLSX.writeFile(wb, name); return true } catch (e) { reportClientError(`saveExcel download ${errText(e)}`); return false }
 }
 
+/** Người dùng bấm Huỷ hộp chọn: Chrome / Edge trả AbortError với câu "… The user aborted a request.".
+ *  AbortError với câu khác (vd "Failed to create or truncate file") là Chrome KHÔNG lưu được vào chỗ đã chọn. */
+export function isUserCancel(e: unknown): boolean {
+  const d = e as { name?: string; message?: string } | null
+  return d?.name === 'AbortError' && /user aborted/i.test(d?.message ?? '')
+}
+
 /** Kết quả lưu — để test và (nếu cần) màn hình gọi tự xử lý tiếp. */
 export type SaveResult = 'saved' | 'cancelled' | 'downloaded' | 'failed'
 
@@ -58,9 +71,21 @@ export async function saveWorkbook(wb: XLSX.WorkBook, filename: string): Promise
       types: [{ description: 'Excel', accept: { [XLSX_MIME]: ['.xlsx'] } }],
     })
   } catch (e) {
-    if ((e as DOMException)?.name === 'AbortError') return 'cancelled'   // người dùng bấm Huỷ hộp chọn
+    if (isUserCancel(e)) return 'cancelled'   // người dùng bấm Huỷ hộp chọn
     reportClientError(`saveExcel picker ${errText(e)}`)
-    return downloadDirect(wb, name) ? 'downloaded' : 'failed'
+    const ok = downloadDirect(wb, name)
+    // Hộp chọn ĐÃ hiện và người dùng đã chọn chỗ (AbortError không phải Huỷ) ⇒ phải nói rõ file không nằm ở chỗ đã chọn.
+    // Lỗi khác (vd SecurityError — hộp chọn không mở được) thì người dùng chưa thấy hộp chọn: tải thẳng như trình duyệt cũ.
+    if ((e as { name?: string } | null)?.name === 'AbortError') {
+      toast({
+        variant: 'destructive',
+        title: 'Không lưu được vào thư mục đã chọn',
+        description: (ok ? `Đã tải ${name} về thư mục Tải xuống thay thế. ` : '')
+          + 'Muốn lưu chỗ khác: bấm tải lại và chọn thư mục khác (vd Documents).'
+          + ` (${(e as { message?: string }).message?.replace(/^Failed to execute '\w+' on '\w+': /, '').slice(0, 80) ?? 'lỗi'})`,
+      })
+    }
+    return ok ? 'downloaded' : 'failed'
   }
 
   // Giai đoạn 2 — GHI vào file đã chọn: lỗi ở đây KHÔNG BAO GIỜ im lặng (kể cả AbortError).

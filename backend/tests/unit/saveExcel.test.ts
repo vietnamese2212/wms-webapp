@@ -9,7 +9,10 @@ vi.mock('@/components/ui/use-toast', () => ({ toast: (a: unknown) => toast(a) })
 vi.mock('@/lib/clientErrorReport', () => ({ reportClientError: (m: string) => report(m) }))
 vi.mock('../../../frontend/node_modules/xlsx', () => ({ writeFile: (...a: unknown[]) => writeFile(...a), write: () => new ArrayBuffer(8) }))
 
-const abort = () => Object.assign(new Error('The user aborted a request.'), { name: 'AbortError' })
+// câu Chrome thật khi bấm Huỷ (đo bằng Chromium 20/11)
+const abort = () => Object.assign(new Error("Failed to execute 'showSaveFilePicker' on 'Window': The user aborted a request."), { name: 'AbortError' })
+// đã chọn chỗ + bấm Save nhưng Chrome không tạo được file ở đó (20/11: Desktop trong OneDrive) — CÙNG tên lỗi, KHÁC câu
+const abortCreate = () => Object.assign(new Error('Failed to create or truncate file'), { name: 'AbortError' })
 type Picker = (o: unknown) => Promise<unknown>
 function setPicker(p: Picker | undefined) { (globalThis as unknown as { window: unknown }).window = { showSaveFilePicker: p } }
 const wb = { SheetNames: [], Sheets: {} } as never
@@ -22,6 +25,20 @@ describe('saveWorkbook — chọn vị trí lưu (C124)', () => {
     const { saveWorkbook } = await import('../../../frontend/src/utils/saveExcel')
     expect(await saveWorkbook(wb, 'mau')).toBe('cancelled')
     expect(writeFile).not.toHaveBeenCalled(); expect(toast).not.toHaveBeenCalled()
+  })
+  it('C124 LẶP 20/11: HỘP CHỌN trả AbortError KHÔNG phải Huỷ (Chrome không tạo được file ở thư mục đã chọn) ⇒ báo + tải về Tải xuống + ghi error_logs', async () => {
+    setPicker(() => Promise.reject(abortCreate()))
+    const { saveWorkbook } = await import('../../../frontend/src/utils/saveExcel')
+    expect(await saveWorkbook(wb, 'mau_dinh_muc')).toBe('downloaded')
+    expect(writeFile).toHaveBeenCalledWith(wb, 'mau_dinh_muc.xlsx')
+    expect(toast).toHaveBeenCalledWith(expect.objectContaining({ variant: 'destructive', title: 'Không lưu được vào thư mục đã chọn' }))
+    expect(report.mock.calls[0][0]).toMatch(/saveExcel picker AbortError: Failed to create or truncate file/)
+  })
+  it('isUserCancel: chỉ câu "user aborted" mới là Huỷ', async () => {
+    const { isUserCancel } = await import('../../../frontend/src/utils/saveExcel')
+    expect(isUserCancel(abort())).toBe(true)
+    expect(isUserCancel(abortCreate())).toBe(false)
+    expect(isUserCancel(Object.assign(new Error('x'), { name: 'SecurityError' }))).toBe(false)
   })
   it('BƯỚC GHI bị huỷ (AbortError lúc close) ⇒ báo lỗi + tải về Tải xuống + ghi error_logs — không im lặng', async () => {
     setPicker(() => Promise.resolve({ name: 'mau.xlsx', createWritable: async () => ({ write: async () => {}, close: async () => { throw abort() } }) }))

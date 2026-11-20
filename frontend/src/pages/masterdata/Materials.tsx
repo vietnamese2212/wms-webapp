@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import * as XLSX from 'xlsx'
-import { saveWorkbook } from '@/utils/saveExcel'
+import { downloadTemplate } from '@/utils/excelTemplate'
 import { Tag, Plus, Upload, Pencil, Trash2, X, Check, PlusCircle, QrCode, Rows3, AlignJustify, Boxes } from 'lucide-react'
 import { FloatingActionBar, FLOATING_BTN, FLOATING_BTN_DANGER } from '@/components/shared/FloatingActionBar'
 import { RowCheck } from '@/components/shared/RowCheck'
@@ -286,32 +285,23 @@ export default function Materials() {
     keys.push('is_semi_finished')
     // 19/11 (C125): sheet dữ liệu CHỈ có 2 dòng tên cột — ví dụ cũ nằm ngay dòng 3 (mã thật 210000262, loại "Thành phẩm")
     // nên quên xoá là cả file bị chặn "ngoài phạm vi" hoặc ghi đè mã thật. Ví dụ + giải thích chuyển sang sheet "Hướng dẫn".
-    const ws = XLSX.utils.aoa_to_sheet([labels, keys])
-    ws['!cols'] = labels.map(l => ({ wch: Math.max(12, Math.min(28, l.length + 2)) }))
     // Loại hàng của ví dụ = loại trong phạm vi người tải (ưu tiên loại bắt Pallet/EA — kiểu nguyên liệu), không viết cứng mã loại
     const exCat = warehouseTypes.find(t => needsPalletPerEa(t.value, whTypeMeta))?.value ?? warehouseTypes[0]?.value ?? ''
     const exNvl = keys.map(k => ({ material_code: '210009999', material_description: 'Bột cacao kiềm hoá 10-12% (ví dụ)', category: exCat,
       cartons_per_pallet: 1000, pallet_per_ea: '0,001', shelf_life_days: 720, base_unit: 'KG', no_qr_tracking: 0, is_non_stock: 0,
       is_pallet_carrier: 0, is_semi_finished: 0 } as Record<string, string | number>)[k] ?? '')
-    const guide = XLSX.utils.aoa_to_sheet([
-      ['NẠP MÃ HÀNG TỪ EXCEL — app chỉ đọc sheet ĐẦU TIÊN ("MaHang"), theo TÊN cột ở dòng 1 / dòng 2 (giữ nguyên 2 dòng này)'],
-      [],
-      ['• Mã CHƯA có ⇒ thêm mới: bắt buộc Mã hàng, Tên hàng, Loại hàng, Base Unit, Thùng/Pallet; thêm HSD (ngày) và Pallet/EA nếu Loại kho bắt (Cài đặt WMS → Loại kho) — như form Thêm mã hàng.'],
-      ['• Mã ĐÃ có ⇒ cập nhật ô có giá trị, ô để trống giữ nguyên.'],
-      ['• Thùng/Pallet: số đơn vị gốc trên một pallet đầy (mã tính KG thì ghi số kg / pallet). Pallet/EA = 1 ÷ số đó (1.000 kg/pallet ⇒ 0,001).'],
-      ['• Có Entry Unit (vd CAR) thì bắt buộc Đv/Thùng = số Base Unit trong 1 Entry; Entry phải khác Base.'],
-      ['• Cột (1/0): 1 = bật, 0 = tắt, trống = giữ nguyên (mã mới: tắt).'],
-      ['• File còn một dòng lỗi thì KHÔNG ghi gì; trước khi ghi app hiện bảng kiểm để bạn xem và bấm Xác nhận.'],
-      [],
-      ['VÍ DỤ (chép sang sheet "MaHang" từ dòng 3, thay bằng mã thật):'],
-      labels,
-      exNvl,
-    ])
-    guide['!cols'] = labels.map(() => ({ wch: 16 }))
-    const wb = XLSX.utils.book_new()
-    XLSX.utils.book_append_sheet(wb, ws, 'MaHang')
-    XLSX.utils.book_append_sheet(wb, guide, 'Hướng dẫn')
-    saveWorkbook(wb, 'mau_ma_hang.xlsx')
+    void downloadTemplate({
+      file: 'mau_ma_hang.xlsx', sheet: 'MaHang', header: [labels, keys], title: 'NẠP MÃ HÀNG TỪ EXCEL',
+      notes: [
+        'Mã CHƯA có ⇒ thêm mới: bắt buộc Mã hàng, Tên hàng, Loại hàng, Base Unit, Thùng/Pallet; thêm HSD (ngày) và Pallet/EA nếu Loại kho bắt (Cài đặt WMS → Loại kho) — như form Thêm mã hàng.',
+        'Mã ĐÃ có ⇒ cập nhật ô có giá trị, ô để trống giữ nguyên.',
+        'Thùng/Pallet: số đơn vị gốc trên một pallet đầy (mã tính KG thì ghi số kg / pallet). Pallet/EA = 1 ÷ số đó (1.000 kg/pallet ⇒ 0,001).',
+        'Có Entry Unit (vd CAR) thì bắt buộc Đv/Thùng = số Base Unit trong 1 Entry; Entry phải khác Base.',
+        'Cột (1/0): 1 = bật, 0 = tắt, trống = giữ nguyên (mã mới: tắt).',
+        'File còn một dòng lỗi thì KHÔNG ghi gì.',
+      ],
+      examples: [exNvl],
+    })
   }
 
   function openAdd() {

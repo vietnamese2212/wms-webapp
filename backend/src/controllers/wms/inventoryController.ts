@@ -18,6 +18,7 @@ import { parseListParam, nonUuidEntries } from '../../utils/httpQuery'
 import { getOrgProfile } from '../../utils/settings'
 import { guardPutawayBatch, type IncomingInput } from '../../services/putawayContext'
 import { logPalletMoves } from '../../services/palletMoveLog'
+import { excelNumber } from '../../utils/excelNumber'
 import { resolveActorId } from '../../utils/actor'
 import { putawayEnforces } from '../../utils/putaway'
 import { moveSourceWarehouse } from '../../utils/entryWarehouse'
@@ -1660,19 +1661,22 @@ const INV_FIELDS: FieldDef[] = [
   { key: 'material_code',   label: 'Mã hàng',     aliases: ['ma hang'], required: true },
   { key: 'warehouse',       label: 'Kho (mã)',    aliases: ['kho ma', 'kho'], required: true },
   { key: 'location_code',   label: 'Mã vị trí',   aliases: ['ma vi tri', 'vi tri'], required: true },
-  { key: 'cartons',         label: 'Số thùng',    aliases: ['so thung', 'so thung so nguyen'], required: true },
+  // 'ton thung' / 'ton hop' (20/11): file XUẤT chi tiết pallet của chính trang này nạp lại được (round-trip)
+  { key: 'cartons',         label: 'Số thùng',    aliases: ['so thung', 'so thung so nguyen', 'ton thung'], required: true },
   { key: 'production_date', label: 'Ngày SX',     aliases: ['ngay sx', 'ngay san xuat', 'ngay sx yyyy mm dd'], required: true },
   { key: 'ncc',             label: 'NCC',         aliases: ['ncc ma ten tuy'] },
   { key: 'qa_status',       label: 'QA',          aliases: ['qa', 'qa mac dinh ok'] },
-  { key: 'shelf_life_days', label: 'HSD (ngày)',  aliases: ['hsd', 'hsd ngay', 'hsd ngay tuy'] },
-  { key: 'boxes_base',      label: 'Hộp (lẻ)',    aliases: ['hop', 'hop phan le', 'hop phan le tuy'] },
+  { key: 'shelf_life_days', label: 'HSD (ngày)',  aliases: ['hsd', 'hsd ngay', 'hsd ngay tuy', 'shelflife', 'shelflife ngay'] },
+  { key: 'boxes_base',      label: 'Hộp (lẻ)',    aliases: ['hop', 'hop phan le', 'hop phan le tuy', 'ton hop'] },
   // 2 cột TÙY CHỌN (29/07) — bê tồn kho cũ vào thì phải khai được NGÀY VÀO KHO THẬT + AI nhận,
   // không thì mọi số "nhập trong ngày" (Giám sát vận hành/Dashboard) tính cả tồn upload thành hàng mới nhận.
-  { key: 'import_date',     label: 'Ngày nhập',   aliases: ['ngay nhap', 'ngay nhap kho', 'ngay nhap tuy', 'ngay nhap trong hom nay'] },
-  { key: 'created_by',      label: 'Người nhập',  aliases: ['nguoi nhap', 'nguoi nhan', 'nguoi nhap tuy'] },
+  // Nhãn dòng 1 của file mẫu ("Ngày nhập (tùy, trống = hôm nay)") cũng là alias — bỏ dòng key (dòng 2) không mất cột
+  { key: 'import_date',     label: 'Ngày nhập',   aliases: ['ngay nhap', 'ngay nhap kho', 'ngay nhap tuy', 'ngay nhap trong hom nay', 'ngay nhap tuy trong hom nay'] },
+  { key: 'created_by',      label: 'Người nhập',  aliases: ['nguoi nhap', 'nguoi nhan', 'nguoi nhap tuy', 'nguoi nhap tuy trong nguoi upload'] },
 ]
 
-const invNum = (v: unknown): number | null => { const n = parseFloat(String(v ?? '').replace(',', '.')); return Number.isNaN(n) ? null : n }
+// Số kiểu VN qua MỘT nguồn (utils/excelNumber): "1.000" = một nghìn, "12,5" = 12.5 — bản chép tay cũ đọc "1.000" thành 1
+const invNum = (v: unknown): number | null => excelNumber(v)
 const invInt = (v: unknown): number | null => { const n = parseInt(String(v ?? '').trim(), 10); return Number.isNaN(n) ? null : n }
 const invStr = (v: unknown): string | null => { const s = String(v ?? '').trim(); return s || null }
 
@@ -1750,13 +1754,13 @@ export async function uploadExcel(req: Request, res: Response) {
       fetchAllRowsParallel(() => supabase.from('Warehouse').select('id, code, name, nmsx_code')),
       fetchAllRowsParallel(() => supabase.from('Location').select('id, location_code, warehouse_id')),
       fetchAllRowsParallel(() => supabase.from('TransportCompany').select('id, code, name, type, alias_codes')),
-      fetchAllRowsParallel(() => supabase.from('QAStatus').select('id, name')),
+      fetchAllRowsParallel(() => supabase.from('QAStatus').select('id, code, name')),
     ]) as [
       ({ id: string; material_code: string; category: string | null } & MatUnits)[],
       { id: string; code: string; name: string; nmsx_code: string | null }[],
       { id: string; location_code: string; warehouse_id: string | null }[],
       { id: string; code: string | null; name: string | null; type: string; alias_codes: string[] | null }[],
-      { id: string; name: string }[],
+      { id: string; code: string | null; name: string }[],
     ]
 
     const matMap = new Map(mats.map(m => [String(m.material_code).trim().toLowerCase(), m.id]))
@@ -1782,7 +1786,11 @@ export async function uploadExcel(req: Request, res: Response) {
     // cắt scope theo Location.warehouse_id → pallet BIẾN khỏi kho A, hiện ở kho B; verify 26/07 ghi được 1 entry lệch).
     const locWhMap = new Map(locs.map(l => [l.id, l.warehouse_id]))
     const resolveNcc = makeNccResolver(cos.filter(c => c.type === 'NCC'))
-    const qaMap = new Map(qas.map(q => [String(q.name).trim().toLowerCase(), q.id]))
+    // QA nhận TÊN lẫn MÃ — file xuất của trang Tồn kho ghi MÃ (X7), file tay hay ghi tên ("X 7 ngày")
+    const qaMap = new Map([
+      ...qas.filter(q => q.code).map(q => [String(q.code).trim().toLowerCase(), q.id] as [string, string]),
+      ...qas.map(q => [String(q.name).trim().toLowerCase(), q.id] as [string, string]),
+    ])
     const qaNames = qas.map(q => q.name).join(' / ')
 
     // NGƯỜI NHẬP (cột tùy chọn): `created_by` là FK → Employee.id, KHÔNG phải tên. File khai
@@ -1829,6 +1837,7 @@ export async function uploadExcel(req: Request, res: Response) {
     const records: Record<string, unknown>[] = []
     const updates: Record<string, unknown>[] = []
     const adjustLogs: Record<string, unknown>[] = []
+    const moves: { entry_id: string; from_location_id: string | null; to: string; app_qty: number }[] = []
     const actorName = req.user?.name ?? null
     const actorId = req.user?.sub ?? null
     const uploadScope = scopeWhIds(req)   // null = NATIONAL (toàn quyền); mảng = chỉ kho được gán
@@ -1837,7 +1846,10 @@ export async function uploadExcel(req: Request, res: Response) {
     for (const r of rows) {
       lineNo++
       const pallet = invStr(r.pallet_code), mcode = invStr(r.material_code), whRaw = invStr(r.warehouse)
-      const cartons = invNum(r.cartons)
+      const cartonsCell = invNum(r.cartons)
+      const boxesCell = invNum(r.boxes_base)
+      // Ô Số thùng trống mà cột Hộp có số = 0 thùng + N hộp (file XUẤT để lượng mã KG/EA ở cột Hộp)
+      const cartons = cartonsCell ?? (boxesCell != null ? 0 : null)
       const locRaw = invStr(r.location_code)
       const prodRaw = invStr(r.production_date)
       const prodIso = invToISODate(r.production_date)
@@ -1879,8 +1891,9 @@ export async function uploadExcel(req: Request, res: Response) {
       if (!matId) { errors.push(`${at} — mã hàng không khớp: ${mcode}`); continue }
       // BASE UNIT: mã có entry → "Số thùng" NGUYÊN + cột Hộp NGUYÊN; lượng lưu = base
       const mu = matUnitsById.get(matId) ?? null
-      const boxesBase = invNum(r.boxes_base) ?? 0
-      let qtyBase = cartons!
+      const boxesBase = boxesCell ?? 0
+      // Mã không có đơn vị thùng: lượng = ô Số thùng; trống thì lấy ô Hộp (cả hai cùng là đơn vị gốc)
+      let qtyBase = cartonsCell ?? boxesBase
       if (hasEntry(mu)) {
         const f = Number(mu!.units_per_carton)
         if (!Number.isInteger(cartons!)) {
@@ -1897,6 +1910,7 @@ export async function uploadExcel(req: Request, res: Response) {
       // Trùng trong file theo (kho, pallet) — cùng mã ở 2 kho khác nhau là hợp lệ
       const fileKey = `${wh.id}|${palletLc}`
       if (seenInFile.has(fileKey)) { errors.push(`${at} — trùng mã pallet trong file (cùng kho ${whRaw})`); continue }
+      const ex = exMap.get(fileKey)
       const locId = locMap.get(locRaw!.toLowerCase())
       if (!locId) { errors.push(`${at} — vị trí không khớp: ${locRaw}`); continue }
       // Vị trí phải THUỘC ĐÚNG kho của dòng — lệch thì pallet biến khỏi kho khai báo (list/export cắt
@@ -1914,7 +1928,7 @@ export async function uploadExcel(req: Request, res: Response) {
       const rowCat = matCatMap.get(matId) ?? ''
       // Scope Loại hàng: chặn ghi mã thuộc loại ngoài phạm vi user (mã chưa gán loại vẫn cho)
       if (!categoryAllowed(req, rowCat)) { errors.push(`${at} — Loại hàng "${rowCat}" ngoài phạm vi của bạn`); continue }
-      if (!nccId && requiresNccAt(wh.id, rowCat)) {
+      if (!(nccId ?? (nccRaw ? null : (ex?.ncc_id as string | null | undefined) ?? null)) && requiresNccAt(wh.id, rowCat)) {
         errors.push(`${at} — Loại kho "${rowCat}" bắt buộc có NCC (cột NCC đang trống)`); continue
       }
       // QA: trống hoặc "OK" = pallet tốt → NULL. Chỉ gán khi là cờ GIỮ thật; giá trị lạ → lỗi.
@@ -1927,7 +1941,6 @@ export async function uploadExcel(req: Request, res: Response) {
       const nmsx = nmsxFromPallet(pallet!, (wh.nmsx_code && String(wh.nmsx_code).trim()) || null, nmsxAlias)
 
       seenInFile.add(fileKey)
-      const ex = exMap.get(fileKey)
       if (ex) {
         // Pallet đã có (active) trong ĐÚNG kho này → CẬP NHẬT theo file (user chốt 05/07).
         // Giữ nguyên: id, pallet, kho, cartons_imported, import_date, created_at, origin, status, reserved.
@@ -1942,13 +1955,20 @@ export async function uploadExcel(req: Request, res: Response) {
           material_id: matId, location_id: locId,
           cartons_remaining: qtyBase,
           production_date: `${prodIso}T00:00:00`,
-          shelf_life_days: invInt(r.shelf_life_days), ncc_id: nccId, qa_status_id: qaId, nmsx,
+          // NCC / HSD / QA: ô trống GIỮ giá trị cũ (20/11 — trước đây ghi NULL đè: mất NCC, mất HSD riêng, NHẢ cờ QA giữ hàng).
+          // QA ghi "OK" mới là nhả cờ.
+          shelf_life_days: invStr(r.shelf_life_days) ? invInt(r.shelf_life_days) : ex.shelf_life_days,
+          ncc_id: nccRaw ? nccId : ex.ncc_id,
+          qa_status_id: qaRaw ? qaId : ex.qa_status_id,
+          nmsx,
           // Ngày nhập / Người nhập: CHỈ đè khi file có khai (ô trống giữ giá trị cũ — đúng luật merge,
           // không được lấy "hôm nay" đè lên ngày nhập thật của pallet đã có).
           ...(impIso ? { import_date: impIso } : {}),
           ...(importerId ? { created_by: importerId } : {}),
           updated_at: now, updated_by: actorId,   // FK → Employee.id (KHÔNG phải tên)
         })
+        if (ex.location_id !== locId)
+          moves.push({ entry_id: String(ex.id), from_location_id: (ex.location_id as string | null) ?? null, to: locId, app_qty: qtyBase })
         if (qtyBase !== before) {
           adjustLogs.push({
             id: randomUUID(), entry_id: ex.id, delta: qtyBase - before,
@@ -1979,7 +1999,10 @@ export async function uploadExcel(req: Request, res: Response) {
     if (isPreflight(req)) return ok(res, buildPreflight({
       unit: 'pallet', total: rows.length, errors,
       toInsert: records.length, toUpdate: updates.length,
-      extra: adjustLogs.length ? [{ label: 'Pallet bị ĐỔI số lượng', value: adjustLogs.length, warn: true }] : [],
+      extra: [
+        ...(adjustLogs.length ? [{ label: 'Pallet bị ĐỔI số lượng', value: adjustLogs.length, warn: true }] : []),
+        ...(moves.length ? [{ label: 'Pallet ĐỔI vị trí', value: moves.length, warn: true }] : []),
+      ],
     }))
 
     if (errors.length) return ok(res, { inserted: 0, updated: 0, errors })
@@ -2005,6 +2028,18 @@ export async function uploadExcel(req: Request, res: Response) {
     for (let i = 0; i < adjustLogs.length; i += 500) {
       const { error } = await supabase.from('InventoryAdjustmentLog').insert(adjustLogs.slice(i, i + 500))
       if (error) console.error('[uploadExcel] Ghi InventoryAdjustmentLog thất bại:', error.message)
+    }
+    // Pallet đổi ô theo file ⇒ vào SỔ CHUYỂN VỊ TRÍ như mọi cửa đổi ô (luật logPalletMoves). Gom theo ô đích
+    // (hàm nhận một đích mỗi lượt), chạy 4 đích song song — sổ là việc nền, hỏng tự ghi error_logs, không chặn upload.
+    const byDest = new Map<string, typeof moves>()
+    for (const m of moves) byDest.set(m.to, [...(byDest.get(m.to) ?? []), m])
+    const dests = [...byDest.entries()]
+    for (let i = 0; i < dests.length; i += 4) {
+      await Promise.all(dests.slice(i, i + 4).map(([to, ms]) => logPalletMoves({
+        moved: ms.map(m => ({ entry_id: m.entry_id, from_location_id: m.from_location_id, app_qty: m.app_qty })),
+        to_location_id: to, actor_id: actorId, actor_name: actorName,
+        note: 'Upload tồn kho (đổi vị trí theo file)', where: 'POST /wms/inventory/upload',
+      })))
     }
     return ok(res, { inserted: records.length, updated: updates.length, errors: [] })
   } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }

@@ -9,11 +9,17 @@ import { fileURLToPath } from 'url'
 const require2 = createRequire(new URL('../../backend/package.json', import.meta.url))
 const XLSX = require2('xlsx')
 
+// [đường, ô kèm trong form, query]. 20/11: thêm 3 cửa còn thiếu (ZSD02 · bảng cước · định mức — gửi ?preflight=1 cho an toàn:
+// pha kiểm trước đọc file y hệt pha ghi, không ghi gì) + Chi phí kho gửi kèm period — thiếu nó thì cửa trả 400 BAD_PERIOD
+// TRƯỚC khi đọc file, nên các lượt trước chưa từng chạm bộ đọc (bản cũ XLSX.read ném ⇒ 500 với PNG đội lốt).
 const ROUTES = [
-  '/masterdata/locations/upload', '/masterdata/materials/upload',
-  '/wms/warehouse-costs/upload', '/wms/inventory/upload',
-  '/wms/outbound/upload', '/wms/outbound/upload-vl06o', '/wms/outbound/upload-khvc',
-]
+  ['/masterdata/locations/upload'], ['/masterdata/materials/upload'],
+  ['/wms/warehouse-costs/upload', { period: '2026-01' }], ['/wms/inventory/upload'],
+  ['/wms/outbound/upload'], ['/wms/outbound/upload-vl06o'], ['/wms/outbound/upload-khvc'],
+  ['/external/do-sap/upload-zsd02', { kind: 'PARTIAL' }, '?preflight=1'],
+  ['/tms/freight/tariffs/upload', {}, '?preflight=1'],
+  ['/wms/production/recipes/import', {}, '?preflight=1'],
+].map(([path, fields = {}, qs = '']) => ({ path, fields, qs }))
 const xbuf = (rows) => {
   const ws = XLSX.utils.aoa_to_sheet(rows)
   const wb = XLSX.utils.book_new()
@@ -36,18 +42,20 @@ const r0 = await fetch(`${BASE}/api/auth/login`, { method: 'POST', headers: { 'C
 const TOKEN = (await r0.json())?.data?.token
 
 const bad = []
-for (const route of ROUTES) {
+for (const { path: route, fields, qs } of ROUTES) {
   {
     const fd = new FormData()
     fd.append('note', 'thiếu file')
-    const r = await fetch(`${BASE}/api${route}`, { method: 'POST', headers: { Authorization: `Bearer ${TOKEN}` }, body: fd })
+    for (const [k, v] of Object.entries(fields)) fd.append(k, v)
+    const r = await fetch(`${BASE}/api${route}${qs}`, { method: 'POST', headers: { Authorization: `Bearer ${TOKEN}` }, body: fd })
     await r.text()
     if (r.status >= 500) bad.push(`${route} · THIẾU FILE → ${r.status}`)
   }
   for (const [label, buf] of FILES) {
     const fd = new FormData()
     fd.append('file', new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), 'simup.xlsx')
-    const r = await fetch(`${BASE}/api${route}`, { method: 'POST', headers: { Authorization: `Bearer ${TOKEN}` }, body: fd })
+    for (const [k, v] of Object.entries(fields)) fd.append(k, v)
+    const r = await fetch(`${BASE}/api${route}${qs}`, { method: 'POST', headers: { Authorization: `Bearer ${TOKEN}` }, body: fd })
     const t = await r.text()
     if (r.status >= 500) bad.push(`${route} · ${label} → ${r.status} · ${t.slice(0, 100)}`)
   }

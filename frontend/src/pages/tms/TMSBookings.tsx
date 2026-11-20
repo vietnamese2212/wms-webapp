@@ -1,8 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import * as XLSX from 'xlsx'
-import { saveWorkbook } from '@/utils/saveExcel'
-import { sanitizeRows } from '@/utils/excelSafe'
+import { downloadTemplate as downloadXlsxTemplate } from '@/utils/excelTemplate'
 import { qtyFromEntryBase, qtyEntryDecimal, qtyEntryText, qtyLabel, unitCodeOf, unitLabel, type MatUnits } from '@/utils/qtyUnits'
 import { Plus, Upload, Pencil, Truck, Trash2, Download, RotateCcw, Star, Eye, PlusCircle, CalendarDays, CalendarCheck, ShieldX, FileSpreadsheet, X, CheckCircle2, Boxes, ChevronDown, Loader2, Play } from 'lucide-react'
 import { ScanIcon } from '@/components/shared/ScanIcon'
@@ -1366,13 +1365,17 @@ function ExcelUploadDialog({ open, onClose, warehouses, warehouseTypes, vehicleT
     const d = new Date(); d.setDate(d.getDate() + 1)
     const dd = String(d.getDate()).padStart(2, '0'), mm = String(d.getMonth() + 1).padStart(2, '0'), yyyy = d.getFullYear()
     const ddmmyy = `${dd}${mm}${String(yyyy).slice(2)}`
-    const ws = XLSX.utils.aoa_to_sheet([
-      ['Mã đơn', 'NPP', 'Kho', 'Ngày', 'Hướng', 'Loại kho', 'Loại xe', 'ĐVVT', 'Thùng', 'Pallet', 'Tấn', 'GDO', 'Ghi chú', 'Ưu tiên'],
-      [`20000016_X_${ddmmyy}_1`, 'Tên NPP mẫu', 'Kho Ba Vì', `${dd}/${mm}/${yyyy}`, 'Xuất', 'Thành phẩm', 'XE 4 PALLET', '3S', 100, 5, 2.5, 'GDO-001', '', ''],
-    ])
-    const wb = XLSX.utils.book_new()
-    XLSX.utils.book_append_sheet(wb, ws, 'Import')
-    saveWorkbook(wb, 'mau_ke_hoach_vc.xlsx')
+    // Ví dụ ở sheet Hướng dẫn (C125); Loại kho / Loại xe / ĐVVT của ví dụ lấy từ danh mục thật (đừng viết cứng "Thành phẩm").
+    void downloadXlsxTemplate({
+      file: 'mau_ke_hoach_vc.xlsx', sheet: 'Import', title: 'NẠP KẾ HOẠCH VẬN CHUYỂN TỪ EXCEL',
+      header: [['Mã đơn', 'NPP', 'Kho', 'Ngày', 'Hướng', 'Loại kho', 'Loại xe', 'ĐVVT', 'Thùng', 'Pallet', 'Tấn', 'GDO', 'Ghi chú', 'Ưu tiên']],
+      notes: [
+        'Mã đơn dạng <mã kho>_X_ddmmyy_stt. Kho ghi đúng tên kho; Loại kho, Loại xe, ĐVVT phải có trong danh mục.',
+        'File còn một dòng lỗi thì chưa nhập được — sửa file rồi chọn lại.',
+      ],
+      examples: [[`20000016_X_${ddmmyy}_1`, 'Tên NPP mẫu', warehouses[0]?.name ?? 'Kho Ba Vì', `${dd}/${mm}/${yyyy}`, 'Xuất', warehouseTypes[0] ?? '',
+        vehicleTypes[0]?.name ?? '', transportCompanies[0]?.code ?? '', 100, 5, 2.5, 'GDO-001', '', '']],
+    })
   }
 
   const errorCount = rows.filter(r => !r.valid).length
@@ -1747,6 +1750,11 @@ function InboundPlanBulkUploadDialog({ open, warehouseId, onClose }: {
           else if (vt && !vtNameSet.has(vt))          error = `Dòng ${i + 2}: Loại xe "${vt}" không hợp lệ`
           else if (!matCode)                          error = `Dòng ${i + 2}: thiếu Mã hàng`
           else if (!matId)                            error = `Dòng ${i + 2}: hàng "${matCode}" không tìm thấy`
+          // "1,5" / "1.000" đọc theo kiểu VN (helper chung); chữ không đọc được là LỖI — trước 20/11 thành rỗng im lặng
+          const boxesN   = boxes   != null && boxes   !== '' ? parseVnNumberShared(boxes)   : null
+          const palletsN = pallets != null && pallets !== '' ? parseVnNumberShared(pallets) : null
+          if (!error && boxes != null && boxes !== '' && (boxesN == null || boxesN < 0))       error = `Dòng ${i + 2}: Số thùng "${String(boxes)}" không phải số`
+          if (!error && pallets != null && pallets !== '' && (palletsN == null || palletsN < 0)) error = `Dòng ${i + 2}: Số pallet "${String(pallets)}" không phải số`
 
           return {
             date: rowDate ?? '',
@@ -1755,8 +1763,8 @@ function InboundPlanBulkUploadDialog({ open, warehouseId, onClose }: {
             warehouse_type: whType, vehicle_type: vt,
             material_code: matCode, material_id: matId,
             po_number: po,
-            planned_boxes:   boxes   != null && boxes   !== '' ? Number(boxes)   : null,
-            planned_pallets: pallets != null && pallets !== '' ? Number(pallets) : null,
+            planned_boxes:   boxesN,
+            planned_pallets: palletsN,
             _valid: !error, _error: error,
           }
         }).filter(r => r.date || r.ncc_code || r.material_code)
@@ -1797,13 +1805,13 @@ function InboundPlanBulkUploadDialog({ open, warehouseId, onClose }: {
   }
 
   function downloadTemplate() {
-    const data = [
-      { 'Ngày': '10/07/2026', 'Mã kho': 'KHO1', 'Mã NCC': 'FAST', 'Loại xe': 'PALLET', 'Mã hàng': '510000127', 'Số PO': 'PO-0001', 'Số thùng': 500, 'Số pallet': 10 },
-    ]
-    const ws = XLSX.utils.json_to_sheet(sanitizeRows(data))
-    const wb = XLSX.utils.book_new()
-    XLSX.utils.book_append_sheet(wb, ws, 'KH Nhập ngoài')
-    saveWorkbook(wb, 'template_ke_hoach_nhap.xlsx')
+    // Ví dụ ở sheet Hướng dẫn (C125) — sheet dữ liệu chỉ có dòng tên cột
+    void downloadXlsxTemplate({
+      file: 'template_ke_hoach_nhap.xlsx', sheet: 'KH Nhập ngoài', title: 'NẠP KẾ HOẠCH NHẬP TỪ EXCEL',
+      header: [['Ngày', 'Mã kho', 'Mã NCC', 'Loại xe', 'Mã hàng', 'Số PO', 'Số thùng', 'Số pallet']],
+      notes: ['Mỗi dòng = một mã hàng của một lần nhập. Trùng (Ngày + Kho + NCC + Mã hàng) với kế hoạch đã có ⇒ cập nhật số lượng.'],
+      examples: [['10/07/2026', '20000016', 'FAST', 'PALLET', '510000127', 'PO-0001', 500, 10]],
+    })
   }
 
   function handleClose() { setPreview(null); setFileName(''); setErr(''); setRowFilter('all'); onClose() }
@@ -1839,7 +1847,7 @@ function InboundPlanBulkUploadDialog({ open, warehouseId, onClose }: {
                 <Upload className="h-3.5 w-3.5 mr-1" /> Chọn file
               </Button>
               <input ref={fileRef} type="file" accept=".xlsx,.xls" className="hidden"
-                onChange={e => { const f = e.target.files?.[0]; if (f) { setFileName(f.name); parseFile(f) } }}
+                onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; if (f) { setFileName(f.name); parseFile(f) } }}
               />
             </div>
             {fileName && <p className="text-slate-500">File: {fileName}</p>}
@@ -1918,9 +1926,13 @@ function UploadPlanLinesDialog({ orderId, warehouseType, onClose }: {
 
   function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0]
+    e.target.value = ''   // chọn lại cùng file (đã sửa) vẫn đọc lại
     if (!f) return
+    setApiError('')
     const reader = new FileReader()
-    reader.onload = async (ev) => {
+    // lỗi trong onload (file hỏng, mạng khi tra mã) KHÔNG được React bắt — trước 20/11 chọn file hỏng thì im lặng
+    reader.onload = (ev) => { void parse(ev).catch(err => setApiError(`Không đọc được file: ${(err as Error)?.message ?? 'lỗi'}`)) }
+    const parse = async (ev: ProgressEvent<FileReader>) => {
       const wb = XLSX.read(ev.target?.result, { type: 'binary' })
       const ws = wb.Sheets[wb.SheetNames[0]]
       const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: '' })
@@ -1940,9 +1952,13 @@ function UploadPlanLinesDialog({ orderId, warehouseType, onClose }: {
           const nm: Record<string, unknown> = {}
           for (const [k, v] of Object.entries(row)) nm[nk(k)] = v
           const material_code = String(pick(nm, ['ma hang', 'material code']) ?? '').trim()
-          const planned_boxes = Number(pick(nm, ['sl thung', 'so thung', 'planned boxes']) || 0)
+          // "1,5" / "1.000" đọc theo kiểu VN (helper chung) — Number("1,5") = NaN từng qua kiểm là OK rồi BE bỏ dòng im lặng
+          const rawBoxes = pick(nm, ['sl thung', 'so thung', 'planned boxes'])
+          const boxesParsed = rawBoxes === '' ? 0 : parseVnNumberShared(rawBoxes)
+          const planned_boxes = boxesParsed ?? NaN
           const rawPallet = pick(nm, ['sl pallet', 'so pallet', 'planned pallets'])
-          const planned_pallets = rawPallet !== '' ? Number(rawPallet) : undefined
+          const palletParsed = rawPallet !== '' ? parseVnNumberShared(rawPallet) : undefined
+          const planned_pallets = palletParsed ?? undefined
           const mat = materials.find(m =>
             m.material_code === material_code &&
             (!warehouseType || m.category === warehouseType)
@@ -1957,9 +1973,13 @@ function UploadPlanLinesDialog({ orderId, warehouseType, onClose }: {
               ? 'Không tìm thấy mã hàng'
               : !mat
                 ? `Mã hàng không thuộc loại kho ${warehouseType}`
-                : planned_boxes <= 0
-                  ? 'SL thùng phải > 0'
-                  : undefined,
+                : !Number.isFinite(planned_boxes)
+                  ? `SL thùng "${String(rawBoxes)}" không phải số`
+                  : planned_boxes <= 0
+                    ? 'SL thùng phải > 0'
+                    : palletParsed === null
+                      ? `SL pallet "${String(rawPallet)}" không phải số`
+                      : undefined,
           }
         })
         .filter(r => r.material_code)   // bỏ dòng trống (không có mã hàng)

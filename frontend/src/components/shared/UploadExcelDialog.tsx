@@ -119,7 +119,8 @@ export function UploadExcelDialog({ title, hint, onClose, onDownloadTemplate, on
               <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-800 space-y-1">
                 <div className="flex items-center gap-2 font-medium">
                   <Info className="h-4 w-4 shrink-0" />
-                  {result!.inserted === 0
+                  {/* nạp theo từng dòng có thể chỉ CẬP NHẬT (inserted 0, updated > 0) — đó không phải "chưa nhập gì" */}
+                  {result!.inserted + (result!.updated ?? 0) === 0
                     ? `${result!.errors.length} dòng lỗi — CHƯA NHẬP GÌ, sửa rồi upload lại:`
                     : `${result!.errors.length} dòng lỗi (đã nhập các dòng hợp lệ):`}
                 </div>

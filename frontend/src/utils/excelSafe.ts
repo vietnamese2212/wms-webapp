@@ -2,9 +2,13 @@
 // khi mở trong Excel/Google Sheets sẽ bị hiểu là CÔNG THỨC → có thể chạy HYPERLINK/
 // lệnh độc hại nếu dữ liệu chứa vd `=cmd|'/c calc'!A1`. Prefix dấu nháy đơn để buộc
 // Excel coi là văn bản. Áp cho MỌI dữ liệu do người dùng nhập trước khi ghi sheet.
-function sanitizeCell<T>(v: T): T {
+// Số âm dạng chữ ("-5", "-1,5") và gạch trống ("-") KHÔNG phải công thức: thêm nháy thì ô hiện "'-5" (trong file .xlsx dấu
+// nháy là ký tự thật, không ẩn như khi gõ tay) — số đo phiếu công đoạn âm bị in kèm nháy (20/11). Chỉ prefix khi '-' theo sau
+// là thứ khác chữ số.
+export function sanitizeCell<T>(v: T): T {
   if (typeof v !== 'string') return v
-  return (/^[=+\-@\t\r]/.test(v) ? "'" + v : v) as unknown as T
+  const risky = /^[=+@\t\r]/.test(v) || (v.startsWith('-') && !/^-[\d\s.,]*$/.test(v))
+  return (risky ? "'" + v : v) as unknown as T
 }
 
 // Làm sạch 1 mảng object (json_to_sheet) — sao chép nông, chỉ đụng giá trị chuỗi nguy hiểm

@@ -36,7 +36,9 @@
 - `sheet_to_json(ws)` mặc định (object theo header) hoặc helper `parseSheetByHeader` (`backend/src/utils/excelHeader.ts`) — alias = {key snake_case + nhãn tiếng Việt}, chuẩn hóa trim/lowercase/bỏ dấu → chịu ĐẢO thứ tự cột + đổi tên nhãn. **KHÔNG map theo vị trí cột** (`header: 1` + mảng KEYS — đảo cột là lệch dữ liệu âm thầm).
 - Lấy **sheet ĐẦU TIÊN** (chốt user). Guard cột bắt buộc thiếu → 400 báo tên cột (đừng nuốt).
 - Ngày: nhận serial Excel (SSF, không qua Date/timezone — bẫy lệch -1 ngày) + dd/mm/yyyy + yyyy-mm-dd. Số: `parseVnNumber` (phẩy = thập phân).
-- Template tải về: dấu `*` CHỈ ở cột bắt buộc thực sự (khớp validation BE).
+- Template tải về: dấu `*` CHỈ ở cột bắt buộc thực sự (khớp validation BE) — chỉ thêm `*` khi bộ đọc map theo tên đã chuẩn hoá (bộ đọc so tên cột nguyên văn như Xuất kho thì ghi "Bắt buộc: …" ở sheet Hướng dẫn).
+- **File mẫu dựng qua `downloadTemplate({ file, sheet, header, title, notes, examples })`** (`utils/excelTemplate.ts`): sheet dữ liệu CHỈ có dòng tên cột, ví dụ nằm ở sheet "Hướng dẫn". Ví dụ trên sheet dữ liệu = người dùng quên xoá là GHI THẬT (C125, đo 20/11: sửa đè vị trí, thêm cước, tạo chuyến). Giá trị danh mục trong ví dụ (loại kho, loại xe, ĐVVT) lấy từ danh mục thật, không viết cứng. Ratchet `template_not_via_helper` gác.
+- **Cập nhật bản ghi có sẵn: ô trống GIỮ giá trị đang lưu** — mặc định ("Sức chứa trống = 1") chỉ áp cho dòng MỚI; đổi vị trí theo file vẫn đi `logPalletMoves` như cửa sửa (C128).
 
 ## B. VALIDATE
 - Số lượng theo BASE UNIT: cột "Thùng" = entry (mã có entry → SỐ NGUYÊN; mã không entry = base, thập phân OK); cột "Hộp"/lẻ = base. Convert 1 lần tại rìa bằng `qtyFromEntryBase`; BE chốt `qtyIntegerError` (422 theo dòng kèm gợi ý quy đổi).
@@ -68,6 +70,8 @@
 - Server đọc: `fetchAllRowsParallel` / `fetchAllByIdChunks` (chunk `.in` 300) — **KHÔNG** query trần (cap ~1000 cắt âm thầm), không `.limit(N>1000)`.
 - FE xuất: `sanitizeRows` + `saveWorkbook` — **tải thường của trình duyệt** (user chốt 20/11; KHÔNG dùng hộp chọn riêng `showSaveFilePicker`: hỏng trên máy user ở Chrome + Edge, C124). File MẪU có cột mã danh mục ⇒ gắn danh sách hợp lệ: `saveWorkbook(wb, tên, { validations })` (`utils/xlsxValidation.ts`), danh mục lấy từ server bằng CHÍNH hàm kiểm của lần nạp (mẫu: Định mức `recipeTemplate.ts` + `import-catalog`); số theo chuẩn VN; ngày date-only `YYYY-MM-DD`/`dd-mm-yyyy` nhất quán với parser upload (round-trip: file export phải upload lại được — vd export Tồn kho 2 cột Thùng+Hộp nguyên).
 - Export tôn trọng filter đang áp trên list; dữ liệu lớn → nút hiện trạng thái đang tải.
+- **File xuất = MỌI dòng khớp bộ lọc, không phải trang đang xem**: list phân trang ở server thì duyệt trang bằng `fetchAllPages(load, { pageSize, maxRows })` (`api/fetchAllPages.ts`) — vượt trần ném `ExportTooLargeError`, màn hiện lời nhắn qua `exportErrorMessage`; KHÔNG viết vòng lặp riêng, KHÔNG `rows.map` của trang. Đang ô TÌM thì xuất đúng kết quả tìm. API chỉ trả phần đầu (cờ `truncated`, "1.000 mới nhất") ⇒ xin trần lớn hơn hoặc TỪ CHỐI xuất kèm lời nhắn thu hẹp — file cụt là sai âm thầm (C7, 20/11: hồ sơ thu hồi lô từng chỉ có 500 dòng đầu). Lỗi lúc tải trang phải hiện (toast/băng đỏ), không `catch {}`.
+- Mỗi file xuất: `sanitizeRows` cho chữ người nhập; cột số đi kèm cột ĐVT (`qtyUnitLabel`) khi một cột trộn mã thùng và mã KG.
 
 ## Checklist
 - [ ] **2 PHA: `isPreflight` giữa pha kiểm & pha ghi · 0 lệnh ghi trước điểm return · dialog 80% + nút Xác nhận**

@@ -50,6 +50,7 @@ import { WarehouseSingleSelect } from '@/components/shared/WarehouseSingleSelect
 import { InfoTip } from '@/components/shared/InfoTip'
 import { useConfirmDialog } from '@/components/shared/ConfirmDialog'
 import { toast } from '@/components/ui/use-toast'
+import { sanitizeRows } from '@/utils/excelSafe'
 import {
   useDispatchPlans, useDispatchPlan, useCreateDispatchPlan, useUpdateDispatchTrip, useMoveDispatchOd, useConfirmDispatchPlan, useDiscardDispatchPlan, useReopenDispatchPlan, useEditDispatchPlan, useResyncDispatchOutbound,
   useSettleDispatchTrip, useRespondDispatchTrip, useDispatchPlanSync, useRefreshDispatchPool, useDeleteDispatchTrip, useHoldDispatchOds,
@@ -604,7 +605,7 @@ export default function Dispatch() {
       'Pallet xe': t.pallets == null ? '' : Number(t.pallets), 'Tải %': t.load_pct == null ? '' : Number(t.load_pct), 'Cước dự tính': t.freight_estimated == null ? '' : Number(t.freight_estimated),
     })))
     const wb = XLSX.utils.book_new()
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), 'KH dieu van')
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(sanitizeRows(rows)), 'KH dieu van')
     saveWorkbook(wb, `dieu-van-${plan.warehouse?.code ?? ''}-${plan.plan_date}.xlsx`)
   }
 

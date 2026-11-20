@@ -8,6 +8,7 @@ import { Upload, Truck, CheckCircle2, AlertTriangle, X, Bookmark, Info, Plus, Tr
 import { FloatingActionBar, FLOATING_BTN } from '@/components/shared/FloatingActionBar'
 import * as XLSX from 'xlsx'
 import { saveWorkbook } from '@/utils/saveExcel'
+import { downloadTemplate as downloadXlsxTemplate } from '@/utils/excelTemplate'
 import { SearchInput } from '@/components/shared/SearchInput'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { SavedViews } from '@/components/shared/SavedViews'
@@ -483,18 +484,26 @@ export default function Outbound() {
   }), [nppBreakdown])
 
   // Tải mẫu Excel Xuất kho — cột khớp uploadExcel (backend). Ngày + ddmmyy động (ngày mai) để không quá khứ.
+  // Ví dụ ở sheet Hướng dẫn (C125); Loại kho của ví dụ lấy từ danh mục của đơn vị (đừng viết cứng "Thành phẩm" — mã loại kho mỗi DB một khác).
+  const { data: tplWhTypes = [] } = useScopedWhTypes()
   function downloadTemplate() {
     const d = new Date(); d.setDate(d.getDate() + 1)
     const dd = String(d.getDate()).padStart(2, '0'), mm = String(d.getMonth() + 1).padStart(2, '0'), yyyy = d.getFullYear()
     const ddmmyy = `${dd}${mm}${String(yyyy).slice(2)}`
     const headers = ['Số xe', 'Ngày xuất', 'Kho xuất', 'Loại kho', 'DVVT', 'Delivery', 'Tên NPP', 'Material', 'Material_type',
       'Thùng', 'Hộp', 'Tải', 'Nhặt lẻ', 'Pallet', 'Loại xuất', 'HEADER TEXT', 'Batch_Yêu cầu', '%Date_Yêu cầu', 'CS phụ trách', 'Shipto party']
-    const ex = [`20000016_X_${ddmmyy}_01`, `${dd}/${mm}/${yyyy}`, 'Kho Ba Vì', 'Thành phẩm', '3S', 'DO-0001', 'NPP mẫu',
-      '510000126', '', 100, '', '', 0, 5, '', '', '', '', '', '']
-    const ws = XLSX.utils.aoa_to_sheet([headers, ex])
-    const wb = XLSX.utils.book_new()
-    XLSX.utils.book_append_sheet(wb, ws, 'XuatKho')
-    saveWorkbook(wb, 'mau_xuat_kho.xlsx')
+    const ex = [`20000016_X_${ddmmyy}_01`, `${dd}/${mm}/${yyyy}`, 'Kho Ba Vì', tplWhTypes[0]?.value ?? '', '3S', 'DO-0001', 'NPP mẫu',
+      '510000126', '', 100, '', '', 0, 5, 'Xe Pallet', '', '', '', '', '']
+    void downloadXlsxTemplate({
+      file: 'mau_xuat_kho.xlsx', sheet: 'XuatKho', header: [headers], title: 'NẠP KẾ HOẠCH XUẤT TỪ EXCEL',
+      notes: [
+        'Bắt buộc: Số xe, Ngày xuất, Kho xuất, Loại kho, Material, Loại xuất. Các dòng cùng Số xe gộp thành một chuyến.',
+        'Loại kho = mã loại kho trong Cài đặt WMS → Loại kho. Loại xuất phải trùng tên một Loại xe trong Cài đặt TMS.',
+        'Thùng: mã có thùng ghi SỐ NGUYÊN, phần lẻ ghi cột Hộp (đơn vị gốc).',
+        'Xe đang xuất chỉ ghi đè được khi ở trạng thái Tạm dừng. File còn một lỗi thì KHÔNG ghi gì.',
+      ],
+      examples: [ex],
+    })
   }
 
 

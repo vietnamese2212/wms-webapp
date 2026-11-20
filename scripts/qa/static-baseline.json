@@ -97,5 +97,7 @@
   "password_rule_hand_rolled": 0,
   "upload_without_merge_expand": 0,
   "print_area_outside_portal": 0,
-  "qtyinput_value_parseint": 0
+  "qtyinput_value_parseint": 0,
+  "upload_body_without_helper": 0,
+  "template_not_via_helper": 0
 }

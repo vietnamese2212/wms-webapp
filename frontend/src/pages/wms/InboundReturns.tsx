@@ -34,6 +34,7 @@ import { QTY_CONVERTED_LABEL, QTY_CONVERTED_TIP, qtyLabel, type MatUnits } from 
 import { formatDate, formatTimestampDate } from '@/utils/formatters'
 import { saveWorkbook } from '@/utils/saveExcel'
 import { sanitizeRows } from '@/utils/excelSafe'
+import { toast } from '@/components/ui/use-toast'
 
 const TD = 'px-2 py-1 text-[10px] whitespace-nowrap'
 const NUM = `${TD} text-right font-semibold tabular-nums`
@@ -85,6 +86,11 @@ export default function InboundReturns() {
   ]
 
   function exportExcel() {
+    // BE trả tối đa 1.000 phiếu mới nhất: file thiếu phiếu là sai âm thầm ⇒ từ chối + bảo thu hẹp (20/11)
+    if (total > rows.length) {
+      toast({ variant: 'destructive', title: 'Chưa xuất được', description: `Bộ lọc có ${total.toLocaleString('vi-VN')} phiếu, màn chỉ tải ${rows.length.toLocaleString('vi-VN')} phiếu mới nhất — thu hẹp khoảng ngày rồi xuất để file đủ.` })
+      return
+    }
     const sheet = rows.map(r => ({
       'Ngày': r.day, 'Dạng': KIND_VI[r.kind] ?? r.kind, 'Số phiếu': r.code, 'Chuyến gốc': r.trip ?? '', 'Kho': whName(r.warehouse_id), 'Khách / NPP': r.party ?? '',
       'Lý do': r.reason_code ? returnReasonLabel(reasons, r.reason_code) : '', 'Ghi chú': r.note ?? '', 'Đợt': recallCode(r.recall_id), 'Số mã': r.n_mat,

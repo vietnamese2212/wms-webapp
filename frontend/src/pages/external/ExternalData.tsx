@@ -10,6 +10,7 @@ import { FloatingActionBar, FLOATING_BTN } from '@/components/shared/FloatingAct
 import type { AxiosError } from 'axios'
 import * as XLSX from 'xlsx'
 import { saveWorkbook } from '@/utils/saveExcel'
+import { sanitizeRows } from '@/utils/excelSafe'
 import { SearchInput } from '@/components/shared/SearchInput'
 import { SingleSelect } from '@/components/shared/SingleSelect'
 import { useScopedWhTypes } from '@/hooks/useUserScope'
@@ -378,7 +379,7 @@ function DoSapTab({ tabBar }: { tabBar: ReactNode }) {
         'Tình trạng': x.sync_status === 'OBSOLETE' ? 'SAP đã bỏ' : x.used ? 'Đã dùng' : 'Chưa dùng',
         'Cập nhật': x.updated_at ? formatTimestampDate(x.updated_at, true) : '',
       }))
-      const ws = XLSX.utils.json_to_sheet(rows)
+      const ws = XLSX.utils.json_to_sheet(sanitizeRows(rows))
       const wb = XLSX.utils.book_new()
       XLSX.utils.book_append_sheet(wb, ws, 'DO SAP')
       saveWorkbook(wb, 'do-sap.xlsx')

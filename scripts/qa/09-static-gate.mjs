@@ -1507,6 +1507,25 @@ const RULES = [
            '(utils/uploadPreflight; chuẩn user chốt 29/07: xem vấn đề của file + bấm Xác nhận mới ghi)',
     count: (s) => countUploadsMissingPreflight(s),
   },
+  // FILE MẪU nạp Excel MỘT cửa dựng: `downloadTemplate` (utils/excelTemplate) — sheet dữ liệu chỉ có dòng tên cột, ví dụ ở sheet
+  // "Hướng dẫn". 19/11 sửa riêng mẫu Mã hàng (C125) mà 7 mẫu khác vẫn để ví dụ trên sheet dữ liệu ⇒ nạp nguyên file mẫu là ghi thật
+  // (sửa đè vị trí, thêm cước, tạo chuyến…) — C125 LẶP 20/11. Mẫu tự `saveWorkbook(wb, 'mau_…')` = đỏ.
+  // Ngoại lệ: mẫu Định mức (buildRecipeTemplate — sheet dữ liệu chỉ có công thức tra tên, ví dụ ở Hướng dẫn; test recipeTemplate.test.ts).
+  {
+    key: 'template_not_via_helper',
+    label: 'file mẫu nạp Excel tự dựng (`saveWorkbook(wb, \'mau_…\')`) — dùng `downloadTemplate({ header, examples, … })` của utils/excelTemplate (ví dụ KHÔNG được nằm trên sheet dữ liệu)',
+    count: (s) => countMatches(['frontend/src'], ['.ts', '.tsx'],
+      (l, f) => /saveWorkbook\([^,]+,\s*[`'"](mau_|template_|Mau-)/i.test(l) && !f.endsWith(`ProductionRecipes.tsx`), s),
+  },
+  // Thân request nạp Excel MỘT cửa: `excelUploadBody` (api/hooks.ts) — file > 4 MB tự đi qua kho tạm vì Vercel chặn thân
+  // > 4,5 MB (413 thô). Hook tự `new FormData()` + `.append('file', …)` thì file lớn chết ở Vercel — 20/11 hook Chi phí kho
+  // còn tự dựng. File KHÔNG phải Excel (ảnh…) mà cần append 'file' thì thêm ngoại lệ có lý do ở đây.
+  {
+    key: 'upload_body_without_helper',
+    label: 'hook nạp file tự `.append(\'file\', …)` — dùng `excelUploadBody(file, { …ô kèm })` (file > 4 MB đi kho tạm, Vercel chặn > 4,5 MB)',
+    count: (s) => countMatches(['frontend/src'], ['.ts', '.tsx'],
+      (l, f) => /\.append\(\s*['"]file['"]/.test(l) && !(f.endsWith(`${sep}api${sep}hooks.ts`) && /^\s*form\.append\('file', file\)/.test(l)), s),
+  },
   // Chính sách mật khẩu MỘT nguồn (utils/passwordPolicy BE + mirror FE). Trước 03/09 có 4 bản `length < 6|8` rải
   // ở controller/form ⇒ "12345678" đặt được. Tự viết `password.length <` / `pwd.length <` ngoài file policy = đỏ.
   {

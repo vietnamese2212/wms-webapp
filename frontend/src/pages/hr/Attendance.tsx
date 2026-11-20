@@ -1,4 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
+import { exportErrorMessage } from '@/api/fetchAllPages'
+import { toast } from '@/components/ui/use-toast'
 import * as XLSX from 'xlsx'
 import { saveWorkbook } from '@/utils/saveExcel'
 import { sanitizeRows } from '@/utils/excelSafe'
@@ -16,7 +18,7 @@ import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { SummaryBand } from '@/components/shared/SummaryBand'
 import { PagerNav, ListFooter } from '@/components/shared/ListPager'
 import {
-  useDepartments, useJobTitles, useAttendanceMatrix,
+  useDepartments, useJobTitles, useAttendanceMatrix, fetchAttendanceRowsAll,
   useAttendance, useUpsertAttendance, useDeleteAttendance, type AttendanceRow,
   useLeaves, useHolidayOverrides, useStandardWorkHours,
 } from '@/api/hooks'
@@ -370,12 +372,12 @@ function TeamSection({ perms }: { perms: ModulePermissions | null }) {
   const workDatesParam = useMemo(() => dates.filter(isWorkDay).join(','),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [dates.join(','), today])
-  const { data: mx, isLoading } = useAttendanceMatrix({
+  const matrixFilter = {
     warehouse_id: wh || undefined, department_id: dept || undefined,
     job_title: jt || undefined, search: q.trim() || undefined,
     date_from: from, date_to: to, work_dates: workDatesParam, status,
-    page: f.page, page_size: f.pageSize,
-  })
+  }
+  const { data: mx, isLoading } = useAttendanceMatrix({ ...matrixFilter, page: f.page, page_size: f.pageSize })
   const rows = mx?.rows ?? []
   const rosterTotal = mx?.total ?? 0
   const rosterPages = Math.max(1, Math.ceil(rosterTotal / f.pageSize))
@@ -427,8 +429,18 @@ function TeamSection({ perms }: { perms: ModulePermissions | null }) {
   const savedViews = useSavedViewsStore(s => s.views['attendance'] ?? [])
   const activeViewId = savedViews.find(v => JSON.stringify(v.filters) === JSON.stringify(viewSnapshot))?.id ?? null
 
-  function exportExcel() {
-    const sheet = filtered.map((r: AttendanceRow) => ({
+  // Xuất = dòng công của MỌI nhân viên trong bộ lọc (duyệt hết trang người) — trước 20/11 chỉ người của trang đang xem.
+  const [exporting, setExporting] = useState(false)
+  async function exportExcel() {
+    setExporting(true)
+    try { await doExport() }
+    catch (e) { toast({ variant: 'destructive', title: 'Không xuất được bảng công', description: exportErrorMessage(e) }) }
+    finally { setExporting(false) }
+  }
+  async function doExport() {
+    const all = await fetchAttendanceRowsAll(matrixFilter)
+    if (!all.length) { toast({ title: 'Không có dòng chấm công nào trong khoảng lọc để xuất' }); return }
+    const sheet = all.map((r: AttendanceRow) => ({
       'Ngày': formatDate(r.work_date), 'Nhân viên': r.employee?.name ?? '', 'Mã NV': r.employee?.employee_code ?? '',
       'Chức danh': r.employee?.job_title ?? '', 'Loại': shiftShort(r.kind),
       'OT (giờ)': r.ot_hours || '', 'Về sớm (giờ)': r.early_leave_hours || '',
@@ -461,16 +473,16 @@ function TeamSection({ perms }: { perms: ModulePermissions | null }) {
           // Xuất bảng công = dữ liệu nhân sự → dùng quyền attendance.report (đã có sẵn, đúng nghĩa "báo cáo"),
           // KHÔNG để ai xem được là xuất được (attendance.self_log có ở 10/19 chức danh).
           ...(can(perms, 'attendance', 'report') ? [{
-            key: 'export', icon: Download, label: 'Xuất Excel',
+            key: 'export', icon: Download, label: exporting ? 'Đang xuất…' : 'Xuất Excel',
             // Nút bật/tắt theo SỐ DÒNG CÔNG, còn màn hình đếm theo SỐ NGƯỜI: khoảng ngày chưa ai
             // chấm thì lưới vẫn hiện đủ người + "Lượt thiếu", mà nút lại mờ. Nói thẳng lý do thay
             // vì để người dùng đoán (đo 06/09: 40 người trên màn, nút mờ, tooltip không giải thích).
             tip: filtered.length
-              ? `Xuất Excel ${filtered.length.toLocaleString('vi-VN')} dòng chấm công trong khoảng lọc (dữ liệu thô, mỗi dòng = 1 người × 1 ngày)`
+              ? `Xuất Excel dòng chấm công của cả ${rosterTotal.toLocaleString('vi-VN')} nhân viên trong bộ lọc — mọi trang (dữ liệu thô, mỗi dòng = 1 người × 1 ngày)`
               : 'Chưa có dòng chấm công nào trong khoảng lọc — không có gì để xuất. Lưới đang hiện danh sách người và lượt thiếu, nhưng file xuất chỉ gồm ngày đã chấm.',
             mobileHidden: true, // xuất báo cáo chỉ dùng trên PC
-            disabled: !filtered.length,
-            onClick: exportExcel,
+            disabled: !filtered.length || exporting, busy: exporting,
+            onClick: () => void exportExcel(),
           } satisfies ActionItem] : []),
         ]} />
         <FilterSheetButton defs={defs} className="sm:hidden" />

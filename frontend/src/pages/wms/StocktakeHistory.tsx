@@ -21,7 +21,9 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { History, Download, Flag, Rows3, AlignJustify } from 'lucide-react'
 import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
-import { qtyEntryText, qtyEntryDecimal, type MatUnits } from '@/utils/qtyUnits'
+import { qtyEntryText, qtyEntryDecimal, qtyUnitLabel, type MatUnits } from '@/utils/qtyUnits'
+import { exportErrorMessage } from '@/api/fetchAllPages'
+import { toast } from '@/components/ui/use-toast'
 import { rowText } from '@/lib/rowStatus'
 import { StocktakeTabs, LOC_ID_CAP } from '@/components/wms/StocktakeTabs'
 import { TableEmptyRow } from '@/components/shared/TableEmptyRow'
@@ -130,11 +132,14 @@ export default function StocktakeHistory() {
   async function exportExcel() {
     setExporting(true)
     let all: StocktakeLogRow[]
-    try { all = await fetchAllStocktakeLog(queryParams) } catch { setExporting(false); return }
+    try { all = await fetchAllStocktakeLog(queryParams) }
+    catch (e) { toast({ variant: 'destructive', title: 'Không xuất được Excel', description: exportErrorMessage(e) }); setExporting(false); return }
     const sheet = all.map(r => ({
       'Thời gian kiểm': `${formatTimestampDate(r.counted_at, true)} ${formatTimestampTime(r.counted_at)}`,
       'Mã pallet': r.pallet_code, 'Vị trí': r.location_code ?? '',
+      'Mã hàng': r.material_code ?? '',
       'Tên hàng': r.short_name ?? r.material_code ?? '',
+      'ĐVT': qtyUnitLabel(mu(r)),
       'Tồn App': qtyEntryDecimal(Number(r.app_qty ?? 0), mu(r)),
       'Thực tế': r.physical_qty != null ? qtyEntryDecimal(Number(r.physical_qty), mu(r)) : '',
       'Chênh lệch': r.diff != null ? qtyEntryDecimal(Number(r.diff), mu(r)) : '',

@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { sanitizeRows } from '@/utils/excelSafe'
 import { AlertTriangle, CheckCircle2, Info, Loader2, Download } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { saveWorkbook } from '@/utils/saveExcel'
@@ -42,7 +43,7 @@ export function UploadPreflightPanel({ report, fileName, busy, onCancel, onConfi
   async function downloadIssues() {
     const rows = issues.map(i => ({ 'Loại': i.kind === 'err' ? 'LỖI' : 'Cảnh báo', 'Ở đâu': i.at, 'Vấn đề': i.msg }))
     const XLSX = await import('xlsx')
-    const ws = XLSX.utils.json_to_sheet(rows)
+    const ws = XLSX.utils.json_to_sheet(sanitizeRows(rows))
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'Loi upload')
     await saveWorkbook(wb, `loi_upload_${(fileName ?? 'file').replace(/\.[^.]+$/, '')}.xlsx`)

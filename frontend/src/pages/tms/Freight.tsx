@@ -41,7 +41,7 @@ import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { formatDate, formatTimestampDate } from '@/utils/formatters'
-import { saveWorkbook } from '@/utils/saveExcel'
+import { downloadTemplate } from '@/utils/excelTemplate'
 
 const nf = (n: number) => n.toLocaleString('vi-VN')
 const vnd = (n: number | null | undefined) => (n == null ? '—' : `${nf(Math.round(n))} ₫`)
@@ -85,17 +85,18 @@ const withAct = (cols: RtColDef[], on: boolean): RtColDef[] => (on ? [...cols, {
 const effText = (r: { effective_from: string; effective_to: string | null }) => `${formatDate(r.effective_from)} → ${r.effective_to ? formatDate(r.effective_to) : '∞'}`
 const modelLabel = (m: VehicleModel) => `${m.sap_code} · ${m.name}${m.parent ? '' : ' (chưa gán cha)'}`
 
-/** Mẫu upload = đúng cột file bảng cước thật + 2 cột thêm (Kho xuất · Hiệu lực từ). */
+/** Mẫu upload = đúng cột file bảng cước thật + 2 cột thêm (Kho xuất · Hiệu lực từ). Ví dụ ở sheet Hướng dẫn (C125 — ví dụ trên
+ *  sheet dữ liệu từng qua kiểm và ghi thật một dòng cước 250.000đ). */
 async function downloadTariffTemplate() {
-  const XLSX = await import('xlsx')
-  const rows = [{
-    'Tỉnh/TP (Cũ)': 'Hà Nội', 'Quận/Huyện (Cũ)': 'Long Biên', 'Tỉnh/TP (Mới)': 'Thành phố Hà Nội', 'Phường/Xã (Mới)': 'HN-Phúc Lợi',
-    'Cự ly (Km)': 35, 'DVVT': 'Đông Á', 'Loại xe': 'Xe 16 Pallet', 'Cước (VND)': 250000, 'Mã xe SAP': '910000030',
-    'Kho xuất': '20000016', 'Hiệu lực từ': todayVN(),
-  }]
-  const ws = XLSX.utils.json_to_sheet(rows)
-  const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'Cuoc')
-  await saveWorkbook(wb, 'mau_bang_cuoc.xlsx')
+  const header = ['Tỉnh/TP (Cũ)', 'Quận/Huyện (Cũ)', 'Tỉnh/TP (Mới)', 'Phường/Xã (Mới)', 'Cự ly (Km)', 'DVVT', 'Loại xe', 'Cước (VND)', 'Mã xe SAP', 'Kho xuất', 'Hiệu lực từ']
+  await downloadTemplate({
+    file: 'mau_bang_cuoc.xlsx', sheet: 'Cuoc', header: [header], title: 'NẠP BẢNG CƯỚC TỪ EXCEL',
+    notes: [
+      'Bắt buộc: Phường/Xã (Mới), DVVT, Cước (VND), Mã xe SAP. Kho xuất trống = kho đang chọn ở bộ lọc.',
+      'Dòng trùng khoá sẽ đè giá cũ. File còn một lỗi thì KHÔNG ghi gì.',
+    ],
+    examples: [['Hà Nội', 'Long Biên', 'Thành phố Hà Nội', 'HN-Phúc Lợi', 35, 'Đông Á', 'Xe 16 Pallet', 250000, '910000030', '20000016', todayVN()]],
+  })
 }
 
 // ─── FORM: dòng cước ─────────────────────────────────────────────────────────────────────────────

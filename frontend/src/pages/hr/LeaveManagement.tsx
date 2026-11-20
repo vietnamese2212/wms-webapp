@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import * as XLSX from 'xlsx'
 import { saveWorkbook } from '@/utils/saveExcel'
+import { exportErrorMessage } from '@/api/fetchAllPages'
+import { toast } from '@/components/ui/use-toast'
 import { sanitizeRows } from '@/utils/excelSafe'
 import { Plus, Check, X, Trash2, CalendarOff, AlertTriangle, Download, Rows3, AlignJustify } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -113,7 +115,9 @@ export function LeaveSection() {
   const [exporting, setExporting] = useState(false)
   async function exportExcel() {
     setExporting(true)
-    try { await doExport() } finally { setExporting(false) }
+    try { await doExport() }
+    catch (e) { toast({ variant: 'destructive', title: 'Không xuất được Excel', description: exportErrorMessage(e) }) }
+    finally { setExporting(false) }
   }
   async function doExport() {
     // Phân trang rồi thì phải duyệt HẾT trang — lấy `leaves` là file Excel bị cắt theo trang đang xem.

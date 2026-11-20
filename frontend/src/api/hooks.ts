@@ -19,6 +19,7 @@ import type { InboundOrder, PalletEntry, Department, JobTitle, EmployeeRecord, G
 import type { WhTypeMeta } from '@/utils/cargoCategory'
 import type { EditSig } from '@/components/tms/dispatchEdit'
 import type { MatUnits } from '@/utils/qtyUnits'
+import { fetchAllPages } from './fetchAllPages'
 
 const delay = (ms = 600) => new Promise((r) => setTimeout(r, ms))
 
@@ -2249,16 +2250,11 @@ function stkParams(p: StocktakeEntriesParams): Record<string, string> {
 // Xuất Excel = duyệt HẾT các trang của bộ lọc đang áp (không chỉ trang đang xem — file cụt là
 // kiểu sai âm thầm: người nhận không biết thiếu). Trần 50 trang × 1000 = 50k dòng/lần xuất.
 export async function fetchAllStocktakeEntries(params: StocktakeEntriesParams): Promise<StocktakeEntryRow[]> {
-  const out: StocktakeEntryRow[] = []
-  for (let page = 1; page <= 50; page++) {
-    const { data } = await apiClient.get('/wms/inventory/stocktake-entries', {
-      params: stkParams({ ...params, page, page_size: 1000 }),
-    })
+  return fetchAllPages(async (page, page_size) => {
+    const { data } = await apiClient.get('/wms/inventory/stocktake-entries', { params: stkParams({ ...params, page, page_size }) })
     const res = data.data as StocktakeEntriesResult
-    out.push(...(res.entries ?? []))
-    if (out.length >= (res.total_filtered ?? 0) || !res.entries?.length) break
-  }
-  return out
+    return { rows: res.entries ?? [], total: res.total_filtered ?? 0 }
+  }, { pageSize: 1000 })
 }
 
 export interface StocktakeLogRow {
@@ -2312,16 +2308,11 @@ export function useStocktakeLog(params: StocktakeLogParams, enabled = true) {
 
 // Xuất Excel lịch sử kiểm = duyệt hết trang của bộ lọc (xem `fetchAllStocktakeEntries`)
 export async function fetchAllStocktakeLog(params: StocktakeLogParams): Promise<StocktakeLogRow[]> {
-  const out: StocktakeLogRow[] = []
-  for (let page = 1; page <= 50; page++) {
-    const { data } = await apiClient.get('/wms/inventory/stocktake-log', {
-      params: stkParams({ ...params, page, page_size: 1000 }),
-    })
+  return fetchAllPages(async (page, page_size) => {
+    const { data } = await apiClient.get('/wms/inventory/stocktake-log', { params: stkParams({ ...params, page, page_size }) })
     const res = data.data as StocktakeLogResult
-    out.push(...(res.rows ?? []))
-    if (out.length >= (res.total ?? 0) || !res.rows?.length) break
-  }
-  return out
+    return { rows: res.rows ?? [], total: res.total ?? 0 }
+  }, { pageSize: 1000 })
 }
 
 // Lịch sử CHUYỂN VỊ TRÍ (tab Lịch sử màn Chuyển vị trí, 20/08) — dòng StocktakeLog có
@@ -2689,33 +2680,41 @@ export type TraceResult = {
 // FILTER CHUẨN (user chốt 01/09 tối lần 3): mỗi tiêu chí một chip, điền ô nào lọc ô đó — 1 lời
 // gọi kind='fwd' (xuôi, tổ hợp trên tồn) hoặc 'rev' (ngược, tổ hợp trên đường giao).
 export type TraceDir = 'fwd' | 'rev'
-export function useLotTrace(p: {
+export type LotTraceQuery = {
   dir: TraceDir
   pallet?: string; material?: string; batch?: string
   cycle?: string; machine?: string; nmsx?: string
   npp?: string; trip?: string; plate?: string
   prodFrom?: string; prodTo?: string; shipFrom?: string; shipTo?: string
-}) {
+}
+function lotTraceParams(p: LotTraceQuery) {
+  const t = (v?: string) => (v ?? '').trim()
+  const put = (k: string, v?: string) => (t(v) ? { [k]: t(v) } : {})
+  return {
+    kind: p.dir,
+    ...put('pallet', p.pallet), ...put('material', p.material), ...put('batch', p.batch),
+    ...put('cycle', p.cycle), ...put('machine', p.machine), ...put('nmsx', p.nmsx),
+    ...put('npp', p.npp), ...put('trip', p.trip), ...put('plate', p.plate),
+    ...(p.prodFrom ? { prod_from: p.prodFrom } : {}), ...(p.prodTo ? { prod_to: p.prodTo } : {}),
+    ...(p.shipFrom ? { ship_from: p.shipFrom } : {}), ...(p.shipTo ? { ship_to: p.shipTo } : {}),
+  }
+}
+/** Xuất hồ sơ truy xuất: xin trần 2.000 dòng/sheet của BE (màn hình chỉ lấy 500). Còn `summary.truncated` thì người gọi phải từ chối. */
+export async function fetchLotTraceForExport(p: LotTraceQuery): Promise<TraceResult> {
+  const { data } = await apiClient.get('/wms/trace', { params: { ...lotTraceParams(p), limit: 2000 }, timeout: 120000 })
+  return data.data as TraceResult
+}
+export function useLotTrace(p: LotTraceQuery) {
   const t = (v?: string) => (v ?? '').trim()
   // Có bất kỳ điều kiện nào của chiều đang chọn là tìm (tiền tố tem cần ≥4 ký tự — BE cũng chặn)
   const enough = p.dir === 'fwd'
     ? !!(t(p.pallet).length >= 4 || t(p.material) || t(p.batch) || t(p.cycle) || t(p.machine)
          || t(p.nmsx) || p.prodFrom || p.prodTo)
     : !!(t(p.npp) || t(p.trip) || t(p.plate) || p.shipFrom || p.shipTo)
-  const put = (k: string, v?: string) => (t(v) ? { [k]: t(v) } : {})
   return useQuery<TraceResult>({
     queryKey: ['lot-trace', p],
     enabled: enough,
-    queryFn: () => apiClient.get('/wms/trace', {
-      params: {
-        kind: p.dir,
-        ...put('pallet', p.pallet), ...put('material', p.material), ...put('batch', p.batch),
-        ...put('cycle', p.cycle), ...put('machine', p.machine), ...put('nmsx', p.nmsx),
-        ...put('npp', p.npp), ...put('trip', p.trip), ...put('plate', p.plate),
-        ...(p.prodFrom ? { prod_from: p.prodFrom } : {}), ...(p.prodTo ? { prod_to: p.prodTo } : {}),
-        ...(p.shipFrom ? { ship_from: p.shipFrom } : {}), ...(p.shipTo ? { ship_to: p.shipTo } : {}),
-      },
-    }).then(r => r.data.data),
+    queryFn: () => apiClient.get('/wms/trace', { params: lotTraceParams(p) }).then(r => r.data.data),
   })
 }
 
@@ -2930,11 +2929,10 @@ export function useLockCostPeriod() {
 export function useUploadCosts() {
   const qc = useQueryClient()
   return useMutation<UploadResult & Partial<UploadPreflight>, unknown, { period: string; file: File; preflight: boolean }>({
-    mutationFn: ({ period, file, preflight }) => {
-      const fd = new FormData()
-      fd.append('file', file)
-      fd.append('period', period)
-      return apiClient.post('/wms/warehouse-costs/upload', fd, { params: preflight ? { preflight: 1 } : {} })
+    // Thân qua excelUploadBody như mọi cửa nạp Excel: file > 4 MB đi qua kho tạm (Vercel chặn thân > 4,5 MB)
+    mutationFn: async ({ period, file, preflight }) => {
+      const { body, headers } = await excelUploadBody(file, { period })
+      return apiClient.post('/wms/warehouse-costs/upload', body, { headers, params: preflight ? { preflight: 1 } : {}, timeout: 60000 })
         .then(r => r.data.data)
     },
     // Pha xem trước KHÔNG ghi gì → không cần invalidate; chỉ pha ghi thật mới nạp lại
@@ -3049,6 +3047,20 @@ export type AttendanceMatrixResult = {
   total: number; roster_total: number; missing_total: number
   work_days: number; leave_days: number; ot: number; early: number
   page: number; page_size: number
+}
+
+/** Xuất bảng công: duyệt HẾT trang nhân viên (BE trần page_size 500) rồi gom dòng công — không chỉ người của trang đang xem. */
+export async function fetchAttendanceRowsAll(params: Omit<AttendanceMatrixParams, 'page' | 'page_size'>): Promise<AttendanceRow[]> {
+  const q: Record<string, string> = {}
+  for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== '') q[k] = String(v)
+  const out: AttendanceRow[] = []
+  await fetchAllPages(async (page, page_size) => {
+    const { data } = await apiClient.get('/hr/attendance/matrix', { params: { ...q, page, page_size } })
+    const d = data.data as AttendanceMatrixResult
+    out.push(...(d.rows ?? []))
+    return { rows: d.employees ?? [], total: Number(d.total) || 0 }
+  }, { pageSize: 500, maxRows: 20_000 })
+  return out
 }
 
 export function useAttendanceMatrix(params: AttendanceMatrixParams, enabled = true) {
@@ -5317,18 +5329,16 @@ export function useOutboundScanLogFacets(materialCategory?: string) {
 }
 
 // Export ScanLog: loop phân trang (BE cap limit=1000) gom toàn bộ dòng khớp filter đã áp.
-export async function fetchScanLogExport(applied: ScanLogParams): Promise<OutboundScanLogEntry[]> {
-  const LIMIT = 1000
-  const all: OutboundScanLogEntry[] = []
-  let page = 1
-  for (;;) {
-    const { data } = await apiClient.get('/wms/outbound/scan-log', { params: { ...applied, page, limit: LIMIT } })
+/** Xuất Lịch sử quét: đang TÌM (ô tìm ≥ 2 ký tự) ⇒ xuất đúng kết quả tìm như trên màn; còn lại theo bộ lọc. */
+export async function fetchScanLogExport(applied: ScanLogParams, search?: string, maxRows?: number): Promise<OutboundScanLogEntry[]> {
+  const q = (search ?? '').trim()
+  return fetchAllPages(async (page, limit) => {
+    const { data } = q.length >= 2
+      ? await apiClient.get('/wms/outbound/scan-log/search', { params: { q, page, limit } })
+      : await apiClient.get('/wms/outbound/scan-log', { params: { ...applied, page, limit } })
     const d = data.data as { rows: OutboundScanLogEntry[]; total: number }
-    all.push(...d.rows)
-    if (d.rows.length === 0 || all.length >= d.total) break
-    page++
-  }
-  return all
+    return { rows: d.rows ?? [], total: Number(d.total) || 0 }
+  }, { pageSize: 1000, maxRows })
 }
 
 // ─── Phiếu cân trạm cân (WeighTicket) ────────────────────────────────────────
@@ -7744,15 +7754,12 @@ export function useLeavesPaged(params: LeavesPageParams, enabled = true) {
 }
 
 // Xuất Excel đơn nghỉ: phải duyệt HẾT trang, không thì file bị cắt âm thầm theo trang đang xem.
-export async function fetchAllLeaves(params: Omit<LeavesPageParams, 'page' | 'page_size'>, maxPages = 50): Promise<LeaveRow[]> {
-  const out: LeaveRow[] = []
-  for (let page = 1; page <= maxPages; page++) {
-    const { data } = await apiClient.get('/hr/leaves', { params: { ...params, page, page_size: 500 } })
+export async function fetchAllLeaves(params: Omit<LeavesPageParams, 'page' | 'page_size'>): Promise<LeaveRow[]> {
+  return fetchAllPages(async (page, page_size) => {
+    const { data } = await apiClient.get('/hr/leaves', { params: { ...params, page, page_size } })
     const d = data.data as LeavesPage
-    out.push(...(d.items ?? []))
-    if (out.length >= (d.total ?? 0) || (d.items?.length ?? 0) < 500) break
-  }
-  return out
+    return { rows: d.items ?? [], total: d.total ?? 0 }
+  }, { pageSize: 500 })
 }
 export function useCreateLeave() {
   const qc = useQueryClient()
@@ -8467,6 +8474,20 @@ export function usePackingRuns(params: {
       return data.data as { rows: PackingRun[]; total: number; page: number; pageSize: number }
     },
   })
+}
+/** Xuất Excel trang sổ / sổ pallet: lấy HẾT trang theo đúng bộ lọc của list (PAGE_MAX của BE = 500). */
+type PackingListParams = { status?: string; date_from?: string; date_to?: string; machine?: string; cycle?: string; warehouse_id?: string; search?: string; received?: string }
+export function fetchAllPackingRuns(params: PackingListParams): Promise<PackingRun[]> {
+  return fetchAllPages(async (page, pageSize) => {
+    const { data } = await apiClient.get('/wms/packing-runs', { params: { ...params, page, pageSize } })
+    return { rows: (data.data?.rows ?? []) as PackingRun[], total: Number(data.data?.total) || 0 }
+  }, { pageSize: 500 })
+}
+export function fetchAllPackingLogs(params: PackingListParams): Promise<PackingLog[]> {
+  return fetchAllPages(async (page, pageSize) => {
+    const { data } = await apiClient.get('/wms/packing-logs', { params: { ...params, page, pageSize } })
+    return { rows: (data.data?.rows ?? []) as PackingLog[], total: Number(data.data?.total) || 0 }
+  }, { pageSize: 500 })
 }
 export function useOpenPackingRun() {
   const qc = useQueryClient()

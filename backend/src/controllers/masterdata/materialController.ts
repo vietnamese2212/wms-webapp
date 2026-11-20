@@ -9,6 +9,7 @@ import { scopeCategoriesOf, categoryAllowed, CATEGORY_FORBIDDEN_MSG } from '../.
 import { safeSearch, searchLooksLikeInjection, normalizeSearchTerm, SEARCH_INVALID_MSG } from '../../utils/search'
 import { parseListParam } from '../../utils/httpQuery'
 import { parseSheetByHeader, expandMergedCells, readWorkbookSafe, BAD_EXCEL_MSG, type FieldDef } from '../../utils/excelHeader'
+import { excelNumber } from '../../utils/excelNumber'
 import { isPreflight, buildPreflight } from '../../utils/uploadPreflight'
 import { semiFinishedFlagError } from '../../utils/semiFinished'
 import { materialMissingFields, type MaterialRequiredInput } from '../../utils/materialRequired'
@@ -500,16 +501,19 @@ const M_FIELDS: FieldDef[] = [
   { key: 'stack_on_top',         label: 'Xếp trên hàng khác', aliases: ['xep tren hang khac 1 0', 'xep tren hang khac'] },
   { key: 'base_unit',            label: 'Base Unit',          aliases: ['base unit'] },
   { key: 'entry_unit',           label: 'Entry Unit',         aliases: ['entry unit'] },
-  { key: 'no_qr_tracking',       label: 'Không quản QR',      aliases: ['khong quan qr'] },
-  { key: 'is_non_stock',         label: 'Mã phi hàng hóa',    aliases: ['ma phi hang hoa'] },
-  { key: 'is_pallet_carrier',    label: 'Pallet mang hàng',   aliases: ['pallet mang hang'] },
-  { key: 'is_semi_finished',     label: 'Bán thành phẩm',     aliases: ['ban thanh pham', 'btp'] },
+  // '… 1 0' = nhãn dòng 1 của file mẫu ("Không quản QR (1/0)") — bỏ dòng key (dòng 2) không mất cột (20/11)
+  { key: 'no_qr_tracking',       label: 'Không quản QR',      aliases: ['khong quan qr', 'khong quan qr 1 0'] },
+  { key: 'is_non_stock',         label: 'Mã phi hàng hóa',    aliases: ['ma phi hang hoa', 'ma phi hang hoa 1 0'] },
+  { key: 'is_pallet_carrier',    label: 'Pallet mang hàng',   aliases: ['pallet mang hang', 'pallet mang hang 1 0'] },
+  { key: 'is_semi_finished',     label: 'Bán thành phẩm',     aliases: ['ban thanh pham', 'btp', 'ban thanh pham 1 0'] },
 ]
 
 const mStr = (v: unknown): string | null => { const s = String(v ?? '').trim(); return s || null }
 // Trường số lượng/quy cách: chỉ nhận số HỮU HẠN, KHÔNG âm (âm/Infinity → null = coi như ô trống, giữ giá trị cũ khi merge)
-const mNum = (v: unknown): number | null => { if (v == null || v === '') return null; const n = parseFloat(String(v).replace(',', '.')); return (!Number.isFinite(n) || n < 0) ? null : n }
-const mInt = (v: unknown): number | null => { if (v == null || v === '') return null; const n = parseInt(String(v), 10); return (!Number.isFinite(n) || n < 0) ? null : n }
+// Số kiểu VN qua MỘT nguồn (utils/excelNumber): ô chữ "1.000" = một nghìn (bản cũ parseInt/parseFloat đọc ra 1 — 20/11, lớp vnNumber).
+// Cột số nguyên giữ cách cắt phần lẻ như parseInt cũ.
+const mNum = (v: unknown): number | null => { const n = excelNumber(v); return (n == null || !Number.isFinite(n) || n < 0) ? null : n }
+const mInt = (v: unknown): number | null => { const n = mNum(v); return n == null ? null : Math.trunc(n) }
 // Trường "N đơn vị TRONG 1 đơn vị khác" (Đv/Thùng, Thùng/Pallet, Pallet/EA): 0 là VÔ NGHĨA
 // (hệ số quy đổi / sức chứa không thể bằng 0) → coi như ô TRỐNG. File thật 27/07 điền 0 cho
 // 2.292 mã, ghi thẳng vào DB thành số rác. KHÁC với HSD=0 ("không hạn") và KL=0 — 0 ở đó CÓ nghĩa.

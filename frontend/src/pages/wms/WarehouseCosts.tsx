@@ -19,7 +19,7 @@ import { SummaryBand } from '@/components/shared/SummaryBand'
 import { FilterBar, FilterSheetButton, type FilterDef } from '@/components/shared/FilterBar'
 import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { UploadExcelDialog } from '@/components/shared/UploadExcelDialog'
-import { saveWorkbook } from '@/utils/saveExcel'
+import { downloadTemplate } from '@/utils/excelTemplate'
 import { formatTimestampDate } from '@/utils/formatters'
 import {
   useCostBook, useCostVouchers, useSaveCostItem, useDeleteCostItem,
@@ -177,18 +177,22 @@ export default function WarehouseCosts() {
     } catch (e) { setErr(apiErr(e)) }
   }
 
-  /** Mẫu Excel dạng DÒNG — đúng cột mà upload đang đọc, kèm 2 dòng ví dụ. */
+  /** Mẫu Excel dạng DÒNG — đúng cột mà upload đang đọc; 2 dòng ví dụ ở sheet Hướng dẫn (C125 — nạp theo từng dòng nên ví dụ
+   *  trên sheet dữ liệu từng được ghi thật 45 triệu + 12 triệu). */
   async function onDownloadTemplate() {
-    const XLSX = await import('xlsx')
     const ex = items.slice(0, 2).map(i => i.label)
-    const ws = XLSX.utils.aoa_to_sheet([
-      ['Tháng', 'Kho', 'Khoản mục', 'Số tiền', 'Ghi chú'],
-      [focusPeriod, warehouses[0]?.name ?? 'Kho Ba Vì', ex[0] ?? 'Thuê xe nâng', 45000000, 'Hợp đồng số 12/2026'],
-      [focusPeriod, 'CHUNG', ex[1] ?? 'Thuê pallet', 12000000, 'Chi phí chung toàn công ty'],
-    ])
-    const wb = XLSX.utils.book_new()
-    XLSX.utils.book_append_sheet(wb, ws, 'ChiPhiKho')
-    await saveWorkbook(wb, `Mau-chi-phi-kho-${focusPeriod}.xlsx`)
+    await downloadTemplate({
+      file: `Mau-chi-phi-kho-${focusPeriod}.xlsx`, sheet: 'ChiPhiKho', header: [['Tháng', 'Kho', 'Khoản mục', 'Số tiền', 'Ghi chú']],
+      title: 'NẠP CHI PHÍ KHO TỪ EXCEL',
+      notes: [
+        `Mỗi dòng = một khoản chi phí. Tháng để trống = kỳ đang chọn (${focusPeriod}).`,
+        'Kho ghi CHUNG = chi phí toàn công ty. Dòng trùng (kho + tháng + khoản mục) sẽ ĐÈ số cũ.',
+      ],
+      examples: [
+        [focusPeriod, warehouses[0]?.name ?? 'Kho Ba Vì', ex[0] ?? 'Thuê xe nâng', 45000000, 'Hợp đồng số 12/2026'],
+        [focusPeriod, 'CHUNG', ex[1] ?? 'Thuê pallet', 12000000, 'Chi phí chung toàn công ty'],
+      ],
+    })
   }
 
   const actions: ActionItem[] = [

@@ -12,6 +12,7 @@ import { normalizeLocScan } from '../../utils/locationScan'
 import { isPreflight, buildPreflight } from '../../utils/uploadPreflight'
 import { loadPutawayContext, loadSlotFactsRaw, putawayTargetZones } from '../../services/putawayContext'
 import { putawayBlock, putawayReason, putawayScore, putawayEnforces, parseLocationMaxMaterials, type PutawayLoc, type PutawayHint } from '../../utils/putaway'
+import { locationUploadFields, type LocationUploadCells } from '../../utils/locationUpload'
 
 // location_code = <tiền tố kho>_<khu>_<dãy>_<tầng>. Tiền tố = nmsx_code nếu có, không thì mã kho.
 function buildLocationCode(prefix: string, subCode: string, row: string, shelf: string) {
@@ -860,7 +861,7 @@ export async function uploadExcel(req: Request, res: Response) {
     if (!wb) return fail(res, 400, 'VALIDATION_ERROR', BAD_EXCEL_MSG)
     const ws = wb.Sheets[wb.SheetNames[0]]
     expandMergedCells(ws)   // file dựng kho hay gộp ô Kho/Khu cho cả cụm vị trí
-    const { rows, missingRequired } = parseSheetByHeader(ws, L_FIELDS)
+    const { rows, missingRequired, rowNums } = parseSheetByHeader(ws, L_FIELDS)
     if (missingRequired.length)
       return fail(res, 400, 'VALIDATION_ERROR', `File thiếu cột bắt buộc: ${missingRequired.join(', ')} — kiểm tra đúng mẫu Vị trí kho`)
     if (!rows.length) return fail(res, 400, 'VALIDATION_ERROR', 'Không có dòng dữ liệu nào')
@@ -876,9 +877,9 @@ export async function uploadExcel(req: Request, res: Response) {
 
     // ── PHA 1: validate TOÀN BỘ (all-or-nothing) ─────────────────────────────
     const errors: string[] = []
+    // 3 cột tuỳ chọn giữ dạng "ô trống = null" — dòng mới lấy mặc định, vị trí đã có GIỮ giá trị cũ (locationUploadFields)
     type Parsed = { code: string; wh_id: string; sub_code: string; sub_name: string | null
-                    categories: string[] | null; row: string; shelf: string; max_pallets: number
-                    max_materials: number | null; sub_type: string | null }
+                    categories: string[] | null; row: string; shelf: string; cells: LocationUploadCells }
     const parsed: Parsed[] = []
     const seenCode = new Map<string, number>()
     const scope = scopeWhIds(req)
@@ -888,8 +889,9 @@ export async function uploadExcel(req: Request, res: Response) {
       lineNo++
       const whRaw = lcStr(r.warehouse), subRaw = lcStr(r.sub_code), rowRaw = lcStr(r.row)
       const shelf = lcStr(r.shelf)
-      // Đánh số theo DÒNG DỮ LIỆU (đã bỏ dòng tiêu đề) — nhắc rõ trong hint dialog để user không lệch
-      const at = `dòng dữ liệu #${lineNo}`
+      // Đánh số theo DÒNG DỮ LIỆU (đã bỏ dòng tiêu đề) — nhắc rõ trong hint dialog để user không lệch.
+      // Kèm số dòng THẬT trong Excel: dòng trống giữa file làm "dòng dữ liệu #n" lệch khỏi dòng Excel.
+      const at = rowNums[lineNo - 1] ? `dòng ${rowNums[lineNo - 1]} trong Excel (dữ liệu #${lineNo})` : `dòng dữ liệu #${lineNo}`
 
       const missing: string[] = []
       if (!whRaw) missing.push('kho')
@@ -934,7 +936,7 @@ export async function uploadExcel(req: Request, res: Response) {
 
       parsed.push({
         code, wh_id: wh.id, sub_code: sub, sub_name: zone.name ?? null, categories: zone.categories ?? null,
-        row: rowRaw, shelf, max_pallets: max_pallets ?? 1, max_materials: mm.value, sub_type: lcStr(r.sub_type) || null,
+        row: rowRaw, shelf, cells: { max_pallets, max_materials: mm.value, sub_type: lcStr(r.sub_type) || null },
       })
     }
     // KIỂM TRƯỚC (preflight): file có lỗi → báo cáo luôn, khỏi phải đếm insert/update
@@ -958,20 +960,23 @@ export async function uploadExcel(req: Request, res: Response) {
     const actor = req.user?.name || null
     const buildNew = (p: Parsed) => ({
       id: randomUUID(), location_code: p.code, warehouse_id: p.wh_id,
-      sub_code: p.sub_code, sub_name: p.sub_name, sub_type: p.sub_type, categories: p.categories,
-      row: p.row, shelf: p.shelf, max_pallets: p.max_pallets, max_materials: p.max_materials,
+      sub_code: p.sub_code, sub_name: p.sub_name, categories: p.categories,
+      row: p.row, shelf: p.shelf, ...locationUploadFields(p.cells, null),
       is_active: true, created_at: now, updated_at: now, created_by: actor, updated_by: actor,
     })
+    // Vị trí đã có → cập nhật sức chứa/kiểu (ô trống GIỮ giá trị cũ) + đồng bộ lại Tên khu & Loại theo ZONE.
+    // KHÔNG đụng is_active/requires_stocktake/slot_no_in/slot_no_out (quản ở nơi khác).
+    const buildUpdate = (ex: ExistingLoc, p: Parsed) => ({
+      ...ex, sub_name: p.sub_name, categories: p.categories, ...locationUploadFields(p.cells, ex),
+      updated_at: now, updated_by: actor,
+    })
+    const parsedByCode = new Map(parsed.map(p => [p.code.toLowerCase(), p]))
     const inserts: Record<string, unknown>[] = []
     const updates: Record<string, unknown>[] = []
     for (const p of parsed) {
       const ex = exMap.get(p.code.toLowerCase())
-      if (ex) {
-        // Vị trí đã có → cập nhật sức chứa/kiểu + đồng bộ lại Tên khu & Loại theo ZONE.
-        // KHÔNG đụng is_active/requires_stocktake/slot_no_in/slot_no_out (quản ở nơi khác).
-        updates.push({ ...ex, sub_name: p.sub_name, sub_type: p.sub_type, categories: p.categories,
-                       max_pallets: p.max_pallets, max_materials: p.max_materials, updated_at: now, updated_by: actor })
-      } else inserts.push(buildNew(p))
+      if (ex) updates.push(buildUpdate(ex, p))
+      else inserts.push(buildNew(p))
     }
 
     // File sạch → báo cáo "sẽ thêm / sẽ cập nhật" rồi DỪNG (chưa ghi gì). Đếm lấy từ chính 2 mảng
@@ -996,8 +1001,8 @@ export async function uploadExcel(req: Request, res: Response) {
       for (const rec of chunk) {
         const w = winMap.get(String(rec.location_code).toLowerCase())
         if (!w) { retryIns.push(rec); continue }
-        updates.push({ ...w, sub_name: rec.sub_name, sub_type: rec.sub_type, categories: rec.categories,
-                       max_pallets: rec.max_pallets, updated_at: now, updated_by: actor })
+        // Bản người thắng đã có ⇒ cùng luật cập nhật như nhánh thường (trước đây bỏ sót max_materials)
+        updates.push(buildUpdate(w, parsedByCode.get(String(rec.location_code).toLowerCase())!))
       }
       if (retryIns.length) {
         const { error: e2 } = await supabase.from('Location').insert(retryIns)

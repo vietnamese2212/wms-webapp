@@ -19,7 +19,7 @@ import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { fetchAllRowsParallel, fetchAllByIdChunks } from '../../utils/pagination'
 import { maskServerMessage, pgUserError, type PgLikeError } from '../../utils/response'
-import { parseSheetByHeader, expandMergedCells, type FieldDef } from '../../utils/excelHeader'
+import { parseSheetByHeader, expandMergedCells, readWorkbookSafe, BAD_EXCEL_MSG, type FieldDef } from '../../utils/excelHeader'
 import { parseListParam } from '../../utils/httpQuery'
 import { isPreflight, buildPreflight } from '../../utils/uploadPreflight'
 import { parseVnNumber } from '../../utils/vnNumber'
@@ -69,8 +69,17 @@ function monthOf(raw: unknown): string | null {
   if (m[3] && (d < 1 || d > 31)) return null
   return `${m[1]}-${m[2]}-01`
 }
-/** Excel hay trả "8/2026", "08-2026", "01/08/2026" — chấp nhận hết, quy về đầu tháng. */
+/** Excel hay trả "8/2026", "08-2026", "01/08/2026" — chấp nhận hết, quy về đầu tháng.
+ *  Gõ "2026-12" / "08/2026" vào ô thì Excel tự đổi thành NGÀY ⇒ ô là SỐ serial (20/11: trước đây "Tháng không đọc được").
+ *  Serial quy theo lịch Excel thuần (mốc 1899-12-30, UTC) — không qua múi giờ máy chủ. */
 function monthLoose(raw: unknown): string | null {
+  if (typeof raw === 'number') {
+    if (!Number.isFinite(raw) || raw < 36526 || raw >= 73051) return null   // ngoài 2000…2099 ⇒ không phải tháng
+    const d = new Date(Date.UTC(1899, 11, 30) + Math.floor(raw) * 86400000)
+    return monthOf(`${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`)
+  }
+  if (raw instanceof Date) return Number.isNaN(raw.getTime()) ? null
+    : monthOf(raw.toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' }).slice(0, 7))
   const direct = monthOf(raw)
   if (direct) return direct
   const s = String(raw ?? '').trim()
@@ -638,8 +647,9 @@ export async function uploadCostExcel(req: Request, res: Response) {
     const preflight = isPreflight(req)
     const scope = scopeWhIds(req)
 
-    const XLSX = await import('xlsx')
-    const wb = XLSX.read(file.buffer, { type: 'buffer' })
+    // File rác (PNG đội lốt .xlsx…) ⇒ 400 như mọi cửa nạp, không để XLSX.read ném thành 500
+    const wb = readWorkbookSafe(file.buffer)
+    if (!wb) return fail(res, BAD_EXCEL_MSG, 400, 'VALIDATION_ERROR')
     const ws = wb.Sheets[wb.SheetNames[0]]
     if (!ws) return fail(res, 'File không có sheet nào', 400, 'NO_SHEET')
 
@@ -684,7 +694,7 @@ export async function uploadCostExcel(req: Request, res: Response) {
     const lines: Line[] = []
     for (let i = 0; i < parsed.rows.length; i++) {
       const r = parsed.rows[i]
-      const rowNo = i + 2
+      const rowNo = parsed.rowNums[i] ?? i + 2   // dòng THẬT trong Excel (dòng trống giữa file không làm lệch)
       const whRaw = String(r.warehouse ?? '').trim()
       const itemRaw = String(r.item ?? '').trim()
       const isShared = whRaw === '' || /^(chung|toan cong ty|\*)$/i.test(norm(whRaw))

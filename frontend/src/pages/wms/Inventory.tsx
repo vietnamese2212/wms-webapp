@@ -46,6 +46,7 @@ import { resolveShelfLife, computePctDate } from '@/utils/shelfLife'
 import { pctDateCls } from '@/utils/pctDateBands'
 import { qtyLabel, qtySplit, qtyUnitLabel, qtyBaseLabel, hasEntry, unitLabel, QTY_CONVERTED_LABEL, QTY_CONVERTED_TIP } from '@/utils/qtyUnits'
 import { saveWorkbook } from '@/utils/saveExcel'
+import { downloadTemplate } from '@/utils/excelTemplate'
 import type { InventoryEntry, SupplierShelfLifeOverride } from '@/types'
 
 // ─── Helpers ──────────────────────────────────────────────────
@@ -933,18 +934,23 @@ Gồm: ${unitBreakdown.join(' · ')}` : QTY_CONVERTED_TIP,
     }
   }
 
-  // Mẫu Excel Tồn kho đầu kỳ — BE map theo TÊN cột (đảo cột vẫn đúng). Dòng 1 nhãn, dòng 2 key, dòng 3 ví dụ. `*` = bắt buộc điền.
+  // Mẫu Excel Tồn kho đầu kỳ — BE map theo TÊN cột (đảo cột vẫn đúng). Dòng 1 nhãn, dòng 2 key; ví dụ ở sheet Hướng dẫn (C125). `*` = bắt buộc điền.
   function downloadInventoryTemplate() {
     // BASE UNIT: mã có Hộp/thùng → "Số thùng" SỐ NGUYÊN + phần lẻ ghi cột "Hộp" (đơn vị gốc)
     const labels = ['Mã pallet *', 'Mã hàng *', 'Kho (mã) *', 'Mã vị trí *', 'Số thùng * (SỐ NGUYÊN)', 'Ngày SX * (yyyy-mm-dd)', 'NCC (mã/tên, tùy)', 'QA (mặc định OK)', 'HSD (ngày, tùy)', 'Hộp (phần lẻ, tùy)',
       'Ngày nhập (tùy, trống = hôm nay)', 'Người nhập (tùy, trống = người upload)']
     const keys = ['pallet_code', 'material_code', 'warehouse', 'location_code', 'cartons', 'production_date', 'ncc', 'qa_status', 'shelf_life_days', 'boxes_base',
       'import_date', 'created_by']
-    const ex = ['BV-OPEN-0001', '210000262', '20000016', 'B_TP1_1_T1', 100, '2026-06-01', 'DTV', 'OK', '', 24, '2026-06-05', 'Nguyễn Văn A']
-    const ws = XLSX.utils.aoa_to_sheet([labels, keys, ex])
-    const wb = XLSX.utils.book_new()
-    XLSX.utils.book_append_sheet(wb, ws, 'TonKho')
-    saveWorkbook(wb, 'mau_ton_kho.xlsx')
+    void downloadTemplate({
+      file: 'mau_ton_kho.xlsx', sheet: 'TonKho', header: [labels, keys], title: 'NẠP TỒN KHO TỪ EXCEL',
+      notes: [
+        'Mỗi dòng = 1 pallet. Pallet ĐÃ CÓ trong đúng kho đó ⇒ cập nhật theo file; chưa có ⇒ thêm mới.',
+        'Mã hàng có thùng: Số thùng là SỐ NGUYÊN, phần lẻ ghi cột Hộp (đơn vị gốc). Mã không có thùng (KG, EA…): ghi cả lượng ở cột Số thùng (được số lẻ).',
+        'Ngày nhập = ngày hàng VÀO KHO (bê tồn cũ thì khai ngày thật; trống = hôm nay). Người nhập: mã nhân viên hoặc tên (trống = người đang upload).',
+        'File còn một dòng lỗi thì KHÔNG ghi gì.',
+      ],
+      examples: [['BV-OPEN-0001', '210000262', '20000016', 'B_TP1_1_T1', 100, '2026-06-01', 'DTV', 'OK', '', 24, '2026-06-05', '']],
+    })
   }
 
   // Derive pallet context for action modals (from first checked entry on current page)

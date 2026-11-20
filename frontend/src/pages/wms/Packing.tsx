@@ -26,7 +26,10 @@ import {
   usePackingRunBoard, usePackingRun, usePackingRuns, useOpenPackingRun, useClosePackingRun,
   useUpdatePackingRun, useCancelPackingRun, useRedrawPackingRun, type PackingRun,
   useImportShifts, useMaterials, useMaterialsByCodes, useMachines, useSettingNumber,
+  fetchAllPackingRuns, fetchAllPackingLogs, fetchMaterialsByCodes,
 } from '@/api/hooks'
+import { queryClient } from '@/api/queryClient'
+import { exportErrorMessage } from '@/api/fetchAllPages'
 import { readCartonPrint, warmOcr } from '@/utils/cartonOcr'
 import { apiClient } from '@/api/client'
 import { SingleSelect } from '@/components/shared/SingleSelect'
@@ -1600,13 +1603,18 @@ function RunsTab({ canExport, openCount, canOpenRun, onOpenRun, whName, whOpts, 
       onChange: (v: string) => setF({ cycle: v, runPage: 1 }) },
   ]
 
+  // Xuất = MỌI trang sổ khớp bộ lọc (duyệt hết trang) — trước 20/11 chỉ 50 dòng của trang đang xem dù tooltip ghi "theo bộ lọc"
   async function exportExcel() {
     setExporting(true)
     try {
-      const [{ saveWorkbook }, XLSX, { sanitizeRows }] = await Promise.all([
+      const [{ saveWorkbook }, XLSX, { sanitizeRows }, all] = await Promise.all([
         import('@/utils/saveExcel'), import('xlsx'), import('@/utils/excelSafe'),
+        fetchAllPackingRuns({
+          status: f.runStatus || undefined, date_from: f.dateFrom || undefined, date_to: f.dateTo || undefined,
+          machine: f.machine || undefined, cycle: f.cycle || undefined, warehouse_id: f.warehouseId || undefined, search: f.search || undefined,
+        }),
       ])
-      const out = rows.map(r => ({
+      const out = all.map(r => ({
         'Trạng thái': RUN_STATUS_LABEL[r.status] ?? r.status,
         'Ngày': r.run_date,
         'Kho': whName.get(r.warehouse_id) ?? r.warehouse_id,
@@ -1629,6 +1637,8 @@ function RunsTab({ canExport, openCount, canOpenRun, onOpenRun, whName, whOpts, 
       const wb = XLSX.utils.book_new()
       XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(sanitizeRows(out)), 'Trang so dong goi')
       await saveWorkbook(wb, `trang-so-dong-goi-${todayVN()}`)
+    } catch (e) {
+      toast({ variant: 'destructive', title: 'Không xuất được Excel', description: exportErrorMessage(e) })
     } finally { setExporting(false) }
   }
 
@@ -1985,25 +1995,35 @@ function LogTab({ canEdit, canCancel, canExport, openCount, whName, whOpts, onEd
       value: f.received, onChange: (v: string) => setF({ received: v, page: 1 }) },
   ]
 
+  // Xuất = MỌI dòng sổ pallet khớp bộ lọc (duyệt hết trang) — trước 20/11 chỉ trang đang xem dù tooltip ghi "theo bộ lọc"
   async function exportExcel() {
     setExporting(true)
     try {
-      const [{ saveWorkbook }, XLSX, { sanitizeRows }] = await Promise.all([
+      const [{ saveWorkbook }, XLSX, { sanitizeRows }, all] = await Promise.all([
         import('@/utils/saveExcel'), import('xlsx'), import('@/utils/excelSafe'),
+        fetchAllPackingLogs({
+          status: f.status || undefined, date_from: f.dateFrom || undefined, date_to: f.dateTo || undefined,
+          machine: f.machine || undefined, cycle: f.cycle || undefined, warehouse_id: f.warehouseId || undefined,
+          search: f.search || undefined, received: f.received || undefined,
+        }),
       ])
-      const out = rows.map(r => ({
+      // tên + ĐVT của MỌI mã trong file (map của màn chỉ có mã thuộc trang đang xem)
+      const codes = [...new Set(all.map(r => r.material_code ?? '').filter(Boolean))]
+      const mats = await fetchMaterialsByCodes(queryClient, codes)
+      const matOf = (code: string | null | undefined) => (code ? mats.get(code.trim().toUpperCase()) : undefined)
+      const out = all.map(r => ({
         'Trạng thái': STATUS_LABEL[r.status] ?? r.status,
         'Tem pallet': r.pallet_code,
         'Mã hàng': r.material_code ?? '',
-        'Tên hàng': r.material_code ? (matName.get(r.material_code) ?? '') : '',
+        'Tên hàng': matOf(r.material_code)?.short_name ?? '',
         'Kho nhận lúc': r.received_at ? `${formatTimestampDate(r.received_at)} ${formatTimestampTime(r.received_at)}` : (r.status !== 'CANCELLED' ? 'CHƯA NHẬN' : ''),
         'SL kho nhập': r.received_qty ?? '',
-        'SL kho nhập (quy đổi)': r.received_qty != null ? qtyLabel(Number(r.received_qty), matUnit.get(r.material_code ?? '')) : '',
+        'SL kho nhập (quy đổi)': r.received_qty != null ? qtyLabel(Number(r.received_qty), matOf(r.material_code)) : '',
         'Lệch SL': r.is_qty_diff ? 'LỆCH' : '',
         'Kho': r.warehouse_id ? (whName.get(r.warehouse_id) ?? '') : '',
         'Máy': r.machine_code ?? '',
         'Số lượng': r.qty_cartons ?? '',
-        'Số lượng (quy đổi)': r.qty_cartons != null ? qtyLabel(Number(r.qty_cartons), matUnit.get(r.material_code ?? '')) : '',
+        'Số lượng (quy đổi)': r.qty_cartons != null ? qtyLabel(Number(r.qty_cartons), matOf(r.material_code)) : '',
         'Nguồn SL': r.qty_source === 'MANUAL' ? 'Nhập tay' : 'Theo tem',
         'Giờ SX thùng đầu': r.prod_start_at ? `${formatTimestampDate(r.prod_start_at)} ${formatTimestampTime(r.prod_start_at)}` : '',
         'Nguồn giờ đầu': r.prod_start_src ?? '',
@@ -2017,6 +2037,8 @@ function LogTab({ canEdit, canCancel, canExport, openCount, whName, whOpts, onEd
       const wb = XLSX.utils.book_new()
       XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(sanitizeRows(out)), 'So dong goi')
       await saveWorkbook(wb, `so-dong-goi-${todayVN()}`)
+    } catch (e) {
+      toast({ variant: 'destructive', title: 'Không xuất được Excel', description: exportErrorMessage(e) })
     } finally { setExporting(false) }
   }
 

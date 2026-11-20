@@ -5,6 +5,8 @@ import { useMobileTabs } from '@/hooks/useMobileSurface'
 // Sơ đồ kho là chunk riêng (kéo theo Three.js cho góc nhìn 3D) — chỉ tải khi mở tab
 const WarehouseMap = lazy(() => import('./WarehouseMap'))
 import { saveWorkbook } from '@/utils/saveExcel'
+import { exportErrorMessage } from '@/api/fetchAllPages'
+import { downloadTemplate } from '@/utils/excelTemplate'
 import { sanitizeRows } from '@/utils/excelSafe'
 import { MapPin, Plus, Pencil, Trash2, Flag, X, Rows3, AlignJustify, Download, Upload, Hand, Ban, Lock, Printer, Layers, Map as MapIcon, List, Thermometer } from 'lucide-react'
 import { FloatingActionBar, FLOATING_BTN, FLOATING_BTN_DANGER } from '@/components/shared/FloatingActionBar'
@@ -510,7 +512,9 @@ export default function Locations() {
 
   async function exportExcel() {
     setExporting(true)
-    try { await doExportExcel(await fetchAllFiltered()) } finally { setExporting(false) }
+    try { await doExportExcel(await fetchAllFiltered()) }
+    catch (e) { toast({ variant: 'destructive', title: 'Không xuất được Excel', description: exportErrorMessage(e) }) }
+    finally { setExporting(false) }
   }
 
   // ─── In tem vị trí (điều kiện để quét vị trí dùng được) ────────────────────────────────────────
@@ -556,15 +560,20 @@ export default function Locations() {
     saveWorkbook(wb, `vi_tri_kho_${new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })}.xlsx`)
   }
 
-  // Mẫu upload: dòng 1 = nhãn (dấu * = bắt buộc), dòng 2 = key, dòng 3 = ví dụ (ghi đè bằng dữ liệu thật)
+  // Mẫu upload: dòng 1 = nhãn (dấu * = bắt buộc), dòng 2 = key; ví dụ ở sheet Hướng dẫn (C125 — ví dụ dòng 3 từng sửa đè vị trí thật)
   function downloadLocationTemplate() {
     const labels = ['Kho *', 'Khu *', 'Dãy *', 'Tầng', 'Sức chứa', 'Số mã tối đa', 'Kiểu']
     const keys   = ['warehouse', 'sub_code', 'row', 'shelf', 'max_pallets', 'max_materials', 'sub_type']
-    const ex     = ['20000016', 'TP1', '1', 'T1', 2, '']
-    const ws = XLSX.utils.aoa_to_sheet([labels, keys, ex])
-    const wb = XLSX.utils.book_new()
-    XLSX.utils.book_append_sheet(wb, ws, 'ViTriKho')
-    saveWorkbook(wb, 'mau_vi_tri_kho.xlsx')
+    void downloadTemplate({
+      file: 'mau_vi_tri_kho.xlsx', sheet: 'ViTriKho', header: [labels, keys], title: 'NẠP VỊ TRÍ KHO TỪ EXCEL',
+      notes: [
+        'Kho điền MÃ hoặc TÊN. Mã vị trí tự ghép: <tiền tố kho>_Khu_Dãy_Tầng (Tầng bỏ trống được).',
+        'Khu phải có sẵn trong Cài đặt WMS → Khu vực — Loại hàng và Tên khu lấy theo khu, không lấy từ file.',
+        'Vị trí ĐÃ CÓ ⇒ cập nhật ô có giá trị (Sức chứa, Số mã tối đa, Kiểu); ô trống giữ nguyên. Vị trí mới để trống Sức chứa = 1 pallet.',
+        'File còn một dòng lỗi thì KHÔNG ghi gì.',
+      ],
+      examples: [['20000016', 'TP1', '1', 'T1', 2, '', '']],
+    })
   }
 
   return (

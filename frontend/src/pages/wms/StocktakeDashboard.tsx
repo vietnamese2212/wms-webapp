@@ -25,7 +25,9 @@ import { Button } from '@/components/ui/button'
 import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { BarChart2, Flag, MapPin, X, Download, Rows3, AlignJustify } from 'lucide-react'
 import { formatDate, formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
-import { qtyLabel, qtyEntryText, qtyEntryDecimal } from '@/utils/qtyUnits'
+import { qtyLabel, qtyEntryText, qtyEntryDecimal, qtyUnitLabel } from '@/utils/qtyUnits'
+import { exportErrorMessage } from '@/api/fetchAllPages'
+import { toast } from '@/components/ui/use-toast'
 import { computePctDate } from '@/utils/shelfLife'
 import { pctDateCls } from '@/utils/pctDateBands'
 import { rowText, type RowStatusKey } from '@/lib/rowStatus'
@@ -345,7 +347,9 @@ export default function StocktakeDashboard() {
     let all: StocktakeEntryRow[]
     try {
       all = await fetchAllStocktakeEntries(queryParams)
-    } catch {
+    } catch (e) {
+      // trước 20/11 nuốt lỗi im lặng: bấm Excel không ra gì, không báo gì
+      toast({ variant: 'destructive', title: 'Không xuất được Excel', description: exportErrorMessage(e) })
       setExporting(false)
       return
     }
@@ -353,7 +357,10 @@ export default function StocktakeDashboard() {
       const diff = parseDiff(e.stocktake_flag_note ?? null)
       return {
         'Mã pallet': e.pallet_code, 'Vị trí': e.location?.location_code ?? '',
+        'Mã hàng': e.material?.material_code ?? '',
         'Tên hàng': e.material?.short_name ?? e.material?.material_code ?? '',
+        // ĐVT của 3 cột số kế bên: thùng (mã có thùng) hoặc đơn vị gốc (KG/EA…) — thiếu cột này 1,5 lúc là thùng lúc là kg
+        'ĐVT': qtyUnitLabel(e.material),
         'Tồn App': qtyEntryDecimal(e.cartons_remaining, e.material),
         'Thực tế': diff ? qtyEntryDecimal(diff.actual, e.material) : '',
         'Chênh lệch': diff ? qtyEntryDecimal(diff.diff, e.material) : '',

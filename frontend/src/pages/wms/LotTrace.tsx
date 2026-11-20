@@ -23,12 +23,15 @@ import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { SingleSelect } from '@/components/shared/SingleSelect'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { saveWorkbook } from '@/utils/saveExcel'
+import { sanitizeRows } from '@/utils/excelSafe'
+import { exportErrorMessage } from '@/api/fetchAllPages'
+import { toast } from '@/components/ui/use-toast'
 import { formatDate, formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 import { apiClient } from '@/api/client'
 import { useDebouncedValue } from '@/hooks/useDebouncedValue'
 import { useMobileTabs } from '@/hooks/useMobileSurface'
 import {
-  useLotTrace, useMaterials, useInvestigatePreview, useCreateInvestigation, useSystemSettings,
+  useLotTrace, fetchLotTraceForExport, type LotTraceQuery, useMaterials, useInvestigatePreview, useCreateInvestigation, useSystemSettings,
   useTraceInvestigations, useTraceInvestigation, useTraceRuns, useTraceRunPallets, useTraceSuggest,
   type TraceSuggestKind, type TraceShipment, type TraceStock,
   type CartonMatch, type TraceInvestigation, type TraceRun, type InvestigateTrace,
@@ -119,13 +122,14 @@ function TraceTab({ canExport }: { canExport: boolean }) {
   const { data: sysSettings = [] } = useSystemSettings()
   const isV2 = (sysSettings.find(x => x.key === 'label_format')?.value as string) === 'semicolon'
 
-  const q = useLotTrace({
+  const traceQuery: LotTraceQuery = {
     dir: f.dir,
     pallet: f.pallet, material: f.material, batch: f.batch,
     cycle: f.cycle, machine: f.machine, nmsx: f.nmsx,
     npp: f.npp, trip: f.trip, plate: f.plate,
     prodFrom: f.prodFrom, prodTo: f.prodTo, shipFrom: f.shipFrom, shipTo: f.shipTo,
-  })
+  }
+  const q = useLotTrace(traceQuery)
   const s = q.data?.summary
   const shipments = q.data?.shipments ?? []
   const stock = q.data?.stock ?? []
@@ -173,21 +177,37 @@ function TraceTab({ canExport }: { canExport: boolean }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   ], [f, isRev, isV2, setF, sPallet, sMaterial, sCycle, sMachine, sNmsx, sBatch, sNpp, sTrip, sPlate])
 
+  // File truy xuất = HỒ SƠ THU HỒI: thiếu một dòng là sót một khách. Màn hình chỉ lấy 500 dòng đầu (banner vàng) — trước
+  // 20/11 nút Xuất ghi đúng 500 dòng đó, không báo gì. Nay xuất xin lại với trần 2.000/sheet; vẫn vượt thì TỪ CHỐI + bảo thu hẹp.
+  const [exporting, setExporting] = useState(false)
   async function onExport() {
+    setExporting(true)
+    try { await doExport() }
+    catch (e) { toast({ variant: 'destructive', title: 'Không xuất được hồ sơ truy xuất', description: exportErrorMessage(e) }) }
+    finally { setExporting(false) }
+  }
+  async function doExport() {
+    const full = await fetchLotTraceForExport(traceQuery)
+    if (full.summary?.truncated) {
+      toast({ variant: 'destructive', title: 'Hồ sơ quá lớn để xuất đủ',
+        description: `Có ${(full.summary.shipments ?? 0).toLocaleString('vi-VN')} dòng giao · ${(full.summary.stock_rows ?? 0).toLocaleString('vi-VN')} dòng tồn — vượt 2.000 dòng mỗi sheet. Thu hẹp bằng khoảng ngày hoặc mã cụ thể hơn rồi xuất lại (file thiếu dòng sẽ sót khách khi thu hồi).` })
+      return
+    }
     const XLSX = await import('xlsx')
+    const ts = (v: string | null | undefined) => v ? `${formatTimestampDate(v, true)} ${formatTimestampTime(v)}` : ''
     const wb = XLSX.utils.book_new()
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(shipments.map(r => ({
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(sanitizeRows((full.shipments ?? []).map(r => ({
       'Tem pallet': r.pallet_code, 'Mã hàng': r.material_code, 'Tên hàng': r.short_name,
       'Mã lô': r.batch, 'Ngày SX': r.production_date?.slice(0, 10) ?? '', 'HSD': r.expiry_date?.slice(0, 10) ?? '',
       'SL xuất': r.cartons_scanned, 'Trả về': r.returned ?? 0, 'Ngày giao': r.delivery_date ?? '', 'Số xe': r.group_code,
       'Biển số': r.license_plate, 'NPP / khách': r.distributor_name, 'Số DO': r.delivery_code,
-      'Kho xuất': r.warehouse_name, 'Lúc quét': r.scanned_at ?? '',
-    }))), 'DaGiao')
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(stock.map(r => ({
+      'Kho xuất': r.warehouse_name, 'Lúc quét': ts(r.scanned_at),
+    })))), 'DaGiao')
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(sanitizeRows((full.stock ?? []).map(r => ({
       'Tem pallet': r.pallet_code, 'Mã hàng': r.material_code, 'Tên hàng': r.short_name,
       'Mã lô': r.batch, 'Ngày SX': r.production_date?.slice(0, 10) ?? '', 'HSD': r.expiry_date?.slice(0, 10) ?? '',
       'Còn lại': r.cartons_remaining, 'Trạng thái': r.status, 'Kho': r.warehouse_name, 'Vị trí': r.location_code,
-    }))), 'ConTrongKho')
+    })))), 'ConTrongKho')
     const tag = [f.pallet, f.material, f.batch, f.cycle, f.machine, f.nmsx, f.npp, f.trip, f.plate]
       .map(v => v.trim()).filter(Boolean).join('-') || (isRev ? 'nguoc' : 'xuoi')
     await saveWorkbook(wb, `Truy-xuat-${tag}.xlsx`)
@@ -198,8 +218,8 @@ function TraceTab({ canExport }: { canExport: boolean }) {
   const actions: ActionItem[] = [
     { key: 'gen', icon: Factory, label: 'Sản xuất', tip: 'Truy xuất sản xuất: tem thành phẩm ⇄ mẻ chế biến ⇄ tem nguyên liệu / nhà cung cấp', onClick: () => setGenOpen(true) },
     ...(canExport && (shipments.length || stock.length) ? [{
-      key: 'export', icon: Download, label: 'Xuất Excel', tip: 'Xuất hồ sơ truy xuất (2 sheet: đã giao · còn trong kho)',
-      onClick: onExport, mobileHidden: true,
+      key: 'export', icon: Download, label: exporting ? 'Đang xuất…' : 'Xuất Excel', tip: 'Xuất hồ sơ truy xuất ĐẦY ĐỦ (2 sheet: đã giao · còn trong kho) — tối đa 2.000 dòng mỗi sheet',
+      onClick: () => void onExport(), busy: exporting, disabled: exporting, mobileHidden: true,
     } satisfies ActionItem] : []),
   ]
 

@@ -34,6 +34,7 @@ import { parseListParam } from '../../utils/httpQuery'
 import { normalizePlate } from '../../utils/plate'
 import { isPreflight, buildPreflight, type PreflightExtra } from '../../utils/uploadPreflight'
 import { expandMergedCells, readWorkbookSafe, BAD_EXCEL_MSG } from '../../utils/excelHeader'
+import { excelNumber } from '../../utils/excelNumber'
 import { cellStr, cellNum, parseExcelDate } from '../../utils/excelCells'
 import { getSapDoSource } from '../../utils/settings'
 import { notLoadableDos, FLOW_LABEL } from '../../services/sapFlow'
@@ -708,22 +709,24 @@ function parsePlannedDate(group_code: string): string | null {
   return d.toISOString().slice(0, 10)
 }
 
-function parseDecimal(val: any): number {
+/** Xoá mềm (OBSOLETE) các dòng OD theo id — lô 300 id/lệnh (20/11: trước đây MỘT lệnh update cho MỖI dòng, bắn song song
+ *  không giới hạn ⇒ file VL06O bỏ vài trăm dòng = vài trăm request cùng lúc vào ~10 khe PostgREST, và lỗi bị nuốt). */
+export async function markOdLinesObsolete(ids: string[], at: string): Promise<void> {
+  for (let i = 0; i < ids.length; i += 300) {
+    const { error } = await supabase.from('erp_outbound_orders')
+      .update({ sync_status: 'OBSOLETE', updated_at: at }).in('id', ids.slice(i, i + 300))
+    if (error) throw new Error(error.message)
+  }
+}
+
+/** Ô số lượng của file Xuất kho (export cho test — backend/tests/unit/outboundQty.test.ts). */
+export function parseDecimal(val: unknown): number {
   // Số lượng/khối lượng xuất — luôn KHÔNG âm & hữu hạn. Âm/Infinity/NaN → 0 (chống
   // giá trị rác từ Excel/paste như "1e999", "-50" làm sai tồn/xuất).
-  const clamp = (n: number): number => (Number.isFinite(n) && n >= 0) ? n : 0
-  if (!val && val !== 0) return 0
-  if (typeof val === 'number') return clamp(val)
-  // Chuẩn số VN: dấu CHẤM = ngăn nghìn, dấu PHẨY = thập phân (1.234,56).
-  let s = String(val).trim().replace(/\s/g, '')
-  const commas = (s.match(/,/g) ?? []).length
-  const dots   = (s.match(/\./g) ?? []).length
-  if (commas && dots)       s = s.replace(/\./g, '').replace(',', '.') // 1.234,56 → 1234.56
-  else if (commas > 1)      s = s.replace(/,/g, '')                    // 1,234,567 (kiểu US) → 1234567
-  else if (commas === 1)    s = s.replace(',', '.')                    // 15,462 → 15.462
-  else if (dots > 1)        s = s.replace(/\./g, '')                   // 1.234.567 (nghìn VN) → 1234567
-  const n = parseFloat(s)
-  return clamp(n)
+  // Chuẩn số VN qua MỘT nguồn (utils/excelNumber → parseVnNumber). Bản chép tay cũ thiếu nhánh "một chấm + đúng 3 chữ số
+  // = nghìn" ⇒ ô chữ "1.234" thùng đọc thành 1,234 (20/11, lớp vnNumber).
+  const n = excelNumber(val)
+  return n != null && Number.isFinite(n) && n >= 0 ? n : 0
 }
 
 function validateGroupCode(gc: string): string | null {
@@ -3626,7 +3629,7 @@ function mergeNppRows(rows: Record<string, any>[]): Record<string, any>[] {
     if (!cur) { byMat.set(code, { ...row, __od_refs: [...(Array.isArray(row['__od_refs']) ? row['__od_refs'] : [])] }); continue }
     cur['__od_refs'] = [...(cur['__od_refs'] ?? []), ...(Array.isArray(row['__od_refs']) ? row['__od_refs'] : [])]
     for (const f of ['Thùng', 'Hộp', 'Tải', 'Nhặt lẻ']) cur[f] = parseDecimal(cur[f]) + parseDecimal(row[f])
-    cur['Pallet'] = parseDecimal(String(cur['Pallet'] ?? '').replace(',', '.')) + parseDecimal(String(row['Pallet'] ?? '').replace(',', '.'))
+    cur['Pallet'] = parseDecimal(cur['Pallet']) + parseDecimal(row['Pallet'])   // phẩy = thập phân đã nằm trong parseDecimal
     const pd = Math.max(parseDecimal(cur['%Date_Yêu cầu']), parseDecimal(row['%Date_Yêu cầu']))
     cur['%Date_Yêu cầu'] = pd > 0 ? pd : (String(cur['%Date_Yêu cầu'] ?? '').trim() || row['%Date_Yêu cầu'])
     cur['Batch_Yêu cầu'] = joinDistinct(cur['Batch_Yêu cầu'], row['Batch_Yêu cầu'])
@@ -3753,7 +3756,7 @@ async function mergePausedGDO(
           ? loosePalletRemainder(newCartons, mu, warehouse_id, loosePol.of(warehouse_id, mu?.category ?? null))
           // Kho OFF ép 0 cả số ghi tay (user chốt 24/08) — file cũ không lách được setting
           : (loosePol.of(warehouse_id, mu?.category ?? null).mode === 'OFF' ? 0 : parseDecimal(row['Nhặt lẻ'])),
-        pallets_estimated: parseDecimal(String(row['Pallet'] ?? '').replace(',', '.')),
+        pallets_estimated: parseDecimal(row['Pallet']),
         material_type,
         export_type:    String(row['Loại xuất']     ?? '').trim() || null,
         header_text:    String(row['HEADER TEXT']   ?? '').trim() || null,
@@ -4405,7 +4408,7 @@ async function processVehicleGroups(
               loose_picking:     autoLoosePallet
                 ? loosePalletRemainder(orderedBase, mu, resolved_warehouse_id, uploadLoosePol.of(resolved_warehouse_id, mu?.category ?? null))
                 : (uploadLoosePol.of(resolved_warehouse_id, mu?.category ?? null).mode === 'OFF' ? 0 : parseDecimal(row['Nhặt lẻ'])),
-              pallets_estimated: parseDecimal(String(row['Pallet'] ?? '').replace(',', '.')),
+              pallets_estimated: parseDecimal(row['Pallet']),
               material_type,
               export_type:    String(row['Loại xuất']     ?? '').trim() || null,
               header_text:    headerText,
@@ -4819,10 +4822,13 @@ export async function uploadVl06o(req: Request, res: Response) {
     const fileKeys = new Set(records.map(r => `${r.od_number}__${r.od_item}`))
     const fileDos = new Set(records.map(r => String(r.od_number)))
     const removedKeys: OdKey[] = []
+    const removedIds: string[] = []
     for (const p of (priorRows ?? [])) {
       const k = `${p.od_number}__${p.od_item}`
-      if (fileDos.has(String(p.od_number)) && !fileKeys.has(k) && p.sync_status !== 'OBSOLETE')
+      if (fileDos.has(String(p.od_number)) && !fileKeys.has(k) && p.sync_status !== 'OBSOLETE') {
         removedKeys.push({ od_number: String(p.od_number), od_item: String(p.od_item) })
+        removedIds.push(p.id)
+      }
     }
 
     // ── PREFLIGHT: kiểm + cảnh báo TRƯỚC khi ghi — file chứa DO đã lên chuyến? (KHÔNG ghi gì) ──
@@ -4886,10 +4892,7 @@ export async function uploadVl06o(req: Request, res: Response) {
         .upsert(toWrite.slice(i, i + CHUNK), { onConflict: 'od_number,od_item' })
       if (error) throw new Error(error.message)
     }
-    if (removedKeys.length) {
-      await Promise.all(removedKeys.map(k => supabase.from('erp_outbound_orders')
-        .update({ sync_status: 'OBSOLETE', updated_at: t }).eq('od_number', k.od_number).eq('od_item', k.od_item)))
-    }
+    await markOdLinesObsolete(removedIds, t)
 
     // ── Engine đối chiếu (AUGMENT — lỗi engine KHÔNG được làm hỏng upload cốt lõi) ──
     let reconcile: Awaited<ReturnType<typeof reconcileFromSap>> | null = null

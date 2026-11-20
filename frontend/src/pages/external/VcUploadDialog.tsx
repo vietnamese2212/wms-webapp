@@ -4,13 +4,12 @@
 // bảng nó đang hiển thị). Giữ NGUYÊN chuẩn 2 pha: kiểm trước (preflight) → xem báo cáo → Xác nhận mới ghi.
 // 22/09: thêm nguồn ZSD02 (báo cáo SAP mức dòng SO/OD) — thay VL06O theo công tắc `sap_do_source`.
 import { useState, useRef } from 'react'
-import * as XLSX from 'xlsx'
 import type { AxiosError } from 'axios'
 import { Upload, Download, X, CheckCircle2, AlertTriangle, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { ModalOverlay } from '@/components/shared/ModalOverlay'
 import { UploadPreflightPanel } from '@/components/shared/UploadPreflightPanel'
-import { saveWorkbook } from '@/utils/saveExcel'
+import { downloadTemplate } from '@/utils/excelTemplate'
 import { useUploadVl06o, useUploadKhvc, useUploadZsd02, useZsd02Coverage, useZsd02UploadLog, UPLOAD_TOO_LARGE_MSG, type UploadPreflight, type Zsd02UploadResult, type Zsd02UploadFields, type Zsd02UploadKind, type Zsd02Coverage } from '@/api/hooks'
 import { useScopedWhTypes, useScopedWarehouses } from '@/hooks/useUserScope'
 import { InfoTip } from '@/components/shared/InfoTip'
@@ -133,33 +132,38 @@ function downloadVl06oTemplate() {
     'Name ship-to party', 'Batch', 'Date (%)', 'Ghi chú giao hàng', 'Ghi chú hoá đơn']
   const ex = ['3000384084', '10', '30000325', '510000306', 'BAVI SCA Có đường 100grx48',
     40, 'CAR', 1920, 'HOP', 'NPPTRANGHOANG', '', '', '', '']
-  const ws = XLSX.utils.aoa_to_sheet([headers, ex])
-  const wb = XLSX.utils.book_new()
-  XLSX.utils.book_append_sheet(wb, ws, 'Data')
-  saveWorkbook(wb, 'mau_vl06o.xlsx')
+  void downloadTemplate({
+    file: 'mau_vl06o.xlsx', sheet: 'Data', header: [headers], title: 'NẠP VL06O (SAP) TỪ EXCEL', examples: [ex],
+    notes: ['Dán nguyên báo cáo VL06O xuất từ SAP; app đọc theo tên cột nên thứ tự cột không quan trọng.'],
+  })
 }
 // Mẫu ZSD02 = ĐÚNG tiêu đề SAP xuất ra (map theo tên cột nên đảo cột không sao). Dấu * ở cột BẮT BUỘC —
 // "Outbound Delivery" KHÔNG bắt buộc: dòng SO chưa có OD để trống, đi vào sổ SO (tab "Chưa có OD").
 function downloadZsd02Template() {
+  // "Thời gian tạo SO" (20/11): luật ZSD02 tính theo NGÀY TẠO SO (kiểu nạp Bao phủ kiểm theo ngày này) — mẫu thiếu cột thì file dựng từ mẫu không có ngày SO
   const headers = ['SO/ PO SAP *', 'Outbound Delivery', 'Item *', 'Material *', 'Material Description', 'Plant *', 'Sloc',
     'Sales unit *', 'SO Qty/ SL SO *', 'SO Qty CAR/ SL SO THÙNG', 'OD Qty', 'OD Qty CAR/ SL THÙNG đã điều phối', 'OD Qty (Base Unit) *', 'Base Unit *',
-    'Số lượng đã xuất / nhập', 'Delivery date *', 'SO/ PO type *', 'Item Category', 'Ship to code *', 'Ship to name', 'Sold to code',
+    'Số lượng đã xuất / nhập', 'Delivery date *', 'Thời gian tạo SO', 'SO/ PO type *', 'Item Category', 'Ship to code *', 'Ship to name', 'Sold to code',
     'Địa chỉ giao hàng', 'Tên Phường', 'Region/ Tỉnh.TP', 'Route/ Tuyến giao hàng', 'Mã Route', 'Sales District/ Khu vực bán hàng',
     'Tên tài xế', 'Biển số xe', 'Trạng thái điều phối xe', 'Đơn vị vận chuyển', 'Ghi chú giao hàng', 'Trạng thái hủy đơn',
     'SL SO PALLET', 'SL PALLET đã điều phối', 'SL SO M3', 'SL M3 đã điều phối', 'Gross Weight', 'Mat Doc', 'Billing']
   // Sloc để trống trong mẫu: mã kho SAP là danh mục của từng đơn vị, không viết cứng vào code
   const ex1 = ['2000276760', '3000494901', '10', '510000219', 'LOF Sữa Bắp Non Canxi hộp 180mlx24', '1102', '',
-    'Thùng', 60, 60, 60, 60, 1440, 'HOP', 0, '07/09/2026', 'ZOR1-SO Standard', 'ZTA1-IC Sales Standard', '10005947', 'Tmart Phan Trọng Tuệ', '10005947',
+    'Thùng', 60, 60, 60, 60, 1440, 'HOP', 0, '07/09/2026', '05/09/2026', 'ZOR1-SO Standard', 'ZTA1-IC Sales Standard', '10005947', 'Tmart Phan Trọng Tuệ', '10005947',
     'Phường Phú Lương, Hà Đông, Hà Nội', 'HN-Phú Lương', '100-Thành phố Hà Nội', 'BV-HN-Phú Lương', 'BV0059', '10401-MB',
     '', '29H94850', 'Đã điều phối', 'HN', 'date>60%', '', 0.316, 0.316, 0.439, 0.439, 298199.52, '', '']
   const ex2 = ['2000276761', '', '10', '510000219', 'LOF Sữa Bắp Non Canxi hộp 180mlx24', '1102', '',
-    'Thùng', 20, 20, 0, 0, 0, 'HOP', 0, '08/09/2026', 'ZOR1-SO Standard', 'ZTA1-IC Sales Standard', '10005947', 'Tmart Phan Trọng Tuệ', '10005947',
+    'Thùng', 20, 20, 0, 0, 0, 'HOP', 0, '08/09/2026', '06/09/2026', 'ZOR1-SO Standard', 'ZTA1-IC Sales Standard', '10005947', 'Tmart Phan Trọng Tuệ', '10005947',
     'Phường Phú Lương, Hà Đông, Hà Nội', 'HN-Phú Lương', '100-Thành phố Hà Nội', 'BV-HN-Phú Lương', 'BV0059', '10401-MB',
     '', '', 'Chưa điều phối', '', '', '', 0.105, 0, 0.146, 0, 99399.84, '', '']
-  const ws = XLSX.utils.aoa_to_sheet([headers, ex1, ex2])
-  const wb = XLSX.utils.book_new()
-  XLSX.utils.book_append_sheet(wb, ws, 'Data')
-  saveWorkbook(wb, 'mau_zsd02.xlsx')
+  void downloadTemplate({
+    file: 'mau_zsd02.xlsx', sheet: 'Data', header: [headers], title: 'NẠP ZSD02 (SAP) TỪ EXCEL', examples: [ex1, ex2],
+    notes: [
+      'Dán nguyên báo cáo ZSD02 xuất từ SAP; app đọc theo tên cột nên thứ tự cột không quan trọng.',
+      'Dòng SO chưa có OD để trống "Outbound Delivery" — vào tab Chưa có OD.',
+      'SO có trong file được coi là bản cuối của SO đó: dòng của SO ấy mà file không còn sẽ bị đánh dấu SAP đã bỏ.',
+    ],
+  })
 }
 // `sampleCategory` = 1 giá trị Loại kho LẤY TỪ DANH MỤC của chính đơn vị này — KHÔNG viết cứng.
 // Mỗi đơn vị một taxonomy riêng (mã SAP 'FG01…' hay tên tiếng Việt 'Thành phẩm…'), mà cột
@@ -173,10 +177,14 @@ function downloadKhvcTemplate(sampleCategory: string) {
   // "Mã xe SAP" (23/09) = dòng xe CON 9100000xx — TÙY CHỌN, dùng để tính cước/tải; để trống thì giữ lựa chọn tay ở tab Kế hoạch xuất
   const headers = ['Ngày xuất', 'Số xe', 'DO', 'Tên NPP', 'Loại kho booking', 'Loại xe', 'Mã xe SAP', 'DVVT', 'Ưu tiên', 'CS phụ trách', 'Note']
   const ex = [`${dd}/${mm}/${yyyy}`, `20000016_X_${ddmmyy}_01`, '3000384084', 'NPPTRANGHOANG', sampleCategory, 'Xe Pallet', '910000030', 'DA', '1', 'Nguyễn Văn A', 'Giao gấp trước 10h']
-  const ws = XLSX.utils.aoa_to_sheet([headers, ex])
-  const wb = XLSX.utils.book_new()
-  XLSX.utils.book_append_sheet(wb, ws, 'Ke hoach dieu van')
-  saveWorkbook(wb, 'mau_khvc.xlsx')
+  void downloadTemplate({
+    file: 'mau_khvc.xlsx', sheet: 'Ke hoach dieu van', header: [headers], title: 'NẠP KẾ HOẠCH ĐIỀU VẬN TỪ EXCEL', examples: [ex],
+    notes: [
+      'Bắt buộc: Số xe, DO, Loại kho booking. Các dòng cùng Số xe gộp thành một chuyến; một Số xe chỉ một Loại kho booking.',
+      'Loại kho booking = mã loại kho trong Cài đặt WMS → Loại kho (cửa xe đậu để đặt khung giờ).',
+      'Mã xe SAP (dòng xe con 9100000xx) không bắt buộc — để trống thì chọn tay ở tab Kế hoạch xuất.',
+    ],
+  })
 }
 
 const nf = (v: number | undefined | null) => (v ?? 0).toLocaleString('vi-VN')

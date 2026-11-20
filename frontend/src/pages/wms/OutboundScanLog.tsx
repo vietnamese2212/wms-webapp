@@ -2,11 +2,11 @@ import { useState, useMemo, useRef, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import * as XLSX from 'xlsx'
 import { saveWorkbook } from '@/utils/saveExcel'
+import { exportErrorMessage } from '@/api/fetchAllPages'
 import { sanitizeRows } from '@/utils/excelSafe'
 import {
   ClipboardList, ChevronLeft, ChevronRight, AlertTriangle, Download,
 } from 'lucide-react'
-import type { AxiosError } from 'axios'
 import { SearchInput } from '@/components/shared/SearchInput'
 import { PagerNav, ListFooter } from '@/components/shared/ListPager'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -299,12 +299,13 @@ export default function OutboundScanLog() {
 
   async function handleExport() {
     setExportError('')
-    if (!canFetch) { setExportError('Chọn Kho và Loại hàng trước khi xuất'); return }
+    // Đang TÌM (≥ 2 ký tự) ⇒ file = đúng kết quả tìm trên màn (trước 20/11 xuất cả bộ lọc, còn trần lại đọc số dòng của kết quả tìm)
+    if (!searchMode && !canFetch) { setExportError('Chọn Kho và Loại hàng trước khi xuất'); return }
     if (total === 0) { setExportError('Không có dữ liệu để xuất'); return }
     if (total > EXPORT_MAX) { setExportError(`Quá nhiều dòng (${total.toLocaleString('vi-VN')}). Hãy lọc hẹp lại rồi xuất.`); return }
     setExporting(true)
     try {
-      const all = await fetchScanLogExport(buildParams(filters))
+      const all = await fetchScanLogExport(buildParams(filters), searchMode ? debouncedQ : undefined, EXPORT_MAX)
       const fmtTs = (ts: string | null) => ts ? `${formatTimestampDate(ts, true)} ${formatTimestampTime(ts)}` : ''
       const sheet = all.map(row => {
         const expiry = rowExpiry(row)
@@ -339,8 +340,7 @@ export default function OutboundScanLog() {
       XLSX.utils.book_append_sheet(wb, ws, 'Lịch sử quét')
       saveWorkbook(wb, `lich_su_quet_${filters.material_category}_${TODAY()}.xlsx`)
     } catch (e) {
-      const err = e as AxiosError<{ error?: { message?: string } }>
-      setExportError(err?.response?.data?.error?.message ?? 'Xuất Excel lỗi')
+      setExportError(exportErrorMessage(e))
     } finally {
       setExporting(false)
     }

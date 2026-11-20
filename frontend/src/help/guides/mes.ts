@@ -269,11 +269,11 @@ export const MES_GUIDE: Guide = {
           title: 'C1. Báo cáo NVL theo chu kỳ',
           text: [
             'Vào **Báo cáo NVL** → tab **Theo chu kỳ** → chọn chu kỳ. Báo cáo chạy trực tiếp, tự cập nhật.',
-            '- **NVL × mẻ**: định mức, thực cấp, lệch, lệch % của từng nguyên liệu, tách theo ca và mẻ.',
+            '- **NVL × ca**: mỗi nguyên liệu một dòng — định mức, thực cấp, lệch của cả chu kỳ, mỗi ca một cột, cột **Mẻ lệch** đếm số mẻ cấp lệch quá mức cho phép. Bấm vào dòng nguyên liệu ▸ để xem từng mẻ xếp dọc; bấm một mẻ để mở mẻ đó.',
             '- **Ca · Mẻ**: từng mẻ thuộc ca nào, đã nạp bồn chưa. **Nhân sự**: mỗi người đã làm bao nhiêu việc trong chu kỳ.',
-            '**Xuất Excel** = báo cáo cuối chu kỳ, 4 sheet: NVL theo mẻ / Ca – Mẻ / Nhân sự / Tiêu hao NVL (thô).',
+            '**Xuất Excel** = báo cáo cuối chu kỳ: NVL theo ca / NVL từng mẻ / Ca – Mẻ / Nhân sự / Tiêu hao NVL (thô).',
           ],
-          images: [d('70-bao-cao-chu-ky', 'Báo cáo theo chu kỳ — NVL × mẻ'), d('72-bao-cao-nhan-su', 'Tab Nhân sự')],
+          images: [d('70-bao-cao-chu-ky', 'Báo cáo theo chu kỳ — NVL × ca, một dòng mở ▸ từng mẻ'), d('72-bao-cao-nhan-su', 'Tab Nhân sự')],
         },
         {
           title: 'C2. Dữ liệu thô tiêu hao NVL (cho SAP)',

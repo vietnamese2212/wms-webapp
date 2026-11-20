@@ -376,7 +376,7 @@ interface ProductionReportFilters {   // trang Báo cáo NVL (18/11 f): tab Theo
   tab: 'cycle' | 'raw' | 'shift'
   warehouseId: string    // kho chế biến ('' = kho mặc định trong phạm vi)
   cycle: string          // '' = chu kỳ mới nhất
-  /** NVL × mẻ · Ca · Mẻ · Nhân sự */
+  /** NVL × ca (▸ từng mẻ) · Ca · Mẻ · Nhân sự */
   view: 'nvl' | 'batch' | 'people'
   /** tab Dữ liệu thô (tiêu hao NVL cho SAP): khoảng ngày của phát sinh ('' = 7 ngày gần nhất) · chu kỳ · tìm · loại phát sinh · cờ · trang */
   rawFrom: string

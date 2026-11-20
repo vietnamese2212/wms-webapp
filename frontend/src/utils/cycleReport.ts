@@ -54,6 +54,19 @@ export function rowSum(row: CycleRowLike, batchIds: readonly string[]): { req: n
   return { req, iss, diff, devPct: req > 0 ? Math.round((diff / req) * 1000) / 10 : null, used }
 }
 
+/** NVL × CA (20/11 — user: "1 ngày có tới 36 mẻ thì số cột sẽ là nhiều lắm"): bảng chính mỗi CA một cột; ▸ ở dòng NVL mở các MẺ
+ *  xếp dọc. Từng mẻ có dùng mã này, theo thứ tự ca → mẻ; trạng thái = cùng luật phiếu mẻ (cellState). Excel "NVL từng mẻ" đọc cùng hàm. */
+export function rowBatchLines<B extends CycleBatchLike>(row: CycleRowLike, groups: { shift: string; batches: B[] }[]):
+  { shift: string; batch: B; cell: CycleCellLike; state: ReqLineState | null }[] {
+  return groups.flatMap(g => g.batches.filter(b => row.cells[b.id]).map(b => ({ shift: g.shift, batch: b, cell: row.cells[b.id], state: cellState(row.cells[b.id], isFilled(b)) })))
+}
+/** số mẻ của dòng NVL cấp LỆCH khỏi mức cho phép (vượt, hoặc thiếu ở mẻ đã nạp bồn) — cột "Mẻ lệch" */
+export const rowDeviations = (lines: { state: ReqLineState | null }[]) => lines.filter(l => l.state === 'over' || l.state === 'under').length
+/** chữ trạng thái một dòng NVL của một mẻ (Excel + dòng mở rộng) */
+export const LINE_STATE_LABEL: Record<ReqLineState, string> = {
+  ok: 'Trong mức', over: 'Vượt mức', under: 'Thiếu (mẻ đã nạp bồn)', progress: 'Đang cấp', extra: 'Ngoài phiếu', none: 'Chưa cấp', removed: 'Bỏ khỏi phiếu',
+}
+
 export interface LineStats { lines: number; ok: number; short: number; over: number; extra: number }
 /** đếm dòng NVL của một nhóm mẻ: đủ (trong mức lệch) · thiếu (chưa đủ / dưới mức) · vượt · ngoài phiếu. Ô chưa cấp của mẻ đang làm = thiếu. */
 export function lineStats(rows: CycleRowLike[], batches: Pick<CycleBatchLike, 'id' | 'stage'>[]): LineStats {

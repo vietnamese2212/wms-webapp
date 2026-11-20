@@ -3,13 +3,15 @@
 // ca, mẻ" · "cuối chu kỳ, nhưng tách ra ca, mẻ — từ đó ra được các chỉ số của nhân sự, số liệu".
 //   • Chọn kho chế biến + chu kỳ (mới nhất trước; chu kỳ đang chạy ghi rõ). Số tự cập nhật khi có người cấp NVL / ghi phiếu / nạp bồn
 //     (realtime qua chính các sổ đó — prod-cycle).
-//   • Ba cách xem: NVL × mẻ (mỗi mẻ một cột, gom theo CA, mỗi ô thực cấp + định mức, tô theo luật mức lệch của phiếu mẻ) · Ca · Mẻ (mỗi mẻ
+//   • Ba cách xem: NVL × CA (20/11 — user: "1 ngày có tới 36 mẻ thì số cột sẽ là nhiều lắm": cột cố định = cả chu kỳ + mỗi CA một cột +
+//     "Mẻ lệch"; bấm ▸ ở dòng NVL mở từng MẺ xếp dọc, tô theo luật mức lệch của phiếu mẻ — trước đó mỗi mẻ một cột) · Ca · Mẻ (mỗi mẻ
 //     một dòng: tình trạng, kế hoạch / nạp bồn, dòng NVL đủ / thiếu / vượt, sai thứ tự, mốc giờ, người làm; mỗi ca một dòng chỉ số) ·
 //     Nhân sự (mỗi người một dòng: đếm việc đã làm trong chu kỳ).
-//   • Báo cáo cuối = Xuất Excel 4 sheet: NVL theo mẻ (bố cục tờ giấy: Ca / BTP / Mẻ) · Ca · Mẻ · Nhân sự · Tiêu hao NVL (thô) — 18/11 g:
+//   • Báo cáo cuối = Xuất Excel: NVL theo ca (giống màn hình) · NVL từng mẻ (mỗi dòng một mẻ × NVL, xếp dọc — 20/11 thay sheet "mỗi mẻ
+//     một cột") · Ca · Mẻ · Nhân sự · Tiêu hao NVL (thô) — 18/11 g:
 //     sheet thô đọc CÙNG khuôn cột với tab Dữ liệu thô (utils/consumptionRaw.ts — mỗi dòng một phát sinh Cấp / Huỷ cấp, đủ cột cho SAP).
 // Số gốc tính ở DB (mes_cycle_report); phép gom ở utils/cycleReport.ts (có test) — bảng, dải số và Excel đọc cùng hàm.
-import { useMemo, useState, type ReactNode } from 'react'
+import { Fragment, useMemo, useState, type ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
 import type { AxiosError } from 'axios'
 import * as XLSX from 'xlsx'
@@ -29,7 +31,7 @@ import { useCanSeePath } from '@/hooks/useCanSeePath'
 import { useProductionWarehouses, useCycles, useCycleReport, fetchRawAll, defaultKitchen, type CycleBatch, type CycleRow, type CyclePerson } from '@/api/productionHooks'
 import { StageSymbol, StageBadge, stageLabel } from './BatchStage'
 import { MobileNumHead, MobileNumRow, type NumCol } from './MobileNumGrid'
-import { shiftGroups, liveBatches, rowSum, cellState, shiftKpis, minutesBetween, durLabel, isFilled, lineStats, type ShiftKpi } from '@/utils/cycleReport'
+import { shiftGroups, liveBatches, rowSum, cellState, shiftKpis, minutesBetween, durLabel, isFilled, lineStats, rowBatchLines, rowDeviations, LINE_STATE_LABEL, type ShiftKpi } from '@/utils/cycleReport'
 import { reqLineState, devLabel } from '@/utils/reqTolerance'
 import { qtyNum, qtyCode, matUnitCode, unitCode } from '@/utils/unitCode'
 import { formatDate, formatDateTime, formatTimestampTime } from '@/utils/formatters'
@@ -42,10 +44,11 @@ const NUM = `${TD} text-right font-semibold tabular-nums`
 const apiMsg = (e: unknown) => (e as AxiosError<{ error?: { message?: string } }>)?.response?.data?.error?.message ?? 'Lỗi không xác định'
 const dash = <span className="text-slate-300 font-normal">—</span>
 const nf = (n: number) => Number(n).toLocaleString('vi-VN', { maximumFractionDigits: 3 })
+const r3 = (n: number) => Math.round(n * 1000) / 1000
 const units = (xs: { unit: string; qty: number }[]) => (xs.length ? xs.map(x => `${nf(x.qty)} ${x.unit}`).join(' + ') : '')
 const hm = (iso: string | null | undefined) => (iso ? formatTimestampTime(iso).slice(0, 5) : '')
 const whenBy = (iso: string | null | undefined, by: string | null | undefined) => (iso ? `${formatDateTime(iso)}${by ? ` · ${by}` : ''}` : '')
-const VIEWS = [{ key: 'nvl', label: 'NVL × mẻ' }, { key: 'batch', label: 'Ca · Mẻ' }, { key: 'people', label: 'Nhân sự' }] as const
+const VIEWS = [{ key: 'nvl', label: 'NVL × ca' }, { key: 'batch', label: 'Ca · Mẻ' }, { key: 'people', label: 'Nhân sự' }] as const
 const MOBILE_NVL: NumCol[] = [{ label: 'Định mức' }, { label: 'Thực cấp' }, { label: 'Lệch', title: 'Thực cấp − định mức' }]
 /** chú thích cột Nhân sự — đếm việc theo tên người làm, trong chu kỳ đang xem */
 const PEOPLE_TIP: Record<string, string> = {
@@ -91,6 +94,9 @@ export function CycleReport({ tabBar }: { tabBar: ReactNode }) {
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
   const [openMat, setOpenMat] = useState<string | null>(null)
+  // máy tính: dòng NVL đang mở (▸ — từng mẻ xếp dọc); mở được nhiều dòng một lúc
+  const [openNvl, setOpenNvl] = useState<Set<string>>(() => new Set())
+  const toggleNvl = (id: string) => setOpenNvl(prev => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n })
 
   const cycleOpts = useMemo(() => {
     const opts = cycles.map(c => ({
@@ -112,27 +118,34 @@ export function CycleReport({ tabBar }: { tabBar: ReactNode }) {
         [`Kho chế biến: ${whName}`, '', `Ngày SX: ${dateText}`, '', `${running ? 'ĐANG CHẠY' : 'ĐÃ XONG'} · ${filled}/${live.length} mẻ đã nạp bồn${cancelled ? ` · ${cancelled} mẻ huỷ` : ''}`, '', `Xuất lúc ${formatDateTime(new Date().toISOString())}`],
         [],
       ]
-      // 1) NVL × mẻ — bố cục tờ giấy: mỗi mẻ hai cột (Định mức | Thực cấp), tiêu đề Ca / BTP / Mẻ; mỗi ca một cặp cột tổng; cuối = cả chu kỳ
-      const cols: { label: [string, string, string]; ids: string[] }[] = []
-      for (const g of groups) {
-        for (const b of g.batches) cols.push({ label: [g.shift, `BTP: ${b.material_code}`, `Mẻ ${b.batch_no ?? ''} (${b.batch_code})`], ids: [b.id] })
-        if (groups.length > 1) cols.push({ label: [g.shift, 'Tổng ca', ''], ids: g.batches.map(b => b.id) })
-      }
+      // 1) NVL theo ca — cùng bố cục màn hình (20/11): cả chu kỳ + mỗi CA hai cột (Định mức | Thực cấp) + Mẻ lệch. Trước 20/11 mỗi mẻ
+      //    hai cột (bố cục tờ giấy) ⇒ chu kỳ 36 mẻ = hơn 70 cột; chi tiết từng mẻ nay ở sheet 1b xếp dọc.
       const nvl: unknown[][] = [...head,
-        ['Nguyên liệu', 'Tên', 'ĐVT', ...cols.flatMap(c => [c.label[0], '']), 'Cả chu kỳ', '', '', ''],
-        ['', '', '', ...cols.flatMap(c => [c.label[1], '']), '', '', '', ''],
-        ['', '', '', ...cols.flatMap(c => [c.label[2], '']), '', '', '', ''],
-        ['', '', '', ...cols.flatMap(() => ['Định mức', 'Thực cấp']), 'Định mức', 'Thực cấp', 'Lệch', 'Lệch %'],
+        ['Nguyên liệu', 'Tên', 'ĐVT', 'Cả chu kỳ', '', '', '', ...groups.flatMap(g => [`${g.shift} (${g.batches.length} mẻ)`, '']), 'Mẻ lệch'],
+        ['', '', '', 'Định mức', 'Thực cấp', 'Lệch', 'Lệch %', ...groups.flatMap(() => ['Định mức', 'Thực cấp']), ''],
         ...rows.map(r => {
           const tot = rowSum(r, liveIds)
-          return [r.material_code, r.material_name ?? '', unitCode(r.base_unit),
-            ...cols.flatMap(c => { const s = rowSum(r, c.ids); return s.used ? [c.ids.length === 1 && r.cells[c.ids[0]]?.req == null ? 'ngoài phiếu' : s.req, s.iss] : ['', ''] }),
-            tot.req, tot.iss, tot.diff, tot.devPct ?? '']
+          return [r.material_code, r.material_name ?? '', unitCode(r.base_unit), tot.req, tot.iss, tot.diff, tot.devPct ?? '',
+            ...groups.flatMap((g): (number | string)[] => { const s = rowSum(r, g.batches.map(b => b.id)); return s.used ? [s.req, s.iss] : ['', ''] }),
+            rowDeviations(rowBatchLines(r, groups))]
         }),
       ]
       const ws1 = XLSX.utils.aoa_to_sheet(sanitizeAoa(nvl))
-      ws1['!cols'] = [{ wch: 14 }, { wch: 28 }, { wch: 7 }, ...cols.flatMap(() => [{ wch: 11 }, { wch: 11 }]), { wch: 11 }, { wch: 11 }, { wch: 10 }, { wch: 8 }]
-      XLSX.utils.book_append_sheet(wb, ws1, 'NVL theo mẻ')
+      ws1['!cols'] = [{ wch: 14 }, { wch: 28 }, { wch: 7 }, { wch: 11 }, { wch: 11 }, { wch: 10 }, { wch: 8 }, ...groups.flatMap(() => [{ wch: 11 }, { wch: 11 }]), { wch: 8 }]
+      XLSX.utils.book_append_sheet(wb, ws1, 'NVL theo ca')
+      // 1b) NVL từng mẻ — mỗi dòng một mẻ × NVL (cùng hàm với ▸ trên màn hình), lọc / pivot được trong Excel
+      const per: unknown[][] = [...head,
+        ['Mã NVL', 'Tên NVL', 'ĐVT', 'Ca', 'Mẻ', 'Mã lô', 'BTP', 'Định mức', 'Mức lệch cho phép (%)', 'Thực cấp', 'Lệch', 'Lệch %', 'Tình trạng'],
+        ...rows.flatMap(r => rowBatchLines(r, groups).map(l => {
+          const res = reqLineState({ required: l.cell.req, consumed: l.cell.iss, tol_pct: l.cell.tol }, isFilled(l.batch))
+          return [r.material_code, r.material_name ?? '', unitCode(r.base_unit), l.shift, l.batch.batch_no ?? '', l.batch.batch_code, l.batch.material_code,
+            l.cell.req ?? 'ngoài phiếu', l.cell.tol ?? '', l.cell.iss, l.cell.req == null ? '' : r3(l.cell.iss - Number(l.cell.req)), res.devPct ?? '',
+            l.state ? LINE_STATE_LABEL[l.state] : '']
+        })),
+      ]
+      const ws1b = XLSX.utils.aoa_to_sheet(sanitizeAoa(per))
+      ws1b['!cols'] = [{ wch: 14 }, { wch: 28 }, { wch: 7 }, { wch: 12 }, { wch: 6 }, { wch: 14 }, { wch: 14 }, { wch: 11 }, { wch: 10 }, { wch: 11 }, { wch: 10 }, { wch: 8 }, { wch: 20 }]
+      XLSX.utils.book_append_sheet(wb, ws1b, 'NVL từng mẻ')
       // 2) Ca · Mẻ
       const kpiRow = (k: ShiftKpi) => [k.shift, `${k.batches} mẻ`, '', '', '', units(k.planned), units(k.filledQty), `${k.stats.ok}/${k.stats.lines}`, k.stats.short, k.stats.over, k.stats.extra, '', '', '', '', '', '', '', durLabel(k.avgMin)]
       const cm: unknown[][] = [...head,
@@ -179,18 +192,14 @@ export function CycleReport({ tabBar }: { tabBar: ReactNode }) {
 
   // ── NVL × mẻ ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   const nvlCols: RtColDef[] = useMemo(() => [
-    { id: 'mat', label: 'Nguyên liệu', w: 200 }, { id: 'unit', label: 'ĐVT', w: 52 },
+    { id: 'mat', label: 'Nguyên liệu', w: 230 }, { id: 'unit', label: 'ĐVT', w: 52 },
     { id: 'req', label: 'Định mức', w: 96, align: 'right' }, { id: 'iss', label: 'Thực cấp', w: 96, align: 'right' },
     { id: 'diff', label: 'Lệch', w: 86, align: 'right' }, { id: 'pct', label: 'Lệch %', w: 64, align: 'right' },
-    ...groups.flatMap(g => [
-      ...g.batches.map(b => ({ id: `b_${b.id}`, label: `Mẻ ${b.batch_no ?? ''}`, w: 96, align: 'right' as const,
-        head: <span className="block leading-tight text-right" title={`${b.batch_code} · ${g.shift} · ${stageLabel(b.stage, b.step)}`}>
-          <span className="flex items-center justify-end gap-1"><StageSymbol stage={b.stage} step={b.step} className="h-3 w-3" />{g.shift} · Mẻ {b.batch_no ?? '—'}</span>
-          <span className="block font-mono text-slate-400">{b.material_code}</span>
-        </span> })),
-      ...(groups.length > 1 ? [{ id: `s_${g.shift}`, label: `Tổng ${g.shift}`, w: 100, align: 'right' as const,
-        head: <span className="block leading-tight text-right font-semibold text-slate-600">Tổng {g.shift}<span className="block font-normal text-slate-400">{g.batches.length} mẻ</span></span> }] : []),
-    ]),
+    // mỗi CA một cột (thực cấp trên · định mức dưới) — bao nhiêu mẻ cũng không thêm cột; từng mẻ xem bằng ▸ ở dòng NVL
+    ...groups.map(g => ({ id: `s_${g.shift}`, label: g.shift, w: 104, align: 'right' as const,
+      head: <span className="block leading-tight text-right font-semibold text-slate-600" title={`Thực cấp (trên) / định mức (dưới) của ${g.batches.length} mẻ trong ${g.shift}`}>{g.shift}<span className="block font-normal text-slate-400">{g.batches.length} mẻ</span></span> })),
+    { id: 'dev', label: 'Mẻ lệch', w: 70, align: 'right',
+      head: <span title="Số mẻ cấp nguyên liệu này lệch khỏi mức cho phép của phiếu (vượt, hoặc thiếu ở mẻ đã nạp bồn) — bấm ▸ ở dòng để xem từng mẻ">Mẻ lệch</span> },
   ], [groups])
   const cellOf = (r: CycleRow, b: CycleBatch) => {
     const c = r.cells[b.id]
@@ -353,26 +362,57 @@ export function CycleReport({ tabBar }: { tabBar: ReactNode }) {
               </div>
             </div>
             <div className="hidden sm:block">
-              <ResizableTable storageKey={`production_cycle_nvl_v2_${groups.map(g => g.batches.length).join('-')}`} cols={nvlCols}>
+              <ResizableTable storageKey={`production_cycle_nvl_v3_${groups.length}`} cols={nvlCols}>
                 <TableBody>
                   {!rows.length && <TableEmptyRow colSpan={nvlCols.length}>Chu kỳ này chưa có NVL nào trên phiếu / chưa cấp.</TableEmptyRow>}
                   {rows.map(r => {
                     const s = rowSum(r, liveIds)
+                    const lines = rowBatchLines(r, groups)
+                    const dev = rowDeviations(lines)
+                    const open = openNvl.has(r.material_id)
                     return (
-                      <TableRow key={r.material_id} data-mat={r.material_code}>
-                        <TableCell className={`${TD} sticky left-0 z-10 bg-white truncate`} title={r.material_name ?? ''}><span className="font-mono font-semibold">{r.material_code}</span> {r.material_name ?? ''}</TableCell>
-                        <TableCell className={`${TD} font-mono text-slate-500`}>{matUnitCode(r)}</TableCell>
-                        <TableCell className={NUM}>{qtyNum(s.req, r)}</TableCell>
-                        <TableCell className={NUM}>{qtyNum(s.iss, r)}</TableCell>
-                        <TableCell className={`${NUM} ${diffTone(s.diff, s.devPct)}`}>{s.diff > 0 ? '+' : s.diff < 0 ? '−' : ''}{qtyNum(Math.abs(s.diff), r)}</TableCell>
-                        <TableCell className={`${NUM} border-r-2 !border-r-slate-300 ${diffTone(s.diff, s.devPct)}`}>{s.devPct != null ? devLabel(s.devPct) : dash}</TableCell>
-                        {groups.flatMap(g => [
-                          ...g.batches.map(b => (
-                            <TableCell key={b.id} className={`${NUM} cursor-pointer hover:bg-sky-50`} onClick={() => navigate(`/wms/production/${b.id}`)}>{cellOf(r, b)}</TableCell>
-                          )),
-                          ...(groups.length > 1 ? [<TableCell key={`s_${g.shift}`} className={`${NUM} bg-slate-50`}>{sumCell(r, g.batches.map(b => b.id))}</TableCell>] : []),
-                        ])}
-                      </TableRow>
+                      <Fragment key={r.material_id}>
+                        <TableRow data-mat={r.material_code} aria-expanded={open} onClick={() => toggleNvl(r.material_id)} className="cursor-pointer hover:bg-slate-50">
+                          <TableCell className={`${TD} sticky left-0 z-10 bg-white truncate`} title={`${r.material_name ?? ''} — bấm để ${open ? 'thu gọn' : 'xem từng mẻ'}`}>
+                            <span className="inline-flex items-center gap-1 max-w-full">
+                              {open ? <ChevronDown className="h-3.5 w-3.5 shrink-0 text-slate-500" /> : <ChevronRight className="h-3.5 w-3.5 shrink-0 text-slate-400" />}
+                              <span className="font-mono font-semibold">{r.material_code}</span><span className="truncate">{r.material_name ?? ''}</span>
+                            </span>
+                          </TableCell>
+                          <TableCell className={`${TD} font-mono text-slate-500`}>{matUnitCode(r)}</TableCell>
+                          <TableCell className={NUM}>{qtyNum(s.req, r)}</TableCell>
+                          <TableCell className={NUM}>{qtyNum(s.iss, r)}</TableCell>
+                          <TableCell className={`${NUM} ${diffTone(s.diff, s.devPct)}`}>{s.diff > 0 ? '+' : s.diff < 0 ? '−' : ''}{qtyNum(Math.abs(s.diff), r)}</TableCell>
+                          <TableCell className={`${NUM} border-r-2 !border-r-slate-300 ${diffTone(s.diff, s.devPct)}`}>{s.devPct != null ? devLabel(s.devPct) : dash}</TableCell>
+                          {groups.map(g => <TableCell key={`s_${g.shift}`} className={`${NUM} bg-slate-50/60`}>{sumCell(r, g.batches.map(b => b.id))}</TableCell>)}
+                          <TableCell className={`${NUM} ${dev ? 'text-red-600' : 'text-slate-300 font-normal'}`} title={dev ? `${dev} mẻ cấp lệch khỏi mức cho phép — bấm để xem` : 'Không mẻ nào lệch'}>{dev}</TableCell>
+                        </TableRow>
+                        {open && lines.map(l => {
+                          const res = reqLineState({ required: l.cell.req, consumed: l.cell.iss, tol_pct: l.cell.tol }, isFilled(l.batch))
+                          const diff = l.cell.req == null ? null : r3(l.cell.iss - Number(l.cell.req))
+                          const tone = l.state === 'over' || l.state === 'under' ? 'text-red-600' : l.state === 'ok' ? 'text-slate-900' : l.state === 'extra' ? 'text-slate-600' : 'text-amber-600'
+                          return (
+                            <TableRow key={`${r.material_id}_${l.batch.id}`} data-batch-line={l.batch.batch_code} onClick={() => navigate(`/wms/production/${l.batch.id}`)}
+                              className="cursor-pointer bg-slate-50/70 hover:bg-sky-50" title={`Mở mẻ ${l.batch.batch_code}`}>
+                              <TableCell colSpan={2} className={`${TD} sticky left-0 z-10 bg-slate-50 pl-7`}>
+                                <span className="inline-flex items-center gap-1.5">
+                                  <StageSymbol stage={l.batch.stage} step={l.batch.step} className="h-3 w-3" />
+                                  <span className="text-slate-600">{l.shift} · Mẻ {l.batch.batch_no ?? '—'}</span>
+                                  <span className="font-mono text-slate-500">{l.batch.batch_code}</span>
+                                </span>
+                              </TableCell>
+                              <TableCell className={`${NUM} font-normal text-slate-600`}>{l.cell.req == null ? <span className="text-slate-400">ngoài phiếu</span> : qtyNum(Number(l.cell.req), r)}{l.cell.tol != null && <span className="ml-1 text-[9px] text-slate-400">±{l.cell.tol}%</span>}</TableCell>
+                              <TableCell className={`${NUM} ${tone}`}>{qtyNum(l.cell.iss, r)}</TableCell>
+                              <TableCell className={`${NUM} ${tone}`}>{diff == null ? dash : `${diff > 0 ? '+' : diff < 0 ? '−' : ''}${qtyNum(Math.abs(diff), r)}`}</TableCell>
+                              <TableCell className={`${NUM} border-r-2 !border-r-slate-300 ${tone}`}>{res.devPct != null ? devLabel(res.devPct) : dash}</TableCell>
+                              <TableCell colSpan={groups.length + 1} className={`${TD} ${tone}`}>
+                                {l.state ? LINE_STATE_LABEL[l.state] : ''}{l.state === 'progress' && res.need > 0 ? ` · còn thiếu ${qtyNum(res.need, r)} ${matUnitCode(r)}` : ''}
+                                <span className="ml-2 text-sky-700">Mở mẻ ›</span>
+                              </TableCell>
+                            </TableRow>
+                          )
+                        })}
+                      </Fragment>
                     )
                   })}
                 </TableBody>

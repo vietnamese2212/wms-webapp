@@ -1,7 +1,7 @@
 // Báo cáo NVL theo chu kỳ (MES 18/11 f) — phép gom của màn hình + Excel: chia ca theo thời gian, cộng dòng NVL trên nhóm mẻ, đếm trạng thái
 // dòng bằng cùng luật phiếu của mẻ (reqLineState). Ba nơi vẽ (bảng · dải số · Excel) đọc cùng các hàm này.
 import { describe, it, expect } from 'vitest'
-import { shiftGroups, rowSum, lineStats, cellState, minutesBetween, durLabel, sumByUnit, shiftKpis, NO_SHIFT } from '../../../frontend/src/utils/cycleReport'
+import { shiftGroups, rowSum, lineStats, cellState, minutesBetween, durLabel, sumByUnit, shiftKpis, NO_SHIFT, rowBatchLines, rowDeviations, LINE_STATE_LABEL } from '../../../frontend/src/utils/cycleReport'
 
 const B = (id: string, shift: string | null, at: string, extra: Partial<{ stage: string; status: string; filled_at: string | null; filled_qty: number; planned_qty: number; base_unit: string; batch_no: number }> = {}) => ({
   id, shift, created_at: at, batch_no: extra.batch_no ?? null, status: extra.status ?? 'OPEN', stage: extra.stage ?? 'working',
@@ -53,6 +53,25 @@ describe('cellState / lineStats — cùng luật phiếu của mẻ', () => {
   })
   it('đếm: đủ 1 · thiếu 1 · vượt 1 · ngoài phiếu 1', () => {
     expect(lineStats(rows, [{ id: 'm1', stage: 'filled' }, { id: 'm2', stage: 'working' }])).toEqual({ lines: 4, ok: 1, short: 1, over: 1, extra: 1 })
+  })
+})
+
+describe('rowBatchLines / rowDeviations — NVL × CA, ▸ mở từng mẻ (20/11: "36 mẻ thì số cột nhiều lắm")', () => {
+  const g = shiftGroups([
+    B('m1', 'Ca 1', '2026-11-18T01:00:00Z', { stage: 'filled', batch_no: 1 }), B('m2', 'Ca 1', '2026-11-18T02:00:00Z', { stage: 'filled', batch_no: 2 }),
+    B('m3', 'Ca 2', '2026-11-18T09:00:00Z', { stage: 'working', batch_no: 3 }), B('m4', 'Ca 2', '2026-11-18T10:00:00Z', { stage: 'filled', batch_no: 4 }),
+  ])
+  const row = { cells: { m1: { req: 100, tol: 1, iss: 100, n: 1 }, m2: { req: 100, tol: 1, iss: 118, n: 1 }, m3: { req: 100, tol: 1, iss: 40, n: 1 }, m4: { req: 100, tol: 1, iss: 80, n: 1 } } }
+  it('chỉ mẻ có dùng mã, theo thứ tự ca → mẻ, kèm ca và trạng thái theo luật phiếu', () => {
+    const l = rowBatchLines(row, g)
+    expect(l.map(x => `${x.shift}:${x.batch.id}:${x.state}`)).toEqual(['Ca 1:m1:ok', 'Ca 1:m2:over', 'Ca 2:m3:progress', 'Ca 2:m4:under'])
+    expect(rowBatchLines({ cells: { m3: row.cells.m3 } }, g).map(x => x.batch.id)).toEqual(['m3'])
+  })
+  it('Mẻ lệch = vượt + thiếu ở mẻ đã nạp bồn (mẻ đang cấp dở KHÔNG tính)', () => {
+    expect(rowDeviations(rowBatchLines(row, g))).toBe(2)
+  })
+  it('mọi trạng thái đều có chữ cho Excel', () => {
+    for (const k of ['ok', 'over', 'under', 'progress', 'extra', 'none', 'removed'] as const) expect(LINE_STATE_LABEL[k]).toBeTruthy()
   })
 })
 

@@ -19,11 +19,13 @@ export function UploadExcelDialog({ title, hint, onClose, onDownloadTemplate, on
   title: string
   hint?: string
   onClose: () => void
-  onDownloadTemplate: () => void
+  /** trả Promise (vd file mẫu cần tải danh mục từ server) ⇒ nút khoá + quay trong lúc chờ, lỗi hiện băng đỏ */
+  onDownloadTemplate: () => void | Promise<void>
   onUpload: (file: File, preflight: boolean) => Promise<UploadResult & Partial<UploadPreflight>>
 }) {
   const fileRef = useRef<HTMLInputElement>(null)
   const [busy, setBusy] = useState(false)
+  const [tplBusy, setTplBusy] = useState(false)
   const [pending, setPending] = useState<{ file: File; report: UploadPreflight } | null>(null)
   const [result, setResult] = useState<UploadResult | null>(null)
   const [err, setErr] = useState<string | null>(null)
@@ -84,8 +86,13 @@ export function UploadExcelDialog({ title, hint, onClose, onDownloadTemplate, on
         ) : (
           <div className="space-y-3 py-1">
             <div className="flex items-center gap-2">
-              <Button size="sm" variant="outline" onClick={onDownloadTemplate} className="h-8 text-xs gap-1">
-                <Download className="h-3.5 w-3.5" />Tải mẫu
+              <Button size="sm" variant="outline" disabled={tplBusy} className="h-8 text-xs gap-1"
+                onClick={async () => {
+                  setTplBusy(true); setErr(null)
+                  try { await onDownloadTemplate() } catch (e) { setErr(`Không tạo được file mẫu: ${(e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message ?? (e as Error)?.message ?? 'lỗi'}`) }
+                  finally { setTplBusy(false) }
+                }}>
+                {tplBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}{tplBusy ? 'Đang tạo mẫu…' : 'Tải mẫu'}
               </Button>
               <Button size="sm" disabled={busy} onClick={() => fileRef.current?.click()} className="h-8 text-xs gap-1">
                 {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}

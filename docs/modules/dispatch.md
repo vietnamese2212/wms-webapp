@@ -322,8 +322,8 @@ kế hoạch chờ: kéo vào xe chờ / sửa xe 409 `TRIP_NOT_EDITABLE`, lập
   (`returned_to_wait` 2) · **liên thông sau Xác nhận**: đổi ĐVVT một dòng ở Kế hoạch xuất ⇒ bàn vẫn in ĐVVT lúc xác nhận (hai sổ, user biết);
   xoá hết dòng một Số xe ở Kế hoạch xuất ⇒ `/sync` tự chữa xe về NHÁP, kế hoạch TENDERED; chuyến Xuất kho ĐANG XUẤT (giả lập trạng thái) ⇒
   Mở lại trả `blocked` nêu lý do, xe giữ CONFIRMED · kế hoạch ngày ĐÃ QUA (12/10) lập + Xác nhận được, không cảnh báo (quan sát, user quyết) ·
-  Xuất Excel (gs): 15 dòng = Σ OD, 17 cột, ĐVVT · Dòng xe · Pallet · Cước khớp bàn — **bẫy bộ kiểm**: app ưu tiên `showSaveFilePicker`, headless
-  phải tắt API đó mới có download · 390 px: Xem đơn tick ⇒ nút "Tạo kế hoạch 15/10 (N đơn)" nằm trên bảng, Tạo ⇒ sang bàn, không tràn, 0 lỗi.
+  Xuất Excel (gs): 15 dòng = Σ OD, 17 cột, ĐVVT · Dòng xe · Pallet · Cước khớp bàn — (từ 20/11 mọi nút Excel tải thường — bộ kiểm
+  bắt sự kiện download là đủ, không cần tắt `showSaveFilePicker` như trước) · 390 px: Xem đơn tick ⇒ nút "Tạo kế hoạch 15/10 (N đơn)" nằm trên bảng, Tạo ⇒ sang bàn, không tràn, 0 lỗi.
 
 ## 13/10 tối — ĐẠI PHẪU Kế hoạch xuất: bàn ghép xe là CỬA GHI DUY NHẤT cho kho dùng bàn (user chốt)
 

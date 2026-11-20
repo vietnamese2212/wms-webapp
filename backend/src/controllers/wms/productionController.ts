@@ -31,7 +31,7 @@ import { vnDayOf, utcMs } from '../../utils/dates'
 import { parseSheetByHeader, expandMergedCells, readWorkbookSafe, BAD_EXCEL_MSG } from '../../utils/excelHeader'
 import { isPreflight, buildPreflight } from '../../utils/uploadPreflight'
 import {
-  RECIPE_IMPORT_FIELDS, RECIPE_IMPORT_MAX_ROWS, RECIPE_IMPORT_MAX_RECIPES, codeKey, planRecipeImport, type ImpMaterial, type ImpExisting,
+  RECIPE_IMPORT_FIELDS, RECIPE_IMPORT_MAX_ROWS, RECIPE_IMPORT_MAX_RECIPES, codeKey, planRecipeImport, btpImportError, type ImpMaterial, type ImpExisting,
 } from '../../utils/recipeImport'
 
 const nowIso = () => new Date().toISOString()
@@ -673,6 +673,22 @@ export async function putRecipe(req: Request, res: Response) {
     const { data: cur } = await db.from('production_recipe').select('id, material_id').eq('id', req.params.id).maybeSingle()
     if (!cur) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy công thức')
     return await saveRecipe(req, res, cur.material_id, cur.id)
+  } catch (e) { return failAny(res, e) }
+}
+
+// GET /wms/production/recipes/import-catalog — DANH SÁCH MÃ cho file mẫu "Nạp định mức" (20/11, user: "validate file excel tải về ở
+// Định mức, đảm bảo mã hàng"). Mã BTP = mã qua CHÍNH hàm kiểm của lần nạp (btpImportError, gồm cắt loại hàng được giao);
+// Mã NVL = mọi mã trong Mã hàng (lần nạp nhận mọi mã có trong danh mục, mã ngừng dùng chỉ cảnh báo). Cùng quyền với nút Nạp Excel.
+// ~2.800 mã × 4 trường ≈ 200 KB, chỉ gọi khi bấm Tải mẫu.
+export async function recipeImportCatalog(req: Request, res: Response) {
+  try {
+    const mats = await fetchAllRowsParallel(() => db.from('Material')
+      .select('id, material_code, short_name, base_unit, category, is_semi_finished, is_active').order('material_code')) as ImpMaterial[]
+    const row = (m: ImpMaterial) => ({ code: m.material_code, name: m.short_name ?? null, unit: m.base_unit ?? null, active: m.is_active !== false })
+    return ok(res, {
+      btp: mats.filter(m => btpImportError(m, cat => categoryAllowed(req, cat)) == null).map(row),
+      nvl: mats.map(row),
+    })
   } catch (e) { return failAny(res, e) }
 }
 

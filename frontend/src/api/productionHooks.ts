@@ -2,6 +2,7 @@
 // Tách file riêng khỏi hooks.ts (cùng apiClient). Realtime: realtimeEvents map production_batch / batch_consumption /
 // production_tank / tank_lot / tank_movement → các key 'prod-*' dưới đây.
 import { useMemo } from 'react'
+import type { RecipeImportCatalog } from '@/components/wms/production/recipeTemplate'
 import { useMutation, useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import { apiClient } from './client'
 import { useWarehouses, useImportShifts, useMaterials, excelUploadBody, type UploadResult, type UploadPreflight } from './hooks'
@@ -438,6 +439,11 @@ export const useSaveRecipe = () => useProdMutation(({ id, material_id, ...b }: R
     ? await apiClient.put(`/wms/production/recipes/${id}`, b)
     : await apiClient.post('/wms/production/recipes', { material_id, ...b })).data.data as { id: string; lines: number; is_default: boolean })())
 /** Nạp định mức từ Excel (19/11): preflight = chỉ kiểm, không ghi (khỏi nạp lại danh sách); lần ghi thật làm mới Định mức */
+/** Danh sách mã cho file mẫu Nạp định mức (20/11) — gọi khi bấm Tải mẫu, không cache. */
+export async function fetchRecipeImportCatalog(): Promise<RecipeImportCatalog> {
+  return (await apiClient.get('/wms/production/recipes/import-catalog', { timeout: 60000 })).data.data as RecipeImportCatalog
+}
+
 export function useImportRecipes() {
   const qc = useQueryClient()
   return useMutation({

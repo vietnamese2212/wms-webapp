@@ -426,6 +426,7 @@ router.get('/production/cycles/report',            P('view'),         validate({
 router.get('/production/consumption-raw',          P('view'),         validate({ query: production.zRawQuery }), production.consumptionRaw)
 router.get('/production/consumption-raw/export',   P('export'),       validate({ query: production.zRawExportQuery }), production.consumptionRawExport)
 router.get('/production/recipes',                  P('view'),       validate({ query: production.zRecipeListQuery }), production.listRecipes)
+router.get('/production/recipes/import-catalog',  P('manage_recipe'), production.recipeImportCatalog)   // trước /:id
 router.get('/production/recipes/:id',              P('view'),       production.getRecipe)
 // nạp định mức từ Excel (19/11) — kiểm trước ?preflight=1 rồi ghi; file lớn đi qua vé Storage như mọi cửa Excel
 router.post('/production/recipes/import',          P('manage_recipe'), validate({ query: production.zRecipeImportQuery }), upload.single('file'), excelFromStorage, production.importRecipes)

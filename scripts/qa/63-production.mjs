@@ -694,6 +694,13 @@ try {
     bpf.s === 200 && bpf.j?.data?.will_write === 0 && /Dòng 3 — ĐVT "KG" khác đơn vị gốc EA/.test(errTxt) && /Dòng 4 — không có mã NVL "QA63KHONGCO"/.test(errTxt)
       && bwr.s === 200 && bwr.j?.data?.inserted === 0 && leaked === 0 && noQty.s === 400 && /Số lượng/.test(noQty.j?.error?.message ?? ''),
     `http=${bpf.s}/${bwr.s}/${noQty.s} errs=${errTxt.slice(0, 240)} leaked=${leaked} ${noQty.j?.error?.message ?? ''}`)
+  // [10s2] DANH SÁCH MÃ cho file mẫu Nạp định mức (20/11): Mã BTP qua cùng hàm kiểm của lần nạp, Mã NVL = mọi mã của Mã hàng
+  const catR = await api('/wms/production/recipes/import-catalog')
+  const catB = (catR.j?.data?.btp ?? []).map(m => m.code), catN = (catR.j?.data?.nvl ?? []).map(m => m.code)
+  check('10s2. File mẫu Nạp định mức — danh sách mã: Mã BTP có QA63BTP2, KHÔNG có mã NVL QA63RM1; Mã NVL có QA63RM1 + QA63EA1, mỗi dòng đủ tên + ĐVT',
+    catR.s === 200 && catB.includes('QA63BTP2') && !catB.includes('QA63RM1') && catN.includes('QA63RM1') && catN.includes('QA63EA1')
+      && (catR.j?.data?.nvl ?? []).find(m => m.code === 'QA63EA1')?.unit === 'EA',
+    `http=${catR.s} btp=${catB.length} (QA63: ${catB.filter(c => c.startsWith('QA63')).join(',')}) nvl=${catN.length}`)
   // sửa mẻ ⇒ bàn tính lại yêu cầu (C114, 16/11)
   const upPlan = await api(`/wms/production/batches/${BW.id}`, 'PATCH', { planned_qty: 600 })
   const board4 = (await api(`/wms/production/batches/${BW.id}`)).j?.data?.board ?? []
@@ -1154,7 +1161,8 @@ try {
     const sLayOk = tkOpen ? await putLay(tkOpen, [{ id: T1.id, x: 20, y: 40 }]) : 0
     const sImpView = tkView ? (await uploadXlsx('/wms/production/recipes/import', [RIMP_HEAD, ['QA63BTP2', '', 'QA63 vai', '100', 'QA63RM1', '1', '', '', '']], { preflight: true, token: tkView })).s : 0
     const sImpOpen = tkOpen ? (await uploadXlsx('/wms/production/recipes/import', [RIMP_HEAD, ['QA63BTP2', '', 'QA63 vai', '100', 'QA63RM1', '1', '', '', '']], { preflight: true, token: tkOpen })).s : 0
-    check('14e. Nạp định mức từ Excel cần quyền "Khai định mức" (manage_recipe): chức danh chỉ xem 403 · chức danh mở mẻ 403', sImpView === 403 && sImpOpen === 403, `view=${sImpView} open=${sImpOpen}`)
+    const sCatView = tkView ? await st(tkView, '/wms/production/recipes/import-catalog') : 0
+    check('14e. Nạp định mức từ Excel cần quyền "Khai định mức" (manage_recipe): chức danh chỉ xem 403 · chức danh mở mẻ 403 · danh sách mã của file mẫu 403', sImpView === 403 && sImpOpen === 403 && sCatView === 403, `view=${sImpView} open=${sImpOpen} catalog=${sCatView}`)
     check('14d. Dữ liệu thô: chức danh chỉ xem đọc kho mình 200 · xuất file 403 (cần quyền export) · kho ngoài phạm vi 403; sơ đồ 2D: không có "Quản lý bồn" 403 · bồn kho ngoài phạm vi 403 · bồn kho mình 200',
       sRawView === 200 && sRawExp === 403 && sRawScope === 403 && sLayView === 403 && sLayScope === 403 && sLayOk === 200,
       `raw=${sRawView}/${sRawExp}/${sRawScope} layout=${sLayView}/${sLayScope}/${sLayOk}`)

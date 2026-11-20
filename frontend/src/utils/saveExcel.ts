@@ -1,45 +1,20 @@
-// Lưu workbook Excel — CHO CHỌN VỊ TRÍ (browse) thay vì tự tải về Downloads.
-// User chốt 22/07: mọi nút tải Excel phải mở hộp thoại chọn thư mục + NHỚ thư mục lần trước
-// (để tải cố định 1 chỗ làm source cho Power Query).
+// Lưu workbook Excel — MỘT cửa cho mọi nút "Xuất Excel" / "Tải mẫu" của app.
 //
-// File System Access API (Chrome/Edge, secure context): showSaveFilePicker.
-// - `id` cố định → trình duyệt TỰ NHỚ thư mục lần trước cho id đó (qua các phiên, không cần IndexedDB).
-// - Người dùng bấm Huỷ HỘP CHỌN → không làm gì (không báo lỗi).
-// Firefox/Safari / không hỗ trợ / non-secure → FALLBACK tải thẳng về Downloads (hành vi cũ).
+// 20/11/2026 user chốt "Luôn tải thường": tải bằng cách tải xuống bình thường của trình duyệt (như mọi trang web).
+// Chọn chỗ lưu + nhớ thư mục là việc của trình duyệt: Chrome / Edge bật "Hỏi vị trí lưu từng tệp trước khi tải
+// xuống" thì hiện hộp Save As và nhớ thư mục lần trước; không bật thì file vào thư mục Tải xuống.
+// Thay cho luật 22/07 (hộp chọn riêng của app qua File System Access API — `showSaveFilePicker`): hộp đó hỏng
+// trên máy user ở cả Chrome lẫn Edge (trả "huỷ" sau 1 giây dù chưa bấm gì, lưu nhầm thư mục) — C124 lặp 3 lần
+// 19–20/11, còn cách tải thường chạy đúng ở cùng máy. Đừng đưa hộp chọn riêng trở lại.
 //
-// 19/11 (C124 — user: "chọn thư mục khác, save xong chẳng thấy kết quả, không báo gì cả"): bản cũ coi MỌI
-// `AbortError` là "người dùng huỷ" — nhưng Chrome cũng trả AbortError khi chính BƯỚC GHI bị huỷ (Chrome / Windows
-// chặn ghi vào thư mục đó) ⇒ file không được ghi mà màn hình im lặng. Nay tách hai giai đoạn: lỗi ở HỘP CHỌN
-// (huỷ = im; không mở được = tải thẳng) và lỗi ở BƯỚC GHI (luôn báo + tải thẳng về Tải xuống + ghi error_logs).
-// Lưu được thì báo "Đã lưu …" — lưu qua hộp chọn không hiện thanh tải xuống của trình duyệt nên trước đây không có gì xác nhận.
-//
-// 20/11 (C124 LẶP — user: "download Mẫu về mà không được, chọn đổi thử qua Desktop ⇒ không tải được"): Chrome còn trả
-// AbortError NGAY Ở HỘP CHỌN khi người dùng đã chọn chỗ và bấm Save nhưng Chrome không tạo được file ở đó (vd Desktop
-// trong OneDrive — Chrome không ghi nhận lần chọn, thư mục vẫn ghi được bằng chương trình khác). Bản 19/11 vẫn coi mọi
-// AbortError ở hộp chọn là "bấm Huỷ" ⇒ im lặng. Nay chỉ coi là Huỷ khi đúng câu "The user aborted a request." (câu
-// Chrome / Edge dùng khi bấm Huỷ, đo 20/11); AbortError khác = lỗi: báo + tải về Tải xuống + ghi error_logs kèm câu gốc.
-//
-// 20/11 chiều (C124 LẶP lần 2 — user vẫn "không tải được", 0 dòng error_logs): thử thật trên máy user bằng Chrome 157
-// + hộp lưu Windows thật (bấm Desktop ở cột trái → Save, giữ tên gợi ý) thì lưu ĐÚNG vào OneDrive\Desktop ⇒ lỗi chỉ ở
-// phiên Chrome của user, và Chrome ở đó trả đúng câu "user aborted" như khi bấm Huỷ (nên không có lỗi nào được ghi).
-// App KHÔNG phân biệt được "bấm Huỷ" với "Chrome tự huỷ sau khi bấm Save" ⇒ không còn im lặng ở nhánh Huỷ: báo
-// "Chưa lưu file" + nút "Tải về" (tải thẳng về Tải xuống) + ghi error_logs `saveExcel picker cancel <n>s` để đọc nguyên nhân.
+// File mẫu có cột mã danh mục (vd Mã BTP / Mã NVL của Định mức) truyền `validations` ⇒ Excel chỉ cho nhập mã
+// có trong danh sách (Data Validation kiểu list) — SheetJS bản cộng đồng không ghi được phần này nên vá thẳng XML.
 import * as XLSX from 'xlsx'
-import { createElement } from 'react'
 import { toast } from '@/components/ui/use-toast'
-import { ToastAction } from '@/components/ui/toast'
 import { reportClientError } from '@/lib/clientErrorReport'
+import { addListValidations, type ListValidation } from '@/utils/xlsxValidation'
 
-const PICKER_ID = 'wmsExcelExport'
 const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-
-type Writable = { write: (data: Blob | BufferSource) => Promise<void>; close: () => Promise<void> }
-type SaveFilePicker = (opts: {
-  suggestedName?: string
-  id?: string
-  startIn?: string
-  types?: { description?: string; accept: Record<string, string[]> }[]
-}) => Promise<{ name?: string; createWritable: () => Promise<Writable> }>
 
 function ensureXlsx(name: string) {
   return name.toLowerCase().endsWith('.xlsx') ? name : `${name}.xlsx`
@@ -48,83 +23,31 @@ const errText = (e: unknown) => {
   const d = e as { name?: string; message?: string } | null
   return `${d?.name ?? 'Error'}: ${d?.message ?? String(e)}`
 }
-/** Tải thẳng về thư mục Tải xuống của trình duyệt. Trả false nếu cả cách này cũng không chạy. */
-function downloadDirect(wb: XLSX.WorkBook, name: string): boolean {
-  try { XLSX.writeFile(wb, name); return true } catch (e) { reportClientError(`saveExcel download ${errText(e)}`); return false }
+
+function downloadBytes(bytes: Uint8Array<ArrayBuffer>, name: string) {
+  const url = URL.createObjectURL(new Blob([bytes], { type: XLSX_MIME }))
+  const a = document.createElement('a')
+  a.href = url; a.download = name
+  document.body.appendChild(a); a.click(); a.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 60_000)
 }
 
-/** Người dùng bấm Huỷ hộp chọn: Chrome / Edge trả AbortError với câu "… The user aborted a request.".
- *  AbortError với câu khác (vd "Failed to create or truncate file") là Chrome KHÔNG lưu được vào chỗ đã chọn. */
-export function isUserCancel(e: unknown): boolean {
-  const d = e as { name?: string; message?: string } | null
-  return d?.name === 'AbortError' && /user aborted/i.test(d?.message ?? '')
-}
+export type SaveResult = 'downloaded' | 'failed'
 
-/** Kết quả lưu — để test và (nếu cần) màn hình gọi tự xử lý tiếp. */
-export type SaveResult = 'saved' | 'cancelled' | 'downloaded' | 'failed'
-
-/** Lưu workbook: mở hộp thoại chọn vị trí (nhớ thư mục trước); fallback tải thẳng nếu trình duyệt không hỗ trợ. */
-export async function saveWorkbook(wb: XLSX.WorkBook, filename: string): Promise<SaveResult> {
+/** Tải workbook về máy (cách tải thường của trình duyệt). `validations` = danh sách mã hợp lệ cho cột mã của file mẫu. */
+export async function saveWorkbook(wb: XLSX.WorkBook, filename: string, opts?: { validations?: ListValidation[] }): Promise<SaveResult> {
   const name = ensureXlsx(filename)
-  const picker = (window as unknown as { showSaveFilePicker?: SaveFilePicker }).showSaveFilePicker
-  if (typeof picker !== 'function') return downloadDirect(wb, name) ? 'downloaded' : 'failed'
-
-  // Giai đoạn 1 — HỘP CHỌN: huỷ = báo "Chưa lưu file" + nút Tải về; không mở được (môi trường / quyền) = tải thẳng.
-  let handle: Awaited<ReturnType<SaveFilePicker>>
-  const openedAt = Date.now()
   try {
-    handle = await picker({
-      suggestedName: name,
-      id: PICKER_ID,             // Chrome/Edge nhớ thư mục lần trước theo id này
-      startIn: 'documents',      // gợi ý lần đầu (khi chưa có thư mục nhớ)
-      types: [{ description: 'Excel', accept: { [XLSX_MIME]: ['.xlsx'] } }],
-    })
-  } catch (e) {
-    if (isUserCancel(e)) {
-      // Bấm Huỷ — HOẶC Chrome tự huỷ sau khi đã bấm Save (cùng một câu lỗi). Không im lặng: cho lối lấy file ngay.
-      reportClientError(`saveExcel picker cancel ${Math.round((Date.now() - openedAt) / 1000)}s`)
-      toast({
-        title: 'Chưa lưu file',
-        description: 'Chrome báo hộp lưu đã bị huỷ. Bấm Tải về để lấy file vào thư mục Tải xuống.',
-        duration: 15000,
-        action: createElement(ToastAction, { altText: 'Tải về thư mục Tải xuống', onClick: () => { downloadDirect(wb, name) } }, 'Tải về'),
-      })
-      return 'cancelled'
+    if (opts?.validations?.length) {
+      const raw = XLSX.write(wb, { bookType: 'xlsx', type: 'array' }) as ArrayBuffer
+      downloadBytes(addListValidations(new Uint8Array(raw), opts.validations), name)
+    } else {
+      XLSX.writeFile(wb, name)
     }
-    reportClientError(`saveExcel picker ${errText(e)}`)
-    const ok = downloadDirect(wb, name)
-    // Hộp chọn ĐÃ hiện và người dùng đã chọn chỗ (AbortError không phải Huỷ) ⇒ phải nói rõ file không nằm ở chỗ đã chọn.
-    // Lỗi khác (vd SecurityError — hộp chọn không mở được) thì người dùng chưa thấy hộp chọn: tải thẳng như trình duyệt cũ.
-    if ((e as { name?: string } | null)?.name === 'AbortError') {
-      toast({
-        variant: 'destructive',
-        title: 'Không lưu được vào thư mục đã chọn',
-        description: (ok ? `Đã tải ${name} về thư mục Tải xuống thay thế. ` : '')
-          + 'Muốn lưu chỗ khác: bấm tải lại và chọn thư mục khác (vd Documents).'
-          + ` (${(e as { message?: string }).message?.replace(/^Failed to execute '\w+' on '\w+': /, '').slice(0, 80) ?? 'lỗi'})`,
-      })
-    }
-    return ok ? 'downloaded' : 'failed'
-  }
-
-  // Giai đoạn 2 — GHI vào file đã chọn: lỗi ở đây KHÔNG BAO GIỜ im lặng (kể cả AbortError).
-  try {
-    const buf = XLSX.write(wb, { bookType: 'xlsx', type: 'array' }) as ArrayBuffer
-    const writable = await handle.createWritable()
-    await writable.write(new Blob([buf], { type: XLSX_MIME }))
-    await writable.close()
-    toast({ title: `Đã lưu ${handle.name ?? name}`, description: 'Vào thư mục bạn vừa chọn.' })
-    return 'saved'
+    return 'downloaded'
   } catch (e) {
-    reportClientError(`saveExcel write ${errText(e)}`)
-    const ok = downloadDirect(wb, name)
-    toast({
-      variant: 'destructive',
-      title: 'Không ghi được vào thư mục đã chọn',
-      description: (ok ? `Đã tải ${name} về thư mục Tải xuống thay thế. ` : '')
-        + 'File cùng tên đang mở trong Excel thì đóng lại; thư mục bị chặn ghi thì chọn thư mục khác rồi bấm tải lại.'
-        + ` (${(e as { name?: string })?.name ?? 'lỗi'})`,
-    })
-    return ok ? 'downloaded' : 'failed'
+    reportClientError(`saveExcel download ${errText(e)}`)
+    toast({ variant: 'destructive', title: 'Không tải được file Excel', description: `${name} — thử lại; vẫn lỗi thì báo quản trị (${(e as { name?: string })?.name ?? 'lỗi'})` })
+    return 'failed'
   }
 }

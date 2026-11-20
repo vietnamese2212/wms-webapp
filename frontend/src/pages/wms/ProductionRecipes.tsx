@@ -5,7 +5,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { AxiosError } from 'axios'
 import { Plus, Copy, FileUp } from 'lucide-react'
-import * as XLSX from 'xlsx'
 import { TableBody, TableCell, TableRow } from '@/components/ui/table'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -26,7 +25,8 @@ import { MatLinesEditor, toMatLine, matLineError, recipeLinesPayload, type MatLi
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { useMaterialsByIds } from '@/api/hooks'
-import { useRecipes, useRecipe, useSaveRecipe, useImportRecipes, useSemiFinishedSearch, SEMI_FINISHED_PLACEHOLDER, type RecipeRow } from '@/api/productionHooks'
+import { useRecipes, useRecipe, useSaveRecipe, useImportRecipes, fetchRecipeImportCatalog, useSemiFinishedSearch, SEMI_FINISHED_PLACEHOLDER, type RecipeRow } from '@/api/productionHooks'
+import { buildRecipeTemplate } from '@/components/wms/production/recipeTemplate'
 import { NoSemiFinishedHint } from '@/components/wms/production/NoSemiFinishedHint'
 import { unitCode } from '@/utils/unitCode'
 import { parseVnNumber, vnNumberInput } from '@/utils/vnNumber'
@@ -41,42 +41,11 @@ const COLS: RtColDef[] = [
 ]
 const nf = (n: number) => Number(n).toLocaleString('vi-VN', { maximumFractionDigits: 3 })
 
-// ─── NẠP ĐỊNH MỨC TỪ EXCEL (19/11) — server đọc SHEET ĐẦU theo TÊN cột (backend utils/recipeImport.ts RECIPE_IMPORT_FIELDS) ───
-// Sheet 1 chỉ có dòng tiêu đề (dấu * = bắt buộc, khớp luật kiểm của server); ví dụ nằm ở sheet "Hướng dẫn" ⇒ quên xoá ví dụ
-// cũng không nạp nhầm. Cột "Tên BTP" / "Tên nguyên liệu" chỉ để người đọc — server bỏ qua.
-const IMPORT_HEAD = ['Mã BTP *', 'Tên BTP', 'Tên công thức *', 'Cỡ mẻ chuẩn *', 'Mã NVL *', 'Tên nguyên liệu', 'Số lượng *', 'ĐVT', 'Mức lệch ± %', 'Mặc định', 'Ghi chú']
+// ─── NẠP ĐỊNH MỨC TỪ EXCEL (19/11) — file mẫu dựng ở components/wms/production/recipeTemplate.ts (20/11: có danh sách mã hợp lệ) ───
 const IMPORT_HINT = 'Mỗi dòng = một nguyên liệu. Các dòng cùng Mã BTP + Tên công thức gộp thành một công thức. Công thức đã có (cùng mã + tên) sẽ được THAY TRỌN danh sách nguyên liệu; chưa có thì thêm mới. Số lượng theo đơn vị gốc của mã NVL. File còn một lỗi thì không ghi gì.'
-function downloadImportTemplate() {
-  const wb = XLSX.utils.book_new()
-  const ws = XLSX.utils.aoa_to_sheet([IMPORT_HEAD])
-  ws['!cols'] = [14, 26, 20, 12, 14, 30, 10, 7, 11, 9, 24].map(wch => ({ wch }))
-  XLSX.utils.book_append_sheet(wb, ws, 'Định mức')
-  const guide = XLSX.utils.aoa_to_sheet([
-    ['NẠP ĐỊNH MỨC TỪ EXCEL — app chỉ đọc sheet ĐẦU TIÊN ("Định mức"), theo TÊN cột (đổi thứ tự cột được)'],
-    [],
-    ['Cột', 'Bắt buộc', 'Ghi chú'],
-    ['Mã BTP', 'Có', 'Mã hàng đã đánh dấu "Bán thành phẩm" ở Mã hàng, đơn vị gốc L hoặc KG'],
-    ['Tên công thức', 'Có', 'Một mã có thể có nhiều công thức. Cùng mã + cùng tên (không phân biệt hoa thường) = một công thức'],
-    ['Cỡ mẻ chuẩn', 'Có', 'Theo đơn vị gốc của mã BTP. Ghi ở dòng đầu của công thức là đủ; các dòng có ghi phải bằng nhau'],
-    ['Mã NVL', 'Có', 'Mã nguyên liệu trong danh mục Mã hàng; một mã chỉ xuất hiện một lần trong một công thức'],
-    ['Số lượng', 'Có', 'Lượng cho MỘT mẻ cỡ chuẩn, theo đơn vị gốc của mã NVL (viết 1.234,5 hoặc 1234.5 đều được)'],
-    ['ĐVT', '', 'Để kiểm: ghi thì phải đúng đơn vị gốc của mã NVL (KG, L, BAG…), sai là báo lỗi'],
-    ['Mức lệch ± %', '', 'Từ 0 tới 100. Cấp ngoài mức này thì dòng tô đỏ trên phiếu của mẻ. Để trống = không kiểm'],
-    ['Mặc định', '', 'Ghi "Có" để đặt làm công thức mặc định của mã (mỗi mã tối đa một). Để trống = giữ như cũ'],
-    ['Ghi chú', '', 'Ghi chú của công thức. Để trống = giữ ghi chú cũ'],
-    [],
-    ['Công thức đã có (cùng Mã BTP + Tên công thức) ⇒ thay TRỌN danh sách nguyên liệu bằng các dòng trong file. Chưa có ⇒ thêm mới.'],
-    ['File còn một lỗi thì KHÔNG ghi gì. Trước khi ghi, app hiện báo cáo kiểm để bạn xem và bấm Xác nhận.'],
-    [],
-    ['VÍ DỤ (chép sang sheet "Định mức" và thay bằng mã thật):'],
-    IMPORT_HEAD,
-    ['BTP-SUACHUA', 'Dịch sữa chua', 'Chuẩn', 6000, '210000101', 'Sữa bột gầy', 450, 'KG', 1, 'Có', ''],
-    ['BTP-SUACHUA', 'Dịch sữa chua', 'Chuẩn', '', '210000102', 'Đường tinh luyện', 520, 'KG', 1, '', ''],
-    ['BTP-SUACHUA', 'Dịch sữa chua', 'Mùa hè', 6000, '210000101', 'Sữa bột gầy', 430, 'KG', '', '', 'Giảm sữa bột'],
-  ])
-  guide['!cols'] = [{ wch: 16 }, { wch: 14 }, { wch: 90 }]
-  XLSX.utils.book_append_sheet(wb, guide, 'Hướng dẫn')
-  void saveWorkbook(wb, 'mau_dinh_muc.xlsx')
+async function downloadImportTemplate() {
+  const { wb, validations } = buildRecipeTemplate(await fetchRecipeImportCatalog())
+  await saveWorkbook(wb, 'mau_dinh_muc.xlsx', { validations })
 }
 
 export default function ProductionRecipes() {

@@ -66,7 +66,7 @@
 
 ## E. DOWNLOAD / EXPORT
 - Server đọc: `fetchAllRowsParallel` / `fetchAllByIdChunks` (chunk `.in` 300) — **KHÔNG** query trần (cap ~1000 cắt âm thầm), không `.limit(N>1000)`.
-- FE xuất: `sanitizeRows` + `saveWorkbook` (saveExcel lazy-load); số theo chuẩn VN; ngày date-only `YYYY-MM-DD`/`dd-mm-yyyy` nhất quán với parser upload (round-trip: file export phải upload lại được — vd export Tồn kho 2 cột Thùng+Hộp nguyên).
+- FE xuất: `sanitizeRows` + `saveWorkbook` — **tải thường của trình duyệt** (user chốt 20/11; KHÔNG dùng hộp chọn riêng `showSaveFilePicker`: hỏng trên máy user ở Chrome + Edge, C124). File MẪU có cột mã danh mục ⇒ gắn danh sách hợp lệ: `saveWorkbook(wb, tên, { validations })` (`utils/xlsxValidation.ts`), danh mục lấy từ server bằng CHÍNH hàm kiểm của lần nạp (mẫu: Định mức `recipeTemplate.ts` + `import-catalog`); số theo chuẩn VN; ngày date-only `YYYY-MM-DD`/`dd-mm-yyyy` nhất quán với parser upload (round-trip: file export phải upload lại được — vd export Tồn kho 2 cột Thùng+Hộp nguyên).
 - Export tôn trọng filter đang áp trên list; dữ liệu lớn → nút hiện trạng thái đang tải.
 
 ## Checklist

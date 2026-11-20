@@ -72,6 +72,16 @@ export function unitMatches(fileUnit: unknown, baseUnit: string | null): boolean
   return u === normSapText(baseUnit ?? '')
 }
 
+/** Mã này làm "Mã BTP" trong file nạp định mức được không — DÙNG CHUNG cho lần nạp (planRecipeImport) và danh sách mã của
+ *  file mẫu (GET /production/recipes/import-catalog, 20/11) ⇒ danh sách trong file mẫu không lệch luật kiểm lúc nạp.
+ *  Như form (saveRecipe): không xét "đang dùng" — công thức của mã đã ngừng vẫn sửa được. */
+export function btpImportError(btp: ImpMaterial, categoryOk: (category: string | null) => boolean): string | null {
+  const be = btpUseError({ ...btp, is_active: null })
+  if (be) return be.message
+  if (!categoryOk(btp.category)) return `mã ${btp.material_code} thuộc loại hàng bạn không được giao`
+  return null
+}
+
 export function planRecipeImport(
   rows: Record<string, unknown>[], rowNums: number[],
   ctx: { matByCode: Map<string, ImpMaterial>; existing: ImpExisting[]; categoryOk: (category: string | null) => boolean },
@@ -91,10 +101,8 @@ export function planRecipeImport(
     if (missing.length) { errors.push(`${at} — thiếu ${missing.join(', ')}`); return }
     const btp = ctx.matByCode.get(btpCode)
     if (!btp) { errors.push(`${at} — không có mã BTP "${btpCode}" trong danh mục Mã hàng`); return }
-    // như form (saveRecipe): không xét "đang dùng" — công thức của mã đã ngừng vẫn sửa được
-    const be = btpUseError({ ...btp, is_active: null })
-    if (be) { errors.push(`${at} — ${be.message}`); return }
-    if (!ctx.categoryOk(btp.category)) { errors.push(`${at} — mã ${btpCode} thuộc loại hàng bạn không được giao`); return }
+    const be = btpImportError(btp, ctx.categoryOk)
+    if (be) { errors.push(`${at} — ${be}`); return }
     if (name.length > 80) { errors.push(`${at} — Tên công thức tối đa 80 ký tự`); return }
     const key = `${btp.id}|${name.toLowerCase()}`
     let g = groups.get(key)

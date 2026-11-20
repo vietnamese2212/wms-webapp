@@ -33,7 +33,7 @@ Tồn kho. **SỔ PALLET (17/09, user hỏi "có giống sổ cái MB51 của SA
 
 **Hàng NCC (cờ "Hàng NCC" của Loại kho, vd RM01) — nhãn tem (17/11):** đoạn 3 = **Lot**, đoạn 4 = **NCC** (mã NCC trên tem) thay Chu kỳ · Máy — chi tiết pallet (pane + `PalletDetailDialog`), bộ lọc "Chu kỳ / Lot" (toàn hàng NCC ⇒ "Lot" và bỏ ô Máy), phiếu nhập (cột Lot · NCC), Lịch sử quét (cột + file Excel). Helper `temSegLabels` / `temCycleHeader` / `temSeg4` (`utils/cargoCategory.ts`); dữ liệu không đổi (cột `cycle` giữ Lot; hàng NCC không ghi `machine_code`).
 
-**Upload tồn (20/11):** pallet ĐÃ CÓ ⇒ ô NCC / HSD / QA trống GIỮ giá trị cũ (chỉ ghi "OK" ở cột QA mới nhả cờ giữ hàng); đổi vị trí theo file ghi vào sổ chuyển vị trí (`logPalletMoves`). File XUẤT chi tiết pallet của trang nạp lại được (alias "Tồn (thùng)/(hộp)", QA theo mã). Số kiểu VN "1.000" qua `utils/excelNumber`. Xuất chi tiết pallet đo 20/11: Ba Vì 9.220 pallet = 15 MB JSON, 7 giây, chạy được (nén gzip).
+**Upload tồn (20/11):** pallet ĐÃ CÓ ⇒ ô NCC / HSD / QA trống GIỮ giá trị cũ (ghi "OK" ở cột QA mới nhả cờ giữ hàng — và ĐỔI QA pallet đã có qua file cần thêm quyền `inventory.qa_update`, user chốt 20/11; pallet mới khai QA lúc tạo thì không cần); đổi vị trí theo file ghi vào sổ chuyển vị trí (`logPalletMoves`). File XUẤT chi tiết pallet của trang nạp lại được (alias "Tồn (thùng)/(hộp)", QA theo mã). Số kiểu VN "1.000" qua `utils/excelNumber`. Xuất chi tiết pallet đo 20/11: Ba Vì 9.220 pallet = 15 MB JSON, 7 giây, chạy được (nén gzip).
 
 ## Actions
 

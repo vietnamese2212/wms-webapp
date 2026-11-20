@@ -1205,7 +1205,7 @@ function parseExcelDate(val: unknown): string | null {
 
 function ExcelUploadDialog({ open, onClose, warehouses, warehouseTypes, vehicleTypes, transportCompanies }: {
   open: boolean; onClose: () => void
-  warehouses: { id: string; name: string }[]
+  warehouses: { id: string; name: string; code?: string | null }[]
   warehouseTypes: string[]
   vehicleTypes: TmsVehicleType[]
   transportCompanies: TransportCompany[]
@@ -1218,7 +1218,8 @@ function ExcelUploadDialog({ open, onClose, warehouses, warehouseTypes, vehicleT
   const [err, setErr] = useState('')
   const [rowFilter, setRowFilter] = useState<RowFilterVal>('all')
 
-  const whByName     = Object.fromEntries(warehouses.map(w => [w.name.toLowerCase().trim(), w.id]))
+  // Kho nhận TÊN lẫn MÃ (chuẩn upload: resolver danh mục nhận cả mã lẫn tên — 20/11 trước đó chỉ tên, ghi 20000016 bị từ chối)
+  const whByName     = Object.fromEntries(warehouses.flatMap(w => [[w.name.toLowerCase().trim(), w.id], ...(w.code ? [[String(w.code).toLowerCase().trim(), w.id]] : [])]))
   const validWhTypes = new Set(warehouseTypes.map(t => t.toLowerCase().trim()))
   const validVtNames = new Set(vehicleTypes.map(vt => vt.name.toLowerCase().trim()))
   // ĐVVT nhận MÃ · ALIAS · TÊN (chuẩn chung với upload KH xuất & KH nhập — 29/07 phát hiện chỗ này
@@ -1370,7 +1371,7 @@ function ExcelUploadDialog({ open, onClose, warehouses, warehouseTypes, vehicleT
       file: 'mau_ke_hoach_vc.xlsx', sheet: 'Import', title: 'NẠP KẾ HOẠCH VẬN CHUYỂN TỪ EXCEL',
       header: [['Mã đơn', 'NPP', 'Kho', 'Ngày', 'Hướng', 'Loại kho', 'Loại xe', 'ĐVVT', 'Thùng', 'Pallet', 'Tấn', 'GDO', 'Ghi chú', 'Ưu tiên']],
       notes: [
-        'Mã đơn dạng <mã kho>_X_ddmmyy_stt. Kho ghi đúng tên kho; Loại kho, Loại xe, ĐVVT phải có trong danh mục.',
+        'Mã đơn dạng <mã kho>_X_ddmmyy_stt. Kho ghi tên hoặc mã kho; Loại kho, Loại xe, ĐVVT phải có trong danh mục.',
         'File còn một dòng lỗi thì chưa nhập được — sửa file rồi chọn lại.',
       ],
       examples: [[`20000016_X_${ddmmyy}_1`, 'Tên NPP mẫu', warehouses[0]?.name ?? 'Kho Ba Vì', `${dd}/${mm}/${yyyy}`, 'Xuất', warehouseTypes[0] ?? '',
@@ -4848,7 +4849,7 @@ export default function TMSBookings() {
       <ExcelUploadDialog
         open={uploadOpen}
         onClose={() => setUploadOpen(false)}
-        warehouses={warehouses as { id: string; name: string }[]}
+        warehouses={warehouses as { id: string; name: string; code?: string | null }[]}
         warehouseTypes={whTypesMain.map(t => t.value)}
         vehicleTypes={vehicleTypesMain as TmsVehicleType[]}
         transportCompanies={transportCompaniesMain as TransportCompany[]}

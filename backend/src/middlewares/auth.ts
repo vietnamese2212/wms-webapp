@@ -37,11 +37,16 @@ export const JWT_SECRET = () => {
   return s
 }
 
+/** Kiểm MỘT quyền bên trong controller — cho cửa ghi chạm nhiều quyền (vd nạp tồn đổi cột QA cần thêm inventory.qa_update).
+ *  Cùng luật với requirePerm (superadmin qua hết). */
+export function hasPerm(req: Request, module: string, action: string): boolean {
+  if (isSuperadminReq(req)) return true
+  return !!req.user?.module_permissions?.[module]?.includes(action)
+}
+
 export function requirePerm(module: string, action: string) {
   return (req: Request, res: Response, next: NextFunction) => {
-    if (isSuperadminReq(req)) return next()
-    const perms = req.user?.module_permissions ?? {}
-    if (!perms[module]?.includes(action)) {
+    if (!hasPerm(req, module, action)) {
       return res.status(403).json({
         success: false,
         error: { code: 'FORBIDDEN', message: 'Bạn không có quyền thực hiện thao tác này' },

@@ -18,6 +18,7 @@ import { parseListParam, nonUuidEntries } from '../../utils/httpQuery'
 import { getOrgProfile } from '../../utils/settings'
 import { guardPutawayBatch, type IncomingInput } from '../../services/putawayContext'
 import { logPalletMoves } from '../../services/palletMoveLog'
+import { hasPerm } from '../../middlewares/auth'
 import { excelNumber } from '../../utils/excelNumber'
 import { resolveActorId } from '../../utils/actor'
 import { putawayEnforces } from '../../utils/putaway'
@@ -1792,6 +1793,9 @@ export async function uploadExcel(req: Request, res: Response) {
       ...qas.map(q => [String(q.name).trim().toLowerCase(), q.id] as [string, string]),
     ])
     const qaNames = qas.map(q => q.name).join(' / ')
+    // Pallet ĐÃ CÓ đổi QA qua file cần thêm inventory.qa_update; mã/tên 'OK' coi như không giữ (= NULL)
+    const canQa = hasPerm(req, 'inventory', 'qa_update')
+    const qaOkIds = new Set(qas.filter(q => String(q.code ?? q.name).trim().toLowerCase() === 'ok' || String(q.name).trim().toLowerCase() === 'ok').map(q => q.id))
 
     // NGƯỜI NHẬP (cột tùy chọn): `created_by` là FK → Employee.id, KHÔNG phải tên. File khai
     // mã nhân viên hoặc tên → resolve sang id; sai/trùng tên thì báo lỗi dòng (đừng ghi bừa → 23503).
@@ -1937,6 +1941,14 @@ export async function uploadExcel(req: Request, res: Response) {
       if (qaRaw && qaRaw.toLowerCase() !== 'ok') {
         qaId = qaMap.get(qaRaw.toLowerCase()) ?? null
         if (qaId == null) { errors.push(`${at} — QA không khớp: "${qaRaw}" (hợp lệ: ${qaNames})`); continue }
+      }
+      // Đổi QA của pallet ĐÃ CÓ qua file = cùng việc với nút Cập nhật QA ⇒ cần thêm quyền inventory.qa_update (user chốt 20/11).
+      // Trước đó chỉ cần inventory.import là ghi "OK" nhả được cờ giữ hàng. Pallet MỚI khai QA lúc tạo thì không phải đổi.
+      if (ex && qaRaw && !canQa) {
+        const okEff = (id: unknown) => (id && !qaOkIds.has(String(id)) ? String(id) : null)
+        if (okEff(qaId) !== okEff(ex.qa_status_id)) {
+          errors.push(`${at} — đổi QA pallet ${pallet} cần quyền "Cập nhật QA" (Tồn kho) — để trống cột QA để giữ nguyên`); continue
+        }
       }
       const nmsx = nmsxFromPallet(pallet!, (wh.nmsx_code && String(wh.nmsx_code).trim()) || null, nmsxAlias)
 

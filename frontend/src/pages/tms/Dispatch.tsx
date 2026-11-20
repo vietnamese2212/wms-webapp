@@ -597,12 +597,15 @@ export default function Dispatch() {
   const doExport = async () => {
     if (!plan) return
     const XLSX = await import('xlsx')
-    const rows = plan.trips.flatMap(t => t.ods.map(o => ({
+    // Số của CẢ XE (Pallet xe · Tải % · Cước dự tính) chỉ ghi ở dòng DO ĐẦU của xe — lặp ở mọi dòng thì cộng cột trong Excel
+    // ra cước gấp số DO lần (user chốt 20/11). Cột nhận dạng xe (Số xe, Loại xe, ĐVVT…) vẫn ghi mọi dòng để lọc / nạp lại.
+    const rows = plan.trips.flatMap(t => t.ods.map((o, i) => ({
       'Số xe': t.group_code, 'DO': o.od_number, 'NPP': o.ship_to_name ?? '', 'Ship-to': o.ship_to_code ?? '', 'Phường': o.ward_code ?? '',
       'Loại xe': t.detail.vehicle_model?.parent_type_name ?? '', 'Mã xe SAP': t.detail.vehicle_model?.sap_code ?? '', 'Dòng xe': (t.detail.vehicles?.length ?? 0) > 1 ? t.detail.vehicles!.map(v => v.name).join(' + ') : t.detail.vehicle_model?.name ?? '',
       'ĐVVT': t.detail.carrier?.name ?? '', 'Trạng thái xe': TRIP_STATUS_VI[tripStatus(t)].label, 'Ngày xuất': plan.plan_date, 'Loại kho booking': t.detail.booking_category ?? '',
       'Pallet OD': o.pallets == null ? '' : Number(o.pallets), 'Tấn OD': o.tons == null ? '' : Number(o.tons),
-      'Pallet xe': t.pallets == null ? '' : Number(t.pallets), 'Tải %': t.load_pct == null ? '' : Number(t.load_pct), 'Cước dự tính': t.freight_estimated == null ? '' : Number(t.freight_estimated),
+      'Pallet xe': i > 0 || t.pallets == null ? '' : Number(t.pallets), 'Tải %': i > 0 || t.load_pct == null ? '' : Number(t.load_pct),
+      'Cước dự tính': i > 0 || t.freight_estimated == null ? '' : Number(t.freight_estimated),
     })))
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(sanitizeRows(rows)), 'KH dieu van')

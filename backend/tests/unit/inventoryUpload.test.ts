@@ -21,7 +21,9 @@ function xlsx(aoa: unknown[][]) {
   const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), 'S')
   return Buffer.from(XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }))
 }
-async function upload(aoa: unknown[][], preflight: boolean) {
+type U = { is_superadmin?: boolean; warehouse_scope: string; sub: string; name: string; module_permissions?: Record<string, string[]> }
+const ADMIN: U = { is_superadmin: true, warehouse_scope: 'NATIONAL', sub: 'emp1', name: 'T' }
+async function upload(aoa: unknown[][], preflight: boolean, user: U = ADMIN) {
   h.db = fakeDb({
     Material: [MAT_CAR, MAT_KG], Warehouse: [{ id: 'wh1', code: 'K1', name: 'Kho 1', nmsx_code: 'A' }],
     Location: [{ id: 'l1', location_code: 'L1', warehouse_id: 'wh1', categories: ['TP'] }, { id: 'l2', location_code: 'L2', warehouse_id: 'wh1', categories: ['TP'] }],
@@ -33,7 +35,7 @@ async function upload(aoa: unknown[][], preflight: boolean) {
   })
   const { uploadExcel } = await import('../../src/controllers/wms/inventoryController')
   const { req, res } = fakeReqRes({ file: { buffer: xlsx(aoa) }, query: preflight ? { preflight: '1' } : {},
-    user: { is_superadmin: true, warehouse_scope: 'NATIONAL', sub: 'emp1', name: 'T' } })
+    user })
   await uploadExcel(req, res)
   return res as unknown as { statusCode: number; body: { success: boolean; data?: { errors: string[]; to_insert?: number; to_update?: number }; error?: { message: string } } }
 }
@@ -81,5 +83,18 @@ describe('upload Tồn kho', () => {
       ['P-NEW4', '210000308', 'K1', 'L1', '1.000', '2026-11-01'],
     ], false)
     expect(h.db.tables.InventoryEntry.find(x => x.pallet_code === 'P-NEW4')).toMatchObject({ cartons_imported: 1000 })
+  })
+  it('(e) đổi QA pallet ĐÃ CÓ qua file cần quyền inventory.qa_update (user chốt 20/11); trống / giữ nguyên QA thì không', async () => {
+    const head = ['Mã pallet', 'Mã hàng', 'Kho', 'Mã vị trí', 'Số thùng', 'Ngày SX', 'QA']
+    const importOnly: U = { warehouse_scope: 'NATIONAL', sub: 'emp1', name: 'T', module_permissions: { inventory: ['view', 'import'] } }
+    const withQa: U = { ...importOnly, module_permissions: { inventory: ['view', 'import', 'qa_update'] } }
+    const nhả = await upload([head, ['P-OLD', '200001', 'K1', 'L1', 2, '2026-11-01', 'OK']], true, importOnly)
+    expect((nhả.body.data?.errors ?? []).join(' ')).toMatch(/cần quyền "Cập nhật QA"/)
+    const giữ = await upload([head, ['P-OLD', '200001', 'K1', 'L1', 2, '2026-11-01', 'X7']], true, importOnly)
+    expect(giữ.body.data?.errors ?? []).toEqual([])
+    const trống = await upload([head, ['P-OLD', '200001', 'K1', 'L1', 2, '2026-11-01', '']], true, importOnly)
+    expect(trống.body.data?.errors ?? []).toEqual([])
+    await upload([head, ['P-OLD', '200001', 'K1', 'L1', 2, '2026-11-01', 'OK']], false, withQa)
+    expect(h.db.tables.InventoryEntry.find(x => x.id === 'e1')).toMatchObject({ qa_status_id: null })
   })
 })

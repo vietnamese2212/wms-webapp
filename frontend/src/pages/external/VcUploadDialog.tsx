@@ -129,12 +129,15 @@ const TITLE: Record<VcUploadMode, string> = { vl06o: 'VL06O', khvc: 'KHVC', zsd0
 function downloadVl06oTemplate() {
   const headers = ['Delivery', 'Item', 'Ship-to Party', 'Material', 'Item Description',
     'Delivery Quantity', 'Sales Unit', 'Actual delivery qty', 'Base Unit of Measure',
-    'Name ship-to party', 'Batch', 'Date (%)', 'Ghi chú giao hàng', 'Ghi chú hoá đơn']
+    'Name ship-to party', 'Batch', 'Date (%)', 'Ghi chú giao hàng', 'Ghi chú hoá đơn', 'Plant', 'Storage Location']
   const ex = ['3000384084', '10', '30000325', '510000306', 'BAVI SCA Có đường 100grx48',
-    40, 'CAR', 1920, 'HOP', 'NPPTRANGHOANG', '', '', '', '']
+    40, 'CAR', 1920, 'HOP', 'NPPTRANGHOANG', '', '', '', '', '1102', '']
   void downloadTemplate({
     file: 'mau_vl06o.xlsx', sheet: 'Data', header: [headers], title: 'NẠP VL06O (SAP) TỪ EXCEL', examples: [ex],
-    notes: ['Dán nguyên báo cáo VL06O xuất từ SAP; app đọc theo tên cột nên thứ tự cột không quan trọng.'],
+    notes: [
+      'Dán nguyên báo cáo VL06O xuất từ SAP; app đọc theo tên cột nên thứ tự cột không quan trọng.',
+      'Plant + Storage Location cho biết dòng thuộc kho nào (khai Plant SAP / Storage Location cho kho ở Cài đặt WMS → tab Kho) — thiếu thì app không chặn được dòng của kho ngoài phạm vi.',
+    ],
   })
 }
 // Mẫu ZSD02 = ĐÚNG tiêu đề SAP xuất ra (map theo tên cột nên đảo cột không sao). Dấu * ở cột BẮT BUỘC —

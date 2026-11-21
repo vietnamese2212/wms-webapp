@@ -511,8 +511,9 @@ export interface CycleBatch {
   rm_bad: number; rm_exp: number; rm_rev: number
   filled_qty: number; filled_at: string | null; filled_by_name: string | null; tank_qa_at: string | null; tank_qa_by_name: string | null
 }
-/** một ô NVL × mẻ: định mức (null = mã ngoài phiếu) · mức lệch % · thực cấp · số lần cấp */
-export interface CycleCell { req: number | null; tol: number | null; iss: number; n: number }
+/** một ô NVL × mẻ (21/11): req = phiếu đang hiệu lực (null = dòng đã bỏ / mã ngoài phiếu) · std = ĐỊNH MỨC GỐC theo công thức (null = dòng
+ *  thêm tay / ngoài phiếu) · rm = dòng đã bỏ khỏi phiếu · why = lý do sửa phiếu · mức lệch % · thực cấp · số lần cấp */
+export interface CycleCell { req: number | null; std: number | null; rm: boolean; why: string | null; tol: number | null; iss: number; n: number }
 export interface CycleRow extends MatUnits { material_id: string; material_code: string; material_name: string | null; cells: Record<string, CycleCell> }
 export interface CyclePerson {
   name: string; open: number; lead: number; qaok: number; label: number; rm: number; rm_rev: number; rm_bad: number; rm_exp: number; rm_batches: number

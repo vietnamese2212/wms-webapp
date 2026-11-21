@@ -376,8 +376,9 @@ interface ProductionReportFilters {   // trang Báo cáo NVL (18/11 f): tab Theo
   tab: 'cycle' | 'raw' | 'shift'
   warehouseId: string    // kho chế biến ('' = kho mặc định trong phạm vi)
   cycle: string          // '' = chu kỳ mới nhất
-  /** NVL × ca (▸ từng mẻ) · Ca · Mẻ · Nhân sự */
-  view: 'nvl' | 'batch' | 'people'
+  /** Tổng quan (21/11 — dashboard lệch định mức theo ca · mẻ, mặc định) · NVL × ca (▸ từng mẻ) · Ca · Mẻ · Nhân sự.
+   *  Tên mới "cview" (trước là "view") để ai đã nhớ cách xem cũ cũng mở vào Tổng quan một lần. */
+  cview: 'dash' | 'nvl' | 'batch' | 'people'
   /** tab Dữ liệu thô (tiêu hao NVL cho SAP): khoảng ngày của phát sinh ('' = 7 ngày gần nhất) · chu kỳ · tìm · loại phát sinh · cờ · trang */
   rawFrom: string
   rawTo: string
@@ -733,7 +734,7 @@ function initialFilters() {
     // dateTo trống = tới hôm nay (và sau) — bộ lọc được nhớ qua ngày, mặc định today() thành 'hôm qua' ở lần mở sau, mẻ hôm nay biến mất khỏi danh sách
     production: { search: '', warehouseId: '', dateFrom: daysAgo(14), dateTo: '', stage: '', page: 1, pageSize: 100 },
     productionTanks: { warehouseId: '', showInactive: false, view: 'map' as const },
-    productionReport: { tab: 'cycle' as const, warehouseId: '', cycle: '', view: 'nvl' as const, rawFrom: '', rawTo: '', rawCycle: '', rawSearch: '', rawEvent: '' as const, rawFlag: '' as const, rawPage: 1, rawPageSize: 200 },
+    productionReport: { tab: 'cycle' as const, warehouseId: '', cycle: '', cview: 'dash' as const, rawFrom: '', rawTo: '', rawCycle: '', rawSearch: '', rawEvent: '' as const, rawFlag: '' as const, rawPage: 1, rawPageSize: 200 },
     packing:      { tab: 'board' as const, search: '', warehouseId: '', machine: '', cycle: '', status: '', dateFrom: daysAgo(7), dateTo: today(), page: 1, pageSize: 200, runStatus: '', runPage: 1, received: '' },
     alerts:       { tab: 'general' as const, search: '', warehouseId: '', rules: [], severity: [], status: 'open' },
     stocktakeCycle: { search: '', warehouseId: '', cats: [], abc: [], dueOnly: true },

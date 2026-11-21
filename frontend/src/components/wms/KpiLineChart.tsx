@@ -3,11 +3,12 @@
 // thẻ, không trục) và full (dialog 80%: trục, lưới hairline, crosshair + tooltip mọi series, nhãn cuối).
 // Theo skill dataviz: đường 2px bo tròn · điểm ≥8px có viền 2px màu nền · lưới 1px liền, lùi ra sau ·
 // chữ luôn dùng màu chữ (không màu series) · đèn G/Y/R = màu trạng thái, chỉ tô ĐIỂM (không tô chữ).
-import { useEffect, useId, useMemo, useRef, useState } from 'react'
+import { useId, useMemo, useState } from 'react'
 import type { KpiDefPublic, KpiGrain } from '@/api/hooks'
 import { fmtNum } from '@/utils/productivity'
 import { formatDate } from '@/utils/formatters'
 import { monotonePath, runsOf } from '@/utils/kpiView'
+import { useElementWidth } from '@/hooks/useElementWidth'
 
 export type Rag = 'G' | 'Y' | 'R' | null
 export const RAG_HEX: Record<string, string> = { G: '#17946a', Y: '#e39a25', R: '#dc4448', none: '#94a3b8' }
@@ -34,18 +35,6 @@ export function bucketLabel(grain: KpiGrain, key: string, withYear = false): str
 
 export type ChartPoint = { key: string; label: string; value: number | null; prev?: number | null; from?: string; to?: string }
 
-function useWidth<T extends HTMLElement>() {
-  const ref = useRef<T>(null)
-  const [w, setW] = useState(0)
-  useEffect(() => {
-    const el = ref.current; if (!el) return
-    const ro = new ResizeObserver(es => { for (const e of es) setW(e.contentRect.width) })
-    ro.observe(el); setW(el.clientWidth)
-    return () => ro.disconnect()
-  }, [])
-  return [ref, w] as const
-}
-
 /** Bước lưới "tròn" (1 / 2 / 5 × 10^k) cho ~4 vạch */
 function niceStep(span: number, n = 4): number {
   if (!(span > 0)) return 1
@@ -58,7 +47,7 @@ export function KpiLineChart({ def, points, target, compact = false, height, pre
   def: KpiDefPublic; points: ChartPoint[]; target: number[] | null
   compact?: boolean; height?: number; prevLabel?: string; grain?: KpiGrain
 }) {
-  const [ref, width] = useWidth<HTMLDivElement>()
+  const [ref, width] = useElementWidth<HTMLDivElement>()
   const H = height ?? (compact ? 52 : 320)
   const gradId = useId()
   const pad = compact ? { l: 2, r: 2, t: 4, b: 4 } : { l: 48, r: 16, t: 12, b: 28 }

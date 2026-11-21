@@ -124,13 +124,13 @@ export function BatchFormSheet({ open, onClose, batch, template, onSaved }: {
   const plannedNum = planned.trim() ? parseVnNumber(planned) : null
   const plannedBad = !planned.trim() || plannedNum == null || plannedNum <= 0
   const overRoom = !!selTank && plannedNum != null && plannedNum > selTank.free + 0.0005 && !filled
-  const canSave = !!wh && !!mat && !!date && !plannedBad && !!cycleNorm && cycleNorm.length <= 6 && !!noNum && noNum >= 1 && !!tank && !saving
+  const canSave = !!wh && !!mat && !!date && !!shift && !plannedBad && !!cycleNorm && cycleNorm.length <= 6 && !!noNum && noNum >= 1 && !!tank && !saving
 
   async function save() {
     setErr('')
     try {
       if (batch) {
-        const r = await update.mutateAsync({ id: batch.id, prod_date: date, machine_code: machine || null, shift: shift || null,
+        const r = await update.mutateAsync({ id: batch.id, prod_date: date, machine_code: machine || null, shift,
           planned_qty: plannedNum, note: note || null,
           ...(filled ? {} : { ...(cycleNorm !== batch.cycle ? { cycle: cycleNorm } : {}), ...(noNum !== batch.batch_no ? { batch_no: noNum ?? undefined } : {}), ...(tank !== batch.tank_id ? { tank_id: tank } : {}) }),
           ...(mat !== batch.material_id ? { material_id: mat } : {}) })
@@ -140,7 +140,7 @@ export function BatchFormSheet({ open, onClose, batch, template, onSaved }: {
         onSaved?.(r.id); onClose()
       } else {
         const r = await create.mutateAsync({ warehouse_id: wh, material_id: mat, prod_date: date, cycle: cycleNorm, batch_no: noNum ?? undefined, tank_id: tank,
-          machine_code: machine || undefined, shift: shift || undefined, planned_qty: plannedNum, note: note || undefined,
+          machine_code: machine || undefined, shift, planned_qty: plannedNum, note: note || undefined,
           recipe_id: recipeId || undefined, extra_forms: extras })
         onSaved?.(r.id); onClose()
       }
@@ -149,7 +149,7 @@ export function BatchFormSheet({ open, onClose, batch, template, onSaved }: {
 
   return (
     <FormSheet open={open} onClose={onClose} title={editing ? `Sửa mẻ ${batch?.batch_code}` : 'Mở mẻ chế biến'}
-      description="Chu kỳ, số mẻ và bồn bắt buộc. Mã lô tự ghép: chữ nhà máy + chu kỳ + số mẻ + mã bồn."
+      description="Chu kỳ, số mẻ, bồn và ca bắt buộc. Mã lô tự ghép: chữ nhà máy + chu kỳ + số mẻ + mã bồn."
       footer={<>
         <Button variant="outline" size="sm" className="h-8" onClick={onClose}>Huỷ</Button>
         <Button size="sm" className="h-8" disabled={!canSave} onClick={() => void save()}>{saving ? 'Đang lưu…' : editing ? 'Lưu' : 'Mở mẻ'}</Button>
@@ -217,10 +217,10 @@ export function BatchFormSheet({ open, onClose, batch, template, onSaved }: {
         </div>
         <div className="grid grid-cols-2 gap-2">
           <div>
-            <Label className="text-xs">Ca</Label>
-            {/* cùng danh mục ca với báo cáo ca + Sổ đóng gói — một ca một nhãn */}
-            <SingleSelect value={shift || '__none__'} onChange={v => setShift(v === '__none__' ? '' : v)} searchable={false} triggerClassName="h-9 sm:h-8 text-xs mt-0.5"
-              options={[{ value: '__none__', label: 'Không ghi' }, ...shiftNames.map(s => ({ value: s, label: s }))]} />
+            <Label className="text-xs">Ca <span className="text-red-500">*</span></Label>
+            {/* cùng danh mục ca với báo cáo ca + Sổ đóng gói — một ca một nhãn. BẮT BUỘC (21/11): Báo cáo NVL chia lệch định mức theo ca */}
+            <SingleSelect value={shift} onChange={setShift} searchable={false} placeholder="Chọn ca" triggerClassName="h-9 sm:h-8 text-xs mt-0.5"
+              options={shiftNames.map(s => ({ value: s, label: s }))} />
           </div>
           <div>
             <Label className="text-xs">Máy / thiết bị trộn</Label>

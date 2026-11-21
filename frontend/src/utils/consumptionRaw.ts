@@ -27,7 +27,9 @@ export interface RawReq {
   batch_status: string; batch_qa: string; tank_code: string | null; btp_code: string; btp_name: string | null; planned_qty: number | null; btp_unit: string | null
   wh_code: string; sap_plant: string | null; sap_sloc: string | null
   mat_code: string; mat_name: string | null; mat_desc: string | null; unit: string | null
-  in_sheet: boolean; req: number | null; std: number | null; tol_pct: number | null; iss: number; diff: number | null
+  /** removed (21/11) = dòng đã bỏ khỏi phiếu — vẫn có dòng vì định mức chuẩn của nó vẫn tính · diff_std = thực cấp − định mức chuẩn */
+  in_sheet: boolean; removed?: boolean; change_reason?: string | null; req: number | null; std: number | null; tol_pct: number | null; iss: number
+  diff: number | null; diff_std?: number | null
   lines: number; reversed_lines: number; reversed_qty: number; rotation_lines: number; first_at: string | null; last_at: string | null
 }
 export interface RawFill {
@@ -144,12 +146,14 @@ export const RAW_REQ_COLS: RawCol<RawReq>[] = [
   { key: 'mat_name', label: 'Tên NVL', w: 180, value: r => s(r.mat_name) },
   { key: 'mat_desc', label: 'Mô tả NVL', w: 180, value: r => s(r.mat_desc) },
   { key: 'unit', label: 'ĐVT', w: 52, value: r => unitCode(r.unit) },
-  { key: 'in_sheet', label: 'Trong phiếu', w: 74, value: r => (r.in_sheet ? 'Có' : 'Ngoài phiếu') },
+  { key: 'in_sheet', label: 'Trong phiếu', w: 84, value: r => (r.in_sheet ? 'Có' : r.removed ? 'Bỏ khỏi phiếu' : 'Ngoài phiếu') },
   { key: 'std', label: 'Định mức chuẩn', w: 96, num: true, value: r => (r.std ?? '') },
   { key: 'req', label: 'Định mức của mẻ', w: 100, num: true, value: r => (r.req ?? '') },
   { key: 'tol', label: 'Mức lệch cho phép (%)', w: 110, num: true, value: r => (r.tol_pct ?? '') },
   { key: 'iss', label: 'Thực cấp', w: 90, num: true, value: r => Number(r.iss) },
-  { key: 'diff', label: 'Lệch (thực cấp − định mức)', w: 130, num: true, value: r => (r.diff ?? '') },
+  { key: 'diff_std', label: 'Lệch so định mức chuẩn', w: 130, num: true, value: r => (r.diff_std ?? ''), tip: 'Thực cấp − định mức chuẩn (công thức × kế hoạch) — con số của Báo cáo NVL theo chu kỳ' },
+  { key: 'diff', label: 'Lệch so định mức của mẻ', w: 130, num: true, value: r => (r.diff ?? ''), tip: 'Thực cấp − định mức của mẻ (phiếu sau khi sửa)' },
+  { key: 'why', label: 'Lý do sửa định mức', w: 160, value: r => s(r.change_reason) },
   { key: 'lines', label: 'Số lần cấp', w: 80, num: true, value: r => r.lines },
   { key: 'rev_lines', label: 'Lần cấp đã huỷ', w: 96, num: true, value: r => r.reversed_lines },
   { key: 'rev_qty', label: 'SL đã huỷ', w: 80, num: true, value: r => Number(r.reversed_qty) },

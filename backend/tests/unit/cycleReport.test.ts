@@ -1,20 +1,51 @@
-// Báo cáo NVL theo chu kỳ (MES 18/11 f) — phép gom của màn hình + Excel: chia ca theo thời gian, cộng dòng NVL trên nhóm mẻ, đếm trạng thái
-// dòng bằng cùng luật phiếu của mẻ (reqLineState). Ba nơi vẽ (bảng · dải số · Excel) đọc cùng các hàm này.
+// Báo cáo NVL theo chu kỳ (MES 18/11 f · 21/11) — phép gom của dashboard + bảng + dải số + Excel: chia ca theo ngày, so với ĐỊNH MỨC GỐC,
+// tách lệch Sửa phiếu / Cấp lệch, cộng KG chỉ dòng đã cấp xong, đếm NVL lệch. Mọi nơi vẽ đọc cùng các hàm này.
+// 21/11 — user chốt: định mức = công thức (tách 2 phần) · lệch mẻ / ca = KG cộng dồn + số NVL lệch · ca = khung giờ của một ngày · ca bắt buộc.
 import { describe, it, expect } from 'vitest'
-import { shiftGroups, rowSum, lineStats, cellState, minutesBetween, durLabel, sumByUnit, shiftKpis, NO_SHIFT, rowBatchLines, rowDeviations, LINE_STATE_LABEL } from '../../../frontend/src/utils/cycleReport'
+import {
+  shiftGroups, rowSum, lineStats, cellState, cellSettled, cellDev, devAgg, devLines, materialDevs, minutesBetween, durLabel, sumByUnit, shiftKpis,
+  NO_SHIFT, rowBatchLines, rowDeviations, LINE_STATE_LABEL, isKgRow,
+} from '../../../frontend/src/utils/cycleReport'
 
-const B = (id: string, shift: string | null, at: string, extra: Partial<{ stage: string; status: string; filled_at: string | null; filled_qty: number; planned_qty: number; base_unit: string; batch_no: number }> = {}) => ({
+const B = (id: string, shift: string | null, at: string, extra: Partial<{ stage: string; status: string; filled_at: string | null; filled_qty: number; planned_qty: number; base_unit: string; batch_no: number; prod_date: string }> = {}) => ({
   id, shift, created_at: at, batch_no: extra.batch_no ?? null, status: extra.status ?? 'OPEN', stage: extra.stage ?? 'working',
   planned_qty: extra.planned_qty ?? null, filled_qty: extra.filled_qty ?? 0, filled_at: extra.filled_at ?? null, base_unit: extra.base_unit ?? 'KG',
+  prod_date: extra.prod_date ?? null,
 })
+/** ô NVL × mẻ: định mức gốc · phiếu · thực cấp */
+const C = (std: number | null, req: number | null, iss: number, o: Partial<{ tol: number | null; rm: boolean; why: string }> = {}) =>
+  ({ std, req, iss, n: iss ? 1 : 0, tol: o.tol === undefined ? 1 : o.tol, rm: o.rm ?? false, why: o.why ?? null })
 
-describe('shiftGroups — ca theo thứ tự thời gian, không theo tên', () => {
-  it('ca đêm (Ca 3) bắt đầu trước ca sáng hôm sau (Ca 1) ⇒ Ca 3 đứng trước', () => {
+describe('shiftGroups — ca của MỘT NGÀY, theo thứ tự thời gian (21/11)', () => {
+  it('chu kỳ 26 thật: Ca 1 ngày 17 và mẻ không ca ngày 18 ⇒ hai nhóm, nhãn kèm ngày', () => {
     const g = shiftGroups([
-      B('b2', 'Ca 1', '2026-11-18T01:00:00Z'), B('b1', 'Ca 3', '2026-11-17T16:00:00Z'), B('b3', 'Ca 1', '2026-11-18T02:00:00Z'),
+      B('m1', 'Ca 1', '2026-11-17T11:33:46Z', { prod_date: '2026-11-17', batch_no: 1 }),
+      B('m2', null, '2026-11-18T01:31:05Z', { prod_date: '2026-11-18', batch_no: 2 }),
     ])
-    expect(g.map(x => x.shift)).toEqual(['Ca 3', 'Ca 1'])
-    expect(g[1].batches.map(b => b.id)).toEqual(['b2', 'b3'])
+    expect(g.map(x => x.shift)).toEqual(['Ca 1 · 17/11', `${NO_SHIFT} · 18/11`])
+  })
+  it('Ca 1 hôm 17 và Ca 1 hôm 18 KHÔNG dồn chung (trước 21/11 dồn một cột)', () => {
+    const g = shiftGroups([
+      B('a', 'Ca 1', '2026-11-17T00:00:00Z', { prod_date: '2026-11-17' }), B('b', 'Ca 1', '2026-11-17T05:00:00Z', { prod_date: '2026-11-17' }),
+      B('c', 'Ca 1', '2026-11-18T00:30:00Z', { prod_date: '2026-11-18' }),
+    ])
+    expect(g.map(x => `${x.shift}:${x.batches.map(b => b.id).join(',')}`)).toEqual(['Ca 1 · 17/11:a,b', 'Ca 1 · 18/11:c'])
+  })
+  it('ca đêm qua nửa đêm (23:00 và 01:00 giờ VN) vẫn là MỘT ca; Ca 3 bắt đầu trước Ca 1 sáng hôm sau ⇒ đứng trước', () => {
+    const g = shiftGroups([
+      B('n2', 'Ca 3', '2026-11-17T18:00:00Z', { prod_date: '2026-11-18' }),   // 01:00 ngày 18
+      B('d1', 'Ca 1', '2026-11-18T01:00:00Z', { prod_date: '2026-11-18' }),
+      B('n1', 'Ca 3', '2026-11-17T16:00:00Z', { prod_date: '2026-11-17' }),   // 23:00 ngày 17
+    ])
+    expect(g.map(x => `${x.shift}:${x.batches.map(b => b.id).join(',')}`)).toEqual(['Ca 3 · 17/11:n1,n2', 'Ca 1 · 18/11:d1'])
+  })
+  it('cả chu kỳ trong một ngày ⇒ nhãn không kèm ngày', () => {
+    const g = shiftGroups([B('a', 'Ca 1', '2026-11-18T01:00:00Z', { prod_date: '2026-11-18' }), B('b', 'Ca 2', '2026-11-18T09:00:00Z', { prod_date: '2026-11-18' })])
+    expect(g.map(x => x.shift)).toEqual(['Ca 1', 'Ca 2'])
+  })
+  it('không có Ngày SX ⇒ ngày theo giờ VN của lúc mở mẻ (17:30Z = 00:30 ngày hôm sau)', () => {
+    const g = shiftGroups([B('a', 'Ca 1', '2026-11-17T01:00:00Z'), B('b', 'Ca 3', '2026-11-17T17:30:00Z')])
+    expect(g.map(x => x.shift)).toEqual(['Ca 1 · 17/11', 'Ca 3 · 18/11'])
   })
   it('mẻ chưa khai ca ⇒ nhóm "Chưa ghi ca"; khoảng trắng coi như trống', () => {
     const g = shiftGroups([B('a', null, '2026-11-18T01:00:00Z'), B('b', '  ', '2026-11-18T02:00:00Z')])
@@ -27,51 +58,136 @@ describe('shiftGroups — ca theo thứ tự thời gian, không theo tên', () 
   })
 })
 
-describe('rowSum — định mức chỉ cộng ô có định mức; lệch = thực cấp − định mức', () => {
-  const row = { cells: { a: { req: 100, tol: 1, iss: 101, n: 2 }, b: { req: 50, tol: null, iss: 0, n: 0 }, c: { req: null, tol: null, iss: 5, n: 1 } } }
-  it('cả ba mẻ', () => {
-    expect(rowSum(row, ['a', 'b', 'c'])).toEqual({ req: 150, iss: 106, diff: -44, devPct: -29.3, used: true })
+describe('so với ĐỊNH MỨC GỐC — tình huống → kết quả (21/11)', () => {
+  it('trưởng ca sửa phiếu 90 → 150, cấp 150 (mẻ đang làm) ⇒ đã cấp xong, VƯỢT định mức +60 = sửa phiếu +60, cấp lệch 0', () => {
+    const c = C(90, 150, 150, { why: 'bù hao' })
+    expect(cellSettled(c, false)).toBe(true)
+    expect(cellState(c, false)).toBe('over')
+    expect(cellDev(c)).toEqual({ std: 90, sheet: 150, iss: 150, edit: 60, exec: 0, total: 60 })
+  })
+  it('phiếu sửa 673,5 → 600, cấp 600 ⇒ DƯỚI định mức −73,5 (do sửa phiếu)', () => {
+    const c = C(673.5, 600, 600)
+    expect(cellState(c, false)).toBe('under')
+    expect(cellDev(c)).toMatchObject({ edit: -73.5, exec: 0, total: -73.5 })
+  })
+  it('phiếu đúng định mức, cấp vượt mức lệch ⇒ vượt (do cấp lệch)', () => {
+    const c = C(100, 100, 103)
+    expect(cellState(c, false)).toBe('over')
+    expect(cellDev(c)).toMatchObject({ edit: 0, exec: 3, total: 3 })
+  })
+  it('cấp trong mức lệch ±1% ⇒ trong mức', () => {
+    expect(cellState(C(100, 100, 100.8), false)).toBe('ok')
+  })
+  it('đang cấp dở ⇒ chưa xong (progress / none), chưa có số lệch; mẻ đã nạp bồn ⇒ dưới định mức', () => {
+    expect(cellState(C(100, 100, 40), false)).toBe('progress')
+    expect(cellState(C(100, 100, 0), false)).toBe('none')
+    expect(cellState(C(100, 100, 40), true)).toBe('under')
+  })
+  it('phiếu nâng 90 → 150 mà mới cấp 100 ⇒ chưa xong (dù đã quá định mức) — tính khi cấp đủ phiếu', () => {
+    expect(cellState(C(90, 150, 100), false)).toBe('progress')
+  })
+  it('dòng BỎ khỏi phiếu (định mức 20, không cấp) ⇒ đã xong, dưới định mức −20 do sửa phiếu', () => {
+    const c = C(20, null, 0, { rm: true, why: 'đổi mã' })
+    expect(cellState(c, false)).toBe('under')
+    expect(cellDev(c)).toEqual({ std: 20, sheet: 0, iss: 0, edit: -20, exec: 0, total: -20 })
+  })
+  it('dòng THÊM tay vào phiếu (không có định mức) ⇒ ngoài định mức; cấp đủ phiếu ⇒ cả phần là sửa phiếu', () => {
+    const c = C(null, 5, 5)
+    expect(cellState(c, false)).toBe('extra')
+    expect(cellDev(c)).toMatchObject({ edit: 5, exec: 0, total: 5 })
+    expect(cellState(C(null, 5, 2), false)).toBe('progress')
+  })
+  it('mã CẤP NGOÀI PHIẾU ⇒ ngoài định mức, cả phần là cấp lệch', () => {
+    const c = C(null, null, 3)
+    expect(cellState(c, false)).toBe('extra')
+    expect(cellDev(c)).toMatchObject({ edit: 0, exec: 3, total: 3 })
+  })
+  it('API cũ chưa có định mức gốc ⇒ coi như phiếu', () => {
+    const old = { req: 100, tol: 1, iss: 100, n: 1 }
+    expect(cellState(old, false)).toBe('ok')
+    expect(cellDev(old)).toMatchObject({ std: 100, total: 0 })
+  })
+  it('mọi trạng thái đều có chữ cho Excel', () => {
+    for (const k of ['ok', 'over', 'under', 'progress', 'extra', 'none', 'removed'] as const) expect(LINE_STATE_LABEL[k]).toBeTruthy()
+  })
+})
+
+describe('devAgg — lệch của mẻ / ca = KG cộng dồn (dòng đã xong) + số NVL lệch (mọi đơn vị)', () => {
+  const rows = [
+    { base_unit: 'KG', cells: { m1: C(90, 150, 150), m2: C(20, 20, 0) } },         // m1 vượt +60 (sửa phiếu) · m2 chưa cấp
+    { base_unit: 'KG', cells: { m1: C(673.5, 600, 600), m2: C(150, 150, 151) } },  // m1 dưới −73,5 · m2 cấp 151 trong mức ±1% (≤ 151,5), cấp lệch +1
+    { base_unit: 'BAG', cells: { m1: C(1.5, 1.5, 2, { tol: null }) } },            // m1 vượt (BAG — đếm NVL lệch, không cộng KG)
+  ]
+  const bs = [{ id: 'm1', stage: 'working' }, { id: 'm2', stage: 'working' }]
+  it('một mẻ: KG chỉ NVL tính KG; NVL lệch đếm cả BAG', () => {
+    const a = devAgg(rows, [bs[0]])
+    expect(a.kg).toMatchObject({ std: 763.5, sheet: 750, iss: 750, edit: -13.5, exec: 0, total: -13.5, pct: -1.8 })
+    expect({ over: a.over, under: a.under, extra: a.extra, pending: a.pending, edited: a.edited }).toEqual({ over: 2, under: 1, extra: 0, pending: 0, edited: 2 })
+    expect(devLines(a)).toBe(3)
+  })
+  it('dòng chưa cấp xong không vào KG, đếm "chưa xong"', () => {
+    const a = devAgg(rows, [bs[1]])
+    expect(a.kg).toMatchObject({ std: 150, iss: 151, total: 1, exec: 1, pct: 0.7 })
+    expect(a.pending).toBe(1)
+    expect(devLines(a)).toBe(0)
+  })
+  it('cả chu kỳ = cộng các mẻ', () => {
+    const a = devAgg(rows, bs)
+    expect(a.kg.total).toBe(-12.5)
+    expect(a.lines).toBe(5)
+    expect(a.settled + a.pending).toBe(5)
+  })
+  it('isKgRow không phân biệt hoa thường / khoảng trắng', () => {
+    expect(isKgRow({ base_unit: ' kg ' })).toBe(true)
+    expect(isKgRow({ base_unit: 'L' })).toBe(false)
+  })
+})
+
+describe('rowSum — định mức gốc · phiếu · thực cấp (mọi ô, kể cả đang cấp dở)', () => {
+  const row = { cells: { a: C(100, 100, 101), b: C(50, 50, 0, { tol: null }), c: C(null, null, 5, { tol: null }), d: C(20, null, 0, { rm: true }) } }
+  it('bốn mẻ', () => {
+    expect(rowSum(row, ['a', 'b', 'c', 'd'])).toEqual({ std: 170, sheet: 150, iss: 106, diff: -64, devPct: -37.6, used: true })
   })
   it('mẻ không dùng mã ⇒ used = false, lệch % null', () => {
-    expect(rowSum(row, ['zz'])).toEqual({ req: 0, iss: 0, diff: 0, devPct: null, used: false })
+    expect(rowSum(row, ['zz'])).toEqual({ std: 0, sheet: 0, iss: 0, diff: 0, devPct: null, used: false })
   })
   it('số lẻ không trôi (0,1 + 0,2)', () => {
-    expect(rowSum({ cells: { a: { req: 0.1, tol: null, iss: 0.1, n: 1 }, b: { req: 0.2, tol: null, iss: 0.2, n: 1 } } }, ['a', 'b']).diff).toBe(0)
+    expect(rowSum({ cells: { a: C(0.1, 0.1, 0.1), b: C(0.2, 0.2, 0.2) } }, ['a', 'b']).diff).toBe(0)
   })
 })
 
-describe('cellState / lineStats — cùng luật phiếu của mẻ', () => {
-  const rows = [
-    { cells: { m1: { req: 100, tol: 1, iss: 100.5, n: 1 }, m2: { req: 100, tol: 1, iss: 50, n: 1 } } },   // m1 đủ · m2 thiếu
-    { cells: { m1: { req: 10, tol: null, iss: 12, n: 1 } } },                                             // m1 vượt (không khai mức lệch)
-    { cells: { m2: { req: null, tol: null, iss: 3, n: 1 } } },                                           // m2 ngoài phiếu
-  ]
-  it('mẻ đang làm: chưa đủ = thiếu (progress); mẻ đã nạp: dưới mức = under (vẫn đếm thiếu)', () => {
-    expect(cellState(rows[0].cells.m2, false)).toBe('progress')
-    expect(cellState(rows[0].cells.m2, true)).toBe('under')
-    expect(cellState(undefined, true)).toBeNull()
-  })
-  it('đếm: đủ 1 · thiếu 1 · vượt 1 · ngoài phiếu 1', () => {
-    expect(lineStats(rows, [{ id: 'm1', stage: 'filled' }, { id: 'm2', stage: 'working' }])).toEqual({ lines: 4, ok: 1, short: 1, over: 1, extra: 1 })
-  })
-})
-
-describe('rowBatchLines / rowDeviations — NVL × CA, ▸ mở từng mẻ (20/11: "36 mẻ thì số cột nhiều lắm")', () => {
+describe('lineStats / rowBatchLines / rowDeviations — NVL × CA', () => {
   const g = shiftGroups([
     B('m1', 'Ca 1', '2026-11-18T01:00:00Z', { stage: 'filled', batch_no: 1 }), B('m2', 'Ca 1', '2026-11-18T02:00:00Z', { stage: 'filled', batch_no: 2 }),
     B('m3', 'Ca 2', '2026-11-18T09:00:00Z', { stage: 'working', batch_no: 3 }), B('m4', 'Ca 2', '2026-11-18T10:00:00Z', { stage: 'filled', batch_no: 4 }),
   ])
-  const row = { cells: { m1: { req: 100, tol: 1, iss: 100, n: 1 }, m2: { req: 100, tol: 1, iss: 118, n: 1 }, m3: { req: 100, tol: 1, iss: 40, n: 1 }, m4: { req: 100, tol: 1, iss: 80, n: 1 } } }
-  it('chỉ mẻ có dùng mã, theo thứ tự ca → mẻ, kèm ca và trạng thái theo luật phiếu', () => {
+  const row = { cells: { m1: C(100, 100, 100), m2: C(100, 100, 118), m3: C(100, 100, 40), m4: C(100, 100, 80) } }
+  it('chỉ mẻ có dùng mã, theo thứ tự ca → mẻ, kèm ca, trạng thái so định mức và phần lệch', () => {
     const l = rowBatchLines(row, g)
     expect(l.map(x => `${x.shift}:${x.batch.id}:${x.state}`)).toEqual(['Ca 1:m1:ok', 'Ca 1:m2:over', 'Ca 2:m3:progress', 'Ca 2:m4:under'])
-    expect(rowBatchLines({ cells: { m3: row.cells.m3 } }, g).map(x => x.batch.id)).toEqual(['m3'])
+    expect(l[1].dev).toMatchObject({ exec: 18, total: 18 })
   })
-  it('Mẻ lệch = vượt + thiếu ở mẻ đã nạp bồn (mẻ đang cấp dở KHÔNG tính)', () => {
+  it('Mẻ lệch = vượt + dưới + ngoài định mức (mẻ đang cấp dở KHÔNG tính)', () => {
     expect(rowDeviations(rowBatchLines(row, g))).toBe(2)
+    expect(rowDeviations(rowBatchLines({ cells: { m1: C(null, null, 3) } }, g))).toBe(1)
   })
-  it('mọi trạng thái đều có chữ cho Excel', () => {
-    for (const k of ['ok', 'over', 'under', 'progress', 'extra', 'none', 'removed'] as const) expect(LINE_STATE_LABEL[k]).toBeTruthy()
+  it('đếm dòng: đủ · thiếu (dưới + đang cấp) · vượt · ngoài định mức', () => {
+    const rows = [row, { cells: { m3: C(null, null, 2) } }]
+    expect(lineStats(rows, [{ id: 'm1', stage: 'filled' }, { id: 'm2', stage: 'filled' }, { id: 'm3', stage: 'working' }, { id: 'm4', stage: 'filled' }]))
+      .toEqual({ lines: 5, ok: 1, short: 2, over: 1, extra: 1 })
+  })
+})
+
+describe('materialDevs — NVL lệch nhiều nhất', () => {
+  it('chỉ mã có lệch, xếp theo số mẻ lệch rồi |lệch %|', () => {
+    const rows = [
+      { cells: { a: C(100, 100, 100), b: C(100, 100, 100) } },          // không lệch ⇒ bỏ
+      { cells: { a: C(10, 10, 12), b: C(10, 10, 10) } },                // 1 mẻ lệch, +20% trên mẻ a ⇒ tổng +10%
+      { cells: { a: C(50, 50, 40), b: C(50, 50, 60) } },                // 2 mẻ lệch (dưới, vượt), tổng 0%
+      { cells: { a: C(5, 5, 8) } },                                     // 1 mẻ lệch, +60%
+    ]
+    const m = materialDevs(rows, [{ id: 'a', stage: 'filled' }, { id: 'b', stage: 'filled' }])
+    expect(m.map(x => `${x.row}:${x.devBatches}:${x.pct}`)).toEqual(['2:2:0', '3:1:60', '1:1:10'])
   })
 })
 

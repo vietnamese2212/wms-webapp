@@ -137,7 +137,7 @@ try {
   const T4 = (await api('/wms/production/tanks', 'POST', { warehouse_id: WC, code: 'QA63-T4', capacity: 2000, unit: 'L' })).j?.data   // các mẻ M_BTP2
   const T5 = (await api('/wms/production/tanks', 'POST', { warehouse_id: WC2, code: 'QA63-T5', capacity: 500, unit: 'L' })).j?.data
   const T6 = (await api('/wms/production/tanks', 'POST', { warehouse_id: WC, code: 'QA63-T6', capacity: 500, unit: 'L' })).j?.data    // mẻ đổi mã (10j)
-  const NEW = (o) => ({ warehouse_id: WC, prod_date: todayVN, cycle: 'Q1', ...o })
+  const NEW = (o) => ({ warehouse_id: WC, prod_date: todayVN, cycle: 'Q1', shift: 'Ca 1', ...o })   // ca bắt buộc từ 21/11
 
   // ── [0] kho phụ TẠO PHIẾU NHẬP trực tiếp được (user chốt 19/11 "cứ cho nhập đi thôi" — trước đó 400 "Kho phụ nội bộ chỉ
   //        nhận hàng qua chuyển kho từ kho parent"): cả Nhập SX lẫn Nhập NCC ──
@@ -157,12 +157,20 @@ try {
   check('1b2. Mở mẻ với mã NGUYÊN LIỆU tính KG (chưa đánh dấu BTP) ⇒ 422 NOT_SEMI_FINISHED', r1b2.s === 422 && r1b2.j?.error?.code === 'NOT_SEMI_FINISHED', `http=${r1b2.s} ${r1b2.j?.error?.code}`)
   const r1g = await api('/wms/production/batches', 'POST', { warehouse_id: WC, material_id: M_BTP, prod_date: todayVN })
   check('1g. Mở mẻ thiếu chu kỳ / bồn ⇒ 400 (17/11: bắt buộc)', r1g.s === 400, `http=${r1g.s}`)
+  const r1gShift = await api('/wms/production/batches', 'POST', NEW({ material_id: M_BTP, tank_id: T1.id, shift: undefined }))
+  const r1gBlank = await api('/wms/production/batches', 'POST', NEW({ material_id: M_BTP, tank_id: T1.id, shift: '  ' }))
+  check('1g2. Mở mẻ thiếu CA / ca để trống ⇒ 400 (21/11: ca bắt buộc — Báo cáo NVL chia lệch định mức theo ca)', r1gShift.s === 400 && r1gBlank.s === 400, `http=${r1gShift.s}/${r1gBlank.s}`)
   const nc = await api(`/wms/production/batches/next-code?warehouse_id=${WC}&cycle=q1&tank_id=${T1.id}`)
   check('1c. Gợi ý: chữ nhà máy lấy ở kho CHA (Q) · số mẻ kế tiếp 1 · mã lô = Q + Q1 + 0001 + mã bồn', nc.s === 200 && nc.j?.data?.plant === 'Q' && nc.j?.data?.next_no === 1 && nc.j?.data?.code === 'QQ10001QA63-T1',
     `http=${nc.s} ${JSON.stringify(nc.j?.data ?? null)}`)
   const b1 = await api('/wms/production/batches', 'POST', NEW({ material_id: M_BTP, tank_id: T1.id, machine_code: 'T1', planned_qty: 1000 }))
   const B1 = b1.j?.data
   check('1d. Mở mẻ không gõ số mẻ ⇒ 201, mã lô tự ghép, số mẻ 1, QA mặc định HOLD', b1.s === 201 && B1?.batch_code === 'QQ10001QA63-T1' && B1?.batch_no === 1 && B1?.tank_id === T1.id && B1?.qa_status === 'HOLD', `http=${b1.s} ${JSON.stringify(b1.j?.error ?? null)} ${B1?.batch_code}`)
+  const b1NoShift = await api(`/wms/production/batches/${B1?.id}`, 'PATCH', { shift: null })
+  const b1Shift = await api(`/wms/production/batches/${B1?.id}`, 'PATCH', { shift: 'Ca 2' })
+  const b1Back = await api(`/wms/production/batches/${B1?.id}`, 'PATCH', { shift: 'Ca 1' })
+  check('1d2. Sửa mẻ: xoá ca ⇒ 400; đổi ca ⇒ 200 (ca bắt buộc 21/11)', b1NoShift.s === 400 && b1Shift.s === 200 && b1Shift.j?.data?.shift === 'Ca 2' && b1Back.s === 200,
+    `http=${b1NoShift.s}/${b1Shift.s}/${b1Back.s} ${b1Shift.j?.data?.shift}`)
   const b2 = await api('/wms/production/batches', 'POST', NEW({ material_id: M_BTP, tank_id: T1.id, machine_code: 'T1' }))
   const B2 = b2.j?.data
   check('1e. Mẻ thứ hai cùng chu kỳ ⇒ số mẻ kế 2', b2.s === 201 && B2?.batch_code === 'QQ10002QA63-T1' && B2?.batch_no === 2, `code=${B2?.batch_code}`)
@@ -636,6 +644,17 @@ try {
     bvNoReason.s === 422 && bvNoReason.j?.error?.code === 'MES_REASON' && bvEdit.s === 200 && num(vRm?.required) === 11 && num(vRm?.standard) === 10
       && vRm?.change_reason === 'QA63 đường ẩm' && vEa?.removed === true && vEa?.required == null && num(vEa?.standard) === 4,
     `http=${bvNoReason.s}/${bvEdit.s} rm=${JSON.stringify(vRm ?? null)} ea=${JSON.stringify(vEa ?? null)}`)
+  // (21/11) BÁO CÁO NVL so với ĐỊNH MỨC GỐC: ô của mẻ mang std (gốc) · req (phiếu) · lý do; dòng BỎ khỏi phiếu vẫn có mặt (rm, req null, giữ gốc)
+  const crQ1 = (await api(`/wms/production/cycles/report?warehouse_id=${WC}&cycle=Q1`)).j?.data
+  const cRm = (crQ1?.rows ?? []).find(r => r.material_id === M_RM)?.cells?.[BV?.id]
+  const cEa = (crQ1?.rows ?? []).find(r => r.material_id === M_EA)?.cells?.[BV?.id]
+  check('10m2. Báo cáo chu kỳ (21/11): ô NVL mang định mức gốc 10 · phiếu 11 · lý do; dòng đã bỏ vẫn có mặt (rm, phiếu trống, gốc 4)',
+    num(cRm?.std) === 10 && num(cRm?.req) === 11 && cRm?.rm === false && cRm?.why === 'QA63 đường ẩm' && cEa?.rm === true && cEa?.req == null && num(cEa?.std) === 4,
+    `rm=${JSON.stringify(cRm ?? null)} ea=${JSON.stringify(cEa ?? null)}`)
+  const rawQ1 = (await api(`/wms/production/consumption-raw/export?warehouse_id=${WC}&cycle=Q1&part=req&page_size=500`)).j?.data?.rows ?? []
+  const rEa = rawQ1.find(x => x.batch_id === BV?.id && x.mat_code === 'QA63EA1')
+  check('10m3. Dữ liệu thô "Định mức – thực cấp": dòng đã bỏ có mặt (Bỏ khỏi phiếu, gốc 4, lệch so chuẩn −4)',
+    !!rEa && rEa.removed === true && rEa.in_sheet === false && num(rEa.std) === 4 && num(rEa.diff_std) === -4, JSON.stringify(rEa ?? null))
   const bvSwap = await api(`/wms/production/batches/${BV?.id}/requirements`, 'PUT', { reason: 'QA63 hết mã cũ, đổi', items: [{ material_id: M_BTP, qty: 11, replaces: M_RM }] })
   const bvS = (await api(`/wms/production/batches/${BV?.id}`)).j?.data?.board ?? []
   const sNew = bvS.find(r => r.material_id === M_BTP), sOld = bvS.find(r => r.material_id === M_RM)
@@ -900,10 +919,10 @@ try {
   {
     const setOn = await api('/wms/production/settings', 'PUT', { warehouse_id: WC2, mes_flow_gate: true })
     await restWrite('InventoryEntry', 'POST', null, [E('QA63_E16', 'QA63_P16', 50, WC2, '2026-11-01', '2027-01-01')])
-    const fb = await api('/wms/production/batches', 'POST', { warehouse_id: WC2, material_id: M_BTP, prod_date: todayVN, cycle: 'Q2', tank_id: T3.id, planned_qty: 100 })
+    const fb = await api('/wms/production/batches', 'POST', { warehouse_id: WC2, material_id: M_BTP, prod_date: todayVN, shift: 'Ca 1', cycle: 'Q2', tank_id: T3.id, planned_qty: 100 })
     const FB = fb.j?.data
     check('16a. Bật luồng chặt qua Cài đặt MES; mở mẻ ở kho 2 ⇒ mã lô QQ20001QA63-T3', setOn.s === 200 && setOn.j?.data?.mes_flow_gate === true && fb.s === 201 && FB?.batch_code === 'QQ20001QA63-T3', `http=${setOn.s}/${fb.s} ${FB?.batch_code}`)
-    const fbOver = await api('/wms/production/batches', 'POST', { warehouse_id: WC2, material_id: M_BTP, prod_date: todayVN, cycle: 'Q2', tank_id: T3.id, planned_qty: 401 })
+    const fbOver = await api('/wms/production/batches', 'POST', { warehouse_id: WC2, material_id: M_BTP, prod_date: todayVN, shift: 'Ca 1', cycle: 'Q2', tank_id: T3.id, planned_qty: 401 })
     check('16b. Bồn 500 đã đặt 100 ⇒ mẻ kế hoạch 401 bị 409 MES_OVER_CAPACITY', fbOver.s === 409 && fbOver.j?.error?.code === 'MES_OVER_CAPACITY', `http=${fbOver.s}`)
     const rq = await api(`/wms/production/batches/${FB.id}/requirements`, 'PUT', { reason: 'QA63 khai phiếu', items: [{ material_id: M_RM, qty: 10 }] })
     const cNo = await api(`/wms/production/batches/${FB.id}/consume-scan`, 'POST', { entry_id: 'QA63_E16', qty: 10, qty_semantics: 'base' })
@@ -1048,7 +1067,7 @@ try {
     check('17d. Chu kỳ quá 6 ký tự ⇒ 400 BAD_CYCLE (báo cáo chu kỳ và dữ liệu thô cùng luật)',
       crBad.s === 400 && crBad.j?.error?.code === 'BAD_CYCLE' && rawBad.s === 400 && rawBad.j?.error?.code === 'BAD_CYCLE', `http=${crBad.s}/${rawBad.s}`)
     // sơ đồ bồn: mẻ đặt bồn mà chưa nạp đứng trên bồn kèm tình trạng + bước (cùng hàm cổng với danh sách mẻ)
-    const qb = (await api('/wms/production/batches', 'POST', { warehouse_id: WC2, material_id: M_BTP, prod_date: todayVN, cycle: 'Q3', tank_id: T3.id, planned_qty: 10 })).j?.data
+    const qb = (await api('/wms/production/batches', 'POST', { warehouse_id: WC2, material_id: M_BTP, prod_date: todayVN, shift: 'Ca 2', cycle: 'Q3', tank_id: T3.id, planned_qty: 10 })).j?.data
     const inc = async () => ((await api(`/wms/production/tanks?warehouse_id=${WC2}`)).j?.data ?? []).find(t => t.id === T3.id)?.incoming?.find(x => x.batch_id === qb?.id)
     const i1 = await inc()
     // trưởng ca chỉ duyệt được phiếu đã có NVL (MES_EMPTY_SHEET) ⇒ khai một dòng trước

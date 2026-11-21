@@ -223,7 +223,8 @@ export async function getBatch(req: Request, res: Response) {
 export const zBatchCreate = z.object({
   warehouse_id: zText(1, 64), material_id: zText(1, 64), prod_date: zDay,
   cycle: zText(1, 20), batch_no: z.number().int().min(1).max(9999).optional(), tank_id: zText(1, 64),
-  machine_code: zText(0, 20).optional(), shift: zText(0, 40).optional(),
+  // CA BẮT BUỘC (21/11 — user chốt): báo cáo NVL chia lệch định mức theo ca của từng ngày; mẻ không ca rơi vào "Chưa ghi ca"
+  machine_code: zText(0, 20).optional(), shift: zText(1, 40),
   planned_qty: z.number().positive().max(10_000_000).nullable().optional(), note: zText(0, 500).optional(),
   recipe_id: zText(1, 64).optional(),   // công thức chọn lúc mở (trống = công thức mặc định của mã)
   extra_forms: z.array(zText(1, 20)).max(20).optional(),   // phiếu bổ sung của mẻ (vắng = mặc định theo mã BTP)
@@ -276,7 +277,7 @@ export async function createBatch(req: Request, res: Response) {
 export const zBatchUpdate = z.object({
   material_id: zText(1, 64).optional(), prod_date: zDay.optional(),
   cycle: zText(1, 20).optional(), batch_no: z.number().int().min(1).max(9999).optional(), tank_id: zText(1, 64).optional(),
-  machine_code: zText(0, 20).nullable().optional(), shift: zText(0, 40).nullable().optional(),
+  machine_code: zText(0, 20).nullable().optional(), shift: zText(1, 40).optional(),   // ca bắt buộc (21/11): sửa mẻ không xoá được ca
   planned_qty: z.number().positive().max(10_000_000).nullable().optional(), note: zText(0, 500).nullable().optional(),
 })
 export async function updateBatch(req: Request, res: Response) {

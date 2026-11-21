@@ -47,4 +47,4 @@
 | `kiem-ke` — Kiểm kê | `stocktake` | `public/guide/kiem-ke/` (14 ảnh) | |
 | `truy-xuat` — Truy xuất lô | `traceability` | `public/guide/truy-xuat/` (8 ảnh) | mẻ thật B260001BD62 (chỉ đọc) |
 | `lich-su-quet` — Lịch sử quét xuất kho | `scanlog` | `public/guide/lich-su-quet/` (3 ảnh) | kho chế biến không xuất theo chuyến ⇒ trang trống, bài nói rõ |
-| `mes` — Sản xuất (MES): cài đặt và vận hành mẻ | `production` | `public/guide/mes/` (46 ảnh, ~3,6 MB) | Chụp 19/11 trên Preview (chức danh Phó phòng QA, Chế biến Ba Vì, mẻ mẫu B260003BD66 + bồn BD66 đã xoá) |
+| `mes` — Sản xuất (MES): cài đặt và vận hành mẻ | `production` | `public/guide/mes/` (47 ảnh, ~3,7 MB) | Chụp 19/11 trên Preview (chức danh Phó phòng QA, Chế biến Ba Vì, mẻ mẫu B260003BD66 + bồn BD66 đã xoá); 21/11 chụp lại 70 + thêm 70a (Tổng quan) trên chu kỳ 26 thật, chỉ đọc |

@@ -70,7 +70,8 @@ export function CycleDashboard({ rows, live, groups, onOpenNvl }: Props) {
             <span className="ml-auto flex items-center gap-3 text-[10px] text-slate-600">
               <span className="inline-flex items-center gap-1"><i className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: BAR_DEV }} />Có NVL lệch</span>
               <span className="inline-flex items-center gap-1"><i className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: BAR_OK }} />Trong mức</span>
-              <span className="inline-flex items-center gap-1"><i className="inline-block h-2.5 w-2.5 rounded-sm opacity-40" style={{ background: BAR_OK }} />Chưa nạp bồn</span>
+              {/* mẻ chưa nạp bồn = CÙNG màu nhưng nhạt (đỏ nhạt nếu có NVL lệch) — ô chú giải nửa đỏ nửa xám nhạt cho khớp */}
+              <span className="inline-flex items-center gap-1" title="Mẻ chưa nạp bồn vẽ nhạt — số có thể còn đổi"><i className="inline-block h-2.5 w-2.5 rounded-sm opacity-40" style={{ background: `linear-gradient(135deg, ${BAR_DEV} 50%, ${BAR_OK} 50%)` }} />Nhạt = chưa nạp bồn</span>
             </span>
           </div>
           <DevBarChart groups={groups} per={per} onPick={pick} />

@@ -26,14 +26,13 @@ import { formatTimestampTime } from '@/utils/formatters'
 import { devLabel } from '@/utils/reqTolerance'
 import { durLabel } from '@/utils/cycleReport'
 import { unitCode } from '@/utils/unitCode'
+import { addDays, daysOf, grainOf, bucketRange, withAllBuckets as fillBuckets } from '@/utils/mesDash'
 
 const apiMsg = (e: unknown) => (e as AxiosError<{ error?: { message?: string } }>)?.response?.data?.error?.message ?? 'Không tải được số liệu'
 const nf = (n: number | null | undefined, d = 1) => (n == null || !Number.isFinite(Number(n)) ? '—' : Number(n).toLocaleString('vi-VN', { maximumFractionDigits: d }))
 const sgn = (n: number, d = 1) => (n > 0 ? `+${nf(n, d)}` : n < 0 ? `−${nf(Math.abs(n), d)}` : '0')
 const pctOf = (total: number, std: number): number | null => (Number(std) > 0 ? Math.round((Number(total) / Number(std)) * 1000) / 10 : null)
 const todayVN = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
-const addDays = (d: string, n: number) => { const t = new Date(`${d}T00:00:00Z`); t.setUTCDate(t.getUTCDate() + n); return t.toISOString().slice(0, 10) }
-const daysOf = (a: string, b: string) => Math.round((Date.parse(b) - Date.parse(a)) / 86_400_000) + 1
 const ddmm = (d: string) => `${d.slice(8, 10)}/${d.slice(5, 7)}`
 const dmy = (d: string) => `${d.slice(8, 10)}/${d.slice(5, 7)}/${d.slice(0, 4)}`
 const TONE_VAR: Record<StatTone, string> = { ok: 'var(--k-ok)', warn: 'var(--k-warn)', bad: 'var(--k-bad)' }
@@ -47,18 +46,11 @@ export const DASH_RANGES = [
 ] as const
 type RangeKey = typeof DASH_RANGES[number]['key']
 const MAX_DAYS = 1100
-/** cách gom theo độ dài kỳ — mỗi biểu đồ vài chục điểm dù xem 3 năm */
-export const grainOf = (days: number): DashGrain => (days <= 1 ? 'batch' : days <= 92 ? 'day' : days <= 400 ? 'week' : 'month')
 const GRAIN_TEXT: Record<DashGrain, string> = { batch: 'từng mẻ', day: 'theo ngày', week: 'theo tuần', month: 'theo tháng' }
 const bucketLabel = (g: DashGrain, k: string) => (g === 'month' ? `${k.slice(5, 7)}/${k.slice(2, 4)}` : g === 'week' ? `T ${ddmm(k)}` : ddmm(k))
-/** khoảng ngày của một kỳ trên biểu đồ (cắt theo kỳ đang xem) */
-function bucketRange(g: DashGrain, k: string, from: string, to: string): { from: string; to: string } {
-  let a = k, b = k
-  if (g === 'week') b = addDays(k, 6)
-  if (g === 'month') { const t = new Date(`${k}T00:00:00Z`); t.setUTCMonth(t.getUTCMonth() + 1); t.setUTCDate(0); b = t.toISOString().slice(0, 10) }
-  if (a < from) a = from
-  if (b > to) b = to
-  return { from: a, to: b }
+/** trục thời gian đủ MỌI kỳ của khoảng (DB chỉ trả kỳ có mẻ) — kỳ trống: đứt đường, ô nhiệt viền đứt */
+function withAllBuckets(d: Dash): Dash {
+  return { ...d, buckets: fillBuckets(d.grain, d.date_from, d.date_to, d.buckets, k => ({ k, batches: 0, filled: 0, pass: 0, dev_batches: 0, dev_lines: 0, std_kg: 0, total_kg: 0, edit_kg: 0, exec_kg: 0 })) }
 }
 /** lệch % so mục tiêu: trong mức xanh · tới 2 lần mục tiêu vàng · hơn nữa đỏ */
 const devTone = (p: number | null, target: number): StatTone | undefined => (p == null ? undefined : Math.abs(p) <= target ? 'ok' : Math.abs(p) <= 2 * target ? 'warn' : 'bad')
@@ -92,13 +84,13 @@ export function MesDashboard({ tabBar }: { tabBar: ReactNode }) {
   const grain = grainOf(days)
   const q = useMesDashboard(wh && !badRange ? { warehouse_id: wh, date_from: cur.from, date_to: cur.to, grain } : null)
   // chỉ dùng số của ĐÚNG kho + kỳ đang chọn (giữ số cũ khi đang tải kỳ mới thì được, nhưng không trộn kho)
-  const d = q.data && q.data.warehouse_id === wh ? q.data : undefined
+  const d = useMemo(() => (q.data && q.data.warehouse_id === wh ? withAllBuckets(q.data) : undefined), [q.data, wh])
   const fresh = !!d && d.date_from === cur.from && d.date_to === cur.to
   const [detail, setDetail] = useState<DetailReq | null>(null)
   const open = (title: string, dq: Omit<DashDetailQuery, 'warehouse_id' | 'date_from' | 'date_to'> & { date_from?: string; date_to?: string }) =>
     setDetail({ title, q: { date_from: dq.date_from ?? cur.from, date_to: dq.date_to ?? cur.to, ...dq } as Omit<DashDetailQuery, 'warehouse_id'> })
   const drill = (b: DashBucket) => {
-    if (!d) return
+    if (!d || !b.batches) return
     const r = bucketRange(d.grain, b.k, cur.from, cur.to)
     if (r.from === cur.from && r.to === cur.to) return
     setStack(s => [...s, { ...r, label: r.from === r.to ? dmy(r.from) : `${ddmm(r.from)} → ${ddmm(r.to)}` }])
@@ -198,7 +190,7 @@ function DashBody({ d, stale, onOpen, onDrill, onBatch }: { d: Dash; stale: bool
             unit={`mục tiêu ≥ ${nf(tg.pass_pct, 1)}%`} sub={cmp(pass, prevPass, ' điểm', 'up')} />
         </CardBtn>
         <CardBtn onClick={() => onOpen('NVL lệch định mức', { kind: 'lines' })} id="dev">
-          <StatCard twoLines label="Lệch NVL (KG)" value={sgn(t.total_kg, 0)} tone={devTone(pct, tg.dev_pct)}
+          <StatCard twoLines label="Lệch NVL (KG)" value={sgn(t.total_kg, Math.abs(t.total_kg) < 100 ? 1 : 0)} tone={devTone(pct, tg.dev_pct)}
             unit={pct == null ? 'KG' : `KG · ${devLabel(pct)}`} sub={<>mục tiêu ±{nf(tg.dev_pct, 2)}% · {cmp(pct == null ? null : Math.abs(pct), prevPct == null ? null : Math.abs(prevPct), ' điểm', 'down', 2)}</>} />
         </CardBtn>
         <CardBtn onClick={() => onOpen('NVL lệch định mức', { kind: 'lines' })} id="lines">
@@ -423,7 +415,7 @@ function Composition({ d, onOpen }: { d: Dash; onOpen: OpenFn }) {
   const chip = (label: string, n: number, only: DashOnly, color: string) => (
     <button type="button" disabled={!n} onClick={() => onOpen(`Dòng NVL ${label.toLowerCase()}`, { kind: 'lines', only })} data-chip={only}
       className="flex-1 min-w-0 rounded-lg border border-[var(--k-line)] px-2 py-1.5 text-left enabled:hover:bg-[var(--k-surface-2)] disabled:opacity-60">
-      <div className="text-[11px] text-[var(--k-muted)] truncate">{label}</div>
+      <div className="text-[11px] leading-tight text-[var(--k-muted)]">{label}</div>
       <div className="text-lg font-semibold tabular-nums leading-tight" style={{ color: n ? color : undefined }}>{nf(n, 0)}</div>
     </button>
   )
@@ -662,13 +654,13 @@ function DetailDialog({ wh, req, onClose, onBatch }: { wh: string; req: DetailRe
   const q = useMesDashboardDetail({ warehouse_id: wh, ...req.q })
   const r = q.data
   const range = req.q.date_from === req.q.date_to ? dmy(req.q.date_from) : `${dmy(req.q.date_from)} → ${dmy(req.q.date_to)}`
-  const TH = 'sticky top-0 z-[1] bg-[var(--k-surface-2)] px-2 py-1.5 text-left text-[10px] font-semibold uppercase tracking-wide text-[var(--k-muted)] whitespace-nowrap'
-  const TD = 'px-2 py-1.5 whitespace-nowrap'
+  const TH = 'sticky top-0 z-[1] bg-[var(--k-surface-2)] px-1.5 py-1.5 text-left text-[10px] font-semibold uppercase tracking-wide text-[var(--k-muted)] whitespace-nowrap'
+  const TD = 'px-1.5 py-1.5 whitespace-nowrap'
   const NUM = `${TD} text-right tabular-nums`
   return (
     <Dialog open onOpenChange={v => { if (!v) onClose() }}>
       <DialogContent onOpenAutoFocus={e => e.preventDefault()} data-testid="dash-detail"
-        className="kpi-console w-[96vw] max-w-[96vw] h-[92dvh] sm:w-[80vw] sm:max-w-[80vw] sm:h-[80vh] max-h-none p-0 gap-0 flex flex-col overflow-hidden bg-[var(--k-surface)]">
+        className="kpi-console w-[96vw] max-w-[96vw] h-[92dvh] sm:w-[92vw] sm:max-w-[1400px] sm:h-[82vh] max-h-none p-0 gap-0 flex flex-col overflow-hidden bg-[var(--k-surface)]">
         <div className="px-4 py-3 border-b border-[var(--k-line)] pr-12">
           <DialogTitle className="text-base font-semibold">{req.title}</DialogTitle>
           <div className="text-xs text-[var(--k-muted)] mt-0.5">Ngày SX {range}{r ? ` · ${nf(r.total, 0)} ${r.kind === 'batches' ? 'mẻ' : 'dòng'}${r.total > r.rows.length ? ` · hiện ${r.rows.length} dòng mới nhất — thu hẹp kỳ để xem hết` : ''}` : ''} · bấm một dòng để mở mẻ</div>
@@ -713,14 +705,14 @@ function DetailDialog({ wh, req, onClose, onBatch }: { wh: string; req: DetailRe
                     <tr key={`${x.batch_id}|${x.mat_id}`} onClick={() => onBatch(x.batch_id)} className="cursor-pointer border-t border-[var(--k-line)] hover:bg-[var(--k-surface-2)]" data-detail={`${x.code}:${x.mat_code}`}>
                       <td className={`${TD} tabular-nums`}>{ddmm(x.d)}</td><td className={TD}>{shiftName(x.shift)}</td>
                       <td className={TD}><b>Mẻ {x.no ?? '—'}</b> <span className="font-mono text-[var(--k-muted)]">{x.code}</span></td>
-                      <td className={`${TD} max-w-[16rem] truncate`} title={x.mat_name ?? ''}><b className="font-mono">{x.mat_code}</b> {x.mat_name ?? ''}</td>
+                      <td className={`${TD} max-w-[13rem] truncate`} title={x.mat_name ?? ''}><b className="font-mono">{x.mat_code}</b> {x.mat_name ?? ''}</td>
                       <td className={`${TD} font-mono text-[var(--k-muted)]`}>{unitCode(x.unit)}</td>
                       <td className={TD} style={{ color: sc }}>{st}</td>
                       <td className={NUM}>{x.state === 'extra' && !Number(x.std) ? '—' : nf(x.std, 3)}</td><td className={NUM}>{nf(x.sheet, 3)}</td><td className={NUM}>{nf(x.iss, 3)}</td>
                       <td className={`${NUM} font-semibold`} style={{ color: sc }}>{sgn(Number(x.diff), 3)}</td>
                       <td className={NUM}>{x.pct == null ? '—' : devLabel(Number(x.pct))}</td>
                       <td className={NUM}>{Number(x.edit) ? sgn(Number(x.edit), 3) : '0'}</td><td className={NUM}>{Number(x.exec) ? sgn(Number(x.exec), 3) : '0'}</td>
-                      <td className={`${TD} max-w-[14rem] truncate text-[var(--k-muted)]`} title={x.why ?? ''}>{x.why ?? ''}</td>
+                      <td className={`${TD} max-w-[12rem] truncate text-[var(--k-muted)]`} title={x.why ?? ''}>{x.why ?? ''}</td>
                     </tr>
                   )
                 })}

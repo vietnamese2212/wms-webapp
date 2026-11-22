@@ -68,10 +68,11 @@ export default function ProductionUsageReport() {
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
   const tabs = useMobileTabs('/wms/production/usage-report', TABS, f.rtab, k => setF({ rtab: k }))
   const tabBar = (
-    <div className="flex rounded-lg border border-slate-200 overflow-hidden text-xs font-medium shrink-0" role="tablist" aria-label="Báo cáo NVL">
+    // điện thoại: chip rời tự xuống hàng (22/11 — thêm tab Tổng quan thì 4 tab không vừa 390 px); máy tính: dải liền như cũ
+    <div className="flex flex-wrap gap-1 text-xs font-medium sm:flex-nowrap sm:gap-0 sm:rounded-lg sm:border sm:border-slate-200 sm:overflow-hidden shrink-0" role="tablist" aria-label="Báo cáo NVL">
       {tabs.map((t, i) => (
         <button key={t.key} type="button" role="tab" aria-selected={f.rtab === t.key} onClick={() => setF({ rtab: t.key })} data-tab={t.key}
-          className={`h-9 sm:h-7 px-3 whitespace-nowrap ${i > 0 ? 'border-l border-slate-200 ' : ''}${f.rtab === t.key ? 'bg-sky-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}>{t.label}</button>
+          className={`h-9 sm:h-7 px-3 whitespace-nowrap rounded-md border border-slate-200 sm:rounded-none sm:border-0 ${i > 0 ? 'sm:border-l sm:border-slate-200 ' : ''}${f.rtab === t.key ? 'bg-sky-600 text-white border-sky-600' : 'bg-white text-slate-600 hover:bg-slate-50'}`}>{t.label}</button>
       ))}
     </div>
   )

@@ -279,7 +279,7 @@ export const MES_GUIDE: Guide = {
             'Ca là ca của một ngày: chu kỳ kéo qua nhiều ngày thì ghi "Ca 1 · 17/11", "Ca 1 · 18/11".',
             '**Xuất Excel** = báo cáo cuối chu kỳ: Lệch theo ca · mẻ / NVL theo ca / NVL từng mẻ / Ca – Mẻ / Nhân sự / Tiêu hao NVL (thô).',
           ],
-          images: [d('70a-tong-quan', 'Theo chu kỳ → Lệch ca · mẻ, một mẻ mở từng nguyên liệu'), d('70-bao-cao-chu-ky', 'NVL × ca, một dòng mở ▸ từng mẻ'), d('72-bao-cao-nhan-su', 'Tab Nhân sự')],
+          images: [d('70b-dashboard', 'Tổng quan — chọn kỳ xem, thẻ số, xu hướng lệch, lệch đến từ đâu'), d('70c-bam-xem-du-lieu', 'Bấm một con số ⇒ bảng dữ liệu đứng sau; bấm một dòng để mở mẻ'), d('70a-tong-quan', 'Theo chu kỳ → Lệch ca · mẻ, một mẻ mở từng nguyên liệu'), d('70-bao-cao-chu-ky', 'NVL × ca, một dòng mở ▸ từng mẻ'), d('72-bao-cao-nhan-su', 'Tab Nhân sự')],
         },
         {
           title: 'C2. Dữ liệu thô tiêu hao NVL (cho SAP)',

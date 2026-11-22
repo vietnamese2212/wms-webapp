@@ -499,7 +499,7 @@ function GroupTable({ kind, d, onOpen }: { kind: 'shift' | 'btp'; d: Dash; onOpe
       <table className="w-full text-xs" data-testid={`dash-${kind}`}>
         <thead><tr className="text-[10px] uppercase tracking-wide text-[var(--k-muted)]">
           <th className="py-1 text-left font-semibold">{kind === 'shift' ? 'Ca' : 'Bán thành phẩm'}</th><th className="py-1 text-right font-semibold">Mẻ</th>
-          <th className="py-1 text-right font-semibold">Đạt</th><th className="py-1 text-right font-semibold">Lệch</th><th className="py-1 text-right font-semibold">NVL lệch</th>
+          <th className="py-1 pl-2 text-right font-semibold">Đạt</th><th className="py-1 pl-2 text-right font-semibold">Lệch</th><th className="py-1 pl-2 text-right font-semibold whitespace-nowrap">NVL lệch</th>
         </tr></thead>
         <tbody>
           {rows.map(r => {
@@ -507,7 +507,7 @@ function GroupTable({ kind, d, onOpen }: { kind: 'shift' | 'btp'; d: Dash; onOpe
             return (
               <tr key={r.key} onClick={() => onOpen(kind === 'shift' ? r.label : `${r.label} ${r.sub}`, r.q)} data-row={r.key}
                 className="cursor-pointer border-t border-[var(--k-line)] hover:bg-[var(--k-surface-2)]">
-                <td className="py-1.5 pr-2 max-w-[11rem] truncate" title={r.sub}><b>{r.label}</b>{r.sub && <span className="ml-1 text-[var(--k-muted)]">{r.sub}</span>}</td>
+                <td className="py-1.5 pr-2 max-w-[9rem]" title={r.sub}><b className="block truncate">{r.label}</b>{r.sub && <span className="block truncate text-[10px] text-[var(--k-muted)]">{r.sub}</span>}</td>
                 <td className="py-1.5 text-right tabular-nums">{nf(r.g.batches, 0)}</td>
                 <td className="py-1.5 text-right font-semibold tabular-nums" style={{ color: toneColor(passTone(ps, d.targets.pass_pct)) }}>{ps == null ? '—' : `${nf(ps, 1)}%`}</td>
                 <td className="py-1.5 text-right font-semibold tabular-nums" style={{ color: toneColor(devTone(p, d.targets.dev_pct)) }}>{p == null ? '—' : devLabel(p)}</td>
@@ -620,7 +620,7 @@ function ExcTable({ d, onBatch }: { d: Dash; onBatch: (id: string) => void }) {
   const cause = (e: Dash['exc'][number]) => Math.abs(e.edit_kg) >= Math.abs(e.exec_kg) && e.edit_kg !== 0 ? ['Sửa phiếu', 'var(--k-data)'] : e.exec_kg !== 0 ? ['Cấp lệch', 'var(--k-warn)'] : ['Ngoài định mức', 'var(--k-bad)']
   return (
     <div className="overflow-x-auto px-3 sm:px-4 py-2">
-      <table className="w-full min-w-[760px] text-xs" data-testid="dash-exc">
+      <table className="w-full min-w-[760px] text-xs [&_th]:pr-3 [&_td]:pr-3" data-testid="dash-exc">
         <thead><tr className="text-[10px] uppercase tracking-wide text-[var(--k-muted)] text-left">
           <th className="py-1 font-semibold">Ngày</th><th className="py-1 font-semibold">Ca</th><th className="py-1 font-semibold">Mẻ · mã lô</th><th className="py-1 font-semibold">BTP</th>
           <th className="py-1 font-semibold text-right">Định mức KG</th><th className="py-1 font-semibold text-right">Lệch KG</th><th className="py-1 font-semibold text-right">Lệch %</th>

@@ -269,15 +269,17 @@ export const MES_GUIDE: Guide = {
         {
           title: 'C1. Báo cáo NVL theo chu kỳ',
           text: [
-            'Vào **Báo cáo NVL** → tab **Theo chu kỳ** → chọn chu kỳ. Báo cáo chạy trực tiếp, tự cập nhật.',
+            'Vào **Báo cáo NVL**. Tab **Tổng quan** (mở sẵn) là dashboard theo thời gian: chọn kỳ **1 ngày · 7 ngày · 1 tháng · 3 tháng · 1 năm · 3 năm · Tự chọn**. Có thẻ số (mẻ hoàn thành, % mẻ đạt định mức, lệch NVL, thời gian mẻ, QA bồn), xu hướng lệch, bản đồ nhiệt theo ca, NVL gây lệch nhiều nhất, biểu đồ kiểm soát từng mẻ. **Bấm vào bất kỳ con số / ô / cột nào** để xem dữ liệu đứng sau; bấm một ngày trên xu hướng để đi sâu vào ngày đó.',
+            'Mục tiêu (lệch cho phép ± %, % mẻ đạt) đặt ở **Cài đặt MES → Mục tiêu Báo cáo NVL**.',
+            'Tab **Theo chu kỳ** → chọn chu kỳ: báo cáo cuối của một chu kỳ. Báo cáo chạy trực tiếp, tự cập nhật.',
             'Mọi con số so với **định mức gốc** (công thức × kế hoạch), không phải phiếu đã sửa. Lệch tách hai phần: **Sửa phiếu** (trưởng ca sửa định mức của mẻ, có lý do) và **Cấp lệch** (cấp khác phiếu). Chỉ dòng đã cấp xong mới có số lệch.',
-            '- **Tổng quan** (mở sẵn): biểu đồ lệch của từng mẻ xếp theo ca (đỏ = có nguyên liệu lệch), danh sách **NVL lệch nhiều nhất**, bảng **Theo ca · mẻ** (định mức, thực cấp, lệch theo KG và số NVL lệch). Bấm một mẻ để xem từng nguyên liệu và lý do sửa.',
+            '- **Lệch ca · mẻ**: biểu đồ lệch của từng mẻ trong chu kỳ xếp theo ca (đỏ = có nguyên liệu lệch), danh sách **NVL lệch nhiều nhất**, bảng **Theo ca · mẻ** (định mức, thực cấp, lệch theo KG và số NVL lệch). Bấm một mẻ để xem từng nguyên liệu và lý do sửa.',
             '- **NVL × ca**: mỗi nguyên liệu một dòng — định mức, phiếu, thực cấp, lệch của cả chu kỳ, mỗi ca một cột, cột **Mẻ lệch**. Bấm dòng nguyên liệu ▸ để xem từng mẻ xếp dọc; bấm một mẻ để mở mẻ đó.',
             '- **Ca · Mẻ**: từng mẻ thuộc ca nào, đã nạp bồn chưa. **Nhân sự**: mỗi người đã làm bao nhiêu việc trong chu kỳ.',
             'Ca là ca của một ngày: chu kỳ kéo qua nhiều ngày thì ghi "Ca 1 · 17/11", "Ca 1 · 18/11".',
             '**Xuất Excel** = báo cáo cuối chu kỳ: Lệch theo ca · mẻ / NVL theo ca / NVL từng mẻ / Ca – Mẻ / Nhân sự / Tiêu hao NVL (thô).',
           ],
-          images: [d('70a-tong-quan', 'Tổng quan — lệch so định mức theo ca · mẻ, một mẻ mở từng nguyên liệu'), d('70-bao-cao-chu-ky', 'NVL × ca, một dòng mở ▸ từng mẻ'), d('72-bao-cao-nhan-su', 'Tab Nhân sự')],
+          images: [d('70a-tong-quan', 'Theo chu kỳ → Lệch ca · mẻ, một mẻ mở từng nguyên liệu'), d('70-bao-cao-chu-ky', 'NVL × ca, một dòng mở ▸ từng mẻ'), d('72-bao-cao-nhan-su', 'Tab Nhân sự')],
         },
         {
           title: 'C2. Dữ liệu thô tiêu hao NVL (cho SAP)',

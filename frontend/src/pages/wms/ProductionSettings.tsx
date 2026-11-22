@@ -3,6 +3,7 @@
 //   • Đóng gói rút bán thành phẩm khỏi bồn còn lô CHỜ QA — 2 tầng Kho chế biến + Loại kho (trước ở Cài đặt WMS).
 //     Lô QA LOẠI luôn chặn — không có công tắc.
 //   • Hạn lưu bồn (giờ) theo mã bán thành phẩm (trước ở form Mã hàng) — áp cho mọi kho.
+//   • Mục tiêu của dashboard Báo cáo NVL (22/11 — user: "mục tiêu để dạng config tự đặt"): ± % lệch NVL và % mẻ đạt, theo kho chế biến.
 //   • Tab "Mẫu phiếu theo dõi" (14/11 khuya): ô · đơn vị · ngưỡng · bảng theo dõi của các phiếu theo dõi mẻ — một nút Lưu riêng của tab.
 // Danh mục bồn vẫn ở trang Bồn (đó là danh mục, không phải cấu hình).
 import { useEffect, useMemo, useState } from 'react'
@@ -21,6 +22,7 @@ import { NoSemiFinishedHint } from '@/components/wms/production/NoSemiFinishedHi
 import { useMobileTabs } from '@/hooks/useMobileSurface'
 import { ProcessFormSettings } from '@/components/wms/production/ProcessFormSettings'
 import { unitCode } from '@/utils/unitCode'
+import { parseVnNumber, vnNumberInput } from '@/utils/vnNumber'
 
 const GATE_OPTS = [
   { value: 'WARN',  label: 'Cảnh báo',   sub: 'cho rót, báo người đóng trang — ghi vào sổ bồn' },
@@ -48,6 +50,9 @@ export default function ProductionSettings() {
   // BẢN NHÁP — một nút Lưu cho cả trang
   const [gate, setGate] = useState('WARN')
   const [flow, setFlow] = useState(false)
+  // mục tiêu dashboard Báo cáo NVL ('' = về mặc định 0,5 % / 95 %)
+  const [devT, setDevT] = useState('')
+  const [passT, setPassT] = useState('')
   const [typeGate, setTypeGate] = useState<Record<string, string | null>>({})
   const [hours, setHours] = useState<Record<string, string>>({})   // material_id → giờ ('' = gỡ hạn)
   const [added, setAdded] = useState<HoldRow[]>([])                // mã thêm mới, chưa lưu
@@ -57,6 +62,8 @@ export default function ProductionSettings() {
     if (!server) return
     setGate(server.production_qa_gate)
     setFlow(server.mes_flow_gate)
+    setDevT(server.mes_dev_target_pct == null ? '' : vnNumberInput(server.mes_dev_target_pct))
+    setPassT(server.mes_pass_target_pct == null ? '' : vnNumberInput(server.mes_pass_target_pct))
     setTypeGate(Object.fromEntries(server.types.map(t => [t.type_code, t.production_qa_gate])))
     setHours(Object.fromEntries(server.hold_hours.map(m => [m.id, String(m.tank_hold_hours ?? '')])))
     setAdded([]); setErr('')
@@ -71,15 +78,24 @@ export default function ProductionSettings() {
     const hold = rows.map(m => ({ m, v: (hours[m.id] ?? '').trim() }))
       .filter(({ m, v }) => v !== String(m.tank_hold_hours ?? ''))
       .map(({ m, v }) => ({ material_id: m.id, tank_hold_hours: v === '' ? null : Number(v) }))
-    return { gate: gate !== server.production_qa_gate ? gate : undefined, flow: flow !== server.mes_flow_gate ? flow : undefined, types, hold }
-  }, [server, gate, flow, typeGate, hours, rows])
-  const dirty = !!changes && (changes.gate !== undefined || changes.flow !== undefined || changes.types.length > 0 || changes.hold.length > 0)
-  const invalid = rows.some(m => hoursErr(hours[m.id] ?? ''))
+    const num = (v: string) => (v.trim() === '' ? null : parseVnNumber(v))
+    const dv = num(devT), pv = num(passT)
+    return { gate: gate !== server.production_qa_gate ? gate : undefined, flow: flow !== server.mes_flow_gate ? flow : undefined, types, hold,
+      dev: dv !== server.mes_dev_target_pct ? dv : undefined, pass: pv !== server.mes_pass_target_pct ? pv : undefined }
+  }, [server, gate, flow, typeGate, hours, rows, devT, passT])
+  const dirty = !!changes && (changes.gate !== undefined || changes.flow !== undefined || changes.types.length > 0 || changes.hold.length > 0
+    || changes.dev !== undefined || changes.pass !== undefined)
+  const targetErr = (v: string, max: number) => {
+    if (v.trim() === '') return ''
+    const n = parseVnNumber(v)
+    return n != null && n > 0 && n <= max ? '' : `Số lớn hơn 0, tối đa ${max}`
+  }
+  const invalid = rows.some(m => hoursErr(hours[m.id] ?? '')) || !!targetErr(devT, 50) || !!targetErr(passT, 100)
 
   function onSave() {
     if (!changes || !wh) return
     setErr('')
-    save.mutate({ warehouse_id: wh, production_qa_gate: changes.gate, mes_flow_gate: changes.flow, types: changes.types.length ? changes.types : undefined, hold_hours: changes.hold.length ? changes.hold : undefined },
+    save.mutate({ warehouse_id: wh, production_qa_gate: changes.gate, mes_flow_gate: changes.flow, mes_dev_target_pct: changes.dev, mes_pass_target_pct: changes.pass, types: changes.types.length ? changes.types : undefined, hold_hours: changes.hold.length ? changes.hold : undefined },
       { onError: e => setErr(apiMsg(e)) })
   }
 
@@ -164,6 +180,29 @@ export default function ProductionSettings() {
                 <SettingRow label="Chặn theo từng bước"
                   desc={<>Bật: phiếu của mẻ chưa đủ hai bước duyệt thì <b>chưa cấp nguyên liệu</b>; <b>chưa nạp bồn</b> khi còn nguyên liệu cấp thiếu, ô bắt buộc của phiếu chưa ghi, hoặc chưa quét đủ tem pallet của mẻ tại đúng bồn.</>}
                   control={<Switch checked={flow} onCheckedChange={setFlow} disabled={!canConfigure} aria-label="Chặn theo từng bước" />} />
+              </SettingsGroup>
+            )}
+
+            {server && (
+              <SettingsGroup title="Mục tiêu Báo cáo NVL"
+                tip={<>Dùng ở tab Tổng quan của Báo cáo NVL: dải mục tiêu trên biểu đồ, màu của số lệch (trong mức xanh · tới 2 lần mục tiêu vàng · hơn nữa đỏ)
+                  và màu của % mẻ đạt. Để trống = mặc định.</>}>
+                <SettingRow label="Lệch NVL cho phép"
+                  desc={targetErr(devT, 50) ? <span className="text-red-600">{targetErr(devT, 50)}</span> : <>Lệch so định mức gốc (theo KG) trong khoảng ± này là đạt. Trống = ±0,5%.</>}
+                  control={<>
+                    <span className="text-[11px] text-slate-500">±</span>
+                    <Input value={devT} onChange={e => setDevT(e.target.value)} disabled={!canConfigure} inputMode="decimal" placeholder="0,5"
+                      className="h-8 w-20 text-xs text-right tabular-nums" aria-label="Mục tiêu lệch NVL (%)" />
+                    <span className="text-[11px] text-slate-500">%</span>
+                  </>} />
+                <SettingRow label="Mẻ đạt định mức"
+                  desc={targetErr(passT, 100) ? <span className="text-red-600">{targetErr(passT, 100)}</span> : <>Tỷ lệ mẻ không có NVL nào lệch ngoài mức cho phép. Trống = 95%.</>}
+                  control={<>
+                    <span className="text-[11px] text-slate-500">≥</span>
+                    <Input value={passT} onChange={e => setPassT(e.target.value)} disabled={!canConfigure} inputMode="decimal" placeholder="95"
+                      className="h-8 w-20 text-xs text-right tabular-nums" aria-label="Mục tiêu % mẻ đạt" />
+                    <span className="text-[11px] text-slate-500">%</span>
+                  </>} />
               </SettingsGroup>
             )}
 

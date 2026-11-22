@@ -1,4 +1,5 @@
-// TRANG "BÁO CÁO NVL" — 18/11 f: TAB MẶC ĐỊNH "Theo chu kỳ" (CycleReport — user: "theo chu kỳ, chu kỳ lớn hơn ca, mẻ";
+// TRANG "BÁO CÁO NVL" — 22/11: TAB MẶC ĐỊNH "Tổng quan" (MesDashboard — dashboard theo thời gian 1 ngày → 3 năm, khuôn "trung tâm điều hành",
+// bấm vào số / biểu đồ ⇒ bảng dữ liệu đứng sau). 18/11 f: tab "Theo chu kỳ" (CycleReport — user: "theo chu kỳ, chu kỳ lớn hơn ca, mẻ";
 // báo cáo cuối tách ca · mẻ · nhân sự). 18/11 g: tab "Dữ liệu thô" (ConsumptionRaw — tiêu hao NVL mỗi dòng một phát sinh, đủ cột cho SAP).
 // Tab "Đếm tồn theo ca" = báo cáo theo ca dưới đây (giữ nguyên).
 // BÁO CÁO SỬ DỤNG NVL THEO CA (MES 14/11/2026) — thay biểu mẫu giấy NB-QA-BM-CB.01 (user: "mục tiêu là bỏ các tờ giấy này đi").
@@ -8,6 +9,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { CycleReport } from '@/components/wms/production/CycleReport'
+import { MesDashboard } from '@/components/wms/production/MesDashboard'
 import { ConsumptionRaw } from '@/components/wms/production/ConsumptionRaw'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { useMobileTabs } from '@/hooks/useMobileSurface'
@@ -51,7 +53,7 @@ const MOBILE_COLS: NumCol[] = [
 ]
 
 // tab cấp trang — key khớp PAGE_TABS['/wms/production/usage-report'] (config/mobileSurface.ts)
-const TABS = [{ key: 'cycle', label: 'Theo chu kỳ' }, { key: 'raw', label: 'Dữ liệu thô' }, { key: 'shift', label: 'Đếm tồn theo ca' }] as const
+const TABS = [{ key: 'dash', label: 'Tổng quan' }, { key: 'cycle', label: 'Theo chu kỳ' }, { key: 'raw', label: 'Dữ liệu thô' }, { key: 'shift', label: 'Đếm tồn theo ca' }] as const
 
 export default function ProductionUsageReport() {
   const f = useWmsFilterStore(s => s.productionReport)
@@ -61,19 +63,19 @@ export default function ProductionUsageReport() {
   useEffect(() => {
     const wh = sp.get('wh'), cycle = sp.get('cycle')
     if (!wh && !cycle) return
-    setF({ tab: 'cycle', ...(wh ? { warehouseId: wh } : {}), cycle: cycle ?? '' })
+    setF({ rtab: 'cycle', ...(wh ? { warehouseId: wh } : {}), cycle: cycle ?? '' })
     setSp({}, { replace: true })
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
-  const tabs = useMobileTabs('/wms/production/usage-report', TABS, f.tab, k => setF({ tab: k }))
+  const tabs = useMobileTabs('/wms/production/usage-report', TABS, f.rtab, k => setF({ rtab: k }))
   const tabBar = (
     <div className="flex rounded-lg border border-slate-200 overflow-hidden text-xs font-medium shrink-0" role="tablist" aria-label="Báo cáo NVL">
       {tabs.map((t, i) => (
-        <button key={t.key} type="button" role="tab" aria-selected={f.tab === t.key} onClick={() => setF({ tab: t.key })} data-tab={t.key}
-          className={`h-9 sm:h-7 px-3 whitespace-nowrap ${i > 0 ? 'border-l border-slate-200 ' : ''}${f.tab === t.key ? 'bg-sky-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}>{t.label}</button>
+        <button key={t.key} type="button" role="tab" aria-selected={f.rtab === t.key} onClick={() => setF({ rtab: t.key })} data-tab={t.key}
+          className={`h-9 sm:h-7 px-3 whitespace-nowrap ${i > 0 ? 'border-l border-slate-200 ' : ''}${f.rtab === t.key ? 'bg-sky-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}>{t.label}</button>
       ))}
     </div>
   )
-  return f.tab === 'shift' ? <ShiftReportView tabBar={tabBar} /> : f.tab === 'raw' ? <ConsumptionRaw tabBar={tabBar} /> : <CycleReport tabBar={tabBar} />
+  return f.rtab === 'shift' ? <ShiftReportView tabBar={tabBar} /> : f.rtab === 'raw' ? <ConsumptionRaw tabBar={tabBar} /> : f.rtab === 'cycle' ? <CycleReport tabBar={tabBar} /> : <MesDashboard tabBar={tabBar} />
 }
 
 function ShiftReportView({ tabBar }: { tabBar: ReactNode }) {

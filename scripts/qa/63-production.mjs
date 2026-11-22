@@ -1080,6 +1080,45 @@ try {
       !!qb && i1?.stage === 'wait_lead' && i1?.step === 'lead' && i2?.stage === 'wait_qa' && i2?.step === 'qa' && num(cQ3?.batches) === 0 && num(cQ3?.cancelled) === 1,
       `${i1?.stage}/${i1?.step} → duyệt http=${ap.s} → ${i2?.stage}/${i2?.step} q3=${JSON.stringify(cQ3 ?? null)}`)
 
+    // ── [19] DASHBOARD BÁO CÁO NVL THEO THỜI GIAN (22/11) — sổ tổng hợp dựng lúc nạp bồn, bấm vào ra dữ liệu, mục tiêu ở Cài đặt MES ──
+    {
+      const dq = (extra = '') => api(`/wms/production/dashboard?warehouse_id=${WC2}&date_from=${todayVN}&date_to=${todayVN}${extra}`)
+      const fact = (await restAll('production_batch_fact', `select=batch_id,lines,extra,over,under,qa_status,total_kg,edit_kg&batch_id=eq.${FB.id}`))[0]
+      const devl = await restAll('production_batch_dev_line', `select=material_id,state,std,sheet,iss&batch_id=eq.${FB.id}`)
+      check('19a. Nạp bồn ⇒ sổ tổng hợp có mẻ (trigger): 1 dòng NVL NGOÀI ĐỊNH MỨC (khai tay vào phiếu, không có định mức gốc) · lệch +10 KG đều do sửa phiếu · QA bồn loại ghi theo (dựng lại khi mẻ đổi) · sổ dòng lệch có QA63RM1',
+        !!fact && fact.lines === 1 && fact.extra === 1 && fact.qa_status === 'REJECTED' && num(fact.total_kg) === 10 && num(fact.edit_kg) === 10
+          && devl.length === 1 && devl[0].material_id === M_RM && devl[0].state === 'extra' && num(devl[0].iss) === 10,
+        JSON.stringify({ fact: fact ?? null, devl }))
+      const db1 = await dq('&grain=batch')
+      const D1 = db1.j?.data
+      check('19b. Dashboard 1 ngày kho 2: 1 mẻ đã nạp · 0 đạt · 1 dòng ngoài định mức · lệch +10 KG (sửa phiếu +10) · QA loại 1 · điểm từng mẻ có mẻ này · NVL gây lệch đầu = QA63RM1',
+        db1.s === 200 && num(D1?.totals?.batches) === 1 && num(D1?.totals?.filled) === 1 && num(D1?.totals?.pass) === 0 && num(D1?.totals?.extra) === 1
+          && num(D1?.totals?.total_kg) === 10 && num(D1?.totals?.edit_kg) === 10 && num(D1?.totals?.qa_rejected) === 1
+          && (D1?.points ?? []).some(p => p.id === FB.id) && D1?.pareto?.[0]?.code === 'QA63RM1' && num(D1?.pareto_total) === 1,
+        `http=${db1.s} ${JSON.stringify(D1?.totals ?? db1.j?.error ?? null)}`)
+      const dd = (extra) => api(`/wms/production/dashboard/detail?warehouse_id=${WC2}&date_from=${todayVN}&date_to=${todayVN}${extra}`)
+      const dtB = await dd('&kind=batches&only=fail'), dtL = await dd(`&kind=lines&material_id=${M_RM}`), dtS = await dd(`&kind=batches&shift=${encodeURIComponent('Ca 2')}`)
+      const lr = dtL.j?.data?.rows?.[0]
+      check('19c. Bấm vào dashboard ra dữ liệu: "mẻ không đạt" = mẻ này · NVL QA63RM1 = 1 dòng (định mức 0 · phiếu 10 · thực cấp 10 · sửa phiếu +10) · lọc Ca 2 ⇒ 0 mẻ',
+        dtB.s === 200 && num(dtB.j?.data?.total) === 1 && dtB.j?.data?.rows?.[0]?.id === FB.id
+          && dtL.s === 200 && num(dtL.j?.data?.total) === 1 && lr?.state === 'extra' && num(lr?.std) === 0 && num(lr?.sheet) === 10 && num(lr?.iss) === 10 && num(lr?.edit) === 10
+          && dtS.s === 200 && num(dtS.j?.data?.total) === 0,
+        `http=${dtB.s}/${dtL.s}/${dtS.s} ${JSON.stringify(lr ?? null)}`)
+      const tPut = await api('/wms/production/settings', 'PUT', { warehouse_id: WC2, mes_dev_target_pct: 0.8, mes_pass_target_pct: 90 })
+      const tBad = await api('/wms/production/settings', 'PUT', { warehouse_id: WC2, mes_dev_target_pct: 0 })
+      const D2 = (await dq('&grain=batch')).j?.data
+      const tNull = await api('/wms/production/settings', 'PUT', { warehouse_id: WC2, mes_dev_target_pct: null, mes_pass_target_pct: null })
+      const D3 = (await dq('&grain=batch')).j?.data
+      check('19d. Mục tiêu ở Cài đặt MES: đặt ±0,8% / 90% ⇒ dashboard dùng · 0 ⇒ 400 · xoá ⇒ về mặc định ±0,5% / 95%',
+        tPut.s === 200 && num(tPut.j?.data?.mes_dev_target_pct) === 0.8 && tBad.s === 400 && num(D2?.targets?.dev_pct) === 0.8 && num(D2?.targets?.pass_pct) === 90
+          && tNull.s === 200 && num(D3?.targets?.dev_pct) === 0.5 && num(D3?.targets?.pass_pct) === 95,
+        `http=${tPut.s}/${tBad.s}/${tNull.s} t2=${JSON.stringify(D2?.targets ?? null)} t3=${JSON.stringify(D3?.targets ?? null)}`)
+      const bad1 = await api(`/wms/production/dashboard?warehouse_id=${WC2}&date_from=2020-01-01&date_to=${todayVN}`)
+      const bad2 = await api(`/wms/production/dashboard?warehouse_id=${WC2}&date_from=${todayVN}&date_to=2020-01-01`)
+      const bad3 = await api(`/wms/production/dashboard?warehouse_id=${WC2}&date_from=${todayVN}&date_to=${todayVN}&grain=year`)
+      check('19e. Khoảng ngày quá 3 năm / ngược ⇒ 400 · cách gom lạ ⇒ 400', bad1.s === 400 && bad2.s === 400 && bad3.s === 400, `http=${bad1.s}/${bad2.s}/${bad3.s}`)
+    }
+
     // ── [18] DỮ LIỆU THÔ TIÊU HAO NVL (18/11 g) + SƠ ĐỒ BỒN 2D ──
     const revN = live16.filter(x => !!x.reversed_at).length
     const rawQ = await api(`/wms/production/consumption-raw?warehouse_id=${WC2}&cycle=q2&page_size=1000`)
@@ -1182,6 +1221,13 @@ try {
     const sImpOpen = tkOpen ? (await uploadXlsx('/wms/production/recipes/import', [RIMP_HEAD, ['QA63BTP2', '', 'QA63 vai', '100', 'QA63RM1', '1', '', '', '']], { preflight: true, token: tkOpen })).s : 0
     const sCatView = tkView ? await st(tkView, '/wms/production/recipes/import-catalog') : 0
     check('14e. Nạp định mức từ Excel cần quyền "Khai định mức" (manage_recipe): chức danh chỉ xem 403 · chức danh mở mẻ 403 · danh sách mã của file mẫu 403', sImpView === 403 && sImpOpen === 403 && sCatView === 403, `view=${sImpView} open=${sImpOpen} catalog=${sCatView}`)
+    // 22/11: dashboard Báo cáo NVL — quyền xem, cắt theo kho được giao (kho ngoài phạm vi 403)
+    const dashP = (w) => `/wms/production/dashboard?warehouse_id=${w}&date_from=${todayVN}&date_to=${todayVN}`
+    const sDashOk = tkView ? await st(tkView, dashP(WC)) : 0
+    const sDashScope = tkView ? await st(tkView, dashP(WC2)) : 0
+    const sDetScope = tkView ? await st(tkView, `/wms/production/dashboard/detail?warehouse_id=${WC2}&date_from=${todayVN}&date_to=${todayVN}&kind=batches`) : 0
+    check('14f. Dashboard Báo cáo NVL: chức danh chỉ xem đọc kho mình 200 · kho ngoài phạm vi 403 (cả bảng chi tiết khi bấm vào)', sDashOk === 200 && sDashScope === 403 && sDetScope === 403,
+      `dash=${sDashOk}/${sDashScope} detail=${sDetScope}`)
     check('14d. Dữ liệu thô: chức danh chỉ xem đọc kho mình 200 · xuất file 403 (cần quyền export) · kho ngoài phạm vi 403; sơ đồ 2D: không có "Quản lý bồn" 403 · bồn kho ngoài phạm vi 403 · bồn kho mình 200',
       sRawView === 200 && sRawExp === 403 && sRawScope === 403 && sLayView === 403 && sLayScope === 403 && sLayOk === 200,
       `raw=${sRawView}/${sRawExp}/${sRawScope} layout=${sLayView}/${sLayScope}/${sLayOk}`)

@@ -53,7 +53,7 @@ const r3 = (n: number) => Math.round(n * 1000) / 1000
 const units = (xs: { unit: string; qty: number }[]) => (xs.length ? xs.map(x => `${nf(x.qty)} ${x.unit}`).join(' + ') : '')
 const hm = (iso: string | null | undefined) => (iso ? formatTimestampTime(iso).slice(0, 5) : '')
 const whenBy = (iso: string | null | undefined, by: string | null | undefined) => (iso ? `${formatDateTime(iso)}${by ? ` · ${by}` : ''}` : '')
-const VIEWS = [{ key: 'dash', label: 'Tổng quan' }, { key: 'nvl', label: 'NVL × ca' }, { key: 'batch', label: 'Ca · Mẻ' }, { key: 'people', label: 'Nhân sự' }] as const
+const VIEWS = [{ key: 'dash', label: 'Lệch ca · mẻ' }, { key: 'nvl', label: 'NVL × ca' }, { key: 'batch', label: 'Ca · Mẻ' }, { key: 'people', label: 'Nhân sự' }] as const
 const MOBILE_NVL: NumCol[] = [{ label: 'Định mức', title: 'Định mức gốc theo công thức' }, { label: 'Thực cấp' }, { label: 'Lệch', title: 'Thực cấp − định mức' }]
 /** chú thích cột Nhân sự — đếm việc theo tên người làm, trong chu kỳ đang xem */
 const PEOPLE_TIP: Record<string, string> = {

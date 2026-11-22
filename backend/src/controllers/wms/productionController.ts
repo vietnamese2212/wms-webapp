@@ -1445,6 +1445,9 @@ export const zSettingsPut = z.object({
   warehouse_id: zText(1, 64),
   production_qa_gate: zGate.optional(),
   mes_flow_gate: z.boolean().optional(),   // 17/11: chưa duyệt đủ thì chưa cấp NVL · chưa đủ điều kiện thì chưa nạp bồn (mặc định tắt = như cũ)
+  // 22/11 — mục tiêu của dashboard Báo cáo NVL (user: "mục tiêu để dạng config tự đặt"); null = về mặc định 0,5 % / 95 %
+  mes_dev_target_pct: z.number().positive().max(50).nullable().optional(),
+  mes_pass_target_pct: z.number().positive().max(100).nullable().optional(),
   types: z.array(z.object({ type_code: zText(1, 64), production_qa_gate: zGate.nullable() })).max(200).optional(),
   hold_hours: z.array(z.object({ material_id: zText(1, 64), tank_hold_hours: z.number().int().min(1).max(8760).nullable() })).max(300).optional(),
 })
@@ -1455,7 +1458,7 @@ async function settingsOf(req: Request, whId: string) {
     .not('tank_hold_hours', 'is', null).order('material_code').limit(500)
   if (scope) mq = mq.or(`category.is.null,category.in.(${scope.map(c => `"${c.replace(/"/g, '')}"`).join(',')})`)
   const [{ data: wh }, { data: types }, { data: mats }] = await Promise.all([
-    db.from('Warehouse').select('id, code, name, production_qa_gate, mes_flow_gate').eq('id', whId).maybeSingle(),
+    db.from('Warehouse').select('id, code, name, production_qa_gate, mes_flow_gate, mes_dev_target_pct, mes_pass_target_pct').eq('id', whId).maybeSingle(),
     db.from('warehouse_type_configs').select('type_code, production_qa_gate, sort_order').eq('warehouse_id', whId)
       .order('sort_order', { ascending: true, nullsFirst: false }).order('type_code').limit(200),
     mq,
@@ -1464,6 +1467,8 @@ async function settingsOf(req: Request, whId: string) {
     warehouse_id: whId,
     production_qa_gate: wh?.production_qa_gate ?? 'WARN',
     mes_flow_gate: wh?.mes_flow_gate === true,
+    mes_dev_target_pct: wh?.mes_dev_target_pct == null ? null : Number(wh.mes_dev_target_pct),
+    mes_pass_target_pct: wh?.mes_pass_target_pct == null ? null : Number(wh.mes_pass_target_pct),
     types: (types ?? []).filter(t => categoryAllowed(req, t.type_code)).map(t => ({ type_code: t.type_code, production_qa_gate: t.production_qa_gate })),
     hold_hours: mats ?? [],
   }
@@ -1511,10 +1516,12 @@ export async function putSettings(req: Request, res: Response) {
       if (miss) return fail(res, 422, 'UNKNOWN_TYPE', `Kho này chưa có Loại kho "${miss.type_code.slice(0, 30)}"`)
     }
 
-    if (body.production_qa_gate !== undefined || body.mes_flow_gate !== undefined) {
+    if (body.production_qa_gate !== undefined || body.mes_flow_gate !== undefined || body.mes_dev_target_pct !== undefined || body.mes_pass_target_pct !== undefined) {
       const { data, error } = await db.from('Warehouse').update({
         ...(body.production_qa_gate !== undefined ? { production_qa_gate: body.production_qa_gate } : {}),
-        ...(body.mes_flow_gate !== undefined ? { mes_flow_gate: body.mes_flow_gate } : {}), updated_at: now, updated_by: who })
+        ...(body.mes_flow_gate !== undefined ? { mes_flow_gate: body.mes_flow_gate } : {}),
+        ...(body.mes_dev_target_pct !== undefined ? { mes_dev_target_pct: body.mes_dev_target_pct } : {}),
+        ...(body.mes_pass_target_pct !== undefined ? { mes_pass_target_pct: body.mes_pass_target_pct } : {}), updated_at: now, updated_by: who })
         .eq('id', body.warehouse_id).select('id')
       if (error) return fail(res, error)
       if (!data?.length) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy kho')
@@ -1634,6 +1641,49 @@ export async function cycleReport(req: Request, res: Response) {
     if (!a) return res
     const { data, error } = await db.rpc('mes_cycle_report', { p_wh: a.wh, p_cycle: a.cycle })
     if (error) return fail(res, error)
+    return ok(res, data)
+  } catch (e) { return failAny(res, e) }
+}
+// ── DASHBOARD BÁO CÁO NVL THEO THỜI GIAN (22/11 — user: "báo cáo chưa chuyên nghiệp, học hỏi MES hiện đại" · "1 ngày 36 mẻ, nhiều tháng, nhiều
+// năm thì sao" · "từ dashboard click vào thì ra dữ liệu xem được"). Kỳ 1 ngày → 3 năm (tối đa 1.100 ngày), gom sẵn ở DB: mẻ đã nạp bồn đọc sổ
+// tổng hợp production_batch_fact (dựng một lần lúc nạp), mẻ chưa nạp tính trực tiếp. MỘT lời gọi cho mọi khối của dashboard (mes_dashboard);
+// bấm vào biểu đồ ⇒ mes_dashboard_detail (từng mẻ hoặc từng NVL lệch, tối đa 500 dòng kèm tổng). Migration 20261122.
+const zDashBase = { warehouse_id: zText(1, 64), date_from: zDay, date_to: zDay }
+export const zDashQuery = z.object({ ...zDashBase, grain: z.enum(['batch', 'day', 'week', 'month']).optional() })
+export const zDashDetailQuery = z.object({
+  ...zDashBase, kind: z.enum(['batches', 'lines']), shift: zText(0, 40).optional(), btp_id: zText(0, 64).optional(), material_id: zText(0, 64).optional(),
+  only: z.enum(['dev', 'fail', 'pass', 'filled', 'running', 'edited', 'exec', 'qa_rejected', 'rm_bad', 'over', 'under', 'extra']).optional(),
+})
+const DASH_MAX_DAYS = 1100
+/** kho trong phạm vi + khoảng ngày hợp lệ (tối đa ~3 năm) — trả null khi đã trả lỗi */
+async function dashArgs(req: Request, res: Response): Promise<z.infer<typeof zDashDetailQuery> | null> {
+  const q = req.query as unknown as z.infer<typeof zDashDetailQuery>
+  if (!(await inScope(req, q.warehouse_id))) { fail(res, 403, 'FORBIDDEN', SCOPE_MSG); return null }
+  const days = (Date.parse(q.date_to) - Date.parse(q.date_from)) / 86_400_000
+  if (!(days >= 0) || days > DASH_MAX_DAYS) { fail(res, 400, 'DATE_RANGE', 'Khoảng ngày không hợp lệ — Đến ngày phải sau Từ ngày, tối đa 3 năm'); return null }
+  return q
+}
+// GET /wms/production/dashboard?warehouse_id=&date_from=&date_to=&grain=
+export async function dashboard(req: Request, res: Response) {
+  try {
+    const q = await dashArgs(req, res)
+    if (!q) return res
+    const grain = (req.query as unknown as z.infer<typeof zDashQuery>).grain ?? 'day'
+    const { data, error } = await db.rpc('mes_dashboard', { p: { warehouse_id: q.warehouse_id, date_from: q.date_from, date_to: q.date_to, grain } })
+    if (error) return mesFail(res, error)
+    return ok(res, data)
+  } catch (e) { return failAny(res, e) }
+}
+// GET /wms/production/dashboard/detail?…&kind=batches|lines&shift=&btp_id=&material_id=&only= — dữ liệu đứng sau một con số của dashboard
+export async function dashboardDetail(req: Request, res: Response) {
+  try {
+    const q = await dashArgs(req, res)
+    if (!q) return res
+    const { data, error } = await db.rpc('mes_dashboard_detail', { p: {
+      warehouse_id: q.warehouse_id, date_from: q.date_from, date_to: q.date_to, kind: q.kind,
+      shift: q.shift || null, btp_id: q.btp_id || null, material_id: q.material_id || null, only: q.only ?? null,
+    } })
+    if (error) return mesFail(res, error)
     return ok(res, data)
   } catch (e) { return failAny(res, e) }
 }

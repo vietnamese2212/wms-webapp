@@ -1,0 +1,25 @@
+{
+  "_note": "BẢNG CA DÙNG CHUNG cho luật trạng thái một dòng NVL của mẻ so với ĐỊNH MỨC GỐC (21/11). Hai bản của luật: TypeScript cellState (frontend/src/utils/cycleReport.ts — màn Theo chu kỳ, Excel) và SQL mes_line_state (migration 20261122 — dashboard Tổng quan, sổ tổng hợp). backend/tests/unit/mesLineState.test.ts chạy bảng này trên TS; khối DO cuối migration 20261122 chạy CÙNG các ca trên SQL. Đổi luật ⇒ sửa cả hai bản + bảng này + khối DO.",
+  "cases": [
+    { "std": 90, "req": 150, "rm": false, "tol": 1, "iss": 150, "closed": false, "state": "over", "why": "phiếu sửa 90 → 150, cấp đủ phiếu ⇒ vượt định mức" },
+    { "std": 673.5, "req": 600, "rm": false, "tol": 1, "iss": 600, "closed": false, "state": "under", "why": "phiếu sửa xuống, cấp đủ phiếu ⇒ dưới định mức" },
+    { "std": 100, "req": 100, "rm": false, "tol": 1, "iss": 103, "closed": false, "state": "over", "why": "cấp vượt mức lệch" },
+    { "std": 100, "req": 100, "rm": false, "tol": 1, "iss": 100.8, "closed": false, "state": "ok", "why": "trong mức ±1%" },
+    { "std": 100, "req": 100, "rm": false, "tol": 1, "iss": 40, "closed": false, "state": "progress", "why": "đang cấp dở" },
+    { "std": 100, "req": 100, "rm": false, "tol": 1, "iss": 0, "closed": false, "state": "none", "why": "chưa cấp" },
+    { "std": 100, "req": 100, "rm": false, "tol": 1, "iss": 40, "closed": true, "state": "under", "why": "mẻ đã nạp bồn mà thiếu" },
+    { "std": 90, "req": 150, "rm": false, "tol": 1, "iss": 100, "closed": false, "state": "progress", "why": "phiếu nâng mà chưa cấp đủ phiếu ⇒ chưa xong" },
+    { "std": 20, "req": null, "rm": true, "tol": 1, "iss": 0, "closed": false, "state": "under", "why": "dòng bỏ khỏi phiếu ⇒ dưới định mức" },
+    { "std": null, "req": 5, "rm": false, "tol": 1, "iss": 5, "closed": false, "state": "extra", "why": "dòng thêm tay, cấp đủ ⇒ ngoài định mức" },
+    { "std": null, "req": 5, "rm": false, "tol": 1, "iss": 2, "closed": false, "state": "progress", "why": "dòng thêm tay đang cấp dở" },
+    { "std": null, "req": null, "rm": false, "tol": null, "iss": 3, "closed": false, "state": "extra", "why": "cấp ngoài phiếu" },
+    { "std": 1.5, "req": 1.5, "rm": false, "tol": null, "iss": 2, "closed": false, "state": "over", "why": "không khai mức lệch, cấp hơn" },
+    { "std": 1.5, "req": 1.5, "rm": false, "tol": null, "iss": 1.5, "closed": false, "state": "ok", "why": "không khai mức lệch, cấp đúng" },
+    { "std": 150, "req": 150, "rm": false, "tol": 1, "iss": 151, "closed": false, "state": "ok", "why": "151 ≤ 151,5" },
+    { "std": 100, "req": 100, "rm": false, "tol": 1, "iss": 98.9, "closed": false, "state": "progress", "why": "dưới cận dưới 99, mẻ đang làm" },
+    { "std": 100, "req": 100, "rm": false, "tol": 1, "iss": 98.9, "closed": true, "state": "under", "why": "dưới cận dưới 99, mẻ đã nạp" },
+    { "std": 100, "req": 100, "rm": false, "tol": null, "iss": 99.9996, "closed": false, "state": "ok", "why": "sai số làm tròn 0,0005" },
+    { "std": 100, "req": 100, "rm": false, "tol": null, "iss": 99.999, "closed": false, "state": "progress", "why": "quá sai số" },
+    { "std": 20, "req": 20, "rm": false, "tol": 1, "iss": 0, "closed": true, "state": "under", "why": "mẻ đã nạp, dòng chưa cấp" }
+  ]
+}

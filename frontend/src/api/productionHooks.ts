@@ -330,6 +330,9 @@ export interface ProductionSettings {
   production_qa_gate: string
   /** luồng chặt (17/11): chưa duyệt đủ thì chưa cấp NVL · chưa đủ điều kiện thì chưa nạp bồn */
   mes_flow_gate: boolean
+  /** 22/11 — mục tiêu của dashboard Báo cáo NVL (null = mặc định 0,5 % / 95 %) */
+  mes_dev_target_pct: number | null
+  mes_pass_target_pct: number | null
   types: { type_code: string; production_qa_gate: string | null }[]
   hold_hours: { id: string; material_code: string; short_name: string | null; category: string | null; base_unit: string | null; tank_hold_hours: number | null }[]
 }
@@ -342,9 +345,9 @@ export function useProductionSettings(warehouseId: string | undefined) {
 export function useSaveProductionSettings() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: async (b: { warehouse_id: string; production_qa_gate?: string; mes_flow_gate?: boolean; types?: { type_code: string; production_qa_gate: string | null }[]; hold_hours?: { material_id: string; tank_hold_hours: number | null }[] }) =>
+    mutationFn: async (b: { warehouse_id: string; production_qa_gate?: string; mes_flow_gate?: boolean; mes_dev_target_pct?: number | null; mes_pass_target_pct?: number | null; types?: { type_code: string; production_qa_gate: string | null }[]; hold_hours?: { material_id: string; tank_hold_hours: number | null }[] }) =>
       (await apiClient.put('/wms/production/settings', b)).data.data as ProductionSettings,
-    onSuccess: (data, v) => { qc.setQueryData(['prod-settings', v.warehouse_id], data) },
+    onSuccess: (data, v) => { qc.setQueryData(['prod-settings', v.warehouse_id], data); void qc.invalidateQueries({ queryKey: ['prod-dash'] }) },
     onSettled: () => {
       for (const k of [['prod-settings'], ['materials'], ['materials-paged'], K.batch, K.tanks, ['warehouses'], ['wh-type-configs']]) void qc.invalidateQueries({ queryKey: k })
     },
@@ -530,6 +533,58 @@ export function useCycleReport(warehouseId: string | undefined, cycle: string | 
   return useQuery({
     queryKey: ['prod-cycle', warehouseId, cycle], enabled: !!warehouseId && !!cycle, staleTime: 10_000,
     queryFn: async () => (await apiClient.get('/wms/production/cycles/report', { params: { warehouse_id: warehouseId, cycle } })).data.data as CycleReport,
+  })
+}
+// ── DASHBOARD BÁO CÁO NVL THEO THỜI GIAN (22/11) — mes_dashboard: mọi khối trong MỘT lời gọi; mes_dashboard_detail: dữ liệu khi bấm vào ──
+export type DashGrain = 'batch' | 'day' | 'week' | 'month'
+interface DashKg { std_kg: number; total_kg: number }
+export interface DashTotals extends DashKg {
+  batches: number; filled: number; pass: number; dev_batches: number; lines: number; pending: number; ok: number; over: number; under: number; extra: number
+  edited: number; sheet_kg: number; iss_kg: number; edit_kg: number; exec_kg: number; avg_min: number | null; rm_bad: number; qa_released: number; qa_rejected: number
+}
+export interface DashPrev extends DashKg { batches: number; filled: number; pass: number; over: number; under: number; extra: number; avg_min: number | null; qa_released: number; qa_rejected: number }
+export interface DashBucket extends DashKg { k: string; batches: number; filled: number; pass: number; dev_batches: number; dev_lines: number; edit_kg: number; exec_kg: number }
+export interface DashPoint extends DashKg { id: string; code: string; no: number | null; shift: string | null; at: string; filled: boolean; pct: number | null; dev: number; pending: number }
+export interface DashHeat extends DashKg { shift: string | null; k: string; batches: number; dev_batches: number }
+export interface DashGroup extends DashKg { batches: number; filled: number; pass: number; dev_lines: number }
+export interface DashShift extends DashGroup { shift: string | null }
+export interface DashBtp extends DashGroup { btp_id: string; code: string; name: string | null }
+export interface DashPareto { material_id: string; code: string; name: string | null; unit: string | null; n: number; batches: number; over: number; under: number; extra: number; std: number; iss: number }
+export interface DashSpc { id: string; code: string; no: number | null; shift: string | null; d: string; at: string; pct: number; dev: number; filled: boolean }
+export interface DashExc extends DashKg {
+  id: string; code: string; no: number | null; shift: string | null; d: string; btp: string; filled: boolean; pct: number; dev: number; edit_kg: number; exec_kg: number; extra: number
+  mat: { code: string; name: string | null; unit: string | null; state: string; diff: number } | null
+}
+export interface MesDashboard {
+  warehouse_id: string; date_from: string; date_to: string; grain: DashGrain; computed_at: string
+  targets: { dev_pct: number; pass_pct: number }
+  totals: DashTotals; prev: DashPrev; buckets: DashBucket[]; points: DashPoint[] | null; heat: DashHeat[]; shifts: DashShift[]; btp: DashBtp[]
+  pareto_total: number; pareto: DashPareto[]; spc: DashSpc[]; exc: DashExc[]
+}
+export interface DashQuery { warehouse_id: string; date_from: string; date_to: string; grain: DashGrain }
+export function useMesDashboard(q: DashQuery | null) {
+  return useQuery({
+    queryKey: ['prod-dash', q?.warehouse_id, q?.date_from, q?.date_to, q?.grain], enabled: !!q?.warehouse_id, staleTime: 30_000, placeholderData: keepPreviousData,
+    queryFn: async () => (await apiClient.get('/wms/production/dashboard', { params: q })).data.data as MesDashboard,
+  })
+}
+export type DashOnly = 'dev' | 'fail' | 'pass' | 'filled' | 'running' | 'edited' | 'exec' | 'qa_rejected' | 'rm_bad' | 'over' | 'under' | 'extra'
+export interface DashDetailQuery { warehouse_id: string; date_from: string; date_to: string; kind: 'batches' | 'lines'; shift?: string; btp_id?: string; material_id?: string; only?: DashOnly }
+export interface DashBatchRow {
+  id: string; code: string; no: number | null; shift: string | null; d: string; at: string; btp: string; btp_name: string | null; filled: boolean; qa_status: string
+  open_min: number | null; rm_bad: number; lines: number; pending: number; over: number; under: number; extra: number; edited: number
+  std_kg: number; iss_kg: number; edit_kg: number; exec_kg: number; total_kg: number; pct: number | null
+}
+export interface DashLineRow {
+  batch_id: string; code: string; no: number | null; shift: string | null; d: string; filled: boolean; btp: string; mat_id: string; mat_code: string
+  mat_name: string | null; unit: string | null; state: 'over' | 'under' | 'extra'; std: number; sheet: number; iss: number; diff: number; edit: number; exec: number
+  pct: number | null; why: string | null
+}
+export type MesDashDetail = { kind: 'batches'; total: number; rows: DashBatchRow[] } | { kind: 'lines'; total: number; rows: DashLineRow[] }
+export function useMesDashboardDetail(q: DashDetailQuery | null) {
+  return useQuery({
+    queryKey: ['prod-dash-detail', q], enabled: !!q?.warehouse_id, staleTime: 30_000,
+    queryFn: async () => (await apiClient.get('/wms/production/dashboard/detail', { params: q })).data.data as MesDashDetail,
   })
 }
 /** DỮ LIỆU THÔ TIÊU HAO NVL (18/11 g — "để làm việc với ERP SAP"): mỗi dòng một phát sinh Cấp (+) / Huỷ cấp (−). Lọc theo ngày của phát sinh

@@ -372,8 +372,13 @@ interface ProductionTanksFilters {   // trang Bồn (MES 14/11)
   /** 17/11: 'map' = sơ đồ bồn 2D (mặc định) · 'table' = bảng */
   view: 'map' | 'table'
 }
-interface ProductionReportFilters {   // trang Báo cáo NVL (18/11 f): tab Theo chu kỳ (mặc định) · Dữ liệu thô (18/11 g) · Đếm tồn theo ca
-  tab: 'cycle' | 'raw' | 'shift'
+interface ProductionReportFilters {   // trang Báo cáo NVL: Tổng quan (22/11, mặc định) · Theo chu kỳ (18/11 f) · Dữ liệu thô (18/11 g) · Đếm tồn theo ca
+  /** tab cấp trang — tên mới "rtab" (trước là "tab") để ai đã nhớ tab cũ cũng mở vào Tổng quan một lần */
+  rtab: 'dash' | 'cycle' | 'raw' | 'shift'
+  /** Tổng quan (22/11): kỳ xem — 1 ngày · 7 ngày · 1 tháng · 3 tháng · 1 năm · 3 năm · tự chọn (dFrom / dTo) */
+  dRange: '1d' | '7d' | '1m' | '3m' | '1y' | '3y' | 'custom'
+  dFrom: string
+  dTo: string
   warehouseId: string    // kho chế biến ('' = kho mặc định trong phạm vi)
   cycle: string          // '' = chu kỳ mới nhất
   /** Tổng quan (21/11 — dashboard lệch định mức theo ca · mẻ, mặc định) · NVL × ca (▸ từng mẻ) · Ca · Mẻ · Nhân sự.
@@ -734,7 +739,7 @@ function initialFilters() {
     // dateTo trống = tới hôm nay (và sau) — bộ lọc được nhớ qua ngày, mặc định today() thành 'hôm qua' ở lần mở sau, mẻ hôm nay biến mất khỏi danh sách
     production: { search: '', warehouseId: '', dateFrom: daysAgo(14), dateTo: '', stage: '', page: 1, pageSize: 100 },
     productionTanks: { warehouseId: '', showInactive: false, view: 'map' as const },
-    productionReport: { tab: 'cycle' as const, warehouseId: '', cycle: '', cview: 'dash' as const, rawFrom: '', rawTo: '', rawCycle: '', rawSearch: '', rawEvent: '' as const, rawFlag: '' as const, rawPage: 1, rawPageSize: 200 },
+    productionReport: { rtab: 'dash' as const, dRange: '7d' as const, dFrom: '', dTo: '', warehouseId: '', cycle: '', cview: 'dash' as const, rawFrom: '', rawTo: '', rawCycle: '', rawSearch: '', rawEvent: '' as const, rawFlag: '' as const, rawPage: 1, rawPageSize: 200 },
     packing:      { tab: 'board' as const, search: '', warehouseId: '', machine: '', cycle: '', status: '', dateFrom: daysAgo(7), dateTo: today(), page: 1, pageSize: 200, runStatus: '', runPage: 1, received: '' },
     alerts:       { tab: 'general' as const, search: '', warehouseId: '', rules: [], severity: [], status: 'open' },
     stocktakeCycle: { search: '', warehouseId: '', cats: [], abc: [], dueOnly: true },

@@ -1,5 +1,5 @@
 // FILE SINH TỰ ĐỘNG — `node scripts/gen-db-types.mjs` (từ information_schema STAGING). KHÔNG sửa tay.
-// Sinh lúc 2026-11-19T03:40:42.546Z · 125 bảng/view · 263 hàm · 0 enum
+// Sinh lúc 2026-11-22T13:36:01.199Z · 127 bảng/view · 272 hàm · 0 enum
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[]
 
 export type Database = {
@@ -2518,6 +2518,8 @@ export type Database = {
           geo_by: string | null
           production_qa_gate: string
           mes_flow_gate: boolean
+          mes_dev_target_pct: number | null
+          mes_pass_target_pct: number | null
         }
         Insert: {
           id: string
@@ -2577,6 +2579,8 @@ export type Database = {
           geo_by?: string | null
           production_qa_gate?: string
           mes_flow_gate?: boolean
+          mes_dev_target_pct?: number | null
+          mes_pass_target_pct?: number | null
         }
         Update: {
           id?: string
@@ -2636,6 +2640,8 @@ export type Database = {
           geo_by?: string | null
           production_qa_gate?: string
           mes_flow_gate?: boolean
+          mes_dev_target_pct?: number | null
+          mes_pass_target_pct?: number | null
         }
         Relationships: []
       }
@@ -5606,6 +5612,141 @@ export type Database = {
         }
         Relationships: []
       }
+      production_batch_dev_line: {
+        Row: {
+          id: string
+          batch_id: string
+          warehouse_id: string
+          prod_date: string
+          shift: string | null
+          material_id: string
+          state: string
+          std: number
+          sheet: number
+          iss: number
+          why: string | null
+          updated_at: string
+        }
+        Insert: {
+          id: string
+          batch_id: string
+          warehouse_id: string
+          prod_date: string
+          shift?: string | null
+          material_id: string
+          state: string
+          std?: number
+          sheet?: number
+          iss?: number
+          why?: string | null
+          updated_at: string
+        }
+        Update: {
+          id?: string
+          batch_id?: string
+          warehouse_id?: string
+          prod_date?: string
+          shift?: string | null
+          material_id?: string
+          state?: string
+          std?: number
+          sheet?: number
+          iss?: number
+          why?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      production_batch_fact: {
+        Row: {
+          batch_id: string
+          warehouse_id: string
+          prod_date: string
+          shift: string | null
+          btp_id: string
+          batch_code: string | null
+          batch_no: number | null
+          cycle: string | null
+          created_at: string
+          filled_at: string
+          open_min: number | null
+          qa_status: string | null
+          rm_bad: number
+          lines: number
+          pending: number
+          ok: number
+          over: number
+          under: number
+          extra: number
+          edited: number
+          std_kg: number
+          sheet_kg: number
+          iss_kg: number
+          edit_kg: number
+          exec_kg: number
+          total_kg: number
+          updated_at: string
+        }
+        Insert: {
+          batch_id: string
+          warehouse_id: string
+          prod_date: string
+          shift?: string | null
+          btp_id: string
+          batch_code?: string | null
+          batch_no?: number | null
+          cycle?: string | null
+          created_at: string
+          filled_at: string
+          open_min?: number | null
+          qa_status?: string | null
+          rm_bad?: number
+          lines?: number
+          pending?: number
+          ok?: number
+          over?: number
+          under?: number
+          extra?: number
+          edited?: number
+          std_kg?: number
+          sheet_kg?: number
+          iss_kg?: number
+          edit_kg?: number
+          exec_kg?: number
+          total_kg?: number
+          updated_at: string
+        }
+        Update: {
+          batch_id?: string
+          warehouse_id?: string
+          prod_date?: string
+          shift?: string | null
+          btp_id?: string
+          batch_code?: string | null
+          batch_no?: number | null
+          cycle?: string | null
+          created_at?: string
+          filled_at?: string
+          open_min?: number | null
+          qa_status?: string | null
+          rm_bad?: number
+          lines?: number
+          pending?: number
+          ok?: number
+          over?: number
+          under?: number
+          extra?: number
+          edited?: number
+          std_kg?: number
+          sheet_kg?: number
+          iss_kg?: number
+          edit_kg?: number
+          exec_kg?: number
+          total_kg?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
       production_process_form: {
         Row: {
           code: string
@@ -7372,6 +7513,10 @@ export type Database = {
         Args: { p_tokens?: unknown | null; p_categories?: unknown | null; p_scope_cats?: unknown | null; p_status?: unknown | null; p_qr?: unknown | null; p_dq?: unknown | null; p_cat_rules?: Json | null; p_legacy_no_sl?: unknown | null; p_legacy_pe?: unknown | null; p_dims?: unknown | null; p_flags?: unknown | null }
         Returns: Json
       }
+      mes_batch_agg: {
+        Args: { p_ids: unknown | null }
+        Returns: Record<string, unknown>[]
+      }
       mes_batch_apply_recipe: {
         Args: { p: Json | null }
         Returns: Json
@@ -7380,6 +7525,10 @@ export type Database = {
         Args: { p_batch_id: string | null }
         Returns: Json
       }
+      mes_batch_cells: {
+        Args: { p_ids: unknown | null }
+        Returns: Record<string, unknown>[]
+      }
       mes_batch_code: {
         Args: { p_wh: string | null; p_cycle: string | null; p_no: number | null; p_tank: string | null }
         Returns: string
@@ -7387,6 +7536,10 @@ export type Database = {
       mes_batch_create: {
         Args: { p: Json | null }
         Returns: Json
+      }
+      mes_batch_fact_build: {
+        Args: { p_batch: string | null }
+        Returns: undefined
       }
       mes_batch_form_error: {
         Args: { p_batch_id: string | null; p_form: string | null }
@@ -7456,6 +7609,22 @@ export type Database = {
         Args: { p_wh: string | null; p_cycle: string | null }
         Returns: Json
       }
+      mes_dash_batches: {
+        Args: { p_wh: string | null; p_from: string | null; p_to: string | null }
+        Returns: Record<string, unknown>[]
+      }
+      mes_dash_lines: {
+        Args: { p_wh: string | null; p_from: string | null; p_to: string | null }
+        Returns: Record<string, unknown>[]
+      }
+      mes_dashboard: {
+        Args: { p: Json | null }
+        Returns: Json
+      }
+      mes_dashboard_detail: {
+        Args: { p: Json | null }
+        Returns: Json
+      }
       mes_default_forms: {
         Args: { p_material: string | null }
         Returns: unknown
@@ -7479,6 +7648,10 @@ export type Database = {
       mes_genealogy: {
         Args: { p_kind: string | null; p_value: string | null; p_wh_ids?: unknown | null; p_limit?: number | null }
         Returns: Json
+      }
+      mes_line_state: {
+        Args: { p_std: number | null; p_req: number | null; p_rm: boolean | null; p_tol: number | null; p_iss: number | null; p_closed: boolean | null }
+        Returns: string
       }
       mes_log_cell: {
         Args: { p: Json | null }
@@ -7507,6 +7680,10 @@ export type Database = {
       mes_recipe_save: {
         Args: { p: Json | null }
         Returns: Json
+      }
+      mes_req_state: {
+        Args: { p_req: number | null; p_iss: number | null; p_tol: number | null; p_closed: boolean | null }
+        Returns: string
       }
       mes_run_redraw: {
         Args: { p: Json | null }

@@ -742,7 +742,7 @@ function initialFilters() {
     // dateTo trống = tới hôm nay (và sau) — bộ lọc được nhớ qua ngày, mặc định today() thành 'hôm qua' ở lần mở sau, mẻ hôm nay biến mất khỏi danh sách
     production: { search: '', warehouseId: '', dateFrom: daysAgo(14), dateTo: '', stage: '', page: 1, pageSize: 100 },
     productionTanks: { warehouseId: '', showInactive: false, view: 'map' as const },
-    productionReport: { rtab: 'dash' as const, dRange: '1w' as const, dAnchor: '', dFrom: '', dTo: '', warehouseId: '', cycle: '', cview: 'dash' as const, rawFrom: '', rawTo: '', rawCycle: '', rawSearch: '', rawEvent: '' as const, rawFlag: '' as const, rawPage: 1, rawPageSize: 200 },
+    productionReport: { rtab: 'dash' as const, dRange: '1m' as const, dAnchor: '', dFrom: '', dTo: '', warehouseId: '', cycle: '', cview: 'dash' as const, rawFrom: '', rawTo: '', rawCycle: '', rawSearch: '', rawEvent: '' as const, rawFlag: '' as const, rawPage: 1, rawPageSize: 200 },
     packing:      { tab: 'board' as const, search: '', warehouseId: '', machine: '', cycle: '', status: '', dateFrom: daysAgo(7), dateTo: today(), page: 1, pageSize: 200, runStatus: '', runPage: 1, received: '' },
     alerts:       { tab: 'general' as const, search: '', warehouseId: '', rules: [], severity: [], status: 'open' },
     stocktakeCycle: { search: '', warehouseId: '', cats: [], abc: [], dueOnly: true },

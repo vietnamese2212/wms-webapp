@@ -47,8 +47,8 @@ export const DASH_KINDS: readonly { key: KindKey; label: string }[] = [
   { key: '1d', label: '1 ngày' }, { key: '1w', label: '7 ngày' }, { key: '1m', label: '1 tháng' }, { key: '3m', label: '3 tháng' },
   { key: '1y', label: '1 năm' }, { key: '3y', label: '3 năm' }, { key: 'custom', label: 'Tự chọn' },
 ]
-/** kỳ đã nhớ (bản 22/11 lưu '7d' · '30d'…) ⇒ kiểu kỳ theo lịch */
-const normKind = (v: string | undefined): KindKey => (v === 'custom' || PERIOD_KINDS.includes(v as PeriodKind) ? v as KindKey : v === '1d' ? '1d' : '1w')
+/** kỳ đã nhớ ⇒ kiểu kỳ theo lịch; mặc định (và '7d' của bản 22/11) = 1 tháng — tuần lịch mở đầu tuần (sáng thứ Hai) gần như luôn trống */
+const normKind = (v: string | undefined): KindKey => (v === 'custom' || PERIOD_KINDS.includes(v as PeriodKind) ? v as KindKey : '1m')
 const PREV_WORD: Record<KindKey, string> = { '1d': 'hôm trước', '1w': 'tuần trước', '1m': 'tháng trước', '3m': '3 tháng trước', '1y': 'năm trước', '3y': '3 năm trước', custom: 'kỳ trước' }
 const MAX_DAYS = 1100
 const GRAIN_TEXT: Record<DashGrain, string> = { batch: 'từng mẻ', day: 'theo ngày', week: 'theo tuần', month: 'theo tháng', year: 'theo năm' }

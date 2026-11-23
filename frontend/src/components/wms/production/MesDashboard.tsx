@@ -2,15 +2,18 @@
 // · "1 ngày có 36 mẻ, vận hành nhiều tháng, nhiều năm thì sao, lên dashboard nó thế nào?" · "từ dashboard click vào thì ra dữ liệu xem được".
 // User chốt: khuôn "trung tâm điều hành" (.kpi-console như Dashboard Tổng quan / Giám sát vận hành) · kỳ 1 ngày / 7 ngày / 1 tháng / 3 tháng /
 // 1 năm / 3 năm / tự chọn · KHÔNG thẻ giá trị ₫ (chưa có giá chuẩn) · KHÔNG hiệu suất thu hồi (chưa ghi nước) · mục tiêu = Cài đặt MES.
+// 23/11 — KỲ THEO LỊCH quanh MỐC (user: "3 năm = năm hiện tại, năm trước, năm sau · 1 năm = các tháng của năm · dữ liệu gom luôn · phải có
+// mục chọn theo mốc thời gian"): kỳ tính ở utils/mesDash.ts periodOf (3 tháng = tháng trước · tháng chọn · tháng sau; 7 ngày = tuần T2→CN),
+// ô chọn mốc + ‹ › + Hôm nay, kỳ so = kỳ liền trước cùng kiểu, bấm một kỳ ⇒ đi sâu đúng một bậc.
 //   • Mọi số gom sẵn ở DB (mes_dashboard — MỘT lời gọi; mẻ đã nạp bồn đọc sổ tổng hợp, mẻ chưa nạp tính trực tiếp) ⇒ 3 năm vẫn chỉ ~40 điểm /
-//     biểu đồ. Cách gom tự chọn theo độ dài kỳ: 1 ngày = từng mẻ · ≤ 3 tháng = ngày · ≤ 1 năm = tuần · dài hơn = tháng.
+//     biểu đồ. Cách gom theo kiểu kỳ (mesDash.periodOf); Tự chọn gom theo độ dài (grainOf).
 //   • Luật như màn Theo chu kỳ: so ĐỊNH MỨC GỐC, lệch = Sửa phiếu + Cấp lệch, KG chỉ NVL tính KG và chỉ dòng đã cấp xong, NVL lệch đếm mọi đơn vị.
 //   • BẤM ĐỂ XEM DỮ LIỆU: thẻ số / cột đếm / ô bản đồ nhiệt / NVL / ca / BTP ⇒ hộp "Dữ liệu" (mes_dashboard_detail: từng mẻ hoặc từng NVL lệch,
 //     tối đa 500 dòng kèm tổng) · bấm một kỳ trên đường xu hướng ⇒ ĐI SÂU vào kỳ đó (nút ‹ quay lại) · bấm một mẻ ⇒ trang của mẻ.
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
 import type { AxiosError } from 'axios'
-import { ChevronLeft } from 'lucide-react'
+import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import { SingleSelect } from '@/components/shared/SingleSelect'
 import { StatCard, type StatTone } from '@/components/wms/DashboardPanel'
@@ -26,7 +29,7 @@ import { formatTimestampTime } from '@/utils/formatters'
 import { devLabel } from '@/utils/reqTolerance'
 import { durLabel } from '@/utils/cycleReport'
 import { unitCode } from '@/utils/unitCode'
-import { addDays, daysOf, grainOf, bucketRange, withAllBuckets as fillBuckets } from '@/utils/mesDash'
+import { addDays, daysOf, grainOf, bucketRange, withAllBuckets as fillBuckets, periodOf, stepAnchor, drillOf, periodLabel, PERIOD_KINDS, type PeriodKind } from '@/utils/mesDash'
 
 const apiMsg = (e: unknown) => (e as AxiosError<{ error?: { message?: string } }>)?.response?.data?.error?.message ?? 'Không tải được số liệu'
 const nf = (n: number | null | undefined, d = 1) => (n == null || !Number.isFinite(Number(n)) ? '—' : Number(n).toLocaleString('vi-VN', { maximumFractionDigits: d }))
@@ -39,15 +42,18 @@ const TONE_VAR: Record<StatTone, string> = { ok: 'var(--k-ok)', warn: 'var(--k-w
 const NO_SHIFT = 'Chưa ghi ca'
 const shiftName = (s: string | null) => s ?? NO_SHIFT
 
-export const DASH_RANGES = [
-  { key: '1d', label: '1 ngày', days: 1 }, { key: '7d', label: '7 ngày', days: 7 }, { key: '1m', label: '1 tháng', days: 30 },
-  { key: '3m', label: '3 tháng', days: 90 }, { key: '1y', label: '1 năm', days: 365 }, { key: '3y', label: '3 năm', days: 1095 },
-  { key: 'custom', label: 'Tự chọn', days: 0 },
-] as const
-type RangeKey = typeof DASH_RANGES[number]['key']
+type KindKey = PeriodKind | 'custom'
+export const DASH_KINDS: readonly { key: KindKey; label: string }[] = [
+  { key: '1d', label: '1 ngày' }, { key: '1w', label: '7 ngày' }, { key: '1m', label: '1 tháng' }, { key: '3m', label: '3 tháng' },
+  { key: '1y', label: '1 năm' }, { key: '3y', label: '3 năm' }, { key: 'custom', label: 'Tự chọn' },
+]
+/** kỳ đã nhớ (bản 22/11 lưu '7d' · '30d'…) ⇒ kiểu kỳ theo lịch */
+const normKind = (v: string | undefined): KindKey => (v === 'custom' || PERIOD_KINDS.includes(v as PeriodKind) ? v as KindKey : v === '1d' ? '1d' : '1w')
+const PREV_WORD: Record<KindKey, string> = { '1d': 'hôm trước', '1w': 'tuần trước', '1m': 'tháng trước', '3m': '3 tháng trước', '1y': 'năm trước', '3y': '3 năm trước', custom: 'kỳ trước' }
 const MAX_DAYS = 1100
-const GRAIN_TEXT: Record<DashGrain, string> = { batch: 'từng mẻ', day: 'theo ngày', week: 'theo tuần', month: 'theo tháng' }
-const bucketLabel = (g: DashGrain, k: string) => (g === 'month' ? `${k.slice(5, 7)}/${k.slice(2, 4)}` : g === 'week' ? `T ${ddmm(k)}` : ddmm(k))
+const GRAIN_TEXT: Record<DashGrain, string> = { batch: 'từng mẻ', day: 'theo ngày', week: 'theo tuần', month: 'theo tháng', year: 'theo năm' }
+const GRAIN_UNIT: Record<DashGrain, string> = { batch: 'mẻ', day: 'ngày', week: 'tuần', month: 'tháng', year: 'năm' }
+const bucketLabel = (g: DashGrain, k: string) => (g === 'year' ? k.slice(0, 4) : g === 'month' ? `${k.slice(5, 7)}/${k.slice(2, 4)}` : g === 'week' ? `T ${ddmm(k)}` : ddmm(k))
 /** trục thời gian đủ MỌI kỳ của khoảng (DB chỉ trả kỳ có mẻ) — kỳ trống: đứt đường, ô nhiệt viền đứt */
 function withAllBuckets(d: Dash): Dash {
   return { ...d, buckets: fillBuckets(d.grain, d.date_from, d.date_to, d.buckets, k => ({ k, batches: 0, filled: 0, pass: 0, dev_batches: 0, dev_lines: 0, std_kg: 0, total_kg: 0, edit_kg: 0, exec_kg: 0 })) }
@@ -58,6 +64,9 @@ const passTone = (p: number | null, target: number): StatTone | undefined => (p 
 const toneColor = (t: StatTone | undefined) => (t ? TONE_VAR[t] : undefined)
 
 type DetailReq = { title: string; q: Omit<DashDetailQuery, 'warehouse_id'> }
+/** một cách xem: kiểu kỳ + mốc (đi sâu = chồng các cách xem; ‹ Quay lại lấy cái trước) */
+type View = { kind: PeriodKind; anchor: string }
+const SEL = 'h-8 sm:h-7 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-1.5 text-xs'
 
 export function MesDashboard({ tabBar }: { tabBar: ReactNode }) {
   const navigate = useNavigate()
@@ -66,36 +75,54 @@ export function MesDashboard({ tabBar }: { tabBar: ReactNode }) {
   const { data: { kitchens } } = useProductionWarehouses()
   const wh = kitchens.some(k => k.id === f.warehouseId) ? f.warehouseId : defaultKitchen(kitchens, f.warehouseId || useGlobalScopeStore.getState().warehouseId)
   const today = todayVN()
-  const range = (f.dRange ?? '7d') as RangeKey
-  const base = useMemo(() => {
-    if (range === 'custom') {
+  const baseKind = normKind(f.dRange)
+  const baseAnchor = /^\d{4}-\d{2}-\d{2}$/.test(f.dAnchor ?? '') ? f.dAnchor : today
+  // ĐI SÂU (23/11): bấm một kỳ ⇒ đúng một bậc (năm → 1 năm → 1 tháng → 1 ngày); ‹ Quay lại về cách xem trước. Không ghi vào bộ lọc đã nhớ.
+  const [view, setView] = useState<View | null>(null)
+  const [stack, setStack] = useState<View[]>([])
+  useEffect(() => { setView(null); setStack([]) }, [baseKind, baseAnchor, f.dFrom, f.dTo, wh])
+  const kind: KindKey = view?.kind ?? baseKind
+  const anchor = view?.anchor ?? baseAnchor
+  const per = useMemo(() => {
+    if (kind === 'custom') {
       const from = f.dFrom || addDays(today, -6), to = f.dTo || today
-      return { from, to }
+      return { from, to, grain: grainOf(daysOf(from, to)), prevFrom: undefined as string | undefined, prevTo: undefined as string | undefined }
     }
-    const days = DASH_RANGES.find(r => r.key === range)?.days ?? 7
-    return { from: addDays(today, -(days - 1)), to: today }
-  }, [range, f.dFrom, f.dTo, today])
-  // ĐI SÂU: bấm một kỳ trên đường xu hướng ⇒ xem riêng kỳ đó; ‹ quay lại kỳ trước
-  const [stack, setStack] = useState<{ from: string; to: string; label: string }[]>([])
-  useEffect(() => { setStack([]) }, [range, base.from, base.to, wh])
-  const cur = stack.length ? stack[stack.length - 1] : base
-  const days = daysOf(cur.from, cur.to)
+    return periodOf(kind, anchor)
+  }, [kind, anchor, f.dFrom, f.dTo, today])
+  const days = daysOf(per.from, per.to)
   const badRange = !(days >= 1) || days > MAX_DAYS
-  const grain = grainOf(days)
-  const q = useMesDashboard(wh && !badRange ? { warehouse_id: wh, date_from: cur.from, date_to: cur.to, grain } : null)
+  const q = useMesDashboard(wh && !badRange ? { warehouse_id: wh, date_from: per.from, date_to: per.to, grain: per.grain, prev_from: per.prevFrom, prev_to: per.prevTo } : null)
   // chỉ dùng số của ĐÚNG kho + kỳ đang chọn (giữ số cũ khi đang tải kỳ mới thì được, nhưng không trộn kho)
   const d = useMemo(() => (q.data && q.data.warehouse_id === wh ? withAllBuckets(q.data) : undefined), [q.data, wh])
-  const fresh = !!d && d.date_from === cur.from && d.date_to === cur.to
+  const fresh = !!d && d.date_from === per.from && d.date_to === per.to
   const [detail, setDetail] = useState<DetailReq | null>(null)
   const open = (title: string, dq: Omit<DashDetailQuery, 'warehouse_id' | 'date_from' | 'date_to'> & { date_from?: string; date_to?: string }) =>
-    setDetail({ title, q: { date_from: dq.date_from ?? cur.from, date_to: dq.date_to ?? cur.to, ...dq } as Omit<DashDetailQuery, 'warehouse_id'> })
+    setDetail({ title, q: { date_from: dq.date_from ?? per.from, date_to: dq.date_to ?? per.to, ...dq } as Omit<DashDetailQuery, 'warehouse_id'> })
+  const cur: View | null = kind === 'custom' ? null : { kind, anchor }
   const drill = (b: DashBucket) => {
     if (!d || !b.batches) return
-    const r = bucketRange(d.grain, b.k, cur.from, cur.to)
-    if (r.from === cur.from && r.to === cur.to) return
-    setStack(s => [...s, { ...r, label: r.from === r.to ? dmy(r.from) : `${ddmm(r.from)} → ${ddmm(r.to)}` }])
+    const nx = drillOf(d.grain, b.k)
+    if (!nx) return
+    setStack(s => [...s, cur ?? { kind: '1w', anchor: per.from }])
+    setView(nx)
   }
-  const rangeText = cur.from === cur.to ? dmy(cur.from) : `${dmy(cur.from)} → ${dmy(cur.to)}`
+  const back = () => {
+    const prev = stack[stack.length - 1]
+    setStack(s => s.slice(0, -1))
+    setView(stack.length > 1 ? prev : null)
+  }
+  /** đổi mốc: đang đi sâu thì đổi cách xem tạm, không thì nhớ vào bộ lọc */
+  const setAnchor = (a: string) => { if (view) setView({ ...view, anchor: a }); else setF({ dAnchor: a }) }
+  const pickKind = (k: KindKey) => {
+    setView(null); setStack([])
+    if (k === 'custom') setF({ dRange: k, ...(!f.dFrom ? { dFrom: per.from, dTo: per.to } : {}) })
+    else setF({ dRange: k, dAnchor: anchor })
+  }
+  const title = kind === 'custom' ? (per.from === per.to ? dmy(per.from) : `${dmy(per.from)} → ${dmy(per.to)}`) : periodLabel(kind, anchor)
+  const yNow = Number(today.slice(0, 4))
+  const years = Array.from({ length: 9 }, (_, i) => yNow - 6 + i)
+  const backLabel = stack.length ? (stack.length > 1 ? periodLabel(stack[stack.length - 1].kind, stack[stack.length - 1].anchor) : kind === 'custom' ? 'kỳ đã chọn' : periodLabel(baseKind as PeriodKind, baseAnchor)) : ''
 
   return (
     <div className="kpi-console flex flex-col h-full bg-slate-100 dark:bg-slate-900" data-testid="mes-dash">
@@ -118,31 +145,56 @@ export function MesDashboard({ tabBar }: { tabBar: ReactNode }) {
         </div>
         <div className="flex flex-wrap items-center gap-1.5">
           <div className="flex flex-wrap gap-1 text-xs font-semibold sm:flex-nowrap sm:gap-0 sm:rounded-[10px] sm:border sm:border-slate-200 sm:dark:border-slate-700 sm:overflow-hidden" role="group" aria-label="Kỳ xem">
-            {DASH_RANGES.map(r => (
-              <button key={r.key} type="button" onClick={() => setF({ dRange: r.key, ...(r.key === 'custom' && !f.dFrom ? { dFrom: base.from, dTo: base.to } : {}) })}
-                aria-pressed={range === r.key} data-range={r.key}
+            {DASH_KINDS.map(r => (
+              <button key={r.key} type="button" onClick={() => pickKind(r.key)} aria-pressed={kind === r.key} data-range={r.key}
                 className={`whitespace-nowrap rounded-md border border-slate-200 dark:border-slate-700 px-3 h-8 sm:h-7 transition-colors sm:rounded-none sm:border-0 sm:border-l sm:first:border-l-0 ${
-                  range === r.key ? 'bg-[var(--k-brand)] text-white' : 'bg-white dark:bg-slate-800/60 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-white/5'}`}>
+                  kind === r.key ? 'bg-[var(--k-brand)] text-white' : 'bg-white dark:bg-slate-800/60 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-white/5'}`}>
                 {r.label}
               </button>
             ))}
           </div>
-          {range === 'custom' && (
+          {/* MỐC (23/11 — user: "phải có mục chọn theo mốc thời gian"): ngày / tuần chọn ngày · tháng chọn tháng + năm · năm chọn năm; ‹ › lùi tiến một kỳ */}
+          {kind !== 'custom' ? (
+            <div className="flex items-center gap-1 text-xs" data-testid="dash-anchor" role="group" aria-label="Mốc thời gian">
+              <button type="button" onClick={() => setAnchor(stepAnchor(kind, anchor, -1))} aria-label="Kỳ trước" title="Kỳ trước"
+                className="inline-flex h-8 w-8 sm:h-7 sm:w-7 items-center justify-center rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50"><ChevronLeft className="h-4 w-4" /></button>
+              {(kind === '1d' || kind === '1w') && (
+                <input type="date" aria-label={kind === '1d' ? 'Ngày' : 'Một ngày trong tuần'} value={anchor} onChange={e => e.target.value && setAnchor(e.target.value)} className={SEL} />
+              )}
+              {(kind === '1m' || kind === '3m') && <>
+                <select aria-label="Tháng" value={Number(anchor.slice(5, 7))} onChange={e => setAnchor(`${anchor.slice(0, 4)}-${String(e.target.value).padStart(2, '0')}-01`)} className={SEL}>
+                  {Array.from({ length: 12 }, (_, i) => <option key={i + 1} value={i + 1}>Tháng {i + 1}</option>)}
+                </select>
+                <select aria-label="Năm" value={Number(anchor.slice(0, 4))} onChange={e => setAnchor(`${e.target.value}-${anchor.slice(5, 7)}-01`)} className={SEL}>
+                  {years.map(y => <option key={y} value={y}>{y}</option>)}
+                </select>
+              </>}
+              {(kind === '1y' || kind === '3y') && (
+                <select aria-label="Năm" value={Number(anchor.slice(0, 4))} onChange={e => setAnchor(`${e.target.value}-01-01`)} className={SEL}>
+                  {years.map(y => <option key={y} value={y}>Năm {y}</option>)}
+                </select>
+              )}
+              <button type="button" onClick={() => setAnchor(stepAnchor(kind, anchor, 1))} aria-label="Kỳ sau" title="Kỳ sau"
+                className="inline-flex h-8 w-8 sm:h-7 sm:w-7 items-center justify-center rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50"><ChevronRight className="h-4 w-4" /></button>
+              {!(per.from <= today && today <= per.to) && (
+                <button type="button" onClick={() => setAnchor(today)} data-testid="dash-today"
+                  className="h-8 sm:h-7 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-2 font-semibold text-[var(--k-brand)] dark:text-sky-300 hover:bg-slate-50">Hôm nay</button>
+              )}
+            </div>
+          ) : (
             <div className="flex items-center gap-1 text-xs">
-              <input type="date" aria-label="Từ ngày" value={f.dFrom || base.from} max={today} onChange={e => setF({ dFrom: e.target.value })}
-                className="h-8 sm:h-7 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-1.5 text-xs" />
+              <input type="date" aria-label="Từ ngày" value={f.dFrom || per.from} onChange={e => setF({ dFrom: e.target.value })} className={SEL} />
               <span className="text-slate-400">→</span>
-              <input type="date" aria-label="Đến ngày" value={f.dTo || base.to} max={today} onChange={e => setF({ dTo: e.target.value })}
-                className="h-8 sm:h-7 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-1.5 text-xs" />
+              <input type="date" aria-label="Đến ngày" value={f.dTo || per.to} onChange={e => setF({ dTo: e.target.value })} className={SEL} />
             </div>
           )}
           {stack.length > 0 && (
-            <button type="button" onClick={() => setStack(s => s.slice(0, -1))} data-testid="dash-back"
+            <button type="button" onClick={back} data-testid="dash-back"
               className="inline-flex items-center gap-0.5 h-8 sm:h-7 rounded-md border border-[var(--k-brand)] px-2 text-xs font-semibold text-[var(--k-brand)] dark:text-sky-300 hover:bg-white dark:hover:bg-white/5">
-              <ChevronLeft className="h-3.5 w-3.5" />Quay lại {stack.length > 1 ? stack[stack.length - 2].label : DASH_RANGES.find(r => r.key === range)?.label}
+              <ChevronLeft className="h-3.5 w-3.5" />Quay lại {backLabel}
             </button>
           )}
-          <span className="text-[11px] text-slate-500 dark:text-slate-400">Ngày SX <b className="tabular-nums text-slate-700 dark:text-slate-200">{rangeText}</b> · {GRAIN_TEXT[grain]}</span>
+          <span className="text-[11px] text-slate-500 dark:text-slate-400" data-testid="dash-period"><b className="text-slate-700 dark:text-slate-200">{title}</b> · {GRAIN_TEXT[per.grain]} · theo ngày SX</span>
         </div>
       </div>
 
@@ -151,7 +203,7 @@ export function MesDashboard({ tabBar }: { tabBar: ReactNode }) {
         {q.isError && <div className="rounded-[14px] border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-600 dark:text-red-400">{apiMsg(q.error)}</div>}
         {!kitchens.length && <p className="text-xs text-amber-700">Chưa có kho chế biến trong phạm vi — khai kho phụ nội bộ ở Cài đặt WMS → Kho.</p>}
         {!d && q.isLoading && <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3">{Array.from({ length: 6 }).map((_, i) => <div key={i} className="h-[112px] rounded-[14px] bg-slate-200 dark:bg-slate-700/50 animate-pulse" />)}</div>}
-        {d && <DashBody d={d} stale={!fresh} onOpen={open} onDrill={drill} onBatch={id => navigate(`/wms/production/${id}`)} />}
+        {d && <DashBody d={d} stale={!fresh} prevWord={PREV_WORD[kind]} today={today} onOpen={open} onDrill={drill} onBatch={id => navigate(`/wms/production/${id}`)} />}
       </div>
       {wh && detail && <DetailDialog wh={wh} req={detail} onClose={() => setDetail(null)} onBatch={id => { setDetail(null); navigate(`/wms/production/${id}`) }} />}
     </div>
@@ -160,21 +212,22 @@ export function MesDashboard({ tabBar }: { tabBar: ReactNode }) {
 
 type OpenFn = (title: string, q: Omit<DashDetailQuery, 'warehouse_id' | 'date_from' | 'date_to'> & { date_from?: string; date_to?: string }) => void
 
-function DashBody({ d, stale, onOpen, onDrill, onBatch }: { d: Dash; stale: boolean; onOpen: OpenFn; onDrill: (b: DashBucket) => void; onBatch: (id: string) => void }) {
+function DashBody({ d, stale, prevWord, today, onOpen, onDrill, onBatch }: { d: Dash; stale: boolean; prevWord: string; today: string; onOpen: OpenFn; onDrill: (b: DashBucket) => void; onBatch: (id: string) => void }) {
   const t = d.totals, p = d.prev, tg = d.targets
   const pct = pctOf(t.total_kg, t.std_kg), prevPct = pctOf(p.total_kg, p.std_kg)
   const pass = t.filled ? (t.pass / t.filled) * 100 : null, prevPass = p.filled ? (p.pass / p.filled) * 100 : null
   const qaN = t.qa_released + t.qa_rejected, qa = qaN ? (t.qa_released / qaN) * 100 : null
   const prevQaN = p.qa_released + p.qa_rejected, prevQa = prevQaN ? (p.qa_released / prevQaN) * 100 : null
   const devLines = t.over + t.under + t.extra
-  const days = daysOf(d.date_from, d.date_to)
+  // mẻ / ngày chỉ chia cho số ngày ĐÃ QUA của kỳ (kỳ theo lịch có thể gồm ngày tương lai — tháng sau, năm sau)
+  const days = Math.max(1, daysOf(d.date_from, d.date_to < today ? d.date_to : today))
   /** so kỳ trước: ▲▼ + màu theo hướng tốt */
   const cmp = (cur: number | null, old: number | null, unit: string, better: 'up' | 'down', dec = 1): ReactNode => {
-    if (cur == null || old == null) return <span>chưa có số kỳ trước để so</span>
+    if (cur == null || old == null) return <span>chưa có số {prevWord} để so</span>
     const v = cur - old
-    if (Math.abs(v) < 10 ** -dec / 2) return <span>bằng kỳ trước</span>
+    if (Math.abs(v) < 10 ** -dec / 2) return <span>bằng {prevWord}</span>
     const good = better === 'up' ? v > 0 : v < 0
-    return <span style={{ color: good ? 'var(--k-ok)' : 'var(--k-bad)' }}>{v > 0 ? '▲' : '▼'} {nf(Math.abs(v), dec)}{unit} so kỳ trước</span>
+    return <span style={{ color: good ? 'var(--k-ok)' : 'var(--k-bad)' }}>{v > 0 ? '▲' : '▼'} {nf(Math.abs(v), dec)}{unit} so {prevWord}</span>
   }
   if (!t.batches) return <p className="text-sm text-[var(--k-muted)] py-6 text-center">Không có mẻ nào có ngày SX trong kỳ này.</p>
   return (
@@ -209,7 +262,7 @@ function DashBody({ d, stale, onOpen, onDrill, onBatch }: { d: Dash; stale: bool
 
       <div className="grid gap-3 sm:gap-4 lg:grid-cols-3">
         <KpiPanel className="lg:col-span-2" title={d.grain === 'batch' ? 'Lệch so định mức — từng mẻ' : 'Xu hướng lệch so định mức'}
-          hint={d.grain === 'batch' ? '% theo KG · bấm một mẻ để mở' : `% theo KG · ${GRAIN_TEXT[d.grain]} · bấm một kỳ để đi sâu`}
+          hint={d.grain === 'batch' ? '% theo KG · bấm một mẻ để mở' : `% theo KG · ${GRAIN_TEXT[d.grain]} · bấm một ${GRAIN_UNIT[d.grain]} để đi sâu`}
           right={<span className="inline-flex items-center gap-1.5 text-[11px] text-[var(--k-muted)]"><i className="inline-block h-2.5 w-3 rounded-sm" style={{ background: 'color-mix(in srgb, var(--k-ok) 22%, transparent)' }} />mục tiêu ±{nf(tg.dev_pct, 2)}%</span>}>
           {d.grain === 'batch'
             ? <BatchBars d={d} onBatch={onBatch} />
@@ -221,7 +274,7 @@ function DashBody({ d, stale, onOpen, onDrill, onBatch }: { d: Dash; stale: bool
       </div>
 
       <div className="grid gap-3 sm:gap-4 lg:grid-cols-3">
-        <KpiPanel className="lg:col-span-2" title={d.grain === 'batch' ? 'Theo ca' : `Bản đồ nhiệt: ca × ${d.grain === 'day' ? 'ngày' : d.grain === 'week' ? 'tuần' : 'tháng'}`}
+        <KpiPanel className="lg:col-span-2" title={d.grain === 'batch' ? 'Theo ca' : `Bản đồ nhiệt: ca × ${GRAIN_UNIT[d.grain]}`}
           hint={d.grain === 'batch' ? 'bấm một ca để xem từng mẻ' : 'mỗi ô = lệch % một ca · bấm ô để xem từng mẻ'}>
           {d.grain !== 'batch' && <ShiftHeat d={d} onOpen={onOpen} />}
           <GroupTable kind="shift" d={d} onOpen={onOpen} />
@@ -285,7 +338,7 @@ function TrendChart({ d, onDrill, onCount }: { d: Dash; onDrill: (b: DashBucket)
   flush()
   const cntMax = Math.max(1, ...d.buckets.map(b => b.dev_batches))
   const SH = 56
-  const every = Math.max(1, Math.ceil(n / Math.max(2, Math.floor(w / 70))))
+  const every = Math.max(1, Math.ceil(n / Math.max(2, Math.floor(w / 58))))
   const h = hover != null ? pts[hover] : null
   return (
     <div ref={ref} className="relative px-2 sm:px-3 pt-2 pb-3 select-none" onMouseLeave={() => setHover(null)} data-testid="dash-trend">
@@ -449,7 +502,7 @@ function ShiftHeat({ d, onOpen }: { d: Dash; onOpen: OpenFn }) {
   const shifts = [...new Set(d.heat.map(h => h.shift))].sort((a, b) => (a == null ? 1 : b == null ? -1 : a.localeCompare(b, 'vi')))
   const cell = new Map(d.heat.map(h => [`${h.shift ?? ''}|${h.k}`, h]))
   const n = ks.length
-  const colMin = n > 60 ? '6px' : n > 31 ? '10px' : '1.6rem'
+  const colMin = n > 60 ? '6px' : n > 31 ? '10px' : n > 16 ? '1.6rem' : '2.6rem'
   const every = Math.max(1, Math.ceil(n / 10))
   const tg = d.targets.dev_pct
   return (

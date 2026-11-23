@@ -269,7 +269,7 @@ export const MES_GUIDE: Guide = {
         {
           title: 'C1. Báo cáo NVL theo chu kỳ',
           text: [
-            'Vào **Báo cáo NVL**. Tab **Tổng quan** (mở sẵn) là dashboard theo thời gian: chọn kỳ **1 ngày · 7 ngày · 1 tháng · 3 tháng · 1 năm · 3 năm · Tự chọn**. Có thẻ số (mẻ hoàn thành, % mẻ đạt định mức, lệch NVL, thời gian mẻ, QA bồn), xu hướng lệch, bản đồ nhiệt theo ca, NVL gây lệch nhiều nhất, biểu đồ kiểm soát từng mẻ. **Bấm vào bất kỳ con số / ô / cột nào** để xem dữ liệu đứng sau; bấm một ngày trên xu hướng để đi sâu vào ngày đó.',
+            'Vào **Báo cáo NVL**. Tab **Tổng quan** (mở sẵn) là dashboard theo lịch: chọn kỳ **1 ngày · 7 ngày** (tuần Thứ Hai → Chủ nhật) **· 1 tháng · 3 tháng** (tháng trước · tháng chọn · tháng sau) **· 1 năm** (12 tháng) **· 3 năm** (năm trước · năm chọn · năm sau) **· Tự chọn**, rồi chọn **mốc** (ngày / tháng / năm) ngay bên cạnh, ‹ › để lùi tiến một kỳ. Có thẻ số (so với kỳ liền trước cùng kiểu), xu hướng lệch, bản đồ nhiệt theo ca, NVL gây lệch nhiều nhất, biểu đồ kiểm soát từng mẻ. **Bấm vào bất kỳ con số / ô / cột nào** để xem dữ liệu đứng sau; bấm một năm / tháng / ngày trên xu hướng để đi sâu một bậc.',
             'Mục tiêu (lệch cho phép ± %, % mẻ đạt) đặt ở **Cài đặt MES → Mục tiêu Báo cáo NVL**.',
             'Tab **Theo chu kỳ** → chọn chu kỳ: báo cáo cuối của một chu kỳ. Báo cáo chạy trực tiếp, tự cập nhật.',
             'Mọi con số so với **định mức gốc** (công thức × kế hoạch), không phải phiếu đã sửa. Lệch tách hai phần: **Sửa phiếu** (trưởng ca sửa định mức của mẻ, có lý do) và **Cấp lệch** (cấp khác phiếu). Chỉ dòng đã cấp xong mới có số lệch.',

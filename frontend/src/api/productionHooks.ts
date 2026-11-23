@@ -536,7 +536,7 @@ export function useCycleReport(warehouseId: string | undefined, cycle: string | 
   })
 }
 // ── DASHBOARD BÁO CÁO NVL THEO THỜI GIAN (22/11) — mes_dashboard: mọi khối trong MỘT lời gọi; mes_dashboard_detail: dữ liệu khi bấm vào ──
-export type DashGrain = 'batch' | 'day' | 'week' | 'month'
+export type DashGrain = 'batch' | 'day' | 'week' | 'month' | 'year'
 interface DashKg { std_kg: number; total_kg: number }
 export interface DashTotals extends DashKg {
   batches: number; filled: number; pass: number; dev_batches: number; lines: number; pending: number; ok: number; over: number; under: number; extra: number
@@ -556,15 +556,16 @@ export interface DashExc extends DashKg {
   mat: { code: string; name: string | null; unit: string | null; state: string; diff: number } | null
 }
 export interface MesDashboard {
-  warehouse_id: string; date_from: string; date_to: string; grain: DashGrain; computed_at: string
+  warehouse_id: string; date_from: string; date_to: string; grain: DashGrain; computed_at: string; prev_from: string; prev_to: string
   targets: { dev_pct: number; pass_pct: number }
   totals: DashTotals; prev: DashPrev; buckets: DashBucket[]; points: DashPoint[] | null; heat: DashHeat[]; shifts: DashShift[]; btp: DashBtp[]
   pareto_total: number; pareto: DashPareto[]; spc: DashSpc[]; exc: DashExc[]
 }
-export interface DashQuery { warehouse_id: string; date_from: string; date_to: string; grain: DashGrain }
+/** prev_from / prev_to (23/11) = kỳ so liền trước cùng kiểu (tháng trước · năm trước…); vắng ⇒ cùng số ngày liền trước */
+export interface DashQuery { warehouse_id: string; date_from: string; date_to: string; grain: DashGrain; prev_from?: string; prev_to?: string }
 export function useMesDashboard(q: DashQuery | null) {
   return useQuery({
-    queryKey: ['prod-dash', q?.warehouse_id, q?.date_from, q?.date_to, q?.grain], enabled: !!q?.warehouse_id, staleTime: 30_000, placeholderData: keepPreviousData,
+    queryKey: ['prod-dash', q?.warehouse_id, q?.date_from, q?.date_to, q?.grain, q?.prev_from, q?.prev_to], enabled: !!q?.warehouse_id, staleTime: 30_000, placeholderData: keepPreviousData,
     queryFn: async () => (await apiClient.get('/wms/production/dashboard', { params: q })).data.data as MesDashboard,
   })
 }

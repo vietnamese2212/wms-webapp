@@ -1649,7 +1649,8 @@ export async function cycleReport(req: Request, res: Response) {
 // tổng hợp production_batch_fact (dựng một lần lúc nạp), mẻ chưa nạp tính trực tiếp. MỘT lời gọi cho mọi khối của dashboard (mes_dashboard);
 // bấm vào biểu đồ ⇒ mes_dashboard_detail (từng mẻ hoặc từng NVL lệch, tối đa 500 dòng kèm tổng). Migration 20261122.
 const zDashBase = { warehouse_id: zText(1, 64), date_from: zDay, date_to: zDay }
-export const zDashQuery = z.object({ ...zDashBase, grain: z.enum(['batch', 'day', 'week', 'month']).optional() })
+// 23/11: kỳ THEO LỊCH quanh mốc (utils/mesDash.ts periodOf) — gom theo năm cho 3 năm; kỳ so (▲▼) do màn gửi = kỳ liền trước cùng kiểu
+export const zDashQuery = z.object({ ...zDashBase, grain: z.enum(['batch', 'day', 'week', 'month', 'year']).optional(), prev_from: zDay.optional(), prev_to: zDay.optional() })
 export const zDashDetailQuery = z.object({
   ...zDashBase, kind: z.enum(['batches', 'lines']), shift: zText(0, 40).optional(), btp_id: zText(0, 64).optional(), material_id: zText(0, 64).optional(),
   only: z.enum(['dev', 'fail', 'pass', 'filled', 'running', 'edited', 'exec', 'qa_rejected', 'rm_bad', 'over', 'under', 'extra']).optional(),
@@ -1668,8 +1669,15 @@ export async function dashboard(req: Request, res: Response) {
   try {
     const q = await dashArgs(req, res)
     if (!q) return res
-    const grain = (req.query as unknown as z.infer<typeof zDashQuery>).grain ?? 'day'
-    const { data, error } = await db.rpc('mes_dashboard', { p: { warehouse_id: q.warehouse_id, date_from: q.date_from, date_to: q.date_to, grain } })
+    const dq = req.query as unknown as z.infer<typeof zDashQuery>
+    const grain = dq.grain ?? 'day'
+    if ((dq.prev_from == null) !== (dq.prev_to == null)) return fail(res, 400, 'DATE_RANGE', 'Kỳ so cần đủ Từ ngày và Đến ngày')
+    if (dq.prev_from && dq.prev_to) {
+      const pd = (Date.parse(dq.prev_to) - Date.parse(dq.prev_from)) / 86_400_000
+      if (!(pd >= 0) || pd > DASH_MAX_DAYS) return fail(res, 400, 'DATE_RANGE', 'Kỳ so không hợp lệ — tối đa 3 năm')
+    }
+    const { data, error } = await db.rpc('mes_dashboard', { p: { warehouse_id: q.warehouse_id, date_from: q.date_from, date_to: q.date_to, grain,
+      ...(dq.prev_from && dq.prev_to ? { prev_from: dq.prev_from, prev_to: dq.prev_to } : {}) } })
     if (error) return mesFail(res, error)
     return ok(res, data)
   } catch (e) { return failAny(res, e) }

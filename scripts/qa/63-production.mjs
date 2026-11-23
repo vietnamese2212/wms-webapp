@@ -1115,8 +1115,17 @@ try {
         `http=${tPut.s}/${tBad.s}/${tNull.s} t2=${JSON.stringify(D2?.targets ?? null)} t3=${JSON.stringify(D3?.targets ?? null)}`)
       const bad1 = await api(`/wms/production/dashboard?warehouse_id=${WC2}&date_from=2020-01-01&date_to=${todayVN}`)
       const bad2 = await api(`/wms/production/dashboard?warehouse_id=${WC2}&date_from=${todayVN}&date_to=2020-01-01`)
-      const bad3 = await api(`/wms/production/dashboard?warehouse_id=${WC2}&date_from=${todayVN}&date_to=${todayVN}&grain=year`)
+      const bad3 = await api(`/wms/production/dashboard?warehouse_id=${WC2}&date_from=${todayVN}&date_to=${todayVN}&grain=decade`)
       check('19e. Khoảng ngày quá 3 năm / ngược ⇒ 400 · cách gom lạ ⇒ 400', bad1.s === 400 && bad2.s === 400 && bad3.s === 400, `http=${bad1.s}/${bad2.s}/${bad3.s}`)
+      // 23/11 — kỳ theo lịch: 3 năm = năm trước · năm này · năm sau gom theo NĂM; kỳ so do màn gửi (3 năm trước đó); kỳ so thiếu một đầu ⇒ 400
+      const yy = Number(todayVN.slice(0, 4))
+      const y3 = await api(`/wms/production/dashboard?warehouse_id=${WC2}&date_from=${yy - 1}-01-01&date_to=${yy + 1}-12-31&grain=year&prev_from=${yy - 4}-01-01&prev_to=${yy - 2}-12-31`)
+      const Y3 = y3.j?.data
+      const yBad = await api(`/wms/production/dashboard?warehouse_id=${WC2}&date_from=${yy}-01-01&date_to=${yy}-12-31&grain=month&prev_from=${yy - 1}-01-01`)
+      check('19f. 3 năm gom theo NĂM: kỳ năm nay (khoá 01/01) có mẻ thử · kỳ so = 3 năm trước đó như màn gửi · kỳ so thiếu một đầu ⇒ 400',
+        y3.s === 200 && (Y3?.buckets ?? []).some(b => b.k === `${yy}-01-01` && num(b.batches) >= 1) && (Y3?.buckets ?? []).every(b => /-01-01$/.test(b.k))
+          && Y3?.prev_from === `${yy - 4}-01-01` && Y3?.prev_to === `${yy - 2}-12-31` && yBad.s === 400,
+        `http=${y3.s}/${yBad.s} ${JSON.stringify((Y3?.buckets ?? []).map(b => b.k + ':' + b.batches))} prev=${Y3?.prev_from}→${Y3?.prev_to}`)
     }
 
     // ── [18] DỮ LIỆU THÔ TIÊU HAO NVL (18/11 g) + SƠ ĐỒ BỒN 2D ──

@@ -5,11 +5,13 @@
   "untyped_supabase_import_files": 70,
   "mirror_helper_without_test": 0,
   "db_types_unknown_table": 8,
+  "secret_literal_in_repo": 0,
   "settings_area_interleaved": 0,
   "background_error_500_hardcoded": 0,
   "actor_column_from_body": 0,
   "entry_decimal_beside_unit_label": 0,
   "empty_row_centered_in_wide_td": 0,
+  "print_area_outside_portal": 0,
   "native_browser_dialog": 31,
   "mutate_call_swallows_error": 13,
   "action_item_custom_fill": 1,
@@ -95,10 +97,9 @@
   "filterbar_without_sheetbutton": 0,
   "scan_input_disabled_drops_focus": 0,
   "upload_without_preflight": 0,
+  "template_not_via_helper": 0,
+  "upload_body_without_helper": 0,
   "password_rule_hand_rolled": 0,
   "upload_without_merge_expand": 0,
-  "print_area_outside_portal": 0,
-  "qtyinput_value_parseint": 0,
-  "upload_body_without_helper": 0,
-  "template_not_via_helper": 0
+  "qtyinput_value_parseint": 0
 }

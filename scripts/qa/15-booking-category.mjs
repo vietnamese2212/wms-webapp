@@ -184,7 +184,7 @@ check('7b. TRIGGER DB chặn cả đường ghi KHÔNG qua app (script/tích h�
   if (XLSX) {
     const tok = await (async () => {
       const r = await fetch(`${BASE}/api/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: process.env.QA_ADMIN_EMAIL || 'admin', password: process.env.QA_ADMIN_PASSWORD || 'Bavi1234' }) })
+        body: JSON.stringify({ email: process.env.QA_ADMIN_EMAIL || 'admin', password: process.env.QA_ADMIN_PASSWORD }) })
       return (await r.json())?.data?.token
     })()
     const upload = async (rows, preflight) => {
@@ -278,7 +278,7 @@ check('7b. TRIGGER DB chặn cả đường ghi KHÔNG qua app (script/tích h�
   if (XLSX) {
     const tok = await (async () => {
       const r = await fetch(`${BASE}/api/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: process.env.QA_ADMIN_EMAIL || 'admin', password: process.env.QA_ADMIN_PASSWORD || 'Bavi1234' }) })
+        body: JSON.stringify({ email: process.env.QA_ADMIN_EMAIL || 'admin', password: process.env.QA_ADMIN_PASSWORD }) })
       return (await r.json())?.data?.token
     })()
     // GC(1) đang có 2 DO ở cửa CUA_B; file chỉ đưa 1 DO và khai cửa CUA_A

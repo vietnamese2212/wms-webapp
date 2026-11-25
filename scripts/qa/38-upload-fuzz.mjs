@@ -38,7 +38,7 @@ const FILES = [
 
 console.log(`── GÓI UPLOAD-FUZZ: ${ROUTES.length} route × ${FILES.length + 1} file ác ──`)
 await login()
-const r0 = await fetch(`${BASE}/api/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: process.env.QA_ADMIN_EMAIL || 'admin', password: process.env.QA_ADMIN_PASSWORD || 'Bavi1234' }) })
+const r0 = await fetch(`${BASE}/api/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: process.env.QA_ADMIN_EMAIL || 'admin', password: process.env.QA_ADMIN_PASSWORD }) })
 const TOKEN = (await r0.json())?.data?.token
 
 const bad = []

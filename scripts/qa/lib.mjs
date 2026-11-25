@@ -12,7 +12,8 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 export const BASE = process.env.QA_BASE_URL
   || 'https://wms-webapp-git-dev-vietnamese2212s-projects.vercel.app'
 const ADMIN_EMAIL = process.env.QA_ADMIN_EMAIL || 'admin'
-const ADMIN_PASSWORD = process.env.QA_ADMIN_PASSWORD || 'Bavi1234'   // tài khoản test STAGING
+// 25/11: KHÔNG ghi mật khẩu dự phòng (repo public) — chạy qua scripts/qa/ci-account.mjs (run-all / CI tự cấp) hoặc đặt QA_ADMIN_PASSWORD
+const ADMIN_PASSWORD = process.env.QA_ADMIN_PASSWORD || ''
 
 // ── Dữ liệu nền cố định của staging dùng cho test (đổi ở đây nếu staging thay data nền) ──
 export const FIX = {
@@ -54,6 +55,7 @@ export function requireLoadApproval(pack) {
 let token = ''
 let realtimeToken = null
 export async function login() {
+  if (!ADMIN_PASSWORD) throw new Error('Thiếu QA_ADMIN_PASSWORD — chạy gói qua scripts/qa/run-all.mjs / ci-account.mjs (tự cấp tài khoản CI) hoặc đặt biến môi trường')
   const r = await fetch(`${BASE}/api/auth/login`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email: ADMIN_EMAIL, password: ADMIN_PASSWORD }),

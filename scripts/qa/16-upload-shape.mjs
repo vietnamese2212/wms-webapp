@@ -60,7 +60,7 @@ const seedRaw = (doNo, qty) => restWrite('erp_outbound_orders', 'POST', null, {
 })
 const tok = await (async () => {
   const r = await fetch(`${BASE}/api/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email: process.env.QA_ADMIN_EMAIL || 'admin', password: process.env.QA_ADMIN_PASSWORD || 'Bavi1234' }) })
+    body: JSON.stringify({ email: process.env.QA_ADMIN_EMAIL || 'admin', password: process.env.QA_ADMIN_PASSWORD }) })
   return (await r.json())?.data?.token
 })()
 // upload nhận SHEET đã dựng sẵn (để cài được ô GỘP), không chỉ mảng object

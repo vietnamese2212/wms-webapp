@@ -468,6 +468,16 @@ function roundBeforeDivide(line) {
 }
 
 const RULES = [
+  // 25/11 (dọn secret): repo PUBLIC ⇒ không file nào được ghi thẳng mật khẩu / chuỗi kết nối DB có mật khẩu / mật khẩu đăng nhập làm giá trị
+  // dự phòng. Lần lộ thật: 8 script QA để sẵn mật khẩu admin staging dạng `QA_ADMIN_PASSWORD || '…'` (nằm trong lịch sử từ 07/2026).
+  // Secret đọc từ biến môi trường / backend/.env (gitignored); MCP postgres đi qua scripts/mcp/postgres-mcp.mjs. Baseline 0.
+  {
+    key: 'secret_literal_in_repo',
+    label: 'mật khẩu / chuỗi kết nối DB có mật khẩu / mật khẩu đăng nhập dự phòng ghi thẳng trong file của repo (repo PUBLIC) — đọc từ biến môi trường hoặc .env',
+    count: (s) => countMatches(['backend/src', 'frontend/src', 'scripts', 'api'], ['.ts', '.tsx', '.js', '.mjs', '.cjs', '.json', '.yml'],
+      (line) => /postgres(ql)?:\/\/[^:/\s"'`]+:(?!\[|\$\{|<|\*)[^@\s"'`]{6,}@/.test(line)
+        || /\b[A-Z_]*(PASSWORD|SECRET|SERVICE_ROLE_KEY)\b[^=]*\|\|\s*['"`][^'"`\s]{4,}['"`]/.test(line), s),
+  },
   // Chuyến sang "Đang xuất" CHỈ qua startGDO / 2 đường Xuất luôn / uncomplete — vì startGDO là nơi duy nhất
   // chấp hành 3 rule (cổng · cân · CỬA có sức chứa xe, 09/09). Viết thêm một chỗ `status: 'IN_PROGRESS'` là
   // mở đường "Đang xuất" không qua rule nào (bug 01/08 PATCH status tự do đã bịt; ratchet gác không tái sinh).

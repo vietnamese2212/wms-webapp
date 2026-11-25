@@ -35,7 +35,7 @@ const now = () => new Date().toISOString()
 const T0 = now()                       // mốc thời gian để dọn error_logs do chính gói này sinh ra
 const CRED = {
   email: process.env.QA_ADMIN_EMAIL || 'admin',
-  password: process.env.QA_ADMIN_PASSWORD || 'Bavi1234',
+  password: process.env.QA_ADMIN_PASSWORD,
 }
 console.log('── GÓI 49: DANH MỤC & TỔ CHỨC ──')
 

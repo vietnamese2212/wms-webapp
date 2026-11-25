@@ -183,7 +183,7 @@ if (g2c) {
     fd.append('file', new Blob([XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' })]), 'khvc.xlsx')
     const tok = await (async () => {
       const r = await fetch(`${BASE}/api/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: process.env.QA_ADMIN_EMAIL || 'admin', password: process.env.QA_ADMIN_PASSWORD || 'Bavi1234' }) })
+        body: JSON.stringify({ email: process.env.QA_ADMIN_EMAIL || 'admin', password: process.env.QA_ADMIN_PASSWORD }) })
       return (await r.json())?.data?.token
     })()
     const up = await fetch(`${BASE}/api/wms/outbound/upload-khvc`, { method: 'POST', headers: { Authorization: `Bearer ${tok}` }, body: fd })

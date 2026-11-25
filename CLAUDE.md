@@ -37,7 +37,7 @@
 ## Môi trường
 
 - Remote `https://github.com/vietnamese2212/wms-webapp.git`. Nhánh `dev` → Vercel Preview + Supabase staging `bxxryrmpfabvjitqbdnw`. Nhánh `main` → production + DB `svicyfquresxaigfxsdb`.
-- `backend/.env`: `DATABASE_URL` chỉ đọc (staging) · `DIRECT_URL` ghi được (staging) · `LOF_DATABASE_URL` là production. `.mcp.json` trỏ staging và không được commit.
+- `backend/.env`: `DATABASE_URL` chỉ đọc (staging) · `DIRECT_URL` ghi được (staging) · `LOF_DATABASE_URL` là production. `.mcp.json` không được commit; MCP postgres khai `node scripts/mcp/postgres-mcp.mjs` (đọc `DATABASE_URL` từ `backend/.env`, mật khẩu qua `PGPASSWORD`) — không ghi chuỗi kết nối có mật khẩu vào `.mcp.json` / `~/.claude.json`. Cổng tĩnh `secret_literal_in_repo` gác file trong repo.
 - Mật khẩu và token không đi qua tham số lệnh gọi công cụ. Script tự đọc trong tiến trình (mẫu `scripts/qa/ci-account.mjs`).
 - `Template upload.xlsx` ở thư mục gốc là dữ liệu gốc của người dùng: chỉ đọc, không sửa, không `git add`. Luôn `git add` từng file cụ thể. Không add `docs/presentation/` và `ui-ux/`.
 - Sửa `backend/src` thì tăng `// rebuild-token` trong `api/index.ts`, nếu không Vercel không build lại hàm.

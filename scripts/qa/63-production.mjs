@@ -1132,6 +1132,10 @@ try {
           && dtL.s === 200 && num(dtL.j?.data?.total) === 1 && lr?.state === 'extra' && num(lr?.std) === 0 && num(lr?.sheet) === 10 && num(lr?.iss) === 10 && num(lr?.edit) === 10
           && dtS.s === 200 && num(dtS.j?.data?.total) === 0,
         `http=${dtB.s}/${dtL.s}/${dtS.s} ${JSON.stringify(lr ?? null)}`)
+      // 25/11 rà soát B7: bấm thẻ "Sửa phiếu" ⇒ số dòng ra = số dòng sửa phiếu của thẻ (trước: dòng trong dung sai không có trong sổ dòng)
+      const dtE = await dd('&kind=lines&only=edited')
+      check('19c2. Bấm "Sửa phiếu" ⇒ số dòng = số dòng sửa phiếu trên thẻ', dtE.s === 200 && num(dtE.j?.data?.total) === num(D1?.totals?.edited),
+        `http=${dtE.s} rows=${dtE.j?.data?.total} card=${D1?.totals?.edited}`)
       const tPut = await api('/wms/production/settings', 'PUT', { warehouse_id: WC2, mes_dev_target_pct: 0.8, mes_pass_target_pct: 90 })
       const tBad = await api('/wms/production/settings', 'PUT', { warehouse_id: WC2, mes_dev_target_pct: 0 })
       const D2 = (await dq('&grain=batch')).j?.data

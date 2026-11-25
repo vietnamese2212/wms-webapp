@@ -1117,39 +1117,35 @@ export async function listTanks(req: Request, res: Response) {
     await Promise.all([
       (async () => {
         for (let i = 0; i < ids.length; i += 300) {
-          const { data } = await db.from('tank_lot')
+          const { data, error: le } = await db.from('tank_lot')
             .select('id, tank_id, batch_id, qty_in, qty_remaining, filled_at, expires_at, batch:production_batch!tank_lot_batch_id_fkey(batch_code, batch_no, cycle, shift, qa_status, material:Material!production_batch_material_id_fkey(material_code, short_name))')
             .in('tank_id', ids.slice(i, i + 300)).eq('status', 'ACTIVE').order('filled_at').limit(1000)
+          if (le) throw le
           lots.push(...((data ?? []) as unknown as LotView[]))
         }
       })(),
       (async () => {
         for (let i = 0; i < ids.length; i += 300) {
-          const { data } = await db.from('packing_runs').select('id, tank_id, machine_code, material_code, start_at, shift')
+          const { data, error: re } = await db.from('packing_runs').select('id, tank_id, machine_code, material_code, start_at, shift')
             .in('tank_id', ids.slice(i, i + 300)).eq('status', 'OPEN').order('start_at').limit(1000)
+          if (re) throw re
           runs.push(...((data ?? []) as RunView[]))
         }
       })(),
     ])
-    // mẻ đang mở ĐÃ ĐẶT bồn mà chưa nạp đủ ⇒ phần "sắp vào" của bồn (sơ đồ bồn vẽ phần này; tạo mẻ trừ phần này khỏi chỗ trống)
-    type Planned = { id: string; tank_id: string | null; batch_code: string; cycle: string | null; batch_no: number | null; planned_qty: number | null
-      shift: string | null; created_at: string; material: { material_code: string; short_name: string | null } | null }
-    const planned: Planned[] = []
+    // mẻ đang mở ĐÃ ĐẶT bồn mà CHƯA nạp lần nào ⇒ phần "sắp vào" của bồn (sơ đồ bồn vẽ phần này; tạo mẻ trừ phần này khỏi chỗ trống).
+    // 25/11 (B1 rà soát): MỘT hàm mes_tank_incoming (cùng luật mes_tank_room_check, chỉ mục một phần theo first_filled_at) — trước đây
+    // lấy mẻ OPEN theo created_at TĂNG + limit 1000 ⇒ mẻ nạp rồi vẫn OPEN mãi nên sau ~1.000 mẻ sơ đồ mất mẻ MỚI
+    type Incoming = { batch_id: string; tank_id: string; batch_code: string; cycle: string | null; batch_no: number | null
+      planned_qty: number | null; shift: string | null; created_at: string; material_code: string | null; short_name: string | null }
+    const planned: Incoming[] = []
     for (let i = 0; i < ids.length; i += 300) {
-      const { data } = await db.from('production_batch')
-        .select('id, tank_id, batch_code, cycle, batch_no, planned_qty, shift, created_at, material:Material!production_batch_material_id_fkey(material_code, short_name)')
-        .in('tank_id', ids.slice(i, i + 300)).eq('status', 'OPEN').order('created_at').limit(1000)
-      planned.push(...((data ?? []) as unknown as Planned[]))
+      const { data, error: pe } = await db.rpc('mes_tank_incoming', { p_tank_ids: ids.slice(i, i + 300) })
+      if (pe) throw pe
+      planned.push(...((data ?? []) as Incoming[]))
     }
-    const filled = new Map<string, number>()
-    const pids = planned.map(x => x.id)
-    for (let i = 0; i < pids.length; i += 300) {
-      const { data } = await db.from('tank_movement').select('batch_id, qty').in('batch_id', pids.slice(i, i + 300)).eq('kind', 'FILL').limit(5000)
-      for (const mv of data ?? []) if (mv.batch_id) filled.set(mv.batch_id, (filled.get(mv.batch_id) ?? 0) + Number(mv.qty))
-    }
-    // SƠ ĐỒ BỒN (18/11 f — "bồn nằm sau khâu của mẻ ⇒ mẻ cũng hiện lên sơ đồ, liên kết với tình trạng"): mẻ sắp vào mang tình trạng + bước
-    // đang tới, MỘT lần gọi cho mọi mẻ (mes_batch_steps → cùng hàm cổng mes_batch_gate với danh sách mẻ / trang mẻ)
-    const waitIds = pids.filter(id => !filled.has(id))
+    const pids = planned.map(x => x.batch_id)
+    const waitIds = pids
     let steps: Record<string, { stage: string | null; step: string | null }> = {}
     if (waitIds.length) {
       const { data, error: se } = await db.rpc('mes_batch_steps', { p_ids: waitIds.slice(0, 2000) })
@@ -1161,10 +1157,10 @@ export async function listTanks(req: Request, res: Response) {
       const ls = lots.filter(l => l.tank_id === t.id)
       const content = ls.reduce((s, l) => s + Number(l.qty_remaining), 0)
       // mẻ GIỮ CHỖ tới lần nạp đầu tiên (18/11 — bỏ "đóng mẻ": trước đây đóng mẻ mới nhả phần chưa nạp; cùng luật hàm mes_tank_room_check)
-      const incoming = planned.filter(x => x.tank_id === t.id && !filled.has(x.id))
-        .map(x => ({ batch_id: x.id, batch_code: x.batch_code, cycle: x.cycle, batch_no: x.batch_no, material_code: x.material?.material_code ?? null,
-          material_name: x.material?.short_name ?? null, qty: round3(Math.max(Number(x.planned_qty ?? 0), 0)), started: false,
-          shift: x.shift, created_at: x.created_at, stage: steps[x.id]?.stage ?? null, step: steps[x.id]?.step ?? null }))
+      const incoming = planned.filter(x => x.tank_id === t.id)
+        .map(x => ({ batch_id: x.batch_id, batch_code: x.batch_code, cycle: x.cycle, batch_no: x.batch_no, material_code: x.material_code,
+          material_name: x.short_name, qty: round3(Math.max(Number(x.planned_qty ?? 0), 0)), started: false,
+          shift: x.shift, created_at: x.created_at, stage: steps[x.batch_id]?.stage ?? null, step: steps[x.batch_id]?.step ?? null }))
         .filter(x => x.qty > 0)
       const qa = ls.map(l => l.batch?.qa_status)
       return {

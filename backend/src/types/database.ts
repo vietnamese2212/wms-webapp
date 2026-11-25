@@ -1,5 +1,5 @@
 // FILE SINH TỰ ĐỘNG — `node scripts/gen-db-types.mjs` (từ information_schema STAGING). KHÔNG sửa tay.
-// Sinh lúc 2026-11-25T05:23:56.723Z · 127 bảng/view · 278 hàm · 0 enum
+// Sinh lúc 2026-11-25T05:28:20.694Z · 127 bảng/view · 280 hàm · 0 enum
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[]
 
 export type Database = {
@@ -5531,6 +5531,7 @@ export type Database = {
           label_at: string | null
           label_by_name: string | null
           extra_forms: string[]
+          first_filled_at: string | null
         }
         Insert: {
           id: string
@@ -5570,6 +5571,7 @@ export type Database = {
           label_at?: string | null
           label_by_name?: string | null
           extra_forms?: string[]
+          first_filled_at?: string | null
         }
         Update: {
           id?: string
@@ -5609,6 +5611,7 @@ export type Database = {
           label_at?: string | null
           label_by_name?: string | null
           extra_forms?: string[]
+          first_filled_at?: string | null
         }
         Relationships: []
       }
@@ -7641,6 +7644,10 @@ export type Database = {
         Args: { p_material: string | null }
         Returns: unknown
       }
+      mes_dev_line_keep: {
+        Args: { p_state: string | null; p_std: number | null; p_sheet: number | null; p_iss: number | null }
+        Returns: boolean
+      }
       mes_entry_status: {
         Args: { p_remaining: number | null; p_imported: number | null }
         Returns: string
@@ -7732,6 +7739,10 @@ export type Database = {
       mes_tank_fill: {
         Args: { p: Json | null }
         Returns: Json
+      }
+      mes_tank_incoming: {
+        Args: { p_tank_ids: unknown | null }
+        Returns: Record<string, unknown>[]
       }
       mes_tank_layout_save: {
         Args: { p: Json | null }
@@ -8026,7 +8037,7 @@ export type Database = {
         Returns: boolean
       }
       unaccent: {
-        Args: { arg1: string | null } | { arg1: unknown | null; arg2: string | null }
+        Args: { arg1: unknown | null; arg2: string | null } | { arg1: string | null }
         Returns: string
       }
       unaccent_init: {

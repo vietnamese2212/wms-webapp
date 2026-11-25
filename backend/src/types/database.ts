@@ -1,5 +1,5 @@
 // FILE SINH TỰ ĐỘNG — `node scripts/gen-db-types.mjs` (từ information_schema STAGING). KHÔNG sửa tay.
-// Sinh lúc 2026-11-25T05:36:43.653Z · 127 bảng/view · 281 hàm · 0 enum
+// Sinh lúc 2026-11-25T05:57:12.907Z · 127 bảng/view · 282 hàm · 0 enum
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[]
 
 export type Database = {
@@ -2520,6 +2520,7 @@ export type Database = {
           mes_flow_gate: boolean
           mes_dev_target_pct: number | null
           mes_pass_target_pct: number | null
+          mes_block_reverse_closed: boolean
         }
         Insert: {
           id: string
@@ -2581,6 +2582,7 @@ export type Database = {
           mes_flow_gate?: boolean
           mes_dev_target_pct?: number | null
           mes_pass_target_pct?: number | null
+          mes_block_reverse_closed?: boolean
         }
         Update: {
           id?: string
@@ -2642,6 +2644,7 @@ export type Database = {
           mes_flow_gate?: boolean
           mes_dev_target_pct?: number | null
           mes_pass_target_pct?: number | null
+          mes_block_reverse_closed?: boolean
         }
         Relationships: []
       }
@@ -5881,6 +5884,7 @@ export type Database = {
           note: string | null
           created_at: string
           updated_at: string
+          qty_returned: number | null
         }
         Insert: {
           id: string
@@ -5895,6 +5899,7 @@ export type Database = {
           note?: string | null
           created_at?: string
           updated_at: string
+          qty_returned?: number | null
         }
         Update: {
           id?: string
@@ -5909,6 +5914,7 @@ export type Database = {
           note?: string | null
           created_at?: string
           updated_at?: string
+          qty_returned?: number | null
         }
         Relationships: []
       }
@@ -7506,6 +7512,10 @@ export type Database = {
       }
       material_abc: {
         Args: { p_warehouse_id: string | null; p_categories?: unknown | null; p_days?: number | null }
+        Returns: Record<string, unknown>[]
+      }
+      material_base_unit_in_use: {
+        Args: { p_ids: unknown | null }
         Returns: Record<string, unknown>[]
       }
       material_categories: {

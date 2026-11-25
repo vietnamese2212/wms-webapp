@@ -5,7 +5,7 @@
 // [1] dòng đang giữ cho nhặt lẻ chỉ góp phần RẢNH vào số khả dụng; dòng QA giữ góp 0 (oracle: chênh khả dụng trước / sau khi dựng)
 // [2] Lưu thủ công vượt khả dụng thật ⇒ 400 INSUFFICIENT_STOCK, không dòng nào bị trừ
 // [3] Điều chỉnh tồn xuống dưới phần đang giữ ⇒ 409 RESERVED
-// Fixture kho QTY + mã pool của lib (mẫu gói 36); dòng dựng mang tag, dọn 0 sót.
+// Fixture kho QTY + mã pool của lib (mẫu gói 36); dòng dựng mang tag + NSX riêng (chỉ mục duy nhất dòng đang dùng theo kho·mã·NSX), dọn 0 sót.
 import { login, api, check, finish, restAll, restWrite, FIX, resolveFixtures, teardownGdo } from './lib.mjs'
 import { randomUUID } from 'crypto'
 
@@ -36,8 +36,8 @@ try {
   const row = (o) => ({ id: randomUUID(), material_id: FIX.MAT_POOL_ID, pallet_code: FIX.MAT_POOL, warehouse_id: FIX.WH_QTY.id, location_id: null,
     stack_layer: 1, import_date: vnToday, notes: TAG, created_at: nowIso, updated_at: nowIso, ...o })
   // dòng A: còn 10, 4 đang giữ cho nhặt lẻ ⇒ góp 6 · dòng B: còn 7 nhưng QA giữ ⇒ góp 0 (không có mã QA ≠ OK thì bỏ phần B)
-  const rows = [row({ cartons_imported: 10, cartons_remaining: 10, cartons_reserved: 4, status: 'LOOSE_PICKING' })]
-  if (qaHold) rows.push(row({ cartons_imported: 7, cartons_remaining: 7, cartons_reserved: 0, status: 'IN_STOCK', qa_status_id: qaHold.id }))
+  const rows = [row({ cartons_imported: 10, cartons_remaining: 10, cartons_reserved: 4, status: 'LOOSE_PICKING', qa_status_id: null, production_date: '2001-01-01' })]   // PostgREST ghi lô: mọi dòng cùng bộ khoá
+  if (qaHold) rows.push(row({ cartons_imported: 7, cartons_remaining: 7, cartons_reserved: 0, status: 'IN_STOCK', qa_status_id: qaHold.id, production_date: '2001-01-02' }))
   const ins = await restWrite('InventoryEntry', 'POST', null, rows)
   for (const r of ins ?? []) seeded.push(r.id)
   const after = await stock()

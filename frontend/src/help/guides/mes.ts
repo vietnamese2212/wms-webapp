@@ -297,6 +297,7 @@ export const MES_GUIDE: Guide = {
             '- Bảng tự tính: Tồn đầu (số đếm ca trước) · Nhập · Dùng theo từng mẻ · Tồn cuối sổ sách.',
             '- Cuối ca nhập **Tồn cuối thực tế** vào ô "đếm" → **Lưu số đếm** (lưu nháp lúc nào cũng được).',
             '- **Chốt ca**: chụp mọi con số, không sửa được nữa. Ca sau lấy số đếm ca này làm tồn đầu.',
+            '- Huỷ cấp một lần cấp của ca **đã chốt** ⇒ lượng hoàn hiện ở cột **Hoàn từ ca trước** của ca đang mở. Muốn chặn hẳn (NVL thường đã dùng / mất): bật **Chặn huỷ cấp của ca đã chốt** ở Cài đặt MES.',
             'Báo cáo không tự sửa tồn — chênh lệch chỉ để thấy; muốn khớp sổ thì kiểm kê / điều chỉnh tồn.',
           ],
           images: [d('75-mo-ca', 'Mở báo cáo ca'), d('75b-bao-cao-ca', 'Báo cáo ca đang mở: nhập số đếm')],

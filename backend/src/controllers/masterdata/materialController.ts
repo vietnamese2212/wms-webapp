@@ -12,6 +12,19 @@ import { parseSheetByHeader, expandMergedCells, readWorkbookSafe, BAD_EXCEL_MSG,
 import { excelNumber } from '../../utils/excelNumber'
 import { isPreflight, buildPreflight } from '../../utils/uploadPreflight'
 import { semiFinishedFlagError } from '../../utils/semiFinished'
+
+/** 25/11 (X9 rà soát MES, user chốt): mã ĐANG được dùng (còn tồn · mẻ mở · phiếu mẻ mở · bồn còn hàng) thì không đổi đơn vị gốc —
+ *  MỘT hàm DB material_base_unit_in_use cho cả form sửa mã lẫn nạp Excel. Trả map id → lý do. */
+async function baseUnitInUse(ids: string[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>()
+  for (let i = 0; i < ids.length; i += 300) {
+    const { data, error } = await supabase.rpc('material_base_unit_in_use', { p_ids: ids.slice(i, i + 300) })
+    if (error) throw error
+    for (const r of (data ?? []) as { material_id: string; reason: string }[]) out.set(r.material_id, r.reason)
+  }
+  return out
+}
+const baseUnitLockMsg = (reason: string) => `Mã ${reason} — không đổi đơn vị gốc được (số đã ghi theo đơn vị cũ sẽ bị đọc sai). Dùng hết / huỷ trước, hoặc tạo mã mới`
 import { materialMissingFields, type MaterialRequiredInput } from '../../utils/materialRequired'
 
 // Màu pallet vẽ trên sơ đồ xếp xe (26/08) — chỉ có nghĩa với mã is_pallet_carrier.
@@ -368,6 +381,10 @@ export async function updateMaterial(req: Request, res: Response) {
       const btpErr = semiFinishedFlagError(eff)
       if (btpErr) return fail(res, 400, 'VALIDATION_ERROR', btpErr)
       if (holdSet && !eff.is_semi_finished) return fail(res, 400, 'VALIDATION_ERROR', HOLD_NOT_BTP_MSG)
+      if (base_unit !== undefined && (eff.base_unit ?? '').toUpperCase() !== String(cur?.base_unit ?? '').toUpperCase()) {
+        const inUse = (await baseUnitInUse([req.params.id])).get(req.params.id)
+        if (inUse) return fail(res, 409, 'BASE_UNIT_IN_USE', baseUnitLockMsg(inUse))
+      }
     }
 
     // Entry unit đòi hệ số 1 Entry = N Base + Entry PHẢI KHÁC Base — kiểm theo GIÁ TRỊ HIỆU LỰC sau patch
@@ -696,6 +713,15 @@ export async function uploadExcel(req: Request, res: Response) {
     for (const [code, rec] of [...upsertByCode, ...insertByCode]) {
       const btpErr = semiFinishedFlagError(rec as Parameters<typeof semiFinishedFlagError>[0])
       if (btpErr) errors.push(`${code} — ${btpErr}`)
+    }
+    // 25/11 (X9): mã có sẵn mà file đổi đơn vị gốc trong lúc mã đang được dùng ⇒ lỗi (cả file không ghi — cùng luật form)
+    const unitChanged = [...upsertByCode].filter(([code, rec]) => {
+      const db0 = existingByCode.get(code)
+      return !!db0 && String(rec.base_unit ?? '').toUpperCase() !== String(db0.base_unit ?? '').toUpperCase()
+    })
+    if (unitChanged.length) {
+      const inUse = await baseUnitInUse(unitChanged.map(([code]) => existingByCode.get(code)!.id))
+      for (const [code] of unitChanged) { const why = inUse.get(existingByCode.get(code)!.id); if (why) errors.push(`${code} — ${baseUnitLockMsg(why)}`) }
     }
     // Mã MỚI phải đủ ô bắt buộc như form Thêm mã hàng (C125) — mã đã có thì không ép (sửa từng ô bằng file vẫn được)
     if (insertByCode.size) {

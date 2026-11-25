@@ -7,6 +7,10 @@
 
 **Quyền (BE `ALL_PERMISSIONS`):** view · create · edit · import · delete
 
+## Khoá đổi đơn vị gốc khi mã đang dùng (25/11 — rà soát MES, user chốt)
+
+Đổi `base_unit` (form sửa mã hoặc nạp Excel) bị chặn 409 `BASE_UNIT_IN_USE` / lỗi dòng khi mã còn tồn > 0, có mẻ đang mở chưa nạp, nằm trong phiếu của mẻ đang mở, hoặc bồn còn hàng — MỘT hàm DB `material_base_unit_in_use`. Mã đã hết dùng vẫn đổi được.
+
 ## Giao thoa với
 <!-- giao-thoa:start -->
 - [`production`](production.md) — Sản xuất (tank_hold_hours hạn lưu bồn — từ 14/11 tối SỬA ở Cài đặt MES, form Mã hàng chỉ hiển thị; batch_prefix làm tiền tố mã lô — 14/11)

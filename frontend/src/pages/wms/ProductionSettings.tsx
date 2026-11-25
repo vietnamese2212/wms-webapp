@@ -53,6 +53,7 @@ export default function ProductionSettings() {
   // BẢN NHÁP — một nút Lưu cho cả trang
   const [gate, setGate] = useState('WARN')
   const [flow, setFlow] = useState(false)
+  const [blockRev, setBlockRev] = useState(false)   // 25/11: chặn huỷ cấp NVL của ca đã chốt
   // mục tiêu dashboard Báo cáo NVL ('' = về mặc định 0,5 % / 95 %)
   const [devT, setDevT] = useState('')
   const [passT, setPassT] = useState('')
@@ -72,6 +73,7 @@ export default function ProductionSettings() {
     appliedWh.current = wh; forceApply.current = false
     setGate(server.production_qa_gate)
     setFlow(server.mes_flow_gate)
+    setBlockRev(server.mes_block_reverse_closed)
     setDevT(server.mes_dev_target_pct == null ? '' : vnNumberInput(server.mes_dev_target_pct))
     setPassT(server.mes_pass_target_pct == null ? '' : vnNumberInput(server.mes_pass_target_pct))
     setTypeGate(Object.fromEntries(server.types.map(t => [t.type_code, t.production_qa_gate])))
@@ -90,10 +92,10 @@ export default function ProductionSettings() {
       .map(({ m, v }) => ({ material_id: m.id, tank_hold_hours: v === '' ? null : Number(v) }))
     const num = (v: string) => (v.trim() === '' ? null : parseVnNumber(v))
     const dv = num(devT), pv = num(passT)
-    return { gate: gate !== server.production_qa_gate ? gate : undefined, flow: flow !== server.mes_flow_gate ? flow : undefined, types, hold,
+    return { gate: gate !== server.production_qa_gate ? gate : undefined, flow: flow !== server.mes_flow_gate ? flow : undefined, blockRev: blockRev !== server.mes_block_reverse_closed ? blockRev : undefined, types, hold,
       dev: dv !== server.mes_dev_target_pct ? dv : undefined, pass: pv !== server.mes_pass_target_pct ? pv : undefined }
-  }, [server, gate, flow, typeGate, hours, rows, devT, passT])
-  const dirty = !!changes && (changes.gate !== undefined || changes.flow !== undefined || changes.types.length > 0 || changes.hold.length > 0
+  }, [server, gate, flow, blockRev, typeGate, hours, rows, devT, passT])
+  const dirty = !!changes && (changes.gate !== undefined || changes.flow !== undefined || changes.blockRev !== undefined || changes.types.length > 0 || changes.hold.length > 0
     || changes.dev !== undefined || changes.pass !== undefined)
   dirtyRef.current = dirty
   const targetErr = (v: string, max: number) => {
@@ -106,7 +108,7 @@ export default function ProductionSettings() {
   function onSave() {
     if (!changes || !wh) return
     setErr('')
-    save.mutate({ warehouse_id: wh, production_qa_gate: changes.gate, mes_flow_gate: changes.flow, mes_dev_target_pct: changes.dev, mes_pass_target_pct: changes.pass, types: changes.types.length ? changes.types : undefined, hold_hours: changes.hold.length ? changes.hold : undefined },
+    save.mutate({ warehouse_id: wh, production_qa_gate: changes.gate, mes_flow_gate: changes.flow, mes_block_reverse_closed: changes.blockRev, mes_dev_target_pct: changes.dev, mes_pass_target_pct: changes.pass, types: changes.types.length ? changes.types : undefined, hold_hours: changes.hold.length ? changes.hold : undefined },
       { onSuccess: () => { forceApply.current = true }, onError: e => setErr(apiMsg(e)) })
   }
 
@@ -191,6 +193,9 @@ export default function ProductionSettings() {
                 <SettingRow label="Chặn theo từng bước"
                   desc={<>Bật: phiếu của mẻ chưa đủ hai bước duyệt thì <b>chưa cấp nguyên liệu</b>; <b>chưa nạp bồn</b> khi còn nguyên liệu cấp thiếu, ô bắt buộc của phiếu chưa ghi, hoặc chưa quét đủ tem pallet của mẻ tại đúng bồn.</>}
                   control={<Switch checked={flow} onCheckedChange={setFlow} disabled={!canConfigure} aria-label="Chặn theo từng bước" />} />
+                <SettingRow label="Chặn huỷ cấp của ca đã chốt"
+                  desc={<>Bật: lần cấp NVL thuộc một ca <b>đã chốt</b> thì không huỷ cấp được nữa — lúc đó NVL thường đã dùng / mất, hoàn về tồn là tồn ảo; chênh lệch xử lý bằng kiểm kê / điều chỉnh tồn. Tắt: vẫn huỷ được, lượng hoàn hiện ở cột <b>Hoàn từ ca trước</b> của ca đang mở.</>}
+                  control={<Switch checked={blockRev} onCheckedChange={setBlockRev} disabled={!canConfigure} aria-label="Chặn huỷ cấp của ca đã chốt" />} />
               </SettingsGroup>
             )}
 

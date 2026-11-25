@@ -331,6 +331,8 @@ export interface ProductionSettings {
   production_qa_gate: string
   /** luồng chặt (17/11): chưa duyệt đủ thì chưa cấp NVL · chưa đủ điều kiện thì chưa nạp bồn */
   mes_flow_gate: boolean
+  /** 25/11: chặn huỷ cấp NVL của ca đã chốt */
+  mes_block_reverse_closed: boolean
   /** 22/11 — mục tiêu của dashboard Báo cáo NVL (null = mặc định 0,5 % / 95 %) */
   mes_dev_target_pct: number | null
   mes_pass_target_pct: number | null
@@ -346,7 +348,7 @@ export function useProductionSettings(warehouseId: string | undefined) {
 export function useSaveProductionSettings() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: async (b: { warehouse_id: string; production_qa_gate?: string; mes_flow_gate?: boolean; mes_dev_target_pct?: number | null; mes_pass_target_pct?: number | null; types?: { type_code: string; production_qa_gate: string | null }[]; hold_hours?: { material_id: string; tank_hold_hours: number | null }[] }) =>
+    mutationFn: async (b: { warehouse_id: string; production_qa_gate?: string; mes_flow_gate?: boolean; mes_block_reverse_closed?: boolean; mes_dev_target_pct?: number | null; mes_pass_target_pct?: number | null; types?: { type_code: string; production_qa_gate: string | null }[]; hold_hours?: { material_id: string; tank_hold_hours: number | null }[] }) =>
       (await apiClient.put('/wms/production/settings', b)).data.data as ProductionSettings,
     onSuccess: (data, v) => { qc.setQueryData(['prod-settings', v.warehouse_id], data); void qc.invalidateQueries({ queryKey: ['prod-dash'] }) },
     onSettled: () => {
@@ -491,6 +493,8 @@ export interface ShiftReportHead {
 export interface ShiftRow extends MatUnits {
   material_id: string; material_code: string; material_name: string | null
   opening: number; opening_src: 'COUNT' | 'BOOK'; received: number; used: number; book: number; actual: number | null
+  /** 25/11: lần cấp của ca TRƯỚC bị huỷ trong ca này (hàng về lại tồn) — sổ cân: đầu + nhập − dùng + hoàn = sổ */
+  returned?: number
   by_batch: Record<string, number>
 }
 export interface ShiftReport {

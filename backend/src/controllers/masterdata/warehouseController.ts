@@ -666,6 +666,13 @@ export async function deleteWarehouse(req: Request, res: Response) {
       // có gì để xoá": nhánh vô hiệu hoá bên dưới đã kiểm 404, nhánh này thì chưa nên kho KHÔNG CÓ
       // THẬT vẫn nhận được thông báo xoá thành công.
       const { data: gone, error } = await supabase.from('Warehouse').delete().eq('id', id).select('id')
+      // 25/11 (X10 rà soát MES): kho còn dữ liệu ở bảng khác (bồn, mẻ, chuyến… — ~29 khoá ngoại) ⇒ 23503 ⇒ vô hiệu hoá thay vì 500
+      if (error?.code === '23503') {
+        const { data: off, error: offErr } = await supabase.from('Warehouse').update({ is_active: false, updated_at: new Date().toISOString() }).eq('id', id).select().maybeSingle()
+        if (offErr) throw offErr
+        if (!off) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy kho')
+        return ok(res, { deleted: false, ...off })
+      }
       if (error) throw error
       if (!gone?.length) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy kho — có thể đã bị xoá trước đó')
       return ok(res, { deleted: true })

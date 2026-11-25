@@ -2463,7 +2463,10 @@ export async function updateGDO(req: Request, res: Response) {
 
     // Luật quỹ đạo kho phụ — kiểm theo shipto HIỆU LỰC sau update (body có gửi thì lấy body, không thì giữ cũ)
     const effShipto = 'shipto_party' in req.body ? (shipto_party ?? null) : ((gdo as { shipto_party?: string | null }).shipto_party ?? null)
-    const orbitErr = await internalOrbitError(warehouse_id ?? null, effShipto)
+    // 25/11 (X6 rà soát MES): kho HIỆU LỰC sau update — body không gửi warehouse_id thì giữ kho cũ của chuyến (trước truyền null ⇒ bỏ qua
+    // kiểm kho phụ, và chặn oan chiều kho cha → kho phụ)
+    const orbitWh = warehouse_id !== undefined ? (warehouse_id ?? null) : (gdoCur.warehouse_id ?? null)   // cùng cách tính kho hiệu lực của nhánh nhặt lẻ bên dưới
+    const orbitErr = await internalOrbitError(orbitWh, effShipto)
     if (orbitErr) return fail(res, orbitErr, 400)
 
     // ĐVVT: khớp danh mục → tên chính tắc; không khớp → giữ tên gõ tay (ĐVVT vãng lai)

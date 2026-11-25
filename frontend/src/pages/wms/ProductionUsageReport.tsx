@@ -151,6 +151,8 @@ function ShiftReportView({ tabBar }: { tabBar: ReactNode }) {
     } catch (e) { setErr(apiMsg(e)) }
   }
 
+  // 25/11 (user chốt): huỷ cấp lần cấp của ca đã chốt ⇒ cột "Hoàn từ ca trước" — chỉ hiện khi ca có hoàn (giữ đúng mẫu giấy lúc không có)
+  const hasRet = rows.some(r => Number(r.returned ?? 0) > 0)
   function exportExcel() {
     if (!rep) return
     const whName = kitchens.find(k => k.id === rep.warehouse_id)?.name ?? ''
@@ -158,20 +160,20 @@ function ShiftReportView({ tabBar }: { tabBar: ReactNode }) {
     const aoa: unknown[][] = [
       ['BÁO CÁO SỬ DỤNG NGUYÊN VẬT LIỆU'],
       [`Kho chế biến: ${whName}`, '', '', `Ngày: ${formatDate(rep.report_date)}`, `Ca: ${rep.shift}`, `Từ ${formatDateTime(rep.from_at)}${rep.to_at ? ` đến ${formatDateTime(rep.to_at)}` : ' — CHƯA CHỐT'}`],
-      [...head, ...batches.map(b => `BTP: ${b.material_code}`), 'Tổng SDụng thực tế', 'Tồn cuối thực tế', 'Tồn cuối sổ sách', 'Chênh lệch NL dư'],
-      ['', '', '', '', '', ...batches.map(b => `Chu kỳ: ${b.cycle ?? ''}`), '', '', '', ''],
-      ['', '', '', '', '', ...batches.map(b => `Mẻ: ${b.batch_code}`), '', '', '', ''],
+      [...head, ...batches.map(b => `BTP: ${b.material_code}`), 'Tổng SDụng thực tế', ...(hasRet ? ['Hoàn từ ca trước'] : []), 'Tồn cuối thực tế', 'Tồn cuối sổ sách', 'Chênh lệch NL dư'],
+      ['', '', '', '', '', ...batches.map(b => `Chu kỳ: ${b.cycle ?? ''}`), '', ...(hasRet ? [''] : []), '', '', ''],
+      ['', '', '', '', '', ...batches.map(b => `Mẻ: ${b.batch_code}`), '', ...(hasRet ? [''] : []), '', '', ''],
       ...rows.map(r => {
         const d = diffOf(r)
         return [r.material_code, r.material_name ?? '', unitCode(r.base_unit), Number(r.opening), Number(r.received),
-          ...batches.map(b => (r.by_batch[b.id] != null ? Number(r.by_batch[b.id]) : '')), Number(r.used), actualOf(r) ?? '', Number(r.book), d ?? '']
+          ...batches.map(b => (r.by_batch[b.id] != null ? Number(r.by_batch[b.id]) : '')), Number(r.used), ...(hasRet ? [Number(r.returned ?? 0) || ''] : []), actualOf(r) ?? '', Number(r.book), d ?? '']
       }),
       [],
       [`Giao ca: ${rep.note ?? ''}`],
       [`Người mở: ${rep.opened_by_name ?? ''}`, '', '', `Người chốt: ${rep.closed_by_name ?? ''}`],
     ]
     const ws = XLSX.utils.aoa_to_sheet(sanitizeAoa(aoa))
-    ws['!cols'] = [{ wch: 16 }, { wch: 28 }, { wch: 9 }, { wch: 14 }, { wch: 10 }, ...batches.map(() => ({ wch: 18 })), { wch: 16 }, { wch: 16 }, { wch: 16 }, { wch: 16 }]
+    ws['!cols'] = [{ wch: 16 }, { wch: 28 }, { wch: 9 }, { wch: 14 }, { wch: 10 }, ...batches.map(() => ({ wch: 18 })), { wch: 16 }, ...(hasRet ? [{ wch: 16 }] : []), { wch: 16 }, { wch: 16 }, { wch: 16 }]
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'BCSD NVL')
     void saveWorkbook(wb, `bao_cao_su_dung_nvl_${rep.report_date}_${rep.shift.replace(/\s+/g, '')}.xlsx`)
@@ -181,9 +183,11 @@ function ShiftReportView({ tabBar }: { tabBar: ReactNode }) {
     { id: 'mat', label: 'Nguyên liệu', w: 210 }, { id: 'unit', label: 'ĐVT', w: 56 },
     { id: 'open', label: 'Tồn đầu thực tế', w: 110, align: 'right' }, { id: 'in', label: 'Nhập', w: 90, align: 'right' },
     ...batches.map(b => ({ id: `b_${b.id}`, label: `${b.material_code}${b.cycle ? ` · CK ${b.cycle}` : ''} · ${b.batch_code}`, w: 150, align: 'right' as const })),
-    { id: 'used', label: 'Tổng sử dụng', w: 110, align: 'right' }, { id: 'actual', label: 'Tồn cuối thực tế', w: 130, align: 'right' },
+    { id: 'used', label: 'Tổng sử dụng', w: 110, align: 'right' },
+    ...(hasRet ? [{ id: 'ret', label: 'Hoàn từ ca trước', w: 120, align: 'right' as const }] : []),
+    { id: 'actual', label: 'Tồn cuối thực tế', w: 130, align: 'right' },
     { id: 'book', label: 'Tồn cuối sổ sách', w: 120, align: 'right' }, { id: 'diff', label: 'Chênh lệch', w: 110, align: 'right' },
-  ], [batches])
+  ], [batches, hasRet])
 
   const hasOpen = reports.some(r => r.status === 'OPEN')
   const actions: ActionItem[] = []
@@ -262,7 +266,9 @@ function ShiftReportView({ tabBar }: { tabBar: ReactNode }) {
                     cells={[
                       <span className="font-normal" title={r.opening_src === 'BOOK' ? 'Chưa có số đếm của ca trước — lấy theo sổ lúc mở ca' : undefined}>{qtyNum(Number(r.opening), r)}</span>,
                       Number(r.received) > 0 ? <span className="font-normal">{qtyNum(Number(r.received), r)}</span> : dash,
-                      Number(r.used) > 0 ? qtyNum(Number(r.used), r) : dash,
+                      Number(r.used) > 0 || Number(r.returned ?? 0) > 0
+                        ? <span>{Number(r.used) > 0 ? qtyNum(Number(r.used), r) : '0'}{Number(r.returned ?? 0) > 0 && <span className="block text-[10px] font-normal text-amber-700" title="Hoàn từ ca trước">+{qtyNum(Number(r.returned), r)} hoàn</span>}</span>
+                        : dash,
                       <span className="font-normal">{qtyNum(Number(r.book), r)}</span>,
                       diffCell(r),
                     ]}
@@ -273,7 +279,7 @@ function ShiftReportView({ tabBar }: { tabBar: ReactNode }) {
           )}
           {rep && (
             <div className="hidden sm:block">
-              <ResizableTable storageKey={`production_usage_cols_v2_${batches.length}`} cols={cols}>
+              <ResizableTable storageKey={`production_usage_cols_v2_${batches.length}${hasRet ? "_r" : ""}`} cols={cols}>
                 <TableBody>
                   {!rows.length && <TableEmptyRow colSpan={cols.length}>{q.isLoading ? 'Đang tải…' : 'Ca này chưa có nguyên liệu nào (kho chế biến trống, chưa cấp gì).'}</TableEmptyRow>}
                   {rows.map(r => (
@@ -290,6 +296,7 @@ function ShiftReportView({ tabBar }: { tabBar: ReactNode }) {
                         </TableCell>
                       ))}
                       <TableCell className={NUM}>{Number(r.used) > 0 ? qtyNum(Number(r.used), r) : dash}</TableCell>
+                      {hasRet && <TableCell className={NUM} title="Lần cấp của ca trước bị huỷ trong ca này — hàng về lại tồn">{Number(r.returned ?? 0) > 0 ? qtyNum(Number(r.returned), r) : dash}</TableCell>}
                       <TableCell className={`${NUM} !py-0.5`}>{editable ? input(r, 'h-7 w-full text-[11px]') : r.actual != null ? qtyNum(Number(r.actual), r) : dash}</TableCell>
                       <TableCell className={NUM}>{qtyNum(Number(r.book), r)}</TableCell>
                       <TableCell className={NUM}>{diffCell(r)}</TableCell>

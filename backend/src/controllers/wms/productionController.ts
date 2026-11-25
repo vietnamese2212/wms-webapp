@@ -1425,6 +1425,7 @@ export const zSettingsPut = z.object({
   warehouse_id: zText(1, 64),
   production_qa_gate: zGate.optional(),
   mes_flow_gate: z.boolean().optional(),   // 17/11: chưa duyệt đủ thì chưa cấp NVL · chưa đủ điều kiện thì chưa nạp bồn (mặc định tắt = như cũ)
+  mes_block_reverse_closed: z.boolean().optional(),   // 25/11: chặn huỷ cấp NVL của ca đã chốt (NVL thường đã mất) — mặc định tắt = như cũ
   // 22/11 — mục tiêu của dashboard Báo cáo NVL (user: "mục tiêu để dạng config tự đặt"); null = về mặc định 0,5 % / 95 %
   mes_dev_target_pct: z.number().positive().max(50).nullable().optional(),
   mes_pass_target_pct: z.number().positive().max(100).nullable().optional(),
@@ -1438,7 +1439,7 @@ async function settingsOf(req: Request, whId: string) {
     .not('tank_hold_hours', 'is', null).order('material_code').limit(500)
   if (scope) mq = mq.or(`category.is.null,category.in.(${scope.map(c => `"${c.replace(/"/g, '')}"`).join(',')})`)
   const [{ data: wh }, { data: types }, { data: mats }] = await Promise.all([
-    db.from('Warehouse').select('id, code, name, production_qa_gate, mes_flow_gate, mes_dev_target_pct, mes_pass_target_pct').eq('id', whId).maybeSingle(),
+    db.from('Warehouse').select('id, code, name, production_qa_gate, mes_flow_gate, mes_block_reverse_closed, mes_dev_target_pct, mes_pass_target_pct').eq('id', whId).maybeSingle(),
     db.from('warehouse_type_configs').select('type_code, production_qa_gate, sort_order').eq('warehouse_id', whId)
       .order('sort_order', { ascending: true, nullsFirst: false }).order('type_code').limit(200),
     mq,
@@ -1447,6 +1448,7 @@ async function settingsOf(req: Request, whId: string) {
     warehouse_id: whId,
     production_qa_gate: wh?.production_qa_gate ?? 'WARN',
     mes_flow_gate: wh?.mes_flow_gate === true,
+    mes_block_reverse_closed: wh?.mes_block_reverse_closed === true,
     mes_dev_target_pct: wh?.mes_dev_target_pct == null ? null : Number(wh.mes_dev_target_pct),
     mes_pass_target_pct: wh?.mes_pass_target_pct == null ? null : Number(wh.mes_pass_target_pct),
     types: (types ?? []).filter(t => categoryAllowed(req, t.type_code)).map(t => ({ type_code: t.type_code, production_qa_gate: t.production_qa_gate })),
@@ -1496,10 +1498,11 @@ export async function putSettings(req: Request, res: Response) {
       if (miss) return fail(res, 422, 'UNKNOWN_TYPE', `Kho này chưa có Loại kho "${miss.type_code.slice(0, 30)}"`)
     }
 
-    if (body.production_qa_gate !== undefined || body.mes_flow_gate !== undefined || body.mes_dev_target_pct !== undefined || body.mes_pass_target_pct !== undefined) {
+    if (body.production_qa_gate !== undefined || body.mes_flow_gate !== undefined || body.mes_block_reverse_closed !== undefined || body.mes_dev_target_pct !== undefined || body.mes_pass_target_pct !== undefined) {
       const { data, error } = await db.from('Warehouse').update({
         ...(body.production_qa_gate !== undefined ? { production_qa_gate: body.production_qa_gate } : {}),
         ...(body.mes_flow_gate !== undefined ? { mes_flow_gate: body.mes_flow_gate } : {}),
+        ...(body.mes_block_reverse_closed !== undefined ? { mes_block_reverse_closed: body.mes_block_reverse_closed } : {}),
         ...(body.mes_dev_target_pct !== undefined ? { mes_dev_target_pct: body.mes_dev_target_pct } : {}),
         ...(body.mes_pass_target_pct !== undefined ? { mes_pass_target_pct: body.mes_pass_target_pct } : {}), updated_at: now, updated_by: who })
         .eq('id', body.warehouse_id).select('id')
@@ -1517,7 +1520,7 @@ export async function putSettings(req: Request, res: Response) {
     }
     // 25/11 (F11 rà soát MES): bảng warehouse_type_configs không phát tín hiệu realtime ⇒ đổi công tắc theo LOẠI KHO mà không đổi
     // gì trên Kho thì máy khác không biết. Chạm Warehouse.updated_at để tín hiệu của Kho kéo trang Cài đặt MES / mẻ / bồn làm mới.
-    if (types.length && body.production_qa_gate === undefined && body.mes_flow_gate === undefined
+    if (types.length && body.production_qa_gate === undefined && body.mes_flow_gate === undefined && body.mes_block_reverse_closed === undefined
         && body.mes_dev_target_pct === undefined && body.mes_pass_target_pct === undefined) {
       const { error } = await db.from('Warehouse').update({ updated_at: now }).eq('id', body.warehouse_id)
       if (error) return fail(res, error)

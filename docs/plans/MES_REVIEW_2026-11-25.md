@@ -29,6 +29,7 @@ User chốt 25/11:
 |---|---|
 | 1 | ✅ 25/11 — migration `20261125_mes_review_packing_tank` (áp staging), gói 63 [6s2], C132 |
 | 2 | ✅ 25/11 — migration `20261125b_mes_review_batch_atomic` (áp staging): B2 B3 B4 B6 B8 B12 F9 G2 G3 + B11 (`nextCode` / `pourScan` kiểm bồn thuộc kho); gói 63 [1i] [10j2]; C60 lặp |
+| 3 | ✅ 25/11 — migration `20261125c_mes_review_flow_gate_db` (áp staging): N1 luồng chặt trong DB · G1 `qaGateOfTank` ném lỗi · B9 `loadBatch` / `loadTank` / `inScope` / `productionWhError` / `getBatch` ném lỗi (503 thay vì 404 / 403 / 200-rỗng) · B10 quét cấp kiểm kho / trạng thái tem trước luân chuyển; C104 lặp |
 
 ## Kế hoạch sửa theo đợt (thứ tự nên làm)
 

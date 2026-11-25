@@ -43,7 +43,8 @@ async function inScope(req: Request, wh: string | null | undefined): Promise<boo
   if (s === null) return true
   if (!wh) return false
   if (s.includes(wh)) return true
-  const { data } = await db.from('Warehouse').select('parent_warehouse_id').eq('id', wh).maybeSingle()
+  const { data, error } = await db.from('Warehouse').select('parent_warehouse_id').eq('id', wh).maybeSingle()
+  if (error) throw error   // 25/11 B9: lỗi đọc (quá tải 57014) ⇒ failAny trả 503, không thành 403 oan
   return !!data?.parent_warehouse_id && s.includes(data.parent_warehouse_id)
 }
 /** Kho đang lọc + các kho phụ trực thuộc (lọc theo kho nhà máy ⇒ thấy kho chế biến của nó). */
@@ -79,26 +80,29 @@ function mesFail(res: Response, e: unknown): Response {
 type BatchRow = { id: string; warehouse_id: string; status: string; material_id: string; batch_code: string; planned_qty: number | null
   cycle: string | null; batch_no: number | null; tank_id: string | null; lead_ok_at: string | null; qa_ok_at: string | null }
 async function loadBatch(id: string): Promise<BatchRow | null> {
-  const { data } = await db.from('production_batch').select('id, warehouse_id, status, material_id, batch_code, planned_qty, cycle, batch_no, tank_id, lead_ok_at, qa_ok_at').eq('id', id).maybeSingle()
+  const { data, error } = await db.from('production_batch').select('id, warehouse_id, status, material_id, batch_code, planned_qty, cycle, batch_no, tank_id, lead_ok_at, qa_ok_at').eq('id', id).maybeSingle()
+  if (error) throw error   // 25/11 B9: lỗi đọc ⇒ 503 qua failAny, không thành 404 "không tìm thấy mẻ"
   return (data as BatchRow | null) ?? null
 }
 /** QA đã duyệt phiếu ⇒ phiếu khoá: muốn sửa định mức / kế hoạch / mã thì QA bỏ duyệt trước (user chốt 17/11). */
 const APPROVED_MSG = 'QA đã duyệt phiếu của mẻ — bỏ duyệt rồi mới sửa được'
-/** Kho bật "luồng chặt" (Warehouse.mes_flow_gate): chưa đủ hai bước duyệt thì CHƯA cấp nguyên liệu. Một hàm cho cả hai cửa cấp (quét tem · chọn lô). */
-async function consumeGateError(b: BatchRow): Promise<string | null> {
-  if (b.lead_ok_at && b.qa_ok_at) return null
-  const { data: w } = await db.from('Warehouse').select('mes_flow_gate').eq('id', b.warehouse_id).maybeSingle()
-  if (!w?.mes_flow_gate) return null
-  return !b.lead_ok_at ? 'Trưởng ca chưa duyệt phiếu của mẻ — chưa cấp nguyên liệu được' : 'QA chưa duyệt phiếu của mẻ — chưa cấp nguyên liệu được'
+/** Kho bật "luồng chặt" (Warehouse.mes_flow_gate): chưa đủ hai bước duyệt thì CHƯA cấp nguyên liệu. Luật nằm ở MỘT hàm DB
+ *  mes_consume_flow_gate — hai hàm cấp gọi lại trong giao dịch trừ tồn (25/11 N1: trước chỉ kiểm ở đây, đọc lỗi ⇒ cho cấp). Gọi sớm ở
+ *  controller chỉ để báo lỗi này trước các bước kiểm khác (luân chuyển…); lỗi đọc ⇒ trả lỗi, không cho qua. */
+async function consumeGateFail(res: Response, b: BatchRow): Promise<Response | null> {
+  const { error } = await db.rpc('mes_consume_flow_gate', { p_batch_id: b.id })
+  return error ? mesFail(res, error) : null
 }
 type TankRow = { id: string; warehouse_id: string; code: string; unit: string; capacity: number; is_active: boolean }
 async function loadTank(id: string): Promise<TankRow | null> {
-  const { data } = await db.from('production_tank').select('id, warehouse_id, code, unit, capacity, is_active').eq('id', id).maybeSingle()
+  const { data, error } = await db.from('production_tank').select('id, warehouse_id, code, unit, capacity, is_active').eq('id', id).maybeSingle()
+  if (error) throw error
   return (data as TankRow | null) ?? null
 }
 /** Kho chế biến hợp lệ = kho PHỤ nội bộ đang hoạt động. Trả lỗi hoặc null. */
 async function productionWhError(whId: string): Promise<string | null> {
-  const { data: w } = await db.from('Warehouse').select('id, name, parent_warehouse_id, is_active').eq('id', whId).maybeSingle()
+  const { data: w, error } = await db.from('Warehouse').select('id, name, parent_warehouse_id, is_active').eq('id', whId).maybeSingle()
+  if (error) throw error
   if (!w) return 'Không tìm thấy kho'
   if (!w.parent_warehouse_id) return `"${w.name}" không phải kho chế biến — khai kho chế biến là kho phụ nội bộ (Cài đặt WMS → Kho → Trực thuộc kho)`
   if (w.is_active === false) return `Kho "${w.name}" đang ngừng hoạt động`
@@ -184,7 +188,7 @@ export async function getBatch(req: Request, res: Response) {
     if (error) return fail(res, error)
     if (!b) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy mẻ')
     if (!(await inScope(req, b.warehouse_id))) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
-    const [{ data: cons }, { data: moves }, { data: lots }, { data: board }, { data: plogs }, { data: gate }, { data: scans }, { data: expiry }] = await Promise.all([
+    const parts = await Promise.all([
       db.from('batch_consumption')
         .select('*, material:Material!batch_consumption_material_id_fkey(material_code, short_name, base_unit, entry_unit, units_per_carton, shelf_life_days, supplier_shelf_life_overrides), entry:InventoryEntry!batch_consumption_entry_id_fkey(cartons_remaining, production_date, expiry_date, expiry_calc, shelf_life_days, ncc_id, location:Location(location_code))')
         .eq('batch_id', b.id).order('created_at').limit(2000),
@@ -193,13 +197,17 @@ export async function getBatch(req: Request, res: Response) {
       db.from('tank_lot').select('id, tank_id, qty_in, qty_remaining, filled_at, expires_at, status, tank:production_tank!tank_lot_tank_id_fkey(code, unit)')
         .eq('batch_id', b.id).order('filled_at').limit(500),
       db.rpc('mes_batch_board', { p_batch_id: b.id }),
-      db.from('batch_process_log').select('id, form, data, blocks, stamps, created_by_name, updated_by_name, confirmed_at, confirmed_by_name, updated_at').eq('batch_id', b.id).limit(10),
+      db.from('batch_process_log').select('id, form, data, blocks, stamps, created_by_name, updated_by_name, confirmed_at, confirmed_by_name, updated_at').eq('batch_id', b.id).limit(100),
       db.rpc('mes_batch_gate', { p_batch_id: b.id }),
       db.from('batch_pour_scan').select('pallet_no, scanned_by_name, created_at').eq('batch_id', b.id).eq('label_ver', b.label_ver).order('pallet_no').limit(100),
       // NVL hết hạn: yêu cầu / quyết định QA của mẻ (17/11)
       db.from('mes_expiry_approval').select('id, entry_id, material_id, pallet_code, production_date, batch_lot, expiry_date, status, requested_by_name, requested_at, decided_by_name, decided_at, note, material:Material!mes_expiry_approval_material_id_fkey(material_code, short_name, base_unit, entry_unit, units_per_carton)')
         .eq('batch_id', b.id).order('created_at').limit(500),
     ])
+    // 25/11 B9: một phần đọc lỗi (quá tải 57014) ⇒ báo lỗi (failAny → 503), KHÔNG trả 200 với bàn NVL trống / cổng rỗng
+    const partErr = parts.find(x => x.error)?.error
+    if (partErr) throw partErr
+    const [{ data: cons }, { data: moves }, { data: lots }, { data: board }, { data: plogs }, { data: gate }, { data: scans }, { data: expiry }] = parts
     // tem pallet của mẻ đang hiệu lực (in lại không cần gọi thêm)
     const labels = b.label_at && b.label_count
       ? Array.from({ length: b.label_count }, (_, i) => ({ pallet_no: i + 1, qr: batchLabelQr(b.batch_code, i + 1, b.label_count as number, b.label_ver) })) : []
@@ -793,12 +801,17 @@ export async function consumeScan(req: Request, res: Response) {
     const b = await loadBatch(req.params.id)
     if (!b) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy mẻ')
     if (!(await inScope(req, b.warehouse_id))) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
-    const gateErr = await consumeGateError(b)
-    if (gateErr) return fail(res, 409, 'MES_NOT_APPROVED', gateErr)
-    const { data: e } = await db.from('InventoryEntry')
-      .select('id, pallet_code, material_id, production_date, import_date, expiry_date, shelf_life_days, ncc_id, qa_status_id, cartons_remaining, cartons_imported, cartons_reserved, material:Material(base_unit, entry_unit, units_per_carton)')
+    const gateRes = await consumeGateFail(res, b)
+    if (gateRes) return gateRes
+    const { data: e, error: eErr } = await db.from('InventoryEntry')
+      .select('id, pallet_code, material_id, warehouse_id, status, production_date, import_date, expiry_date, shelf_life_days, ncc_id, qa_status_id, cartons_remaining, cartons_imported, cartons_reserved, material:Material(base_unit, entry_unit, units_per_carton)')
       .eq('id', body.entry_id).maybeSingle()
+    if (eErr) return fail(res, eErr)
     if (!e) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy dòng tồn')
+    // tem kho khác / không còn trong kho ⇒ báo đúng lý do TRƯỚC khi so luân chuyển của kho mẻ (25/11 B10 — trước trả nhầm ROTATION_VIOLATION).
+    // Câu chữ y như hàm ghi mes_consume_scan (hàm vẫn tự chặn lại trong giao dịch).
+    if (e.warehouse_id !== b.warehouse_id) return fail(res, 409, 'MES_WRONG_WAREHOUSE', `Tem ${e.pallet_code} không nằm trong kho của mẻ — chuyển hàng sang kho chế biến trước`)
+    if (e.status !== 'IN_STOCK' && e.status !== 'PARTIAL') return fail(res, 409, 'MES_NOT_IN_STOCK', `Tem ${e.pallet_code} không còn là hàng trong kho (trạng thái ${e.status}) — không rút vào mẻ được`)
     const intErr = qtyIntegerError(body.qty, e.material as unknown as { base_unit: string | null; entry_unit: string | null; units_per_carton: number | null } | null)
     if (intErr) return fail(res, 422, 'QTY_NOT_INTEGER', intErr)
     // LUÂN CHUYỂN — cùng luật cửa quét xuất (outboundController.scanItem): kho / loại kho bật "bắt buộc" ⇒ sai thứ tự
@@ -996,8 +1009,8 @@ export async function consumeLot(req: Request, res: Response) {
     const b = await loadBatch(req.params.id)
     if (!b) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy mẻ')
     if (!(await inScope(req, b.warehouse_id))) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
-    const gateErr = await consumeGateError(b)
-    if (gateErr) return fail(res, 409, 'MES_NOT_APPROVED', gateErr)
+    const gateRes = await consumeGateFail(res, b)
+    if (gateRes) return gateRes
     const { data: m } = await db.from('Material').select('base_unit, entry_unit, units_per_carton').eq('id', body.material_id).maybeSingle()
     if (!m) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy mã nguyên liệu')
     const intErr = qtyIntegerError(body.qty, m)

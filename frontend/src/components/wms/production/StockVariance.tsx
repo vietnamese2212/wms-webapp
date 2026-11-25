@@ -44,7 +44,7 @@ const SRC_VI: Record<BlockRow['source'], string> = { REVERSE: 'Huỷ cấp', BAT
 const EV_SIZE = 200
 
 const MAT_COLS: RtColDef[] = [
-  { id: 'mat', label: 'Nguyên liệu', w: 220 }, { id: 'unit', label: 'ĐVT', w: 56 },
+  { id: 'mat', label: 'Nguyên liệu', w: 180 }, { id: 'unit', label: 'ĐVT', w: 56 },
   // số cần đọc trước (chênh lệch so SAP) đứng ngay sau tên — điện thoại không phải cuộn ngang mới thấy
   { id: 'var', label: 'Chênh lệch so SAP', w: 125, align: 'right' }, { id: 'wo', label: 'Xoá hàng chặn', w: 105, align: 'right' },
   { id: 'adj', label: 'Điều chỉnh khác', w: 110, align: 'right' }, { id: 'open', label: 'Đang chặn', w: 100, align: 'right' },
@@ -186,7 +186,7 @@ export function StockVariance({ tabBar }: { tabBar: ReactNode }) {
           {!kitchens.length && <p className="p-3 text-xs text-amber-700">Chưa có kho chế biến trong phạm vi — khai kho phụ nội bộ ở Cài đặt WMS → Kho.</p>}
 
           {!!kitchens.length && view === 'mat' && (
-            <ResizableTable storageKey="production_variance_mat_v2" cols={MAT_COLS}>
+            <ResizableTable storageKey="production_variance_mat_v3" cols={MAT_COLS}>
               <TableBody data-testid="variance-mat">
                 {sumQ.isLoading && <TableEmptyRow colSpan={MAT_COLS.length}>Đang tải…</TableEmptyRow>}
                 {!sumQ.isLoading && !sumQ.isError && !rows.length && <TableEmptyRow colSpan={MAT_COLS.length}>Không có chặn / điều chỉnh nào trong kỳ — tồn app khớp sổ SAP (phần cấp / huỷ cấp).</TableEmptyRow>}

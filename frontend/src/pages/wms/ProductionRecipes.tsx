@@ -182,6 +182,7 @@ function RecipeSheet({ open, onClose, recipeId, canManage, all }: { open: boolea
       </>}>
       <div className="space-y-3">
         {err && <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700">{err}</div>}
+        {rq.isError && <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700">Không tải được công thức: {apiMsg(rq.error)}</div>}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
           <div>
             <Label className="text-xs">Mã bán thành phẩm <span className="text-red-500">*</span></Label>

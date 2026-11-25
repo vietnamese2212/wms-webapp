@@ -114,6 +114,9 @@ export function BatchFormSheet({ open, onClose, batch, template, onSaved }: {
   const noNum = /^\d{1,4}$/.test(batchNo.trim()) ? Number(batchNo) : null
   // đã nạp bồn ⇒ mã lô đứng yên: chu kỳ / số mẻ / bồn khoá (đưa sang bồn khác = Chuyển bồn ở trang Bồn)
   const filled = !!batch?.movements.length
+  // 25/11 (cải tiến rà soát MES): khoá sẵn ô mà server sẽ từ chối — đỡ bấm Lưu rồi mới nhận 409
+  const approved = !!batch?.qa_ok_at
+  const matLocked = !!batch && (filled || approved || (batch.consumption ?? []).some(c => !c.reversed_at))
   const next = useNextBatchCode({ warehouse_id: wh || undefined, cycle: cycleNorm || undefined, tank_id: tank || undefined, batch_no: noNum ?? undefined }, open)
   useEffect(() => { if (!editing && !noTouched && next.data?.next_no) setBatchNo(String(next.data.next_no)) }, [next.data?.next_no, editing, noTouched])
   const codePreview = filled ? batch?.batch_code : next.data?.code
@@ -164,8 +167,9 @@ export function BatchFormSheet({ open, onClose, batch, template, onSaved }: {
         </div>
         <div>
           <Label className="text-xs">Mã bán thành phẩm <span className="text-red-500">*</span></Label>
-          <SingleSelect value={mat} onChange={setMat} serverSearch onSearchChange={setMatTerm} loading={isFetching}
-            selectedLabel={selMat ? selMat.material_code : undefined} placeholder={SEMI_FINISHED_PLACEHOLDER} options={matOpts} />
+          <SingleSelect value={mat} onChange={setMat} serverSearch onSearchChange={setMatTerm} loading={isFetching} disabled={matLocked}
+            selectedLabel={selMat ? selMat.material_code : (batch?.material_id === mat ? batch?.material?.material_code : undefined)} placeholder={SEMI_FINISHED_PLACEHOLDER} options={matOpts} />
+          {matLocked && <p className="text-[11px] text-slate-500 mt-0.5">{approved ? 'QA đã duyệt phiếu — QA bỏ duyệt rồi mới đổi mã' : 'Mẻ đã cấp NVL / đã nạp bồn — không đổi mã bán thành phẩm'}</p>}
           {noBtp && !mat && <NoSemiFinishedHint />}
         </div>
         {!editing && !!mat && (
@@ -207,7 +211,7 @@ export function BatchFormSheet({ open, onClose, batch, template, onSaved }: {
         <div className="grid grid-cols-2 gap-2">
           <div>
             <Label className="text-xs">Lượng kế hoạch{selMat ? ` (${unitCode(selMat.base_unit)})` : ''} <span className="text-red-500">*</span></Label>
-            <Input value={planned} onChange={e => setPlanned(e.target.value)} inputMode="decimal" aria-label="Lượng kế hoạch" className={`h-9 sm:h-8 text-xs mt-0.5 ${(planned.trim() && plannedBad) || overRoom ? 'border-red-400' : ''}`} />
+            <Input value={planned} onChange={e => setPlanned(e.target.value)} inputMode="decimal" aria-label="Lượng kế hoạch" disabled={approved} title={approved ? 'QA đã duyệt phiếu — QA bỏ duyệt rồi mới sửa kế hoạch' : undefined} className={`h-9 sm:h-8 text-xs mt-0.5 ${(planned.trim() && plannedBad) || overRoom ? 'border-red-400' : ''}`} />
             {overRoom && <p className="text-[11px] text-red-600 mt-0.5">Bồn {selTank?.label} chỉ còn chỗ {selTank?.free.toLocaleString('vi-VN', { maximumFractionDigits: 3 })}</p>}
           </div>
           <div>

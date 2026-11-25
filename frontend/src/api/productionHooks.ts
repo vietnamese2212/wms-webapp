@@ -250,10 +250,11 @@ export function useSaveTankLayout() {
     onSettled: () => { qc.invalidateQueries({ queryKey: K.tanks }) },
   })
 }
-export function useTankMovements(tankId: string | null) {
+/** sổ bồn theo trang (200 dòng / trang, mới nhất trước) — 25/11 F5: trước chỉ xem được 200 dòng mới nhất */
+export function useTankMovements(tankId: string | null, page = 1) {
   return useQuery({
-    queryKey: [...K.moves, tankId], enabled: !!tankId, staleTime: 10_000,
-    queryFn: async () => (await apiClient.get(`/wms/production/tanks/${tankId}/movements`)).data.data as { rows: TankMoveRow[]; total: number },
+    queryKey: [...K.moves, tankId, page], enabled: !!tankId, staleTime: 10_000, placeholderData: keepPreviousData,
+    queryFn: async () => (await apiClient.get(`/wms/production/tanks/${tankId}/movements`, { params: { page } })).data.data as { rows: TankMoveRow[]; total: number; page?: number; pageSize?: number },
   })
 }
 export function useTanksForRun(warehouseId: string | undefined) {
@@ -349,7 +350,7 @@ export function useSaveProductionSettings() {
       (await apiClient.put('/wms/production/settings', b)).data.data as ProductionSettings,
     onSuccess: (data, v) => { qc.setQueryData(['prod-settings', v.warehouse_id], data); void qc.invalidateQueries({ queryKey: ['prod-dash'] }) },
     onSettled: () => {
-      for (const k of [['prod-settings'], ['materials'], ['materials-paged'], K.batch, K.tanks, ['warehouses'], ['wh-type-configs']]) void qc.invalidateQueries({ queryKey: k })
+      for (const k of [['prod-settings'], ['materials'], ['materials-paged'], K.batch, K.batches, K.tanks, ['prod-cycle'], ['warehouses'], ['wh-type-configs']]) void qc.invalidateQueries({ queryKey: k })
     },
   })
 }
@@ -479,7 +480,7 @@ export function useSaveProcessForm() {
   return useMutation({
     mutationFn: async ({ code, ...b }: { code: string; title: string; short: string; is_active: boolean; sort_order?: number; blocks: FormBlock[]; optional?: boolean; material_ids?: string[] }) =>
       (await apiClient.put(`/wms/production/process-forms/${code}`, b)).data.data as ProcessFormDef,
-    onSettled: () => { void qc.invalidateQueries({ queryKey: ['prod-process-forms'] }) },
+    onSettled: () => { for (const k of [['prod-process-forms'], K.batch, K.batches, K.tanks]) void qc.invalidateQueries({ queryKey: k }) },
   })
 }
 // ── Báo cáo sử dụng NVL theo ca ──

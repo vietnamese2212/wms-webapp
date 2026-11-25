@@ -560,9 +560,9 @@ export function TankMap2D({ tanks, selectedId, onSelect, onOpenBatch, quick, arr
           <button type="button" onClick={zoom100} title="Về tỉ lệ 100% (phím 1)" data-testid="map-zoom-label"
             className="h-7 w-11 rounded-md border border-slate-300 bg-white/95 text-[10px] font-semibold tabular-nums text-slate-600 shadow-sm hover:bg-slate-50">{Math.round(view.scale * 100)}%</button>
           <button type="button" className={ctl} onClick={fit} title="Vừa màn — xem toàn cảnh (phím 0)" aria-label="Vừa màn" data-testid="map-fit"><Maximize2 className="h-4 w-4" /></button>
-          <button type="button" className={`${ctl} ${mini ? 'bg-sky-50 text-sky-700' : ''}`} onClick={() => setMini(m => !m)} title="Bản đồ thu nhỏ" aria-pressed={mini} data-testid="map-minimap-toggle"><MapIcon className="h-4 w-4" /></button>
+          <button type="button" className={`${ctl} ${mini ? 'bg-sky-50 text-sky-700' : ''}`} onClick={() => { const on = !mini; setMini(on); if (on && size.w < 640) setLegend(false) }} title="Bản đồ thu nhỏ" aria-pressed={mini} data-testid="map-minimap-toggle"><MapIcon className="h-4 w-4" /></button>
           <button type="button" className={ctl} onClick={toggleFull} title={full ? 'Thoát toàn màn hình' : 'Toàn màn hình (màn TV điều hành)'} aria-label="Toàn màn hình" data-testid="map-full">{full ? <Shrink className="h-4 w-4" /> : <Expand className="h-4 w-4" />}</button>
-          <button type="button" className={`${ctl} ${legend ? 'bg-sky-50 text-sky-700' : ''}`} onClick={() => setLegend(l => !l)} title="Chú giải" aria-pressed={legend} data-testid="map-legend-toggle"><Info className="h-4 w-4" /></button>
+          <button type="button" className={`${ctl} ${legend ? 'bg-sky-50 text-sky-700' : ''}`} onClick={() => { const on = !legend; setLegend(on); if (on && size.w < 640) setMini(false) }} title="Chú giải" aria-pressed={legend} data-testid="map-legend-toggle"><Info className="h-4 w-4" /></button>
         </div>
 
         {/* dưới-phải: bản đồ thu nhỏ — khung xanh = phần đang xem; bấm / kéo để nhảy */}

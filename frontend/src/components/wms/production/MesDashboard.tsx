@@ -122,7 +122,7 @@ export function MesDashboard({ tabBar }: { tabBar: ReactNode }) {
   const title = kind === 'custom' ? (per.from === per.to ? dmy(per.from) : `${dmy(per.from)} → ${dmy(per.to)}`) : periodLabel(kind, anchor)
   const yNow = Number(today.slice(0, 4))
   const years = Array.from({ length: 9 }, (_, i) => yNow - 6 + i)
-  const backLabel = stack.length ? (stack.length > 1 ? periodLabel(stack[stack.length - 1].kind, stack[stack.length - 1].anchor) : kind === 'custom' ? 'kỳ đã chọn' : periodLabel(baseKind as PeriodKind, baseAnchor)) : ''
+  const backLabel = stack.length ? (stack.length > 1 ? periodLabel(stack[stack.length - 1].kind, stack[stack.length - 1].anchor) : baseKind === 'custom' ? 'kỳ đã chọn' : periodLabel(baseKind as PeriodKind, baseAnchor)) : ''   // F6 25/11: kỳ GỐC, không phải kỳ đang xem
 
   return (
     <div className="kpi-console flex flex-col h-full bg-slate-100 dark:bg-slate-900" data-testid="mes-dash">

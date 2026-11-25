@@ -1515,6 +1515,13 @@ export async function putSettings(req: Request, res: Response) {
         .eq('warehouse_id', body.warehouse_id).in('type_code', chunk)
       if (error) return fail(res, error)
     }
+    // 25/11 (F11 rà soát MES): bảng warehouse_type_configs không phát tín hiệu realtime ⇒ đổi công tắc theo LOẠI KHO mà không đổi
+    // gì trên Kho thì máy khác không biết. Chạm Warehouse.updated_at để tín hiệu của Kho kéo trang Cài đặt MES / mẻ / bồn làm mới.
+    if (types.length && body.production_qa_gate === undefined && body.mes_flow_gate === undefined
+        && body.mes_dev_target_pct === undefined && body.mes_pass_target_pct === undefined) {
+      const { error } = await db.from('Warehouse').update({ updated_at: now }).eq('id', body.warehouse_id)
+      if (error) return fail(res, error)
+    }
     const byHours = new Map<string, string[]>()
     for (const h of holds) { const k = h.tank_hold_hours == null ? '' : String(h.tank_hold_hours); byHours.set(k, [...(byHours.get(k) ?? []), h.material_id]) }
     for (const [k, ids] of byHours) for (let i = 0; i < ids.length; i += 300) {

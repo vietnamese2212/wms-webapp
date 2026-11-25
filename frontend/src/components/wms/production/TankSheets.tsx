@@ -5,6 +5,7 @@ import type { AxiosError } from 'axios'
 import { FormSheet } from '@/components/shared/FormSheet'
 import { SingleSelect } from '@/components/shared/SingleSelect'
 import { StatusBadge } from '@/components/shared/StatusBadge'
+import { PagerNav } from '@/components/shared/ListPager'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -177,19 +178,23 @@ export function TankOpSheet({ open, onClose, tank, op, presetBatchId }: {
 
 // ── Sổ bồn ─────────────────────────────────────────────────────────────────────────────────────
 export function TankMovesSheet({ open, onClose, tank }: { open: boolean; onClose: () => void; tank: TankRow | null }) {
-  const q = useTankMovements(open ? tank?.id ?? null : null)
+  const [page, setPage] = useState(1)
+  useEffect(() => { setPage(1) }, [tank?.id, open])
+  const q = useTankMovements(open ? tank?.id ?? null : null, page)
   const rows = q.data?.rows ?? []
+  const totalPages = Math.max(1, Math.ceil((q.data?.total ?? 0) / (q.data?.pageSize ?? 200)))
   return (
     <FormSheet open={open} onClose={onClose} widthClass="sm:max-w-3xl" title={`Sổ bồn ${tank?.code ?? ''}`}
-      description={`Mọi lần nạp · rút cho đóng gói · chuyển · điều chỉnh · xả — mới nhất trước${q.data && q.data.total > rows.length ? ` (hiện ${rows.length}/${q.data.total})` : ''}`}
+      description={`Mọi lần nạp · rút cho đóng gói · chuyển · điều chỉnh · xả — mới nhất trước${q.data && q.data.total > rows.length ? ` (${q.data.total} dòng · trang ${page}/${totalPages})` : ''}`}
       footer={<Button variant="outline" size="sm" className="h-8" onClick={onClose}>Đóng</Button>}>
+      {q.isError && <ErrBox msg={apiMsg(q.error)} />}
       <div className="overflow-auto border rounded-lg text-xs">
         <table className="w-full">
           <thead><tr className="bg-slate-50 text-[9px] text-slate-500">
             {['Lúc', 'Việc', 'Mẻ', 'Lượng', 'Người', 'Lý do / cảnh báo'].map(h => <th key={h} className="px-2 py-1 text-left whitespace-nowrap">{h}</th>)}
           </tr></thead>
           <tbody>
-            {!rows.length && <tr><td colSpan={6} className="px-2 py-1.5 text-slate-400 whitespace-nowrap">{q.isLoading ? 'Đang tải…' : 'Chưa có thao tác nào'}</td></tr>}
+            {!rows.length && <tr><td colSpan={6} className="px-2 py-1.5 text-slate-400 whitespace-nowrap">{q.isLoading ? 'Đang tải…' : q.isError ? 'Không tải được sổ bồn' : 'Chưa có thao tác nào'}</td></tr>}
             {rows.map(r => (
               <tr key={r.id} className="border-t border-slate-100">
                 <td className="px-2 py-1 whitespace-nowrap tabular-nums text-[10px]">{formatDateTime(r.created_at)}</td>
@@ -205,6 +210,7 @@ export function TankMovesSheet({ open, onClose, tank }: { open: boolean; onClose
           </tbody>
         </table>
       </div>
+      {totalPages > 1 && <PagerNav page={page} totalPages={totalPages} onPage={setPage} />}
     </FormSheet>
   )
 }
@@ -254,7 +260,7 @@ export function BatchFillSheet({ open, onClose, batchId, batchCode, warehouseId,
           <SingleSelect value={tankId} onChange={setTankId} placeholder={usable.length ? 'Chọn bồn' : `Chưa có bồn nào nhận được mẻ này (bồn ${u || '—'}, trống hoặc cùng mã)`}
             options={usable.map(t => ({ value: t.id, label: t.code, sub: `còn chỗ ${nfQty(t.capacity - t.content)} ${t.unit}${t.lots.length ? ` · đang chứa ${t.lots.map(l => l.batch?.batch_code).join(', ')}` : ' · trống'}` }))} /></div>
         <div><Label className="text-xs">Lượng nạp ({u}) <span className="text-red-500">*</span></Label>
-          <Input value={qty} onChange={e => setQty(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && tank && qtyN && qtyN > 0 && !over && !fill.isPending) void save() }}
+          <Input value={qty} onChange={e => setQty(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && tank && qtyN && qtyN > 0 && !over && !fill.isPending && blockers.length === 0) void save() }}
             inputMode="decimal" autoFocus className={`h-9 sm:h-8 text-sm mt-0.5 ${over ? 'border-red-400' : ''}`} />
           {tank && <p className={`text-[11px] mt-0.5 ${over ? 'text-red-600' : 'text-slate-500'}`}>{over ? 'Vượt chỗ còn trống — bồn' : 'Bồn'} còn chỗ {nfQty(room)} {tank.unit}</p>}</div>
         {blockers.length > 0 && (

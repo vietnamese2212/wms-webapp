@@ -34,7 +34,8 @@ const TABLE_QUERY_MAP: Record<string, string[][]> = {
   PalletLabelPrint:    [['pallet-prints'], ['pallet-prints-paged'], ['pallet-print-facets']],
   PalletOperation:     [['pallet-ops-log'], ['pallet-ops-paged']],
   InventoryAdjustmentLog: [['adjustment-log']],   // prefix khớp ['adjustment-log', entryId]
-  Warehouse:           [['prod-settings'], ['warehouses'], ['dispatch-plan-geo']],
+  // 25/11 (F1d rà soát MES): cờ luồng chặt / mục tiêu dashboard nằm trên Warehouse ⇒ tình trạng mẻ, sơ đồ bồn, dashboard đổi theo
+  Warehouse:           [['prod-settings'], ['warehouses'], ['dispatch-plan-geo'], ['prod-batches'], ['prod-batch'], ['prod-tanks'], ['prod-cycle'], ['prod-dash']],
   // Danh mục Khách hàng nuôi quy định date tự động ⇒ đổi khách là màn Quy định date phải đổi theo (11/09)
   Customer:            [['customers'], ['customer-channels'], ['customer-seed-candidates'], ['date-rule-lines'], ['customer-geo-status'], ['dispatch-plan-geo']],
   // Mức theo (khách|kênh) × loại hàng — cùng bộ màn với Customer vì nó là phần "mức" của chính khách
@@ -127,9 +128,9 @@ const TABLE_QUERY_MAP: Record<string, string[][]> = {
   production_tank:          [['prod-tanks'], ['prod-tanks-for-run']],
   tank_lot:                 [['prod-tanks'], ['prod-batch'], ['prod-batches']],
   batch_requirement:        [['prod-batch'], ['prod-tanks'], ['prod-cycle'], ['prod-dash'], ['prod-dash-detail']],
-  batch_process_log:        [['prod-batch'], ['prod-tanks'], ['prod-cycle']],
+  batch_process_log:        [['prod-batch'], ['prod-tanks'], ['prod-cycle'], ['prod-batches']],   // ghi đủ ô bắt buộc ⇒ bước của mẻ đổi (F1b 25/11)
   batch_pour_scan:          [['prod-batch'], ['prod-batches'], ['prod-tanks'], ['prod-cycle']],
-  production_process_form:  [['prod-process-forms']],
+  production_process_form:  [['prod-process-forms'], ['prod-batch'], ['prod-batches'], ['prod-tanks']],   // ô bắt buộc của mẫu đổi ⇒ cổng mẻ đổi (F1c 25/11)
   production_shift_report:  [['prod-shift-reports'], ['prod-shift-report']],
   production_shift_count:   [['prod-shift-report']],
   production_recipe:        [['prod-recipes'], ['prod-recipe']],

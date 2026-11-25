@@ -7,8 +7,32 @@
 // - part='entry': chỉ ô Thùng (mã không entry → "—" vì không có thùng).
 // - part='base' : chỉ ô Hộp lẻ (mã có entry) HOẶC ô base thập phân (mã không entry: KG/EA).
 // Cả 2 part đọc cùng `value` + gọi cùng `onChange(base)` → tách cột không đổi tính toán.
+import { useEffect, useState } from 'react'
 import { Input } from '@/components/ui/input'
 import { hasEntry, qtySplit, qtyFromEntryBase, unitLabel, type MatUnits } from '@/utils/qtyUnits'
+import { parseVnNumber, vnNumberInput } from '@/utils/vnNumber'
+
+// 25/11 (F2 rà soát MES, user đồng ý sửa ở ô DÙNG CHUNG): ô số THẬP PHÂN (mã không có đơn vị nhập — KG / L / BAG…) trước dùng
+// <input type="number"> + parseFloat ⇒ máy để ngôn ngữ không nhận dấu phẩy thì gõ "12,5" ra 0 / số sai. Nay là ô chữ
+// inputMode="decimal" + parseVnNumber (cùng luật mọi ô số khác của app — phẩy = thập phân), giữ chuỗi đang gõ ("12,") không bị đè.
+function DecimalQty({ value, onChange, disabled, autoFocus, className }: {
+  value: number; onChange: (n: number) => void; disabled?: boolean; autoFocus?: boolean; className: string
+}) {
+  const shown = (v: number) => (Number.isFinite(v) ? (v === 0 ? '0' : vnNumberInput(v)) : '')
+  const [draft, setDraft] = useState(() => shown(value))
+  // số đổi từ ngoài (điền sẵn, đặt lại form) ⇒ hiện số mới; số đổi do chính mình gõ ⇒ giữ nguyên chuỗi đang gõ
+  useEffect(() => {
+    const cur = draft.trim() === '' ? 0 : parseVnNumber(draft)
+    if (cur !== value) setDraft(shown(value))
+  }, [value]) // eslint-disable-line react-hooks/exhaustive-deps
+  return (
+    <Input
+      type="text" inputMode="decimal" disabled={disabled} autoFocus={autoFocus} className={className}
+      value={draft}
+      onChange={e => { const raw = e.target.value; setDraft(raw); onChange(Math.max(0, parseVnNumber(raw) ?? 0)) }}
+    />
+  )
+}
 
 export function QtyInput({ value, mat, onChange, disabled, autoFocus, className, compact, part }: {
   value: number
@@ -52,12 +76,7 @@ export function QtyInput({ value, mat, onChange, disabled, autoFocus, className,
       const bLbl = mat?.base_unit ? unitLabel(mat.base_unit) : ''
       return (
         <div className={className ?? ''}>
-          <Input
-            type="number" min={0} step="any" disabled={disabled} autoFocus={autoFocus}
-            className={`text-center font-semibold ${h} ${pad}`}
-            value={Number.isFinite(value) && value !== 0 ? value : (value === 0 ? 0 : '')}
-            onChange={e => onChange(parseFloat(e.target.value) || 0)}
-          />
+          <DecimalQty value={value} onChange={onChange} disabled={disabled} autoFocus={autoFocus} className={`text-center font-semibold ${h} ${pad}`} />
           {bLbl && <p className="text-[9px] text-slate-400 text-center mt-0.5">{bLbl}</p>}
         </div>
       )
@@ -79,12 +98,7 @@ export function QtyInput({ value, mat, onChange, disabled, autoFocus, className,
   // ── Chế độ 2 ô GỘP (mặc định) ──
   if (noEntry) {
     return (
-      <Input
-        type="number" min={0} step="any" disabled={disabled} autoFocus={autoFocus}
-        className={`text-center font-semibold ${h} ${pad} ${className ?? ''}`}
-        value={Number.isFinite(value) && value !== 0 ? value : (value === 0 ? 0 : '')}
-        onChange={e => onChange(parseFloat(e.target.value) || 0)}
-      />
+      <DecimalQty value={value} onChange={onChange} disabled={disabled} autoFocus={autoFocus} className={`text-center font-semibold ${h} ${pad} ${className ?? ''}`} />
     )
   }
   const { entry, base } = qtySplit(value, mat)

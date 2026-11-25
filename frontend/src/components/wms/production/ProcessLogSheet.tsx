@@ -244,6 +244,7 @@ export function ProcessLogSheet({ open, onClose, batch, def, canWrite, canConfir
 
   /** bấm một ô: ô GIỜ còn trống ⇒ ghi giờ máy chủ ngay; còn lại ⇒ khung nhập */
   async function tap(c: CellReq) {
+    if (write.isPending) return   // 25/11 (F3): chạm đúp ô giờ lúc mạng chậm ⇒ lần hai báo "ô đã ghi" giả
     setErr('')
     if (c.kind === 'time' && !(values[c.key] ?? '').trim()) {
       try { await write.mutateAsync({ batchId: batch.id, form, key: c.key }) } catch (e) { setErr(apiMsg(e)) }

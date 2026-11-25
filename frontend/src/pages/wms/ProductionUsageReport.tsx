@@ -85,8 +85,10 @@ function ShiftReportView({ tabBar }: { tabBar: ReactNode }) {
   const canWrite = can(perms, 'production', 'shift_report')
   const canExport = can(perms, 'production', 'export')
   const { data: { kitchens } } = useProductionWarehouses()
-  const [whPick, setWhPick] = useState(() => useGlobalScopeStore.getState().warehouseId ?? '')
-  const wh = kitchens.some(k => k.id === whPick) ? whPick : defaultKitchen(kitchens, whPick)
+  // 25/11 (F4 rà soát MES): CÙNG kho với 3 tab còn lại của trang (bộ lọc productionReport — đổi Kho toàn cục cũng theo), không giữ state riêng
+  const fr = useWmsFilterStore(s => s.productionReport)
+  const setFr = useWmsFilterStore(s => s.setProductionReport)
+  const wh = kitchens.some(k => k.id === fr.warehouseId) ? fr.warehouseId : defaultKitchen(kitchens, fr.warehouseId || useGlobalScopeStore.getState().warehouseId)
   const listQ = useShiftReports(wh || undefined)
   const reports = listQ.data ?? []
   const [pick, setPick] = useState('')
@@ -212,11 +214,11 @@ function ShiftReportView({ tabBar }: { tabBar: ReactNode }) {
             {kitchens.length === 1 && <span className="hidden sm:inline text-xs text-slate-500 shrink-0">{kitchens[0].name}</span>}
             {kitchens.length > 1 && (
               <div className="w-40 sm:w-48 min-w-0 shrink">
-                <SingleSelect value={wh} onChange={v => { setWhPick(v); setPick('') }} triggerClassName="h-9 sm:h-7" placeholder="Kho chế biến" options={kitchens.map(k => ({ value: k.id, label: k.name }))} />
+                <SingleSelect value={wh} onChange={v => { setFr({ warehouseId: v }); setPick('') }} triggerClassName="h-9 sm:h-7" placeholder="Kho chế biến" options={kitchens.map(k => ({ value: k.id, label: k.name }))} />
               </div>
             )}
             <div className="flex-1 min-w-[150px] max-w-xs">
-              <SingleSelect value={reportId} onChange={setPick} triggerClassName="h-9 sm:h-7" placeholder={listQ.isLoading ? 'Đang tải…' : 'Chưa có báo cáo ca nào'} searchable={false}
+              <SingleSelect value={reportId} onChange={setPick} triggerClassName="h-9 sm:h-7" placeholder={listQ.isLoading ? 'Đang tải…' : listQ.isError ? 'Không tải được' : 'Chưa có báo cáo ca nào'} searchable={false}
                 options={reports.map(r => ({ value: r.id, label: `${formatDate(r.report_date)} · ${r.shift}`, sub: r.status === 'OPEN' ? 'đang mở' : `đã chốt${r.closed_by_name ? ` · ${r.closed_by_name}` : ''}` }))} />
             </div>
             <ActionCluster mobileInline className="sm:ml-auto" items={actions} />
@@ -230,6 +232,7 @@ function ShiftReportView({ tabBar }: { tabBar: ReactNode }) {
             </div>
           )}
           {err && <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-1.5 text-xs text-red-700">{err}</div>}
+          {listQ.isError && <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-1.5 text-xs text-red-700">Không tải được danh sách ca: {apiMsg(listQ.error)}</div>}
           {q.isError && <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-1.5 text-xs text-red-700">{apiMsg(q.error)}</div>}
         </div>
         <SummaryBand tiles={[
@@ -240,7 +243,7 @@ function ShiftReportView({ tabBar }: { tabBar: ReactNode }) {
         ]} />
         <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
           {!kitchens.length && <p className="p-3 text-xs text-amber-700">Chưa có kho chế biến trong phạm vi — khai kho phụ nội bộ ở Cài đặt WMS → Kho.</p>}
-          {!!kitchens.length && !listQ.isLoading && !reports.length && (
+          {!!kitchens.length && !listQ.isLoading && !listQ.isError && !reports.length && (
             <p className="p-3 text-xs text-slate-500">Kho này chưa có báo cáo ca nào.{canWrite ? ' Bấm "Mở ca" để bắt đầu — từ đó mọi lần cấp nguyên liệu cho mẻ tự vào báo cáo.' : ''}</p>
           )}
           {/* ĐIỆN THOẠI: bảng thu nhỏ — nhãn cột một lần, mỗi dòng mã · tên · ĐVT rồi chỉ con số + ô nhập số đếm */}

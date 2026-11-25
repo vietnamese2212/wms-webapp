@@ -6,7 +6,7 @@
 //   • Mục tiêu của dashboard Báo cáo NVL (22/11 — user: "mục tiêu để dạng config tự đặt"): ± % lệch NVL và % mẻ đạt, theo kho chế biến.
 //   • Tab "Mẫu phiếu theo dõi" (14/11 khuya): ô · đơn vị · ngưỡng · bảng theo dõi của các phiếu theo dõi mẻ — một nút Lưu riêng của tab.
 // Danh mục bồn vẫn ở trang Bồn (đó là danh mục, không phải cấu hình).
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { AxiosError } from 'axios'
 import { Save, X, Plus } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -16,6 +16,7 @@ import { Switch } from '@/components/ui/switch'
 import { SettingsGroup, SettingRow } from '@/components/shared/SettingRow'
 import { useAuthStore } from '@/stores/authStore'
 import { useGlobalScopeStore } from '@/stores/globalScopeStore'
+import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { useProductionWarehouses, useProductionSettings, useSaveProductionSettings, defaultKitchen, useSemiFinishedSearch, SEMI_FINISHED_PLACEHOLDER, type ProductionSettings as Settings } from '@/api/productionHooks'
 import { NoSemiFinishedHint } from '@/components/wms/production/NoSemiFinishedHint'
@@ -39,8 +40,10 @@ export default function ProductionSettings() {
   const perms = useAuthStore(s => s.user)?.module_permissions as ModulePermissions | null ?? null
   const canConfigure = can(perms, 'production', 'configure')
   const { data: { kitchens } } = useProductionWarehouses()
-  const [whPick, setWhPick] = useState(() => useGlobalScopeStore.getState().warehouseId ?? '')
-  const wh = kitchens.some(k => k.id === whPick) ? whPick : defaultKitchen(kitchens, whPick)
+  // 25/11 (F4 rà soát MES): kho chế biến đang làm việc = bộ lọc chung của MES (Báo cáo NVL dùng cùng) — đổi Kho toàn cục cũng theo
+  const fr = useWmsFilterStore(s => s.productionReport)
+  const setFr = useWmsFilterStore(s => s.setProductionReport)
+  const wh = kitchens.some(k => k.id === fr.warehouseId) ? fr.warehouseId : defaultKitchen(kitchens, fr.warehouseId || useGlobalScopeStore.getState().warehouseId)
   const q = useProductionSettings(wh || undefined)
   const save = useSaveProductionSettings()
   const [err, setErr] = useState('')
@@ -58,8 +61,15 @@ export default function ProductionSettings() {
   const [added, setAdded] = useState<HoldRow[]>([])                // mã thêm mới, chưa lưu
   const server = q.data
   const stamp = server ? JSON.stringify(server) : ''
+  // 25/11 (F8 rà soát MES): realtime làm mới (người khác sửa mã BTP / lưu cài đặt) mà mình đang sửa dở CÙNG kho ⇒ GIỮ bản nháp;
+  // đổi kho hoặc vừa lưu xong ⇒ nạp lại từ server
+  const appliedWh = useRef('')
+  const dirtyRef = useRef(false)
+  const forceApply = useRef(false)
   useEffect(() => {
     if (!server) return
+    if (appliedWh.current === wh && dirtyRef.current && !forceApply.current) return
+    appliedWh.current = wh; forceApply.current = false
     setGate(server.production_qa_gate)
     setFlow(server.mes_flow_gate)
     setDevT(server.mes_dev_target_pct == null ? '' : vnNumberInput(server.mes_dev_target_pct))
@@ -85,6 +95,7 @@ export default function ProductionSettings() {
   }, [server, gate, flow, typeGate, hours, rows, devT, passT])
   const dirty = !!changes && (changes.gate !== undefined || changes.flow !== undefined || changes.types.length > 0 || changes.hold.length > 0
     || changes.dev !== undefined || changes.pass !== undefined)
+  dirtyRef.current = dirty
   const targetErr = (v: string, max: number) => {
     if (v.trim() === '') return ''
     const n = parseVnNumber(v)
@@ -96,7 +107,7 @@ export default function ProductionSettings() {
     if (!changes || !wh) return
     setErr('')
     save.mutate({ warehouse_id: wh, production_qa_gate: changes.gate, mes_flow_gate: changes.flow, mes_dev_target_pct: changes.dev, mes_pass_target_pct: changes.pass, types: changes.types.length ? changes.types : undefined, hold_hours: changes.hold.length ? changes.hold : undefined },
-      { onError: e => setErr(apiMsg(e)) })
+      { onSuccess: () => { forceApply.current = true }, onError: e => setErr(apiMsg(e)) })
   }
 
   // thêm mã bán thành phẩm vào bảng hạn lưu — tìm trên server
@@ -129,7 +140,7 @@ export default function ProductionSettings() {
             </div>
             {tab === 'general' && kitchens.length > 1 && (
               <div className="flex-1 min-w-0 max-w-56">
-                <SingleSelect value={wh} onChange={setWhPick} triggerClassName="h-9 sm:h-7" placeholder="Chọn kho chế biến"
+                <SingleSelect value={wh} onChange={v => setFr({ warehouseId: v })} triggerClassName="h-9 sm:h-7" placeholder="Chọn kho chế biến"
                   options={kitchens.map(k => ({ value: k.id, label: k.name, sub: k.parent_name ? `thuộc ${k.parent_name}` : undefined }))} />
               </div>
             )}

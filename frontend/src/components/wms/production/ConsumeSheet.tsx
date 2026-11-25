@@ -114,12 +114,17 @@ export function ConsumeSheet({ open, onClose, batch, focusId }: {
   }, [open, focusId]) // eslint-disable-line react-hooks/exhaustive-deps
   function reset() { setCode(''); setEntry(null); setQty(0); setErr(''); setRotReason('') }
 
+  // 25/11 (F3 rà soát MES): hai lần bắn sát nhau ⇒ hai lượt tra chạy song song — lượt về SAU mà là lượt CŨ thì bỏ (lần bắn mới nhất thắng;
+  // không khoá súng vì luật "thấy nhắc sai thứ tự thì bắn ngay tem đúng là thay")
+  const lookSeq = useRef(0)
   async function lookup(raw: string) {
     const c = normalizeQR(raw)
     if (!c) return
+    const seq = ++lookSeq.current
     setCode(c); setErr(''); setEntry(null); setRotReason(''); setLooking(true)
     try {
       const e = await scanCheck(batch.id, c)
+      if (seq !== lookSeq.current) return
       if (focus && e.material_id !== focus.material_id) {
         setErr(`Tem này là mã ${e.material?.material_code ?? ''} — đang cấp ${focus.material_code}. Quét đúng tem, hoặc đóng form rồi bấm "Quét cấp NVL" ở đầu bàn để cấp mã khác.`)
         return
@@ -129,8 +134,8 @@ export function ConsumeSheet({ open, onClose, batch, focusId }: {
       // quét lại = muốn tình trạng MỚI NHẤT: tải lại "Lấy ở đâu" để bảng và tem vừa quét nói cùng một chuyện (vd QA vừa duyệt)
       void qc.invalidateQueries({ queryKey: ['prod-stock', 'pick-list', batch.id] })
     }
-    catch (e) { setErr(apiMsg(e)) }
-    finally { setLooking(false) }
+    catch (e) { if (seq === lookSeq.current) setErr(apiMsg(e)) }
+    finally { if (seq === lookSeq.current) setLooking(false) }
   }
   // Súng PDA nghe suốt lúc ở chế độ quét, KỂ CẢ khi đang hiện một tem: thấy nhắc "sai thứ tự" thì bắn ngay tem đúng là thay.
   // Bắn trúng lúc con trỏ ở ô lượng: máy đọc trả lại số trong ô rồi mới phát mã (useWedgeScanner) — số đang nhập không bị chuỗi tem phá.

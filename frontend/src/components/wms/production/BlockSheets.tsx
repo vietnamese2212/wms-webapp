@@ -14,6 +14,7 @@ import { Label } from '@/components/ui/label'
 import { FormSheet } from '@/components/shared/FormSheet'
 import { QtyInput } from '@/components/shared/QtyInput'
 import { StatusBadge } from '@/components/shared/StatusBadge'
+import { useConfirmDialog, type ConfirmOptions } from '@/components/shared/ConfirmDialog'
 import {
   useReverseConsumption, useCancelBatch, useShiftAdjustPlan, useShiftAdjust, useBlockAct,
   type ConsumptionRow, type BlockRow,
@@ -25,6 +26,56 @@ const apiMsg = (e: unknown) => (e as AxiosError<{ error?: { message?: string } }
 const r3 = (n: number) => Math.round(n * 1000) / 1000
 const ErrBox = ({ msg }: { msg: string }) => msg ? <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700">{msg}</div> : null
 const BLOCK_HINT = 'Phần chặn vẫn nằm trong tồn sổ của kho nhưng không cấp / xuất được. Người có quyền Điều chỉnh tồn xoá nó khỏi tồn (theo số đếm cuối ca) hoặc bỏ chặn nếu dùng lại được.'
+
+/** XÁC NHẬN "Hoàn hết" / "Chặn hết" (user 25/11: "cần phải được confirm, trên confirm có diễn giải") — MỘT nội dung cho form huỷ mẻ
+ *  và form huỷ một dòng: liệt kê dòng bị áp + hệ quả lên tồn. Nút chỉ điền sẵn ô Chặn; ghi thật khi bấm Huỷ. */
+function fillConfirm(full: boolean, lines: ConsumptionRow[], what: string): ConfirmOptions {
+  const shown = lines.slice(0, 6)
+  const list = (
+    <ul className="my-1.5 space-y-0.5" data-testid="fill-confirm-lines">
+      {shown.map(c => (
+        <li key={c.id}>• <span className="font-mono font-semibold">{c.material?.material_code}</span> {c.material?.short_name ?? ''} · tem <span className="font-mono">{c.pallet_code}</span> · <b>{qtyCode(Number(c.qty), c.material)}</b></li>
+      ))}
+      {lines.length > shown.length && <li className="text-slate-400">… và {lines.length - shown.length} dòng khác</li>}
+    </ul>
+  )
+  const tail = <p className="mt-2 text-slate-500">Nút này chỉ điền sẵn ô Chặn — vẫn sửa được từng dòng trước khi bấm Huỷ.</p>
+  return full ? {
+    title: `Chặn hết ${what}?`,
+    confirmLabel: 'Chặn hết',
+    body: (
+      <div className="whitespace-normal" data-testid="fill-confirm" data-kind="block">
+        <p>Coi như <b>toàn bộ</b> NVL đã cấp dưới đây <b>đã đổ vào mẻ / hỏng, không dùng lại được</b>:</p>
+        {list}
+        <p className="mt-2 font-semibold text-slate-700">Khi bấm Huỷ:</p>
+        <ul className="space-y-0.5">
+          <li>• Tồn dùng được của các tem này <b>không tăng</b> — không ai cấp / xuất lại được.</li>
+          <li>• Toàn bộ lượng trên thành <b>hàng chặn</b> của đúng tem đó: vẫn nằm trong tồn sổ, kèm lý do huỷ.</li>
+          <li>• Cuối ca đếm thấy thiếu ⇒ người có quyền Điều chỉnh tồn bấm <b>Điều chỉnh tồn theo số đếm</b> để xoá khỏi tồn. Dòng nào thật ra còn dùng được ⇒ <b>Bỏ chặn</b> ở Báo cáo NVL › Chênh lệch tồn.</li>
+        </ul>
+        {tail}
+      </div>
+    ),
+  } : {
+    title: `Hoàn hết ${what} về kho?`,
+    confirmLabel: 'Hoàn hết',
+    body: (
+      <div className="whitespace-normal" data-testid="fill-confirm" data-kind="return">
+        <p>Coi như <b>toàn bộ</b> NVL đã cấp dưới đây <b>còn nguyên, dùng lại được</b>:</p>
+        {list}
+        <p className="mt-2 font-semibold text-slate-700">Khi bấm Huỷ:</p>
+        <ul className="space-y-0.5">
+          <li>• Mỗi dòng trả <b>đủ</b> về đúng tem / lô đã cấp, cấp / xuất lại được ngay.</li>
+          <li>• Không ghi hàng chặn nào.</li>
+        </ul>
+        <p className="mt-2 rounded bg-amber-50 border border-amber-200 px-2 py-1 text-amber-800">
+          Chỉ chọn khi NVL chưa đổ vào mẻ (bao còn nguyên). Nếu thực tế đã mất mà vẫn hoàn, kho có <b>tồn ảo</b> — sổ nhiều hơn thực tế — tới khi đếm / kiểm kê mới lộ.
+        </p>
+        {tail}
+      </div>
+    ),
+  }
+}
 
 /** dòng cấp: tem / lô + lượng đã cấp */
 function LineHead({ c }: { c: ConsumptionRow }) {
@@ -42,6 +93,7 @@ function LineHead({ c }: { c: ConsumptionRow }) {
 // ── Huỷ MỘT dòng cấp ──────────────────────────────────────────────────────────────────────────────────────────────────
 export function ReverseLineSheet({ line, onClose }: { line: ConsumptionRow | null; onClose: () => void }) {
   const reverse = useReverseConsumption()
+  const [ask, confirmNode] = useConfirmDialog()
   const [block, setBlock] = useState(0)
   const [reason, setReason] = useState('')
   const [err, setErr] = useState('')
@@ -71,8 +123,10 @@ export function ReverseLineSheet({ line, onClose }: { line: ConsumptionRow | nul
             <Label className="text-xs">Không tái dùng được — chặn <span className="text-slate-400 font-normal">({matUnitCode(line.material)})</span></Label>
             <div className="mt-1 flex items-center gap-2 flex-wrap">
               <QtyInput value={block} mat={line.material} onChange={setBlock} className={bad ? '[&_input]:border-red-400' : ''} />
-              <button type="button" className="text-[11px] text-blue-600 hover:underline" onClick={() => setBlock(qty)}>Chặn hết</button>
-              {block > 0 && <button type="button" className="text-[11px] text-slate-500 hover:underline" onClick={() => setBlock(0)}>Hoàn hết</button>}
+              <button type="button" className="text-[11px] text-blue-600 hover:underline"
+                onClick={async () => { if (await ask(fillConfirm(true, [line], 'dòng cấp này')) !== null) setBlock(qty) }}>Chặn hết</button>
+              {block > 0 && <button type="button" className="text-[11px] text-slate-500 hover:underline"
+                onClick={async () => { if (await ask(fillConfirm(false, [line], 'dòng cấp này')) !== null) setBlock(0) }}>Hoàn hết</button>}
             </div>
             <p className="mt-1 text-[11px] text-slate-600">
               Hoàn về dùng được: <b>{qtyCode(Math.max(0, r3(qty - block)), line.material)}</b>
@@ -87,6 +141,7 @@ export function ReverseLineSheet({ line, onClose }: { line: ConsumptionRow | nul
           </div>
         </div>
       )}
+      {confirmNode}
     </FormSheet>
   )
 }
@@ -96,6 +151,7 @@ export function CancelBatchSheet({ open, onClose, batchId, batchCode, lines, onD
   open: boolean; onClose: () => void; batchId: string; batchCode: string; lines: ConsumptionRow[]; onDone?: () => void
 }) {
   const cancel = useCancelBatch()
+  const [ask, confirmNode] = useConfirmDialog()
   const [block, setBlock] = useState<Record<string, number>>({})
   const [reason, setReason] = useState('')
   const [err, setErr] = useState('')
@@ -105,6 +161,9 @@ export function CancelBatchSheet({ open, onClose, batchId, batchCode, lines, onD
   const bad = lines.some(c => bOf(c) < 0 || bOf(c) > Number(c.qty) + 1e-9)
   const nBlocked = lines.filter(c => bOf(c) > 0).length
   const setAll = (full: boolean) => setBlock(Object.fromEntries(lines.map(c => [c.id, full ? Number(c.qty) : 0])))
+  const askAll = async (full: boolean) => {
+    if (await ask(fillConfirm(full, lines, `${lines.length} dòng NVL của mẻ ${batchCode}`)) !== null) setAll(full)
+  }
   async function go() {
     setErr('')
     try {
@@ -126,8 +185,8 @@ export function CancelBatchSheet({ open, onClose, batchId, batchCode, lines, onD
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-slate-600">{lines.length} dòng đã cấp{nBlocked ? ` · ${nBlocked} dòng có chặn` : ''}</span>
           <span className="ml-auto flex gap-1.5">
-            <Button type="button" size="sm" variant="outline" className="h-8 sm:h-7 text-xs" onClick={() => setAll(false)}>Hoàn hết</Button>
-            <Button type="button" size="sm" variant="outline" className="h-8 sm:h-7 text-xs" onClick={() => setAll(true)}>Chặn hết</Button>
+            <Button type="button" size="sm" variant="outline" className="h-8 sm:h-7 text-xs" onClick={() => void askAll(false)}>Hoàn hết</Button>
+            <Button type="button" size="sm" variant="outline" className="h-8 sm:h-7 text-xs" onClick={() => void askAll(true)}>Chặn hết</Button>
           </span>
         </div>
         <div className="divide-y divide-slate-100 rounded-lg border border-slate-200">
@@ -151,6 +210,7 @@ export function CancelBatchSheet({ open, onClose, batchId, batchCode, lines, onD
           <Input value={reason} onChange={e => setReason(e.target.value)} maxLength={500} className="h-9 sm:h-8 text-xs mt-0.5" placeholder="VD: mẻ hỏng do quá nhiệt, phải bỏ" aria-label="Lý do huỷ mẻ" />
         </div>
       </div>
+      {confirmNode}
     </FormSheet>
   )
 }

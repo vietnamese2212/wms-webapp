@@ -1539,7 +1539,7 @@ function RunCancelConfirm({ run, onDone, onError }: { run: PackingRun; onDone: (
       <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-4 space-y-3" onClick={e => e.stopPropagation()}>
         <p className="text-sm font-semibold text-slate-800">Hủy trang sổ này?</p>
         <p className="text-xs text-slate-500">{run.material_code} · Máy {run.machine_code} · {formatDate(run.run_date)}</p>
-        <p className="text-[11px] text-slate-500">Chỉ hủy được trang CHƯA có pallet ghi vào. Trang hủy vẫn giữ vết (Đã hủy).</p>
+        <p className="text-[11px] text-slate-500">Chỉ hủy được trang CHƯA có pallet ghi vào và không còn lượng rút bồn (đã rút thì sửa lượng rút về 0 trước). Trang hủy vẫn giữ vết (Đã hủy).</p>
         <Input value={note} onChange={e => setNote(e.target.value)} placeholder="Lý do hủy (nên ghi)" className="h-9 text-sm" />
         <div className="flex gap-2">
           <Button variant="outline" className="flex-1" onClick={onDone}>Không</Button>
@@ -1749,7 +1749,8 @@ function RunDetailSheet({ id, h, onDone }: { id: string; h: RunTableHandlers; on
               <Pencil className="h-3.5 w-3.5" />
             </Button>
           )}
-          {run && run.status !== 'CANCELLED' && canOpenRun && (run.pallets ?? []).length === 0 && (
+          {run && run.status !== 'CANCELLED' && canOpenRun && (run.pallets ?? []).length === 0
+            && Math.abs((run.tank_draws ?? []).reduce((s, d) => s + Number(d.qty), 0)) < 0.0005 && (   // còn rút bồn ⇒ sửa lượng rút về 0 trước (25/11 X3)
             <Button variant="outline" className="shrink-0 text-red-600 border-red-200" onClick={() => { onDone(); h.onCancelRun(run) }}>
               <X className="h-3.5 w-3.5" />
             </Button>

@@ -18,6 +18,17 @@
 - **Lỗi thêm.** Claude tìm thêm 7 lỗi; Gemini tìm thêm 4 lỗi cùng lớp ở vòng 2.
 - **Nặng nhất là sai số liệu tồn và bồn.** Không có lỗi nào lọt quyền giữa các kho theo kiểu đọc hay ghi được dữ liệu kho khác. B11 chỉ lộ mã bồn, và phải biết trước UUID.
 
+## Tiến độ
+
+User chốt 25/11:
+- Câu 4: ghi "Hoàn từ ca trước", kèm công tắc chặn khi cần (vì lúc đó NVL thường đã mất), và rà phần NVL đã mất.
+- Câu 5: không mở Sổ pallet cho kho cha.
+- Các câu còn lại: theo khuyến nghị.
+
+| Đợt | Trạng thái |
+|---|---|
+| 1 | ✅ 25/11 — migration `20261125_mes_review_packing_tank` (áp staging), gói 63 [6s2], C132 |
+
 ## Kế hoạch sửa theo đợt (thứ tự nên làm)
 
 | Đợt | Chủ đề | Mục | Sửa ở một chỗ | Lưới máy | Công sức |

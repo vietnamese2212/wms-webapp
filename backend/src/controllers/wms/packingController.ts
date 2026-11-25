@@ -860,20 +860,14 @@ export async function cancelRun(req: Request, res: Response) {
   const { data: run } = await supabase.from('packing_runs').select('id, warehouse_id').eq('id', id).maybeSingle()
   if (!run) return fail(res, 'Không tìm thấy trang sổ', 404)
   if (whOutOfScope(req, run.warehouse_id)) return fail(res, 'Kho ngoài phạm vi được gán', 403)
-  const { count } = await supabase.from('packing_logs')
-    .select('id', { count: 'exact', head: true }).eq('run_id', id).neq('status', 'CANCELLED')
-  if ((count ?? 0) > 0)
-    return fail(res, 409, 'RUN_HAS_PALLETS', `Trang sổ đã có ${count} pallet ghi vào — hủy từng pallet trước, hoặc bấm Giờ kết thúc để đóng trang`)
-  const now = new Date().toISOString()
-  const { data, error } = await supabase.from('packing_runs')
-    .update({
-      status: 'CANCELLED',
-      ...(typeof note === 'string' && note.trim() ? { note: note.trim().slice(0, 500) } : {}),
-      updated_at: now,
-    })
-    .eq('id', id).neq('status', 'CANCELLED').select('id')
-  if (error) return fail(res, error.message, 500)
-  if (!data?.length) return fail(res, 'Không tìm thấy trang sổ (hoặc đã hủy)', 404)
+  // 25/11 (rà soát MES X3): MỘT hàm khoá trang rồi mới đếm pallet + lượng rút bồn thuần (cùng khoá với mes_run_redraw) —
+  // trang đã rút bồn mà hủy thì lượng rút không được trả, bồn hụt vĩnh viễn ⇒ bắt sửa lượng rút về 0 trước
+  const { error } = await supabase.rpc('packing_run_cancel', { p: { run_id: id, note: typeof note === 'string' ? note : null } })
+  if (error) {
+    const m = /MESERR:([A-Z_]+)\|([\s\S]+)$/.exec(error.message ?? '')
+    if (m) return fail(res, m[1] === 'NOT_FOUND' ? 404 : 409, m[1] === 'NOT_FOUND' ? 'NOT_FOUND' : m[1], m[2].trim())
+    return fail(res, error)
+  }
   return ok(res, { id })
 }
 

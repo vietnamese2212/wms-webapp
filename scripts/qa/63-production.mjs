@@ -514,6 +514,18 @@ try {
     rdOpen.s === 409 && rdOpen.j?.error?.code === 'MES_RUN_NOT_CLOSED' && rdOver.s === 409 && rdOver.j?.error?.code === 'MES_TANK_SHORT',
     `http=${rdOpen.s} ${rdOpen.j?.error?.code} / ${rdOver.s} ${rdOver.j?.error?.code}`)
   await api(`/wms/packing-runs/${R4.id}/cancel`, 'POST', { note: 'QA63' })
+  // 25/11 rà soát X3: trang đã ĐÓNG còn lượng rút bồn ⇒ hủy bị chặn (không thì bồn hụt vĩnh viễn); sửa về 0 rồi hủy được
+  const beforeCx = await lotsNow()
+  const rdAgain = await api(`/wms/packing-runs/${R3.id}/tank-draw`, 'POST', { tank_qty: 10, reason: 'QA63 rút lại' })
+  const cxDrawn = await api(`/wms/packing-runs/${R3.id}/cancel`, 'POST', { note: 'QA63' })
+  const r3st = (await restAll('packing_runs', `select=status&id=eq.${R3.id}`))[0]
+  await api(`/wms/packing-runs/${R3.id}/tank-draw`, 'POST', { tank_qty: 0, reason: 'QA63 trả lại' })
+  const cxZero = await api(`/wms/packing-runs/${R3.id}/cancel`, 'POST', { note: 'QA63' })
+  const afterCx = await lotsNow()
+  check('6s2. Hủy trang ĐÃ ĐÓNG còn rút bồn ⇒ 409 RUN_HAS_TANK_DRAW, trang giữ CLOSED; sửa lượng rút về 0 rồi hủy được, bồn về đúng mức cũ',
+    rdAgain.s === 200 && cxDrawn.s === 409 && cxDrawn.j?.error?.code === 'RUN_HAS_TANK_DRAW' && r3st?.status === 'CLOSED' && cxZero.s === 200
+      && Math.abs(afterCx(B1.id) - beforeCx(B1.id)) < 0.001 && Math.abs(afterCx(B2.id) - beforeCx(B2.id)) < 0.001,
+    `rút=${rdAgain.s} hủy=${cxDrawn.s} ${cxDrawn.j?.error?.code} status=${r3st?.status} hủy0=${cxZero.s}`)
 
   // ── [6t] Cài đặt MES — cửa ghi DUY NHẤT của công tắc QA + hạn lưu bồn ──
   const st0 = await api(`/wms/production/settings?warehouse_id=${WC}`)

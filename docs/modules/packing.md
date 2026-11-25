@@ -24,4 +24,4 @@ Sổ đóng gói (menu Kho WMS) — số hóa sổ đóng gói viết tay tại 
 
 ## Actions
 
-view, **record**=quét mở/đóng pallet, **open_run**=mở/đóng/sửa/hủy TRANG SỔ (lệnh — nút Giờ kết thúc), **edit**=sửa giờ SX/số thùng sau đóng (nguồn → MANUAL), **cancel**=hủy dòng ghi nhầm (giữ vết), **export**=Xuất Excel sổ. ⚠️ **"SL (quy đổi)" = THÙNG quy đổi per mã (`qty_conv`, BE tính sống trong `aggRuns`), KHÔNG in `qty_total` (Σ BASE) dưới nhãn đó** — ca đêm 20/09 pallet 190 thùng × 24 hộp hiện "4.560" ở list/band/export (C2 tái phát); gói 22 [9b] gác 
+view, **record**=quét mở/đóng pallet, **open_run**=mở/đóng/sửa/hủy TRANG SỔ (lệnh — nút Giờ kết thúc; hủy chỉ khi 0 pallet và lượng rút bồn thuần = 0 — 25/11, hàm `packing_run_cancel`), **edit**=sửa giờ SX/số thùng sau đóng (nguồn → MANUAL), **cancel**=hủy dòng ghi nhầm (giữ vết), **export**=Xuất Excel sổ. ⚠️ **"SL (quy đổi)" = THÙNG quy đổi per mã (`qty_conv`, BE tính sống trong `aggRuns`), KHÔNG in `qty_total` (Σ BASE) dưới nhãn đó** — ca đêm 20/09 pallet 190 thùng × 24 hộp hiện "4.560" ở list/band/export (C2 tái phát); gói 22 [9b] gác 

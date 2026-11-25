@@ -19,7 +19,7 @@
 - [`slotting`](slotting.md) — Tối ưu vị trí (Slotting) (hai chiều)
 - [`stocktake`](stocktake.md) — Kiểm kho (hai chiều)
 - [`traceability`](traceability.md) — Truy xuất lô (được nhắc tới từ đó)
-- [`production`](production.md) — Sản xuất (rút NVL vào mẻ trừ tồn kho chế biến; sổ pallet nguồn 10 "Rút vào mẻ" — 14/11)
+- [`production`](production.md) — Sản xuất (rút NVL vào mẻ trừ tồn kho chế biến; sổ pallet nguồn 10 "Rút vào mẻ" — 14/11; 25/11 HÀNG CHẶN: huỷ cấp mà NVL không tái dùng được ⇒ phần chặn ra khỏi `cartons_remaining` của đúng lô, nằm ở sổ `inventory_block` — mọi cửa cấp / xuất / nhặt / fill tự không lấy được; xoá / bỏ chặn = quyền `inventory.adjust`; sổ pallet nguồn 11 Chặn · Bỏ chặn · Xoá hàng chặn; Kiểm kho chưa biết phần chặn ⇒ xử lý chặn trước khi kiểm kho chế biến)
 - [`help`](help.md) — Hỗ trợ (bài hướng dẫn `frontend/src/help/guides/tonKho.ts` + ảnh `public/guide/ton-kho/` — đổi giao diện / tên nút thì chụp lại ảnh + sửa chữ bài)
 <!-- giao-thoa:end -->
 

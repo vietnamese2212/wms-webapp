@@ -203,6 +203,8 @@ export const MES_GUIDE: Guide = {
             'Đủ mọi nguyên liệu thì ô **NVL đã đủ** = 10/10, cột Tình trạng ghi **Đủ**.',
             'Bấm **Xem tem đã cấp** để mở mọi dòng: mỗi tem đã cấp một dòng (lượng, %Date, NSX, HSD). Bấm **Thu gọn** để đóng.',
             'Cấp nhầm: dòng cấp có nút huỷ (cần quyền huỷ dòng cấp, bắt buộc ghi lý do) — hàng trả về đúng tem. Mẻ đã nạp bồn thì sổ nguyên liệu khoá.',
+            'Phần đã đổ vào mẻ / hỏng, **không dùng lại được**: nhập ở ô **Chặn** khi huỷ. Phần chặn vẫn nằm trong tồn sổ nhưng không cấp / xuất được, chờ người có quyền Điều chỉnh tồn xoá.',
+            '**Mẻ hỏng trước khi nạp bồn**: ⋮ → **Huỷ mẻ** → mỗi dòng NVL đã cấp một ô Chặn (mặc định hoàn hết; có nút Chặn hết), ghi lý do → Huỷ mẻ.',
           ],
           images: [d('34-da-cap-du', 'Đã cấp đủ: mở xem tem đã cấp')],
         },
@@ -298,9 +300,18 @@ export const MES_GUIDE: Guide = {
             '- Cuối ca nhập **Tồn cuối thực tế** vào ô "đếm" → **Lưu số đếm** (lưu nháp lúc nào cũng được).',
             '- **Chốt ca**: chụp mọi con số, không sửa được nữa. Ca sau lấy số đếm ca này làm tồn đầu.',
             '- Huỷ cấp một lần cấp của ca **đã chốt** ⇒ lượng hoàn hiện ở cột **Hoàn từ ca trước** của ca đang mở. Muốn chặn hẳn (NVL thường đã dùng / mất): bật **Chặn huỷ cấp của ca đã chốt** ở Cài đặt MES.',
-            'Báo cáo không tự sửa tồn — chênh lệch chỉ để thấy; muốn khớp sổ thì kiểm kê / điều chỉnh tồn.',
+            '- Tồn cuối sổ sách **gồm phần đang chặn** (NVL hoàn về khi huỷ cấp nhưng không tái dùng được).',
+            '- Ca đã chốt mới nhất có mã đếm thiếu: người có quyền **Điều chỉnh tồn** bấm **Điều chỉnh tồn theo số đếm** → xem trước từng lô chặn sẽ xoá → xác nhận. Phần thiếu không có lô chặn, hoặc đếm thừa: điều chỉnh từng lô ở Tồn kho.',
           ],
           images: [d('75-mo-ca', 'Mở báo cáo ca'), d('75b-bao-cao-ca', 'Báo cáo ca đang mở: nhập số đếm')],
+        },
+        {
+          title: 'C3b. Chênh lệch tồn (kiểm kê đối chiếu SAP)',
+          text: [
+            'Tab **Chênh lệch tồn**, chọn kỳ. **Theo mã**: tồn sổ · đang chặn · trong kỳ: chặn / bỏ chặn / xoá hàng chặn / điều chỉnh khác · **Chênh lệch so SAP**. Bấm một mã để xem từng lần.',
+            '**Đang chặn**: từng lô chặn chưa điều chỉnh — người có quyền Điều chỉnh tồn bấm **Xoá khỏi tồn** hoặc **Bỏ chặn** (dùng lại được).',
+            '**Xuất Excel** khi kiểm kê để kế toán đối chiếu với SAP.',
+          ],
         },
         {
           title: 'C4. Truy xuất lô sản xuất',

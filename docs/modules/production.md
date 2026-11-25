@@ -223,6 +223,36 @@ User chốt: *"Chặn và cho qua khi QA duyệt"*. Chỉ áp ở HAI cửa cấ
 
 Code: migration `20261117e` (`mes_expiry_subject` · `mes_expiry_request` · `mes_expiry_decide` · cổng trong `mes_consume_scan` / `mes_consume_lot`); `productionController.ts` (`mesPickContext` đọc sổ duyệt của mẻ · `expiryView` · `expiryRequest` / `expiryDecide`); FE `ConsumeSheet` (`ExpiryLine`) · `ProductionBatchDetail` (`ExpiryApprovalsBlock`) · `MesStockGroups`. Gói QA 63 [2e1–2e6] · [14c]. Chưa có: thông báo đẩy cho QA khi có yêu cầu mới (QA thấy ở trang mẻ).
 
+## HÀNG CHẶN — NVL ĐÃ MẤT (25/11 — rà soát MES, user chốt; migration `20261125h_mes_block_stock`)
+
+User: "Về nguyên lý tồn phải về làm tồn ảo trước, nhưng nếu nó đã sử dụng hoặc không tái dùng được phần nào thì phải được ghi nhận (block toàn bộ hoặc phần nào, có lý do)" · "Huỷ lô nào thì tồn lô đó hồi về, block đúng lô. Điều chỉnh thì làm đúng lô block" · "Phần mềm chạy riêng biệt, khi kiểm kê thực tế đối chiếu với SAP ⇒ cần show ra được phần chênh lệch là gì". Chốt: quyền **Điều chỉnh tồn** (`inventory.adjust`); sổ chênh lệch là **tab riêng**; **chỉ kho chế biến**.
+
+Mô hình = **hàng chặn** (như tồn bị chặn của SAP), sổ `inventory_block` (mỗi dòng một lô bị chặn: tem · mã · lượng · đã xoá · đã bỏ chặn · lý do · nguồn · mẻ · dòng cấp) + `inventory_block_event` (mỗi lần xoá / bỏ chặn). Phần chặn RA KHỎI `cartons_remaining` của lô ⇒ không cửa cấp / xuất / nhặt / fill nào lấy được mà **không cửa nào phải sửa**; nhưng vẫn nằm trong **tồn sổ** của kho (một hàm `mes_block_open`).
+
+| Tình huống | Kết quả |
+|---|---|
+| Huỷ cấp một dòng, không chặn | Như cũ: hoàn đủ về đúng tem / lô, dùng lại được |
+| Huỷ cấp 50, chặn 20 (lý do bắt buộc) | Lô +30 dùng được; 20 thành hàng chặn của ĐÚNG lô đó. Tồn sổ của kho +50 (30 + 20 chặn). Dữ liệu thô vẫn là Huỷ cấp −50 (SAP hạch toán đảo đủ) |
+| Chặn âm / lớn hơn lượng đã cấp | 422 `MES_BLOCK_QTY` · mã có đơn vị thùng mà chặn lẻ ⇒ 422 (số gốc phải nguyên) |
+| Huỷ mẻ chưa cấp NVL | Như cũ (hỏi xác nhận) |
+| Huỷ mẻ đã cấp NVL (mẻ hỏng trước khi nạp bồn) | Form liệt kê mọi dòng cấp, mặc định hoàn hết, nút Hoàn hết / Chặn hết, mỗi dòng một ô Chặn, một lý do. MỘT giao dịch (hàm `mes_batch_cancel`): hoàn từng dòng + chặn đúng lô + mẻ Huỷ (ghi `cancel_reason` · người · lúc) |
+| Huỷ mẻ gửi không đủ / sai tập dòng cấp (màn mở lâu, có người cấp thêm) | 409 `MES_LINES_CHANGED` — tải lại; không huỷ theo bản cũ. Không gửi dòng mà mẻ còn cấp ⇒ 409 `BATCH_HAS_CONSUMPTION` |
+| Huỷ mẻ đã cấp mà thiếu quyền Huỷ dòng cấp (`production.reverse`) | 403 (nút Huỷ mẻ khoá kèm lý do) |
+| Kho bật "Chặn huỷ cấp của ca đã chốt", dòng cấp thuộc ca đã chốt | Huỷ cấp dòng đó: 409 như cũ. Huỷ mẻ: dòng đó GIỮ là cấp cho mẻ huỷ (hao hụt của mẻ), các dòng khác hoàn / chặn bình thường |
+| Mẻ đã nạp bồn | Không huỷ được (như cũ) |
+| Báo cáo ca | **Tồn sổ = dùng được + đang chặn** ("tồn về làm tồn ảo trước"), dòng ghi "gồm X chặn" · cột **Điều chỉnh** (tay / kiểm kê / nạp Excel / xoá hàng chặn trong ca) chỉ hiện khi có · sổ cân: đầu + nhập − dùng + hoàn + điều chỉnh = sổ |
+| Ca đã chốt MỚI NHẤT, mã đếm thiếu, có lô chặn trước lúc chốt | Nút **Điều chỉnh tồn theo số đếm** (quyền Điều chỉnh tồn): xem trước từng lô sẽ xoá (lô chặn cũ trước, tối đa bằng phần thiếu), chọn mã, xác nhận ⇒ xoá khỏi tồn sổ đúng lô chặn; báo cáo ghi "đã xoá X chặn" + người / lúc |
+| Thiếu nhiều hơn hàng chặn · hoặc đếm thừa | KHÔNG tự trừ / cộng (không biết lô) — "điều chỉnh từng lô ở Tồn kho" |
+| Ca cũ hơn (đã có ca chốt sau) · đã điều chỉnh rồi · ca chưa chốt | Không cho (409 `MES_ADJUST_NOT_ALLOWED`) — phần lệch của ca cũ đã nằm trong số của ca sau; điều chỉnh hai lần là trừ hai lần |
+| Xoá / bỏ chặn từng lô ngoài báo cáo ca | Tab **Chênh lệch tồn** → Đang chặn: **Xoá khỏi tồn** / **Bỏ chặn** (trả về dùng được) một phần hoặc hết — quyền Điều chỉnh tồn; quá phần đang chặn ⇒ 422 |
+| Kiểm kê đối chiếu SAP | Tab **Chênh lệch tồn** (Báo cáo NVL, chọn kỳ): theo mã — tồn sổ hiện tại · đang chặn · chặn / bỏ chặn / xoá hàng chặn / điều chỉnh khác trong kỳ · **chênh lệch so SAP = điều chỉnh khác − xoá hàng chặn** (SAP nhận Cấp / Huỷ cấp qua Dữ liệu thô); bấm mã ⇒ từng tác động; Excel 4 sheet |
+
+- Hàm: `mes_consume_reverse_line` (lõi dùng chung huỷ cấp + huỷ mẻ; khoá mẻ trước dòng cấp — cùng thứ tự với huỷ mẻ, không khoá chéo) · `mes_consume_reverse` (thêm `qty_block`) · `mes_batch_cancel` · `mes_block_act` (WRITE_OFF / RELEASE, khoá chia sẻ theo kho như mọi cửa đổi tồn) · `mes_shift_adjust_plan` (MỘT hàm kế hoạch cho xem trước lẫn thực hiện) · `mes_shift_adjust` (khoá độc quyền như chốt ca) · `mes_stock_variance` (summary · events · blocks) · `mes_wh_adjust` · `mes_block_open`. `mes_shift_calc` đổi kiểu trả về (+ `blocked`, `adjusted`).
+- Route: `POST /production/consumption/:id/reverse` nhận `qty_block` · `POST /production/batches/:id/cancel` nhận `reason` + `lines` · `GET /production/shift-reports/:id/adjust-plan` · `POST …/adjust` · `POST /production/blocks/:id/write-off` · `…/release` (4 route này `inventory.adjust`) · `GET /production/stock-variance` (`view`) · `…/export` (`export`).
+- Realtime: `inventory_block` · `inventory_block_event` ⇒ sổ chênh lệch, sổ ca, kế hoạch điều chỉnh, chi tiết mẻ, sổ pallet; `InventoryAdjustmentLog` thêm sổ chênh lệch + sổ ca. Sổ pallet thêm Chặn · Bỏ chặn · Xoá hàng chặn.
+- Màn: `components/wms/production/BlockSheets.tsx` (huỷ dòng cấp · huỷ mẻ · điều chỉnh theo số đếm · xoá / bỏ chặn) · `StockVariance.tsx` (tab). Gói QA 63 mục [20] + [14g]; khối DO tự kiểm của migration.
+- Còn để ý: hàng chặn mà vẫn nằm nguyên trong kho (bao hỏng để riêng) thì phải xoá / bỏ chặn trước khi Kiểm kho đếm kho chế biến — Kiểm kho chỉ so với tồn dùng được, chưa biết phần chặn.
+
 ## Trang / nghiệp vụ
 
 Nhà máy sữa: NVL → **mẻ chế biến** → bán thành phẩm (BTP) trong **bồn** → **Sổ đóng gói** → pallet thành phẩm. User chốt 14/11: thiết kế trước khi có kết quả phiếu khảo sát; giai đoạn 1 = nối lô + tồn theo bồn; rút NVL = quét tem HOẶC chọn lô + số lượng; mẻ tạo tay trong app; mã lô tự ghép từ chu kỳ + số mẻ + bồn (17/11 — xem mục Luồng làm việc của mẻ); bồn chưa QA thả = cho rót, chỉ cảnh báo (công tắc); quá hạn lưu bồn = chỉ cảnh báo; lượng rút khai khi đóng trang sổ.
@@ -232,7 +262,7 @@ Nhà máy sữa: NVL → **mẻ chế biến** → bán thành phẩm (BTP) tron
   - quét tem ⇒ `scan-check` (tem ở kho khác nói tên kho; mã tồn gộp nhiều lô ⇒ 409 `POOLED_CODE`) ⇒ `consume-scan` (hàm `mes_consume_scan`, khoá dòng);
   - "Không có tem" ⇒ chọn mã + lô (NSX / mã lô tem, hàm `mes_stock`) ⇒ `consume-lot` (hàm `mes_consume_lot`, FEFO trong lô, thiếu thì KHÔNG trừ dở).
   - Hai đường CÙNG luật trạng thái (chỉ IN_STOCK / PARTIAL); đường lô khớp ĐÚNG (NSX, mã lô) đã chọn — lô không mã lô không ăn sang lô có mã lô cùng NSX (14/11, `20261114d`, C110).
-  - Huỷ dòng rút = hoàn đúng dòng tồn + giữ vết (quyền `reverse` riêng — chưa tự cấp cho chức danh nào).
+  - Huỷ dòng rút = hoàn đúng dòng tồn + giữ vết (quyền `reverse` riêng — chưa tự cấp cho chức danh nào). 25/11: phần không tái dùng được ⇒ hàng chặn của đúng lô (mục HÀNG CHẶN).
   - Dòng tồn đã vào mẻ không xoá được (FK RESTRICT — chuỗi truy xuất).
 - **Bồn** (`production_tank` + `tank_lot` + `tank_movement`): một bồn một mã BTP (chặn trộn mã), đơn vị bồn = base của mã BTP (L/KG), chặn vượt sức chứa (khoá dòng bồn). Nhiều mẻ chung một bồn được ⇒ mọi lần lấy ra (`mes_tank_take`: rút cho trang sổ · xả · điều chỉnh giảm · chuyển đi) **chia theo tỷ lệ lượng còn của từng mẻ**, làm tròn 3 số lẻ, phần dư vào lô lớn nhất. Chuyển bồn giữ lúc nạp + hạn lưu gốc (trộn thì hạn theo phần cũ nhất). Điều chỉnh mức bắt buộc lý do.
 - **Sổ đóng gói rút từ bồn:** trang sổ chọn bồn của chính kho hoặc kho phụ trực thuộc (`tanks-for-run`); đóng trang khai lượng rút ⇒ hàm `mes_close_run` đóng trang + rút bồn trong MỘT giao dịch. Rút gặp lô chưa QA thả ⇒ công tắc 2 tầng Kho + Loại kho `production_qa_gate` (OFF / WARN mặc định / BLOCK — `services/productionGate.ts`); quá hạn lưu ⇒ chỉ cảnh báo; cảnh báo lưu vào `tank_movement.warning`. **Lô QA LOẠI (REJECTED) khác lô CHỜ QA (14/11, C111):** không nạp vào bồn, bồn đang chứa nó không rút cho đóng gói được BẤT KỂ công tắc (409 `MES_QA_REJECTED`) — công tắc chỉ nói về lô HOLD; xả bỏ / chuyển / điều chỉnh vẫn làm được. Lượng bồn giữ tối đa 3 số lẻ (`round3` ở controller + lưới tổng phần chia trong `mes_tank_take`). Form Giờ kết thúc của trang GẮN BỒN bắt khai lượng rút (0 = không rút) — để trống từng đóng trang âm thầm, mất đường truy xuất.

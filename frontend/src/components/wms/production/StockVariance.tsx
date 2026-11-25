@@ -45,10 +45,11 @@ const EV_SIZE = 200
 
 const MAT_COLS: RtColDef[] = [
   { id: 'mat', label: 'Nguyên liệu', w: 220 }, { id: 'unit', label: 'ĐVT', w: 56 },
-  { id: 'book', label: 'Tồn sổ hiện tại', w: 110, align: 'right' }, { id: 'open', label: 'Đang chặn', w: 100, align: 'right' },
+  // số cần đọc trước (chênh lệch so SAP) đứng ngay sau tên — điện thoại không phải cuộn ngang mới thấy
+  { id: 'var', label: 'Chênh lệch so SAP', w: 125, align: 'right' }, { id: 'wo', label: 'Xoá hàng chặn', w: 105, align: 'right' },
+  { id: 'adj', label: 'Điều chỉnh khác', w: 110, align: 'right' }, { id: 'open', label: 'Đang chặn', w: 100, align: 'right' },
   { id: 'blk', label: 'Chặn trong kỳ', w: 100, align: 'right' }, { id: 'rel', label: 'Bỏ chặn', w: 90, align: 'right' },
-  { id: 'wo', label: 'Xoá hàng chặn', w: 105, align: 'right' }, { id: 'adj', label: 'Điều chỉnh khác', w: 110, align: 'right' },
-  { id: 'var', label: 'Chênh lệch so SAP', w: 125, align: 'right' },
+  { id: 'book', label: 'Tồn sổ hiện tại', w: 110, align: 'right' },
 ]
 const BLK_COLS: RtColDef[] = [
   { id: 'tem', label: 'Tem / lô', w: 150 }, { id: 'mat', label: 'Nguyên liệu', w: 200 }, { id: 'unit', label: 'ĐVT', w: 56 },
@@ -185,7 +186,7 @@ export function StockVariance({ tabBar }: { tabBar: ReactNode }) {
           {!kitchens.length && <p className="p-3 text-xs text-amber-700">Chưa có kho chế biến trong phạm vi — khai kho phụ nội bộ ở Cài đặt WMS → Kho.</p>}
 
           {!!kitchens.length && view === 'mat' && (
-            <ResizableTable storageKey="production_variance_mat_v1" cols={MAT_COLS}>
+            <ResizableTable storageKey="production_variance_mat_v2" cols={MAT_COLS}>
               <TableBody data-testid="variance-mat">
                 {sumQ.isLoading && <TableEmptyRow colSpan={MAT_COLS.length}>Đang tải…</TableEmptyRow>}
                 {!sumQ.isLoading && !sumQ.isError && !rows.length && <TableEmptyRow colSpan={MAT_COLS.length}>Không có chặn / điều chỉnh nào trong kỳ — tồn app khớp sổ SAP (phần cấp / huỷ cấp).</TableEmptyRow>}
@@ -193,13 +194,13 @@ export function StockVariance({ tabBar }: { tabBar: ReactNode }) {
                   <TableRow key={r.material_id} className="cursor-pointer hover:bg-sky-50" onClick={() => openEvents(r.material_id)} title="Xem từng tác động của mã này" data-mat={r.material_code}>
                     <TableCell className={`${TD} sticky left-0 z-10 bg-white truncate`} title={r.material_name ?? ''}><span className="font-mono font-semibold">{r.material_code}</span> {r.material_name ?? ''}</TableCell>
                     <TableCell className={`${TD} font-mono text-slate-500`}>{matUnitCode(r)}</TableCell>
-                    <TableCell className={NUM}><span className="font-normal">{qtyNum(Number(r.book), r)}</span></TableCell>
+                    <TableCell className={NUM} data-variance={Number(r.variance)}><Signed n={Number(r.variance)} m={r} /></TableCell>
+                    <TableCell className={NUM}><Signed n={-Number(r.written_off)} m={r} /></TableCell>
+                    <TableCell className={NUM}><Signed n={Number(r.adjusted)} m={r} /></TableCell>
                     <TableCell className={NUM}>{Number(r.blocked_open) > 0 ? <span className="text-amber-700">{qtyNum(Number(r.blocked_open), r)}</span> : dash}</TableCell>
                     <TableCell className={NUM}>{Number(r.blocked) > 0 ? <span className="font-normal">{qtyNum(Number(r.blocked), r)}</span> : dash}</TableCell>
                     <TableCell className={NUM}>{Number(r.released) > 0 ? <span className="font-normal">{qtyNum(Number(r.released), r)}</span> : dash}</TableCell>
-                    <TableCell className={NUM}><Signed n={-Number(r.written_off)} m={r} /></TableCell>
-                    <TableCell className={NUM}><Signed n={Number(r.adjusted)} m={r} /></TableCell>
-                    <TableCell className={NUM} data-variance={Number(r.variance)}><Signed n={Number(r.variance)} m={r} /></TableCell>
+                    <TableCell className={NUM}><span className="font-normal">{qtyNum(Number(r.book), r)}</span></TableCell>
                   </TableRow>
                 ))}
               </TableBody>

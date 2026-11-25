@@ -66,6 +66,7 @@
   "role_by_vietnamese_name": 0,
   "rotation_rule_hand_rolled": 1,
   "qa_hold_rule_hand_rolled": 0,
+  "inventory_status_hand_rolled": 0,
   "putaway_rule_hand_rolled": 0,
   "n_plus_1_supabase_in_map": 3,
   "detail_dead_end_no_way_back": 0,

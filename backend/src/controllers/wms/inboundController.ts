@@ -1,4 +1,5 @@
 import { Request, Response } from 'express'
+import { inventoryEntryStatus } from '../../utils/inventoryStatus'
 import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { ok, fail } from '../../utils/response'
@@ -1948,17 +1949,25 @@ export async function updateEntry(req: Request, res: Response) {
       let updatedEntry: any = null
       for (let attempt = 0; attempt < 15; attempt++) {
         const { data: cur } = await supabase.from('InventoryEntry')
-          .select('cartons_remaining, cartons_imported, cartons_reserved').eq('id', entryId).maybeSingle()
+          .select('cartons_remaining, cartons_imported, cartons_reserved, status').eq('id', entryId).maybeSingle()
         if (!cur) return fail(res, 404, 'NOT_FOUND', 'Pallet không còn tồn tại')
         const before = Number(cur.cartons_remaining)
         const newRemaining = before + delta
+        const newImported = Number(cur.cartons_imported) + delta
+        // 25/11 (rà soát MES): tổng nhập của dòng chung không được âm (dòng từng được điều chỉnh tăng ở Tồn kho)
+        if (newImported < 0) return fail(res, 400, 'INVENTORY_CHANGED', 'Dòng tồn chung không còn đủ số nhập để giảm tới mức này — kiểm lại số đã nhập / điều chỉnh tồn')
         // Không cho giảm xuống dưới phần đã xuất/giữ cho đơn xuất
         if (newRemaining < Number(cur.cartons_reserved ?? 0))
           return fail(res, 400, 'INVENTORY_CHANGED', 'Một phần hàng đã xuất hoặc đang được giữ — không thể giảm xuống mức này')
         const { data: upd, error } = await supabase
           .from('InventoryEntry')
-          .update({ cartons_imported: Number(cur.cartons_imported) + delta, cartons_remaining: newRemaining, update_date: vnDate(), updated_at: nowTs })
+          // 25/11 (X5 rà soát MES): tính lại trạng thái — dòng đã EXPORTED được cộng thêm phải về PARTIAL / IN_STOCK, nếu không cửa
+          // cấp NVL vào mẻ (lọc IN_STOCK / PARTIAL) không thấy phần mới nhập. MỘT luật: inventoryEntryStatus (= SQL inventory_entry_status)
+          .update({ cartons_imported: newImported, cartons_remaining: newRemaining,
+            status: inventoryEntryStatus(cur.status, newRemaining, newImported, cur.cartons_reserved), update_date: vnDate(), updated_at: nowTs })
           .eq('id', entryId).eq('cartons_remaining', before).select(ENTRY_SELECT)
+        // hồi dòng EXPORTED trong khi phiếu sau đã tạo dòng mới cùng mã ⇒ chỉ mục duy nhất của dòng đang dùng chặn (23505)
+        if (error?.code === '23505') return fail(res, 409, 'POOL_ROW_REPLACED', 'Mã này đã có dòng tồn mới (phiếu nhập sau tạo) — sửa số ở phiếu mới nhất hoặc điều chỉnh tồn ở Tồn kho')
         if (error) throw error
         if (upd?.length) { updatedEntry = upd[0]; break }
         await new Promise(r => setTimeout(r, 10 + Math.floor(Math.random() * (30 + attempt * 20))))
@@ -2091,7 +2100,7 @@ export async function removeEntry(req: Request, res: Response) {
       let done = false
       for (let attempt = 0; attempt < 15; attempt++) {
         const { data: cur } = await supabase.from('InventoryEntry')
-          .select('cartons_imported, cartons_remaining, cartons_reserved').eq('id', entryId).maybeSingle()
+          .select('cartons_imported, cartons_remaining, cartons_reserved, adjustment_qty, status').eq('id', entryId).maybeSingle()
         if (!cur) { done = true; break }   // entry chung đã bị phiếu khác xóa hết → đóng góp cũng không còn
         const curRem = Number(cur.cartons_remaining)
         if (contribution > curRem - Number(cur.cartons_reserved ?? 0))
@@ -2099,14 +2108,18 @@ export async function removeEntry(req: Request, res: Response) {
         const newImported  = Number(cur.cartons_imported) - contribution
         const newRemaining = curRem - contribution
         if (newImported <= 0) {
+          // 25/11 (rà soát MES): còn hàng từ điều chỉnh / kiểm kê ⇒ KHÔNG xoá dòng (xoá là mất luôn tồn đó + nhật ký điều chỉnh, khoá ngoại CASCADE)
+          if (newRemaining > 0 || Number(cur.adjustment_qty ?? 0) !== 0)
+            return fail(res, 409, 'HAS_ADJUSTMENT', 'Dòng tồn chung còn hàng / có điều chỉnh ở Tồn kho — không xoá đóng góp của phiếu được; điều chỉnh tồn trước')
           // Xóa cũng phải CAS (khớp remaining vừa đọc) — không nuốt phần vừa được phiếu khác cộng thêm
           const { data: del, error } = await supabase.from('InventoryEntry')
             .delete().eq('id', entryId).eq('cartons_remaining', curRem).select('id')
-          if (error) throw error
+          if (error) return fail(res, error)   // 23503: dòng đã từng cấp vào mẻ / có lịch sử ⇒ 409, không 500 (X8)
           if (del?.length) { done = true; break }
         } else {
           const { data: upd, error } = await supabase.from('InventoryEntry')
-            .update({ cartons_imported: newImported, cartons_remaining: newRemaining, update_date: vnDate(), updated_at: nowTs })
+            .update({ cartons_imported: newImported, cartons_remaining: newRemaining,
+              status: inventoryEntryStatus(cur.status, newRemaining, newImported, cur.cartons_reserved), update_date: vnDate(), updated_at: nowTs })
             .eq('id', entryId).eq('cartons_remaining', curRem).select('id')
           if (error) throw error
           if (upd?.length) { done = true; break }
@@ -2126,7 +2139,7 @@ export async function removeEntry(req: Request, res: Response) {
     if (!inv.allowed) return fail(res, 400, 'INVENTORY_CHANGED', inv.reason!)
 
     const { error } = await supabase.from('InventoryEntry').delete().eq('id', entryId)
-    if (error) throw error
+    if (error) return fail(res, error)   // 25/11 (X8): đã từng cấp vào mẻ (batch_consumption) ⇒ 23503 → 409, không 500
 
     emitInboundChanged()
     ok(res, { deleted: true })
@@ -2168,7 +2181,7 @@ export async function removeEntries(req: Request, res: Response) {
 
     const { error } = await supabase
       .from('InventoryEntry').delete().in('id', entry_ids).eq('import_order_id', order_id)
-    if (error) throw error
+    if (error) return fail(res, error)   // 25/11 (X8): 23503 → 409
 
     emitInboundChanged()
     ok(res, { deleted: entries.length })

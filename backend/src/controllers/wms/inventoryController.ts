@@ -880,6 +880,8 @@ export async function adjustInventory(req: Request, res: Response) {
   if (!rpcErr) {
     if (rpcResult === 'NOT_FOUND') return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy pallet')
     if (rpcResult === 'NEGATIVE') return fail(res, 400, 'INVALID_INPUT', 'Tồn kho không thể âm')
+    // 25/11 (rà soát MES): không hạ tồn xuống dưới phần đang GIỮ cho nhặt lẻ — người đang nhặt sẽ xác nhận trừ phần đó
+    if (rpcResult === 'RESERVED') return fail(res, 409, 'RESERVED', 'Pallet đang có hàng giữ cho nhặt lẻ — không điều chỉnh tồn xuống dưới phần đang giữ (xác nhận / huỷ lượt nhặt lẻ trước)')
     const { data: entry } = await supabase.from('InventoryEntry').select(ENTRY_SELECT).eq('id', id).maybeSingle()
     return ok(res, { entry })
   }

@@ -1171,6 +1171,17 @@ const RULES = [
           || /!!\s*[\w.]*\.qa_status\b(?!_id)|\.qa_status\s*(!==?|===?)\s*null\b/.test(line)), s),
   },
   {
+    key: 'inventory_status_hand_rolled',
+    label: 'tự viết công thức trạng thái dòng tồn (… ? "EXPORTED" : …) — phải qua utils/inventoryStatus.ts (BE) / public.inventory_entry_status() (SQL)',
+    // 25/11 rà soát MES: 6 chỗ tự tính InventoryEntry.status khác nhau — có chỗ bỏ qua phần GIỮ cho nhặt lẻ (đè mất LOOSE_PICKING),
+    // có chỗ không tính lại (dòng EXPORTED được cộng thêm vẫn EXPORTED ⇒ cửa cấp NVL không thấy). Một luật + bảng ca chung
+    // (backend/tests/unit/inventoryStatusCases.json chạy cả bản TS lẫn khối DO của migration 20261125e). Miễn chính file luật. Baseline 0.
+    count: (s) => countMatches(['backend/src'], ['.ts'],
+      (line, file) => !/^\s*(\/\/|\*|\/\*)/.test(line)
+        && !/utils[\\/]inventoryStatus\.ts$/.test(file)
+        && /\?\s*'EXPORTED'|'EXPORTED'\s*:/.test(line), s),
+  },
+  {
     key: 'putaway_rule_hand_rolled',
     label: 'tự đoán "cất pallet vào ô nào" (has_same_material / slot_no_in / so sức chứa để gợi ý) — phải đi qua utils/putaway (BE) / khối `putaway` do BE trả (FE)',
     // Cùng họ bug với rotation_rule_hand_rolled, đo 15/08: luật ★ có 3 bản chép tay (BE

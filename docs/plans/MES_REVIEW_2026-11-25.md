@@ -31,6 +31,7 @@ User chốt 25/11:
 | 2 | ✅ 25/11 — migration `20261125b_mes_review_batch_atomic` (áp staging): B2 B3 B4 B6 B8 B12 F9 G2 G3 + B11 (`nextCode` / `pourScan` kiểm bồn thuộc kho); gói 63 [1i] [10j2]; C60 lặp |
 | 3 | ✅ 25/11 — migration `20261125c_mes_review_flow_gate_db` (áp staging): N1 luồng chặt trong DB · G1 `qaGateOfTank` ném lỗi · B9 `loadBatch` / `loadTank` / `inScope` / `productionWhError` / `getBatch` ném lỗi (503 thay vì 404 / 403 / 200-rỗng) · B10 quét cấp kiểm kho / trạng thái tem trước luân chuyển; C104 lặp |
 | 4 | ✅ 25/11 — migration `20261125d_mes_review_tank_dash` (áp staging): B1 (`first_filled_at` + `mes_tank_incoming` dùng chung 4 chỗ, `listTanks` hết cắt 1.000) · B5 · B7 (`mes_dev_line_keep`); gói 63 [19c2] |
+| 5 | ✅ 25/11 — migration `20261125e_inventory_status_pool` (áp staging): X1 luật 1–4 (cửa tồn gộp: QA giữ · trừ giữ chỗ · thứ tự luân chuyển · kho bắt buộc chặn NSX chọn sai) · mới 1 (xuất lố + `clamped` ghi vết) · mới 2 (một hàm trạng thái + cổng tĩnh) · X2 vế 2 · X5 · mới 4 · X8 · X-N3a; gói 64 MỚI; C133 |
 
 ## Kế hoạch sửa theo đợt (thứ tự nên làm)
 

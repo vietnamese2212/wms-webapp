@@ -1,0 +1,14 @@
+[
+  { "cur": "IN_STOCK", "remaining": 100, "imported": 100, "reserved": 0, "want": "IN_STOCK" },
+  { "cur": "IN_STOCK", "remaining": 60, "imported": 100, "reserved": 0, "want": "PARTIAL" },
+  { "cur": "PARTIAL", "remaining": 0, "imported": 100, "reserved": 0, "want": "EXPORTED" },
+  { "cur": "PARTIAL", "remaining": 60, "imported": 100, "reserved": 20, "want": "LOOSE_PICKING" },
+  { "cur": "LOOSE_PICKING", "remaining": 60, "imported": 100, "reserved": 0, "want": "PARTIAL" },
+  { "cur": "LOOSE_PICKING", "remaining": 20, "imported": 100, "reserved": 20, "want": "LOOSE_PICKING" },
+  { "cur": "QUARANTINE", "remaining": 60, "imported": 100, "reserved": 0, "want": "QUARANTINE" },
+  { "cur": "EXPORTED", "remaining": 30, "imported": 100, "reserved": 0, "want": "PARTIAL" },
+  { "cur": "EXPORTED", "remaining": 150, "imported": 150, "reserved": 0, "want": "IN_STOCK" },
+  { "cur": null, "remaining": 100, "imported": 100, "reserved": 0, "want": "IN_STOCK" },
+  { "cur": null, "remaining": -5, "imported": 100, "reserved": 0, "want": "EXPORTED" },
+  { "cur": "IN_STOCK", "remaining": 120, "imported": 100, "reserved": 0, "want": "IN_STOCK" }
+]

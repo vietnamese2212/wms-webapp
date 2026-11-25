@@ -12,8 +12,9 @@ import { estimateFreightSafely, sapLoadRefs, sapRefKey, loadOfWithSap } from '..
 import { normalizeQR } from '../../utils/qrParser'
 import { wrongFormatHint, getDeliveryConfirmation } from './systemSettingController'
 import { computePctDate, computeDaysLeft, type MaterialShelfInfo } from '../../utils/shelfLife'
+import { inventoryEntryStatus } from '../../utils/inventoryStatus'
 import {
-  PICKABLE_STATUSES, asRotationPrinciple, isPickEligible, isRotationViolation, isRotationReason,
+  PICKABLE_STATUSES, asRotationPrinciple, availableOf, isPickEligible, isRotationViolation, isRotationReason,
   rotationDateOf, rotationSortKey, ROTATION_DATE_LABEL, ROTATION_LABEL,
   type RotationCheck, type RotationEntry, type RotationPrinciple,
 } from '../../utils/rotation'
@@ -389,7 +390,13 @@ async function adjustInventoryAtomic(
     const { data, error } = await supabase.rpc('outbound_adjust_entry', {
       p_entry_id: invId, p_delta_remaining: deltaRemaining, p_delta_reserved: deltaReserved, p_now: now(),
     })
-    if (!error && data) return (data as { ok?: boolean }).ok === true
+    if (!error && data) {
+      const d = data as { ok?: boolean; clamped?: boolean }
+      // 25/11 (rà soát MES — "xuất lố không ai biết"): lượng trừ vượt tồn ⇒ có cửa khác đã lấy lố phần này. Hàm vẫn kẹp về 0 để
+      // người đang nhặt không bị kẹt, nhưng ghi vết vào error_logs thay vì im lặng.
+      if (d.clamped) recordBackgroundFailure(`Trừ tồn vượt số còn ở dòng ${invId} (Δcòn ${deltaRemaining}, Δgiữ ${deltaReserved}) — kẹp về 0`, 'STOCK_CLAMPED', 'outbound.adjustInventoryAtomic', null)
+      return d.ok === true
+    }
   }
   for (let attempt = 0; attempt < 15; attempt++) {
     const { data: inv } = await supabase.from('InventoryEntry')
@@ -400,10 +407,7 @@ async function adjustInventoryAtomic(
     const newRemaining = Math.max(0, curRemaining + deltaRemaining)
     const newReserved  = Math.max(0, curReserved + deltaReserved)
     const maxImport    = Number(inv.cartons_imported)
-    const newStatus    = newReserved > 0 ? 'LOOSE_PICKING'
-      : newRemaining === 0 ? 'EXPORTED'
-      : newRemaining < maxImport ? 'PARTIAL'
-      : 'IN_STOCK'
+    const newStatus    = inventoryEntryStatus(null, newRemaining, maxImport, newReserved)   // MỘT luật (= SQL inventory_entry_status)
     const { data: applied } = await supabase.from('InventoryEntry')
       .update({ cartons_remaining: newRemaining, cartons_reserved: newReserved, status: newStatus, updated_at: now() })
       .eq('id', invId).eq('cartons_remaining', curRemaining).eq('cartons_reserved', curReserved)
@@ -599,10 +603,10 @@ async function consumeInventoryExact(invId: string, amount: number): Promise<boo
     if (!inv) return null
     const curRemaining = Number(inv.cartons_remaining ?? inv.cartons_imported ?? 0)
     const curReserved  = Number(inv.cartons_reserved ?? 0)
-    if (curRemaining < amount) return false   // không đủ tồn để xuất từng ấy nữa
+    if (curRemaining - curReserved < amount) return false   // không đủ tồn để xuất từng ấy nữa (phần đang giữ cho nhặt lẻ không lấy được — 25/11)
     const newRemaining = curRemaining - amount
     const maxImport    = Number(inv.cartons_imported)
-    const newStatus    = newRemaining === 0 ? 'EXPORTED' : newRemaining < maxImport ? 'PARTIAL' : 'IN_STOCK'
+    const newStatus    = inventoryEntryStatus(null, newRemaining, maxImport, curReserved)   // MỘT luật (= SQL inventory_entry_status)
     const { data: applied } = await supabase.from('InventoryEntry')
       .update({ cartons_remaining: newRemaining, status: newStatus, updated_at: now() })
       .eq('id', invId).eq('cartons_remaining', curRemaining).eq('cartons_reserved', curReserved)
@@ -1829,14 +1833,9 @@ export async function quickExportGDO(req: Request, res: Response) {
     // Pre-check tồn pool TRƯỚC khi ghi (chỉ mã có dòng tồn; không có dòng → như Lưu thủ công: cho qua, không trừ).
     // GỘP TỔNG mọi dòng cùng mã (pool đa dòng sau nhập lại / QTY_DATE 1 dòng mỗi NSX — Map thô lấy dòng CUỐI
     // làm khả dụng SAI, báo thiếu oan) + chunk mã & phân trang (nhiều mã × nhiều NSX vượt cap 1000 dòng/response).
+    // 25/11: khả dụng THẬT (trừ QA giữ + phần giữ cho nhặt lẻ) — cùng luật với lúc ghi (applyPoolAtomic / outbound_pool_apply)
     const poolMap = new Map<string, number>()
-    for (let i = 0; i < allCodes.length; i += 300) {
-      const chunk = allCodes.slice(i, i + 300)
-      const rows = await fetchAllRowsParallel(() => supabase.from('InventoryEntry')
-        .select('id, pallet_code, cartons_remaining').eq('warehouse_id', warehouse_id).in('pallet_code', chunk).order('id'))
-      for (const p of rows as { pallet_code: string; cartons_remaining: number }[])
-        poolMap.set(p.pallet_code, (poolMap.get(p.pallet_code) ?? 0) + Number(p.cartons_remaining))
-    }
+    for (const [code, p] of await poolAvailable(warehouse_id, allCodes)) poolMap.set(code, p.available)
     // QTY: mã không có dòng tồn = tồn 0 → tính là thiếu. NONE: không theo dõi tồn → bỏ qua (have=null).
     const availOf = (code: string): number | null =>
       poolMap.has(code) ? poolMap.get(code)! : (isQtyLike(whMode) ? 0 : null)
@@ -7504,19 +7503,15 @@ export async function getManualItemStock(req: Request, res: Response) {
     if (!gdo || !item) return fail(res, 'Không tìm thấy', 404)
     const materialCode = (item.material as any)?.material_code ?? item.material_code_raw
     // GỘP qua mọi dòng cùng pallet_code (mã pool có thể có nhiều dòng sau khi xuất hết rồi nhập lại) — KHÔNG maybeSingle.
-    const { data: invRows } = await supabase
-      .from('InventoryEntry')
-      .select('cartons_imported, cartons_remaining, production_date')
-      .eq('pallet_code', materialCode)
-      .eq('warehouse_id', gdo.warehouse_id)
-    const rows = (invRows ?? []) as { cartons_imported: number; cartons_remaining: number; production_date?: string | null }[]
-    const sumRemaining = rows.reduce((s, r) => s + Number(r.cartons_remaining), 0)
-    const sumImported  = rows.reduce((s, r) => s + Number(r.cartons_imported), 0)
-    // Kho QTY_DATE: liệt kê pool theo NSX (FEFO — cũ nhất trước) để FE cho chọn dòng date khi cần
+    // 25/11: số hiện = khả dụng THẬT (trừ hàng QA giữ + phần đang giữ cho nhặt lẻ) — cùng luật với lúc ghi (applyPoolAtomic)
+    const pool = (await poolAvailable(gdo.warehouse_id as string, [materialCode])).get(materialCode)
+    const sumRemaining = pool?.available ?? 0
+    const sumImported  = pool?.imported ?? 0
+    // Kho QTY_DATE: liệt kê pool theo NSX (cũ nhất trước) để FE cho chọn dòng date khi cần
     const invMode = (gdo as any)?.warehouse?.inventory_mode ?? null
     const date_pools = invMode === 'QTY_DATE'
-      ? rows.filter(r => Number(r.cartons_remaining) > 0)
-          .map(r => ({ production_date: String(r.production_date ?? '').slice(0, 10) || null, cartons_remaining: Number(r.cartons_remaining) }))
+      ? [...(pool?.pools ?? new Map<string, number>()).entries()].filter(([, q]) => q > 0)
+          .map(([d, q]) => ({ production_date: d || null, cartons_remaining: q }))
           .sort((a, b) => ((a.production_date ?? '9999-99-99') < (b.production_date ?? '9999-99-99') ? -1 : 1))
       : undefined
     return ok(res, {
@@ -7526,7 +7521,7 @@ export async function getManualItemStock(req: Request, res: Response) {
       cartons_scanned:   item.cartons_scanned ?? 0,
       inventory_mode:    invMode,                                           // NONE → không có trần tồn (FE)
       ...(date_pools ? { date_pools } : {}),
-      has_pool:          rows.length > 0,                                   // có dòng tồn = được theo dõi
+      has_pool:          (pool?.rows ?? 0) > 0,                                   // có dòng tồn = được theo dõi
     })
   } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
 }
@@ -7542,16 +7537,75 @@ export async function getManualItemStock(req: Request, res: Response) {
 // INSUFFICIENT; NONE/không dòng → OK không đụng tồn; QTY_DATE trừ FEFO + lọc NSX chọn tay;
 // gộp đa-dòng cùng pallet_code (dòng EXPORTED nhập lại). claimOnlyPending=true thay cú
 // CAS-claim + hoàn-bù của "Xuất luôn" (thua đua = CLAIM_LOST, KHÔNG đụng tồn).
-type PoolApplyOutcome = { outcome: 'OK' | 'INSUFFICIENT' | 'CLAIM_LOST' | 'NOT_FOUND'; inv_entry_id?: string | null; available?: number }
+type PoolApplyOutcome = { outcome: 'OK' | 'INSUFFICIENT' | 'CLAIM_LOST' | 'NOT_FOUND' | 'ROTATION'; inv_entry_id?: string | null; available?: number
+  rotation?: { principle: RotationPrinciple; chosen_date: string | null; best_date: string | null } }
+
+// ── CỬA TỒN GỘP (Lưu thủ công · Xuất luôn · thêm vào chuyến) — 25/11 rà soát MES, user chốt: theo đúng luật của cửa cấp NVL / cửa quét:
+//   • "lấy được" = trạng thái trong PICKABLE_STATUSES + KHÔNG bị QA giữ + khả dụng = còn − giữ cho nhặt lẻ (isPickEligible / availableOf);
+//   • thứ tự lấy = nguyên tắc luân chuyển hiệu lực của kho × loại kho (rotationSortKey — CÙNG helper với cửa quét), truyền xuống RPC;
+//   • kho BẮT BUỘC mà người chọn NSX không phải NSX phải lấy trước ⇒ chặn (không bắt buộc ⇒ cho qua, như cửa quét).
+// Trước đây RPC cộng SUM(remaining) mọi dòng ⇒ lấy cả hàng QA giữ + phần đang giữ cho nhặt lẻ (xuất lố không ai biết).
+type PoolRow = RotationEntry & { id: string; status: string | null; production_date?: string | null }
+const POOL_COLS = 'id, pallet_code, status, qa_status_id, cartons_remaining, cartons_imported, cartons_reserved, production_date, import_date, expiry_date, ncc_id, shelf_life_days'
+const isPoolPickable = (r: PoolRow, qaHold: ReadonlySet<string>) =>
+  (PICKABLE_STATUSES as readonly string[]).includes(String(r.status)) && isPickEligible(r, qaHold)
+/** Khả dụng THẬT của tồn gộp theo mã (một lời gọi cho nhiều mã — chia lô 300) — số màn hình hiện = trần RPC trừ */
+async function poolAvailable(warehouseId: string, codes: string[]): Promise<Map<string, { available: number; imported: number; rows: number; pools: Map<string, number> }>> {
+  const qaHold = await qaHoldIds()
+  const out = new Map<string, { available: number; imported: number; rows: number; pools: Map<string, number> }>()
+  for (let i = 0; i < codes.length; i += 300) {
+    const rows = await fetchAllRowsParallel(() => supabase.from('InventoryEntry').select(POOL_COLS)
+      .eq('warehouse_id', warehouseId).in('pallet_code', codes.slice(i, i + 300)).order('id')) as (PoolRow & { pallet_code: string })[]
+    for (const r of rows) {
+      const o = out.get(r.pallet_code) ?? { available: 0, imported: 0, rows: 0, pools: new Map<string, number>() }
+      o.rows += 1
+      o.imported += Number(r.cartons_imported ?? 0)
+      if (isPoolPickable(r, qaHold)) {
+        const a = availableOf(r)
+        o.available += a
+        const d = String(r.production_date ?? '').slice(0, 10)
+        o.pools.set(d, (o.pools.get(d) ?? 0) + a)
+      }
+      out.set(r.pallet_code, o)
+    }
+  }
+  return out
+}
+/** Thứ tự lấy theo luân chuyển + kiểm NSX chọn tay (kho bắt buộc) — một mã */
+async function poolPickOrder(warehouseId: string, materialCode: string, chosenDate: string | null) {
+  const [{ data: rows, error }, { data: mat, error: mErr }, qaHold, rot] = await Promise.all([
+    supabase.from('InventoryEntry').select(POOL_COLS).eq('warehouse_id', warehouseId).eq('pallet_code', materialCode).order('id').limit(1000),
+    supabase.from('Material').select('category, shelf_life_days, supplier_shelf_life_overrides').eq('material_code', materialCode).limit(1).maybeSingle(),
+    qaHoldIds(), rotationConfigOf([warehouseId]),
+  ])
+  if (error) throw error
+  if (mErr) throw mErr
+  const cfg = rot.of(warehouseId, (mat as { category?: string | null } | null)?.category ?? null)
+  const shelf = (mat ?? null) as MaterialShelfInfo | null
+  const keyed = ((rows ?? []) as PoolRow[]).filter(r => isPoolPickable(r, qaHold))
+    .map(r => ({ r, k: rotationSortKey(r, shelf, cfg.principle) }))
+    .sort((a, b) => (a.k ?? Infinity) - (b.k ?? Infinity) || String(a.r.production_date ?? '').localeCompare(String(b.r.production_date ?? '')) || a.r.id.localeCompare(b.r.id))
+  let violation: PoolApplyOutcome['rotation'] | null = null
+  if (chosenDate && cfg.required && keyed.length) {
+    const chosen = keyed.find(x => String(x.r.production_date ?? '').slice(0, 10) === chosenDate)
+    if (chosen && isRotationViolation(chosen.k, keyed[0].k))
+      violation = { principle: cfg.principle, chosen_date: chosenDate, best_date: String(keyed[0].r.production_date ?? '').slice(0, 10) || null }
+  }
+  return { order: keyed.map(x => x.r.id), violation }
+}
 async function applyPoolAtomic(args: {
   itemId: string; materialCode: string; warehouseId: string; mode?: string | null
   newQty: number; itemStatus: string; chosenDate?: string | null; claimOnlyPending?: boolean
+  /** kiểm NSX chọn tay theo luân chuyển (chỉ khi GHI THÊM — sửa giảm / hoàn luôn cho) */
+  enforceRotation?: boolean
 }): Promise<PoolApplyOutcome> {
+  const pick = await poolPickOrder(args.warehouseId, args.materialCode, args.enforceRotation ? (args.chosenDate ?? null) : null)
+  if (pick.violation) return { outcome: 'ROTATION', rotation: pick.violation }
   const { data, error } = await supabase.rpc('outbound_pool_apply', {
     p_item_id: args.itemId, p_material_code: args.materialCode, p_warehouse_id: args.warehouseId,
     p_mode: args.mode ?? null, p_new_qty: args.newQty, p_item_status: args.itemStatus,
     p_chosen_date: args.chosenDate ?? null, p_claim_only_pending: args.claimOnlyPending ?? false,
-    p_touch_pool: true,
+    p_touch_pool: true, p_order_ids: pick.order,
   })
   if (error) throw new Error(error.message)
   return (data ?? { outcome: 'NOT_FOUND' }) as PoolApplyOutcome
@@ -7635,8 +7689,12 @@ export async function manualCompleteItem(req: Request, res: Response) {
       const chosenDate = gdoMode === 'QTY_DATE' && production_date ? String(production_date).slice(0, 10) : null
       const r = await applyPoolAtomic({
         itemId, materialCode: specialMatCode, warehouseId: gdo.warehouse_id as string,
-        mode: gdoMode, newQty: ctn, itemStatus: newItemStatus, chosenDate,
+        mode: gdoMode, newQty: ctn, itemStatus: newItemStatus, chosenDate, enforceRotation: mcAdding,
       })
+      if (r.outcome === 'ROTATION' && r.rotation) {
+        const rt = r.rotation
+        return fail(res, 422, 'ROTATION_REQUIRED', `Kho bắt buộc lấy hàng theo ${ROTATION_LABEL[rt.principle]}: còn NSX ${rt.best_date ?? '?'} phải lấy trước NSX ${rt.chosen_date} — chọn NSX đó`)
+      }
       if (r.outcome === 'INSUFFICIENT') {
         const mu = (item.material ?? null) as MatUnitsQ | null
         const oldCartons = Number(item.cartons_scanned) || 0

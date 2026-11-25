@@ -1,5 +1,5 @@
 // FILE SINH TỰ ĐỘNG — `node scripts/gen-db-types.mjs` (từ information_schema STAGING). KHÔNG sửa tay.
-// Sinh lúc 2026-11-25T05:28:20.694Z · 127 bảng/view · 280 hàm · 0 enum
+// Sinh lúc 2026-11-25T05:36:43.653Z · 127 bảng/view · 281 hàm · 0 enum
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[]
 
 export type Database = {
@@ -7456,6 +7456,10 @@ export type Database = {
         Args: { p_ids: unknown | null; p_status: string | null; p_wh_ids: unknown | null; p_location_ids: unknown | null; p_material_ids: unknown | null; p_categories: unknown | null; p_qa_ids: unknown | null; p_search: string | null; p_search_mat_ids: unknown | null; p_search_loc_ids: unknown | null; p_manufacturer: string | null; p_cycles: unknown | null; p_machines: unknown | null; p_nmsx: unknown | null; p_ncc_ids: unknown | null; p_import_from: string | null; p_import_to: string | null }
         Returns: Json
       }
+      inventory_entry_status: {
+        Args: { p_cur: string | null; p_remaining: number | null; p_imported: number | null; p_reserved: number | null }
+        Returns: string
+      }
       inventory_expiry_calc: {
         Args: { p_expiry: string | null; p_prod: string | null; p_entry_shelf: number | null; p_mat_shelf: number | null; p_overrides: Json | null; p_ncc: string | null }
         Returns: string
@@ -7837,7 +7841,7 @@ export type Database = {
         Returns: Json
       }
       outbound_pool_apply: {
-        Args: { p_item_id: string | null; p_material_code: string | null; p_warehouse_id: string | null; p_mode: string | null; p_new_qty: number | null; p_item_status: string | null; p_chosen_date?: string | null; p_claim_only_pending?: boolean | null; p_touch_pool?: boolean | null }
+        Args: { p_item_id: string | null; p_material_code: string | null; p_warehouse_id: string | null; p_mode: string | null; p_new_qty: number | null; p_item_status: string | null; p_chosen_date?: string | null; p_claim_only_pending?: boolean | null; p_touch_pool?: boolean | null; p_order_ids?: unknown | null }
         Returns: Json
       }
       outbound_shortage_stats: {

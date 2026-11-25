@@ -33,7 +33,7 @@ const TABLE_QUERY_MAP: Record<string, string[][]> = {
   Manufacturer:        [['manufacturers']],
   PalletLabelPrint:    [['pallet-prints'], ['pallet-prints-paged'], ['pallet-print-facets']],
   PalletOperation:     [['pallet-ops-log'], ['pallet-ops-paged']],
-  InventoryAdjustmentLog: [['adjustment-log']],   // prefix khớp ['adjustment-log', entryId]
+  InventoryAdjustmentLog: [['adjustment-log'], ['prod-stock-variance'], ['prod-shift-report']],   // 25/11: sổ chênh lệch tồn + cột Điều chỉnh của sổ ca   // prefix khớp ['adjustment-log', entryId]
   // 25/11 (F1d rà soát MES): cờ luồng chặt / mục tiêu dashboard nằm trên Warehouse ⇒ tình trạng mẻ, sơ đồ bồn, dashboard đổi theo
   Warehouse:           [['prod-settings'], ['warehouses'], ['dispatch-plan-geo'], ['prod-batches'], ['prod-batch'], ['prod-tanks'], ['prod-cycle'], ['prod-dash']],
   // Danh mục Khách hàng nuôi quy định date tự động ⇒ đổi khách là màn Quy định date phải đổi theo (11/09)
@@ -133,6 +133,9 @@ const TABLE_QUERY_MAP: Record<string, string[][]> = {
   production_process_form:  [['prod-process-forms'], ['prod-batch'], ['prod-batches'], ['prod-tanks']],   // ô bắt buộc của mẫu đổi ⇒ cổng mẻ đổi (F1c 25/11)
   production_shift_report:  [['prod-shift-reports'], ['prod-shift-report']],
   production_shift_count:   [['prod-shift-report']],
+  // 25/11 hàng chặn (NVL đã mất): chặn khi huỷ cấp · xoá / bỏ chặn — sổ ca (tồn sổ gồm chặn), kế hoạch điều chỉnh, sổ chênh lệch, chi tiết mẻ, sổ pallet
+  inventory_block:          [['prod-stock-variance'], ['prod-shift-report'], ['prod-shift-adjust-plan'], ['prod-batch'], ['pallet-ledger']],
+  inventory_block_event:    [['prod-stock-variance'], ['prod-shift-report'], ['prod-shift-adjust-plan'], ['prod-batch'], ['pallet-ledger']],
   production_recipe:        [['prod-recipes'], ['prod-recipe']],
   production_recipe_line:   [['prod-recipe']],
   tank_movement:            [['prod-tank-moves'], ['prod-batch'], ['prod-genealogy'], ['packing-run'], ['prod-cycles'], ['prod-cycle'], ['prod-dash'], ['prod-dash-detail']],

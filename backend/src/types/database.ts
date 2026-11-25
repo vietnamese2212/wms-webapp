@@ -1,5 +1,5 @@
 // FILE SINH TỰ ĐỘNG — `node scripts/gen-db-types.mjs` (từ information_schema STAGING). KHÔNG sửa tay.
-// Sinh lúc 2026-11-25T05:57:12.907Z · 127 bảng/view · 282 hàm · 0 enum
+// Sinh lúc 2026-11-25T07:11:58.279Z · 129 bảng/view · 290 hàm · 0 enum
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[]
 
 export type Database = {
@@ -5069,6 +5069,105 @@ export type Database = {
         }
         Relationships: []
       }
+      inventory_block: {
+        Row: {
+          id: string
+          entry_id: string
+          warehouse_id: string
+          material_id: string
+          pallet_code: string
+          qty: number
+          qty_written_off: number
+          qty_released: number
+          reason: string
+          source: string
+          batch_id: string | null
+          consumption_id: string | null
+          created_by: string | null
+          created_by_name: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id: string
+          entry_id: string
+          warehouse_id: string
+          material_id: string
+          pallet_code: string
+          qty: number
+          qty_written_off?: number
+          qty_released?: number
+          reason: string
+          source: string
+          batch_id?: string | null
+          consumption_id?: string | null
+          created_by?: string | null
+          created_by_name?: string | null
+          created_at?: string
+          updated_at: string
+        }
+        Update: {
+          id?: string
+          entry_id?: string
+          warehouse_id?: string
+          material_id?: string
+          pallet_code?: string
+          qty?: number
+          qty_written_off?: number
+          qty_released?: number
+          reason?: string
+          source?: string
+          batch_id?: string | null
+          consumption_id?: string | null
+          created_by?: string | null
+          created_by_name?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      inventory_block_event: {
+        Row: {
+          id: string
+          block_id: string
+          warehouse_id: string
+          kind: string
+          qty: number
+          note: string | null
+          shift_report_id: string | null
+          actor_id: string | null
+          actor_name: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id: string
+          block_id: string
+          warehouse_id: string
+          kind: string
+          qty: number
+          note?: string | null
+          shift_report_id?: string | null
+          actor_id?: string | null
+          actor_name?: string | null
+          created_at?: string
+          updated_at: string
+        }
+        Update: {
+          id?: string
+          block_id?: string
+          warehouse_id?: string
+          kind?: string
+          qty?: number
+          note?: string | null
+          shift_report_id?: string | null
+          actor_id?: string | null
+          actor_name?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       khvc_lines: {
         Row: {
           id: string
@@ -5535,6 +5634,10 @@ export type Database = {
           label_by_name: string | null
           extra_forms: string[]
           first_filled_at: string | null
+          cancel_reason: string | null
+          cancelled_at: string | null
+          cancelled_by: string | null
+          cancelled_by_name: string | null
         }
         Insert: {
           id: string
@@ -5575,6 +5678,10 @@ export type Database = {
           label_by_name?: string | null
           extra_forms?: string[]
           first_filled_at?: string | null
+          cancel_reason?: string | null
+          cancelled_at?: string | null
+          cancelled_by?: string | null
+          cancelled_by_name?: string | null
         }
         Update: {
           id?: string
@@ -5615,6 +5722,10 @@ export type Database = {
           label_by_name?: string | null
           extra_forms?: string[]
           first_filled_at?: string | null
+          cancel_reason?: string | null
+          cancelled_at?: string | null
+          cancelled_by?: string | null
+          cancelled_by_name?: string | null
         }
         Relationships: []
       }
@@ -5885,6 +5996,9 @@ export type Database = {
           created_at: string
           updated_at: string
           qty_returned: number | null
+          qty_blocked: number | null
+          qty_adjust: number | null
+          qty_written_off: number | null
         }
         Insert: {
           id: string
@@ -5900,6 +6014,9 @@ export type Database = {
           created_at?: string
           updated_at: string
           qty_returned?: number | null
+          qty_blocked?: number | null
+          qty_adjust?: number | null
+          qty_written_off?: number | null
         }
         Update: {
           id?: string
@@ -5915,6 +6032,9 @@ export type Database = {
           created_at?: string
           updated_at?: string
           qty_returned?: number | null
+          qty_blocked?: number | null
+          qty_adjust?: number | null
+          qty_written_off?: number | null
         }
         Relationships: []
       }
@@ -5934,6 +6054,9 @@ export type Database = {
           created_at: string
           updated_at: string
           cum_in: Json | null
+          stock_adjusted_at: string | null
+          stock_adjusted_by: string | null
+          stock_adjusted_by_name: string | null
         }
         Insert: {
           id: string
@@ -5950,6 +6073,9 @@ export type Database = {
           created_at?: string
           updated_at: string
           cum_in?: Json | null
+          stock_adjusted_at?: string | null
+          stock_adjusted_by?: string | null
+          stock_adjusted_by_name?: string | null
         }
         Update: {
           id?: string
@@ -5966,6 +6092,9 @@ export type Database = {
           created_at?: string
           updated_at?: string
           cum_in?: Json | null
+          stock_adjusted_at?: string | null
+          stock_adjusted_by?: string | null
+          stock_adjusted_by_name?: string | null
         }
         Relationships: []
       }
@@ -7546,6 +7675,10 @@ export type Database = {
         Args: { p_batch_id: string | null }
         Returns: Json
       }
+      mes_batch_cancel: {
+        Args: { p: Json | null }
+        Returns: Json
+      }
       mes_batch_cells: {
         Args: { p_ids: unknown | null }
         Returns: Record<string, unknown>[]
@@ -7606,6 +7739,14 @@ export type Database = {
         Args: { p: Json | null }
         Returns: Json
       }
+      mes_block_act: {
+        Args: { p: Json | null }
+        Returns: Json
+      }
+      mes_block_open: {
+        Args: { p_wh: string | null }
+        Returns: Record<string, unknown>[]
+      }
       mes_close_run: {
         Args: { p: Json | null }
         Returns: Json
@@ -7620,6 +7761,10 @@ export type Database = {
       }
       mes_consume_reverse: {
         Args: { p: Json | null }
+        Returns: Json
+      }
+      mes_consume_reverse_line: {
+        Args: { p_cid: string | null; p_reason: string | null; p_block: number | null; p_keep_closed: boolean | null; p_source: string | null; p_actor_id: string | null; p_actor_name: string | null }
         Returns: Json
       }
       mes_consume_scan: {
@@ -7726,6 +7871,14 @@ export type Database = {
         Args: { p: Json | null }
         Returns: Json
       }
+      mes_shift_adjust: {
+        Args: { p: Json | null }
+        Returns: Json
+      }
+      mes_shift_adjust_plan: {
+        Args: { p_report_id: string | null }
+        Returns: Json
+      }
       mes_shift_calc: {
         Args: { p_report_id: string | null }
         Returns: Record<string, unknown>[]
@@ -7744,6 +7897,10 @@ export type Database = {
       }
       mes_stock: {
         Args: { p_wh: string | null; p_material?: string | null; p_search?: string | null; p_limit?: number | null }
+        Returns: Json
+      }
+      mes_stock_variance: {
+        Args: { p: Json | null }
         Returns: Json
       }
       mes_tank_adjust: {
@@ -7785,6 +7942,10 @@ export type Database = {
       mes_vn_today: {
         Args: Record<PropertyKey, never>
         Returns: string
+      }
+      mes_wh_adjust: {
+        Args: { p_wh: string | null; p_from: string | null; p_to: string | null }
+        Returns: Record<string, unknown>[]
       }
       mes_wh_cum_in: {
         Args: { p_wh: string | null }
@@ -8051,7 +8212,7 @@ export type Database = {
         Returns: boolean
       }
       unaccent: {
-        Args: { arg1: unknown | null; arg2: string | null } | { arg1: string | null }
+        Args: { arg1: string | null } | { arg1: unknown | null; arg2: string | null }
         Returns: string
       }
       unaccent_init: {

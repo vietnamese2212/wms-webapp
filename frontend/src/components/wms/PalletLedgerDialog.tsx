@@ -33,6 +33,10 @@ const KIND: Record<string, { label: string; cls: string }> = {
   PICKED:    { label: 'Xuất hàng',             cls: 'bg-red-100 text-red-700' },
   CONSUMED:  { label: 'Rút vào mẻ chế biến',   cls: 'bg-orange-100 text-orange-700' },   // MES 14/11 (ref = mã lô mẻ)
   CONSUME_REVERSED: { label: 'Huỷ rút vào mẻ', cls: 'bg-slate-200 text-slate-600' },
+  // 25/11 hàng chặn: phần NVL hoàn về nhưng không tái dùng được — chặn đúng tem · bỏ chặn · xoá khỏi tồn (điều chỉnh)
+  BLOCKED:           { label: 'Chặn (không tái dùng)', cls: 'bg-amber-100 text-amber-800' },
+  BLOCK_RELEASED:    { label: 'Bỏ chặn',               cls: 'bg-slate-200 text-slate-600' },
+  BLOCK_WRITTEN_OFF: { label: 'Xoá hàng chặn',         cls: 'bg-red-100 text-red-700' },
   TASK_PLANNED:   { label: 'Máy giao việc',    cls: 'bg-slate-100 text-slate-500' },
   TASK_CLAIMED:   { label: 'Nhận việc',        cls: 'bg-sky-50 text-sky-700' },
   TASK_UNCLAIMED: { label: 'Trả việc',         cls: 'bg-slate-100 text-slate-500' },

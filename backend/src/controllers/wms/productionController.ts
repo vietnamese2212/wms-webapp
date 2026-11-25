@@ -8,6 +8,7 @@ import { randomUUID } from 'crypto'
 import { db } from '../../lib/supabase'
 import { z, zText, zDay } from '../../middlewares/validate'
 import { ok, fail, failAny } from '../../utils/response'
+import { hasPerm } from '../../middlewares/auth'
 import { resolveActorId, resolveActorName } from '../../utils/actor'
 import { normalizeQR } from '../../utils/qrParser'
 import { qtyIntegerError } from '../../utils/qtyUnits'
@@ -73,7 +74,7 @@ function mesFail(res: Response, e: unknown): Response {
   if (!m) return failAny(res, e)
   const [, code, text] = m
   const status = code === 'NOT_FOUND' ? 404 : ['QTY', 'REASON', 'UNIT', 'KIND', 'SAME_TANK', 'DUPLICATE', 'SELF', 'NAME', 'MISMATCH', 'RECIPE_MISMATCH', 'RECIPE_INACTIVE', 'CYCLE', 'BATCH_NO', 'TANK', 'NO_PLANT', 'FORM_INVALID',
-    'EXPIRED', 'EXPIRED_REJECTED', 'NOT_EXPIRED', 'DECISION', 'SUBJECT', 'KEY', 'TIME', 'TOO_LONG', 'DATE_RANGE', 'WAREHOUSE'].includes(code) ? 422 : 409
+    'EXPIRED', 'EXPIRED_REJECTED', 'NOT_EXPIRED', 'DECISION', 'SUBJECT', 'KEY', 'TIME', 'TOO_LONG', 'DATE_RANGE', 'WAREHOUSE', 'BLOCK_QTY', 'BAD_INPUT'].includes(code) ? 422 : 409
   return fail(res, status, `MES_${code}`, text.trim())
 }
 
@@ -203,11 +204,16 @@ export async function getBatch(req: Request, res: Response) {
       // NVL hết hạn: yêu cầu / quyết định QA của mẻ (17/11)
       db.from('mes_expiry_approval').select('id, entry_id, material_id, pallet_code, production_date, batch_lot, expiry_date, status, requested_by_name, requested_at, decided_by_name, decided_at, note, material:Material!mes_expiry_approval_material_id_fkey(material_code, short_name, base_unit, entry_unit, units_per_carton)')
         .eq('batch_id', b.id).order('created_at').limit(500),
+      // 25/11 hàng chặn: phần không tái dùng được của dòng cấp đã huỷ (hoàn về lô nhưng chặn — chờ điều chỉnh)
+      db.from('inventory_block').select('consumption_id, qty, qty_written_off, qty_released').eq('batch_id', b.id).limit(2000),
     ])
     // 25/11 B9: một phần đọc lỗi (quá tải 57014) ⇒ báo lỗi (failAny → 503), KHÔNG trả 200 với bàn NVL trống / cổng rỗng
     const partErr = parts.find(x => x.error)?.error
     if (partErr) throw partErr
-    const [{ data: cons }, { data: moves }, { data: lots }, { data: board }, { data: plogs }, { data: gate }, { data: scans }, { data: expiry }] = parts
+    const [{ data: cons }, { data: moves }, { data: lots }, { data: board }, { data: plogs }, { data: gate }, { data: scans }, { data: expiry }, { data: blocks }] = parts
+    const blockOf = new Map<string, { qty: number; open: number }>()
+    for (const k of (blocks ?? []) as { consumption_id: string | null; qty: number; qty_written_off: number; qty_released: number }[])
+      if (k.consumption_id) blockOf.set(k.consumption_id, { qty: Number(k.qty), open: Number(k.qty) - Number(k.qty_written_off) - Number(k.qty_released) })
     // tem pallet của mẻ đang hiệu lực (in lại không cần gọi thêm)
     const labels = b.label_at && b.label_count
       ? Array.from({ length: b.label_count }, (_, i) => ({ pallet_no: i + 1, qr: batchLabelQr(b.batch_code, i + 1, b.label_count as number, b.label_ver) })) : []
@@ -222,7 +228,7 @@ export async function getBatch(req: Request, res: Response) {
       return { ...c,
         material: material ? { material_code: material.material_code, short_name: material.short_name, base_unit: material.base_unit, entry_unit: material.entry_unit, units_per_carton: material.units_per_carton } : null,
         entry: entry ? { cartons_remaining: entry.cartons_remaining, expiry_date: entry.expiry_date, location: entry.location } : null,
-        pct_date: pct, expiry_date: dayOf(entry?.expiry_calc) }
+        pct_date: pct, expiry_date: dayOf(entry?.expiry_calc), block: blockOf.get(c.id) ?? null }
     })
     return ok(res, { ...b, consumption, movements: moves ?? [], lots: lots ?? [], board: board ?? [], process_logs: plogs ?? [],
       gate: gate ?? null, pour_scans: scans ?? [], labels, expiry_approvals: expiry ?? [] })
@@ -727,31 +733,37 @@ export async function importRecipes(req: Request, res: Response) {
   } catch (e) { return failAny(res, e) }
 }
 
-// POST /wms/production/batches/:id/cancel — CAS theo trạng thái: hai người cùng bấm ⇒ một người thắng.
 // (18/11) không còn "Đóng mẻ" / "Mở lại" — mẻ chỉ OPEN · CANCELLED; "xong" = đã nạp BTP vào bồn (tình trạng mes_batch_stage).
-async function setBatchStatus(req: Request, res: Response, from: string[], to: string, extra: Record<string, unknown> = {}) {
-  const b = await loadBatch(req.params.id)
-  if (!b) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy mẻ')
-  if (!(await inScope(req, b.warehouse_id))) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
-  if (!from.includes(b.status)) return fail(res, 409, 'BATCH_STATUS', `Mẻ đang ở trạng thái ${b.status}`)
-  const { data, error } = await db.from('production_batch').update({ status: to, updated_at: nowIso(), ...extra })
-    .eq('id', b.id).in('status', [...from]).select('*')   // CAS theo trạng thái (2–3 giá trị), không phải danh sách id
-  if (error) return fail(res, error)
-  if (!data?.length) return fail(res, 409, 'BATCH_STATUS', 'Mẻ vừa được người khác đổi trạng thái — tải lại')
-  return ok(res, data[0])
-}
+// 25/11: huỷ mẻ đi qua hàm DB mes_batch_cancel (khoá mẻ — hai người cùng bấm ⇒ một người thắng, người kia 409 MES_BATCH_STATUS).
+// POST /wms/production/batches/:id/cancel — HUỶ MẺ (25/11 "NVL đã mất", user chốt): mẻ đã cấp NVL (mẻ hỏng trước khi nạp bồn) huỷ được
+// trong MỘT giao dịch (hàm mes_batch_cancel): mỗi dòng cấp HOÀN ĐỦ về đúng lô, phần không tái dùng được (qty_block) thành HÀNG CHẶN của
+// lô đó, có lý do — chờ người có quyền Điều chỉnh tồn xoá (theo số đếm ca) hoặc bỏ chặn. lines = đúng tập dòng cấp còn hiệu lực lúc mở màn.
+export const zBatchCancel = z.object({
+  reason: zText(0, 500).optional(),
+  lines: z.array(z.object({ consumption_id: zText(1, 100), qty_block: z.number().min(0).max(10_000_000) })).max(2000).optional(),
+  qty_semantics: z.literal('base').optional(),
+})
 export async function cancelBatch(req: Request, res: Response) {
   try {
     const b = await loadBatch(req.params.id)
     if (!b) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy mẻ')
     if (!(await inScope(req, b.warehouse_id))) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
-    const [{ count: nc }, { count: nm }] = await Promise.all([
-      db.from('batch_consumption').select('id', { count: 'exact', head: true }).eq('batch_id', b.id).is('reversed_at', null),
-      db.from('tank_movement').select('id', { count: 'exact', head: true }).eq('batch_id', b.id),
-    ])
-    if ((nc ?? 0) > 0) return fail(res, 409, 'BATCH_HAS_CONSUMPTION', `Mẻ còn ${nc} dòng NVL đã rút — huỷ từng dòng rút (hoàn tồn) trước khi huỷ mẻ`)
-    if ((nm ?? 0) > 0) return fail(res, 409, 'BATCH_HAS_TANK', 'Mẻ đã nạp bồn — không huỷ được; phần trong bồn xả bỏ ở trang Bồn')
-    return await setBatchStatus(req, res, ['OPEN'], 'CANCELLED')
+    const body = req.body as z.infer<typeof zBatchCancel>
+    const lines = body.lines ?? []
+    if (!lines.length) {
+      const { count: nc, error: cErr } = await db.from('batch_consumption').select('id', { count: 'exact', head: true }).eq('batch_id', b.id).is('reversed_at', null)
+      if (cErr) return fail(res, cErr)
+      if ((nc ?? 0) > 0) return fail(res, 409, 'BATCH_HAS_CONSUMPTION', `Mẻ còn ${nc} dòng NVL đã cấp — mở "Huỷ mẻ" để chọn hoàn về tồn / chặn phần không tái dùng của từng dòng`)
+    }
+    // huỷ mẻ đã cấp = huỷ cấp từng dòng ⇒ cần thêm quyền Huỷ cấp (như nút huỷ từng dòng)
+    if (lines.length && !hasPerm(req, 'production', 'reverse'))
+      return fail(res, 403, 'FORBIDDEN', 'Mẻ đã cấp nguyên liệu — huỷ mẻ cần thêm quyền "Huỷ dòng cấp" (hoàn / chặn từng dòng)')
+    const { data, error } = await db.rpc('mes_batch_cancel', { p: {
+      batch_id: b.id, reason: body.reason?.trim() ?? '',
+      lines: lines.map(l => ({ consumption_id: l.consumption_id, qty_block: round3(l.qty_block) })), ...actor(req),
+    } })
+    if (error) return mesFail(res, error)
+    return ok(res, data)
   } catch (e) { return failAny(res, e) }
 }
 
@@ -1068,13 +1080,16 @@ export const expiryDecide = (req: Request, res: Response) =>
   expiryCall(req, res, 'mes_expiry_decide', { decision: (req.body as z.infer<typeof zExpiryDecide>).decision })
 
 // POST /wms/production/consumption/:id/reverse — huỷ dòng rút ghi nhầm (hoàn tồn, giữ vết)
-export const zReverse = z.object({ reason: zText(1, 500) })
+// qty_block (25/11): phần KHÔNG tái dùng được — hoàn về đúng lô nhưng thành hàng chặn (không cấp / xuất được), chờ điều chỉnh. Đơn vị gốc.
+export const zReverse = z.object({ reason: zText(1, 500), qty_block: z.number().min(0).max(10_000_000).optional(), qty_semantics: z.literal('base').optional() })
 export async function reverseConsumption(req: Request, res: Response) {
   try {
     const { data: c } = await db.from('batch_consumption').select('id, batch:production_batch!batch_consumption_batch_id_fkey(warehouse_id)').eq('id', req.params.id).maybeSingle()
     if (!c) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy dòng rút')
     if (!(await inScope(req, (c.batch as unknown as { warehouse_id: string } | null)?.warehouse_id))) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
-    const { data, error } = await db.rpc('mes_consume_reverse', { p: { consumption_id: c.id, reason: (req.body as { reason: string }).reason, ...actor(req) } })
+    const body = req.body as z.infer<typeof zReverse>
+    const { data, error } = await db.rpc('mes_consume_reverse', { p: { consumption_id: c.id, reason: body.reason,
+      ...(body.qty_block ? { qty_block: round3(body.qty_block) } : {}), ...actor(req) } })
     if (error) return mesFail(res, error)
     return ok(res, data)
   } catch (e) { return failAny(res, e) }
@@ -1600,6 +1615,79 @@ export async function saveShiftReport(req: Request, res: Response) {
     return ok(res, data)
   } catch (e) { return failAny(res, e) }
 }
+
+// ── HÀNG CHẶN · ĐIỀU CHỈNH TỒN THEO SỐ ĐẾM · SỔ CHÊNH LỆCH (25/11 "NVL đã mất" — user chốt; migration 20261125h) ─────────────────
+// "Huỷ lô nào thì tồn lô đó hồi về, block đúng lô. Điều chỉnh thì làm đúng lô block." — xoá / bỏ chặn: quyền Điều chỉnh tồn (inventory.adjust).
+// GET /wms/production/shift-reports/:id/adjust-plan — xem trước: mã đếm thiếu ⇒ lô chặn sẽ xoá (cũ trước, tối đa bằng phần thiếu)
+export async function shiftAdjustPlan(req: Request, res: Response) {
+  try {
+    const wh = await shiftWh(req.params.id)
+    if (!wh) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy báo cáo ca')
+    if (!(await inScope(req, wh))) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
+    const { data, error } = await db.rpc('mes_shift_adjust_plan', { p_report_id: req.params.id })
+    if (error) return mesFail(res, error)
+    return ok(res, data)
+  } catch (e) { return failAny(res, e) }
+}
+// POST /wms/production/shift-reports/:id/adjust — xoá các lô chặn theo kế hoạch (chỉ ca đã chốt mới nhất, một lần)
+export const zShiftAdjust = z.object({ material_ids: z.array(zText(1, 64)).min(1).max(500).optional() })
+export async function shiftAdjust(req: Request, res: Response) {
+  try {
+    const wh = await shiftWh(req.params.id)
+    if (!wh) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy báo cáo ca')
+    if (!(await inScope(req, wh))) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
+    const body = req.body as z.infer<typeof zShiftAdjust>
+    const { data, error } = await db.rpc('mes_shift_adjust', { p: { report_id: req.params.id, ...(body.material_ids ? { material_ids: body.material_ids } : {}), ...actor(req) } })
+    if (error) return mesFail(res, error)
+    return ok(res, data)
+  } catch (e) { return failAny(res, e) }
+}
+// POST /wms/production/blocks/:id/write-off | release — xoá khỏi tồn sổ (điều chỉnh) / bỏ chặn (trả về dùng được) đúng lô chặn
+export const zBlockAct = z.object({ qty: z.number().positive().max(10_000_000).optional(), note: zText(0, 500).optional(), qty_semantics: z.literal('base').optional() })
+async function blockAct(req: Request, res: Response, kind: 'WRITE_OFF' | 'RELEASE') {
+  try {
+    const { data: k, error: kErr } = await db.from('inventory_block').select('id, warehouse_id').eq('id', req.params.id).maybeSingle()
+    if (kErr) return fail(res, kErr)
+    if (!k) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy dòng hàng chặn')
+    if (!(await inScope(req, k.warehouse_id))) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
+    const body = req.body as z.infer<typeof zBlockAct>
+    const { data, error } = await db.rpc('mes_block_act', { p: { block_id: k.id, kind, ...(body.qty != null ? { qty: round3(body.qty) } : {}),
+      note: body.note?.trim() || null, ...actor(req) } })
+    if (error) return mesFail(res, error)
+    return ok(res, data)
+  } catch (e) { return failAny(res, e) }
+}
+export const writeOffBlock = (req: Request, res: Response) => blockAct(req, res, 'WRITE_OFF')
+export const releaseBlock = (req: Request, res: Response) => blockAct(req, res, 'RELEASE')
+// GET /wms/production/stock-variance?warehouse_id=&date_from=&date_to=&part=summary|events|blocks — sổ chênh lệch tồn để kiểm kê đối chiếu SAP
+// (user 25/11: "phần mềm chạy riêng, kiểm kê thực tế đối chiếu SAP ⇒ cần show phần chênh lệch là gì"): mỗi mã — đang chặn chưa điều chỉnh ·
+// xoá hàng chặn · điều chỉnh khác (tay / kiểm kê / nạp Excel) trong kỳ; từng tác động; hàng đang chặn. Chỉ kho chế biến (user chốt).
+const zVarBase = { warehouse_id: zText(1, 64), date_from: zDay, date_to: zDay, part: z.enum(['summary', 'events', 'blocks']).optional(),
+  material_id: zText(1, 64).optional(), page: z.coerce.number().int().min(1).max(100000).optional() }
+export const zVarianceQuery = z.object({ ...zVarBase, page_size: z.coerce.number().int().min(1).max(1000).optional() })
+export const zVarianceExportQuery = z.object({ ...zVarBase, page_size: z.coerce.number().int().min(1).max(2000).optional() })
+const VAR_MAX_DAYS = 400
+async function varianceCall(req: Request, res: Response) {
+  try {
+    const q = req.query as unknown as z.infer<typeof zVarianceExportQuery>
+    if (!(await inScope(req, q.warehouse_id))) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
+    const whErr = await productionWhError(q.warehouse_id)
+    if (whErr) return fail(res, 422, 'NOT_PRODUCTION_WAREHOUSE', whErr)
+    const d0 = Date.parse(`${q.date_from}T00:00:00Z`), d1 = Date.parse(`${q.date_to}T00:00:00Z`)
+    const days = (d1 - d0) / 86_400_000
+    if (!Number.isFinite(days) || days < 0 || days > VAR_MAX_DAYS)
+      return fail(res, 400, 'DATE_RANGE', `Khoảng ngày không hợp lệ — Đến ngày phải sau Từ ngày, tối đa ${VAR_MAX_DAYS + 1} ngày`)
+    const size = q.page_size ?? 200
+    const { data, error } = await db.rpc('mes_stock_variance', { p: {
+      warehouse_id: q.warehouse_id, date_from: q.date_from, date_to: q.date_to, part: q.part ?? 'summary', material_id: q.material_id ?? null,
+      limit: size, offset: ((q.page ?? 1) - 1) * size,
+    } })
+    if (error) return mesFail(res, error)
+    return ok(res, data)
+  } catch (e) { return failAny(res, e) }
+}
+export const stockVariance = varianceCall
+export const stockVarianceExport = varianceCall
 
 // ── BÁO CÁO NVL THEO CHU KỲ (18/11 f — user: "theo chu kỳ, chu kỳ là lớn hơn ca, mẻ" · "cuối chu kỳ, nhưng tách ra ca, mẻ — từ đó ra được
 // các chỉ số của nhân sự, số liệu"). Chu kỳ = (kho chế biến, production_batch.cycle); ca của mẻ = ca khai lúc mở mẻ. Mọi con số tính ở DB

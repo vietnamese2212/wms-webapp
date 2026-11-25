@@ -14,6 +14,7 @@ import { PinnedTabsBar, PinnedTab } from '@/components/shared/PinnedTabs'
 import { useActiveBatchesStore, batchTabDot } from '@/stores/activeBatchesStore'
 import { usePctBands } from '@/api/hooks'
 import type { ConsumptionRow } from '@/api/productionHooks'
+import { ReverseLineSheet, CancelBatchSheet } from '@/components/wms/production/BlockSheets'
 import { TableBody, TableCell, TableRow } from '@/components/ui/table'
 import { ResizableTable, type RtColDef } from '@/components/shared/ResizableTable'
 import { TableEmptyRow } from '@/components/shared/TableEmptyRow'
@@ -36,7 +37,7 @@ import { useCanSeePath } from '@/hooks/useCanSeePath'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { rowText } from '@/lib/rowStatus'
 import {
-  useProductionBatch, useBatchStatus, useApproveBatch, useLogStart, useReverseConsumption, TANK_MOVE_VI,
+  useProductionBatch, useCancelBatch, useApproveBatch, useLogStart, TANK_MOVE_VI,
   useProcessForms, useSetBatchForms, useExpiryDecide, type BatchDetail, type ExpiryApproval,
 } from '@/api/productionHooks'
 import { StageBadge, BATCH_STAGE, BATCH_STEP_LABEL, stageOf, stageText, stageTabMark } from '@/components/wms/production/BatchStage'
@@ -89,11 +90,10 @@ function ProductionBatchDetail() {
   const perms = useAuthStore(s => s.user)?.module_permissions as ModulePermissions | null ?? null
   const q = useProductionBatch(id)
   const b = q.data
-  const setStatus = useBatchStatus()
+  const cancelMut = useCancelBatch()
   const approve = useApproveBatch()
   const logStart = useLogStart()
   const setForms = useSetBatchForms()
-  const reverse = useReverseConsumption()
   const [ask, confirmNode] = useConfirmDialog()
   const canSeeTanks = useCanSeePath()('/wms/production/tanks')
   // mở mẻ xong KHÔNG tự bật form cấp NVL (user 18/11: "mở mẻ xong đừng tự động vào scan") — bước kế theo luồng là duyệt phiếu
@@ -126,6 +126,9 @@ function ProductionBatchDetail() {
     if (q.isError && (q.error as AxiosError | null)?.response?.status === 404 && id) unpinBatch(id)
   }, [q.isError]) // eslint-disable-line react-hooks/exhaustive-deps
   const [err, setErr] = useState('')
+  // 25/11 (NVL đã mất): huỷ dòng cấp có ô "Chặn" (phần không tái dùng) · huỷ mẻ đã cấp NVL = hoàn / chặn từng dòng trong một lần
+  const [revLine, setRevLine] = useState<ConsumptionRow | null>(null)
+  const [cancelOpen, setCancelOpen] = useState(false)
 
   if (q.isLoading) return <div className="p-6 text-sm text-slate-500">Đang tải mẻ…</div>
   if (q.isError || !b) return (
@@ -197,18 +200,14 @@ function ProductionBatchDetail() {
     setLogForm(form)
   }
   async function doCancel() {
-    const ok = await ask({ title: `Huỷ mẻ ${b!.batch_code}?`, danger: true, body: 'Chỉ huỷ được mẻ chưa rút nguyên liệu và chưa nạp bồn.' })
+    // mẻ đã cấp NVL (mẻ hỏng trước khi nạp bồn) ⇒ form hoàn / chặn từng dòng (25/11)
+    if (live.length) { setCancelOpen(true); return }
+    const ok = await ask({ title: `Huỷ mẻ ${b!.batch_code}?`, danger: true, body: 'Mẻ chưa cấp nguyên liệu, chưa nạp bồn.' })
     if (ok === null) return
-    await run(() => setStatus.mutateAsync({ id: b!.id, action: 'cancel' }))
-  }
-  async function doReverse(cid: string, label: string) {
-    const reason = await ask({ title: `Huỷ dòng rút ${label}?`, body: 'Lượng đã rút được hoàn lại đúng tem / dòng tồn đó. Dòng huỷ vẫn giữ trong sổ để truy vết.', danger: true,
-      input: { label: 'Lý do huỷ', required: true, placeholder: 'Quét nhầm tem · nhập sai số…' } })
-    if (!reason) return
-    await run(() => reverse.mutateAsync({ id: cid, reason }))
+    await run(() => cancelMut.mutateAsync({ id: b!.id }))
   }
 
-  const busy = setStatus.isPending || approve.isPending
+  const busy = cancelMut.isPending || approve.isPending
   const P = (a: string) => can(perms, 'production', a)
   // CỔNG CỦA MẺ (hàm DB mes_batch_gate — cũng là hàm chặn nạp bồn): kho bật "chặn theo từng bước" ⇒ strict
   const g = b.gate
@@ -294,7 +293,10 @@ function ProductionBatchDetail() {
     actions.push({ key: 'no-qa', icon: RotateCcw, label: 'Bỏ duyệt QA', tip: 'QA bỏ duyệt để sửa phiếu của mẻ — chưa duyệt lại thì chưa làm tiếp được', admin: true, onClick: () => void doApprove('qa', false), disabled: busy })
   if (can(perms, 'production', 'open_batch')) {
     actions.push({ key: 'clone', icon: Copy, label: 'Mở mẻ giống', tip: 'Mở mẻ mới cùng kho · mã bán thành phẩm · chu kỳ · bồn · máy · ca · kế hoạch (số mẻ kế tiếp)', admin: true, onClick: () => setCloneOpen(true) })
-    if (b.status !== 'CANCELLED') actions.push({ key: 'cancel', icon: XCircle, label: 'Huỷ mẻ', tip: 'Huỷ mẻ mở nhầm (chưa rút, chưa nạp)', admin: true, danger: true, onClick: () => void doCancel(), disabled: busy })
+    // mẻ đã cấp NVL: huỷ mẻ = huỷ từng dòng cấp (hoàn / chặn) ⇒ cần thêm quyền Huỷ dòng cấp (BE cũng chặn)
+    const needRev = live.length > 0 && !P('reverse')
+    if (b.status !== 'CANCELLED') actions.push({ key: 'cancel', icon: XCircle, label: 'Huỷ mẻ', admin: true, danger: true, onClick: () => void doCancel(), disabled: busy || needRev,
+      tip: needRev ? 'Mẻ đã cấp nguyên liệu — huỷ mẻ cần thêm quyền "Huỷ dòng cấp"' : live.length ? 'Huỷ mẻ chưa nạp bồn: hoàn từng dòng NVL về đúng tem / lô, phần không tái dùng được thì chặn (kèm lý do)' : 'Huỷ mẻ mở nhầm (chưa cấp, chưa nạp)' })
   }
   // XEM TEM ĐÃ CẤP của CẢ MẺ — nút ở thanh "Nguyên liệu của mẻ", không nằm trong ⋮ (user 18/11: "cho nút mở rộng này ra khỏi ba chấm")
   const anyOpen = [...openMats].some(m => consByMat.has(m))
@@ -337,6 +339,9 @@ function ProductionBatchDetail() {
             {b.qa_ok_at && <span className="hidden sm:inline"><span className="text-slate-400 text-[10px]">QA duyệt:</span> {b.qa_ok_by_name ?? '—'} · {formatDateTime(b.qa_ok_at)}</span>}
             {b.qa_at && <span className="hidden sm:inline"><span className="text-slate-400 text-[10px]">QA bồn:</span> {b.qa_by_name ?? '—'} · {formatDateTime(b.qa_at)}{b.qa_note ? ` · ${b.qa_note}` : ''}</span>}
             {b.note && <span className="hidden sm:inline text-slate-500">{b.note}</span>}
+            {b.status === 'CANCELLED' && (b.cancel_reason || b.cancelled_by_name) && (
+              <span className="text-red-700" data-testid="cancel-reason"><span className="text-slate-400 text-[10px]">Huỷ:</span> {b.cancel_reason ?? ''}{b.cancelled_by_name ? ` · ${b.cancelled_by_name}` : ''}{b.cancelled_at ? ` · ${formatDateTime(b.cancelled_at)}` : ''}</span>
+            )}
           </div>
           {strict && b.status !== 'CANCELLED' && <FlowStrip steps={steps} />}
           {strict && open && !hasFill && !g?.can_consume && <p className="text-[11px] text-amber-700">Phiếu chưa đủ hai bước duyệt (trưởng ca → QA) — chưa cấp nguyên liệu được.</p>}
@@ -597,14 +602,15 @@ function ProductionBatchDetail() {
                     <TableCell className={TD}>{gone ? <StatusBadge tone="slate">Đã huỷ</StatusBadge> : <StatusBadge tone={c.source === 'SCAN' ? 'sky' : 'purple'}>{c.source === 'SCAN' ? 'Quét tem' : 'Theo lô'}</StatusBadge>}
                       {/* lấy khác thứ tự luân chuyển (17/11) — như cột "Thứ tự lấy" của Lịch sử quét xuất */}
                       {!gone && c.expiry_approval_id && <span className="ml-1"><StatusBadge tone="red" title="Nguyên liệu quá HSD — QA đã duyệt cho dùng vào mẻ này (xem mục NVL hết hạn)">Hết hạn · QA duyệt</StatusBadge></span>}
+                      {gone && c.block && <span className="ml-1"><StatusBadge tone="amber" title={c.block.open > 0 ? `Phần không tái dùng được — vẫn trong tồn sổ, chặn không cấp / xuất được; còn ${qtyCode(c.block.open, c.material)} chờ điều chỉnh` : 'Phần chặn đã xử lý (xoá khỏi tồn / bỏ chặn)'}>Chặn {qtyCode(c.block.qty, c.material)}</StatusBadge></span>}
                       {!gone && c.rotation_violation && <span className="ml-1"><StatusBadge tone="amber" title={`Còn ${c.rotation_principle ?? ''} ${c.rotation_best_date ? formatDate(c.rotation_best_date) : ''} phải dùng trước${c.rotation_override_reason ? ` · lý do: ${rotationReasonLabel(c.rotation_override_reason)}` : ''}`}>Sai thứ tự</StatusBadge></span>}
                     </TableCell>
                     <TableCell className={`${TD} tabular-nums`}>{formatDateTime(c.created_at)}</TableCell>
                     <TableCell className={`${TD} truncate`}>{c.created_by_name ?? '—'}</TableCell>
                     <TableCell className={`${TD} sticky right-0 z-10 bg-white text-right`}>
                       {canReverse && !gone && (
-                        <button type="button" onClick={e => { e.stopPropagation(); void doReverse(c.id, `${c.pallet_code} (${qtyCode(Number(c.qty), c.material)})`) }}
-                          className="touch-target px-1.5 py-1 rounded text-slate-500 hover:text-red-600 hover:bg-red-50" title="Huỷ dòng rút ghi nhầm (hoàn tồn)">
+                        <button type="button" onClick={e => { e.stopPropagation(); setRevLine(c) }} aria-label={`Huỷ dòng cấp ${c.pallet_code}`}
+                          className="touch-target px-1.5 py-1 rounded text-slate-500 hover:text-red-600 hover:bg-red-50" title="Huỷ dòng cấp: hoàn về đúng tem / lô (phần không tái dùng được thì chặn)">
                           <Undo2 className="h-3.5 w-3.5" />
                         </button>
                       )}
@@ -680,6 +686,8 @@ function ProductionBatchDetail() {
       <BatchFormSheet open={editOpen} onClose={() => setEditOpen(false)} batch={b} />
       <BatchFormSheet open={cloneOpen} onClose={() => setCloneOpen(false)} template={b}
         onSaved={nid => navigate(`/wms/production/${nid}`)} />
+      <ReverseLineSheet line={revLine} onClose={() => setRevLine(null)} />
+      <CancelBatchSheet open={cancelOpen} onClose={() => setCancelOpen(false)} batchId={b.id} batchCode={b.batch_code} lines={live} />
       {confirmNode}
     </div>
   )

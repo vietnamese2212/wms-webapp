@@ -86,6 +86,8 @@ export interface ConsumptionRow {
   expiry_approval_id?: string | null
   /** 18/11 — %Date LÚC CẤP (chưa làm tròn, cùng hàm "Lấy ở đâu") + HSD hiệu lực của tem / lô (server tính ở GET mẻ) */
   pct_date?: number | null; expiry_date?: string | null
+  /** 25/11 — dòng đã huỷ mà phần NVL không tái dùng được: hàng CHẶN của đúng lô (qty lúc chặn · open = còn chặn, chưa điều chỉnh) */
+  block?: { qty: number; open: number } | null
   material: ({ material_code: string; short_name: string | null } & MatUnits) | null
   entry: { cartons_remaining: number | null; expiry_date: string | null; location: { location_code: string } | null } | null
 }
@@ -143,6 +145,8 @@ export interface ExpiryApproval {
 export interface MesExpiry { expired: boolean; expiry_date: string | null; approval: ExpiryApproval | null }
 export interface PourScan { pallet_no: number; scanned_by_name: string | null; created_at: string }
 export interface BatchDetail {
+  /** 25/11 — huỷ mẻ: lý do · lúc · người (mẻ hỏng đã cấp NVL) */
+  cancel_reason?: string | null; cancelled_at?: string | null; cancelled_by_name?: string | null
   cycle: string | null; board: BoardRow[]; process_logs: ProcessLog[]
   /** phiếu bổ sung của mẻ (mã mẫu phiếu) — 17/11 */
   extra_forms: string[]
@@ -317,7 +321,7 @@ function useProdMutation<TVars, TRes = unknown>(fn: (v: TVars) => Promise<TRes>)
   return useMutation({
     mutationFn: fn,
     onSettled: () => {
-      for (const k of [K.batches, K.batch, K.stock, K.tanks, K.moves, ['prod-recipes'], ['prod-recipe'], ['prod-shift-reports'], ['prod-shift-report'], ['prod-next-code'], ['prod-genealogy'], ['inventory-entries'], ['inventory-summary'], ['pallet-ledger'], ['packing-run'], ['packing-runs'], ['packing-run-board']])
+      for (const k of [K.batches, K.batch, K.stock, K.tanks, K.moves, ['prod-recipes'], ['prod-recipe'], ['prod-shift-reports'], ['prod-shift-report'], ['prod-shift-adjust-plan'], ['prod-stock-variance'], ['prod-next-code'], ['prod-genealogy'], ['inventory-entries'], ['inventory-summary'], ['pallet-ledger'], ['packing-run'], ['packing-runs'], ['packing-run-board']])
         void qc.invalidateQueries({ queryKey: k })
     },
   })
@@ -489,12 +493,17 @@ export function useSaveProcessForm() {
 export interface ShiftReportHead {
   id: string; warehouse_id: string; report_date: string; shift: string; from_at: string; to_at: string | null; status: 'OPEN' | 'CLOSED'
   note: string | null; opened_by_name: string | null; closed_by_name: string | null; created_at: string
+  /** 25/11 — ca đã chốt MỚI NHẤT của kho (chỉ ca này điều chỉnh tồn theo số đếm được) · đã điều chỉnh lúc / người */
+  latest_closed?: boolean; stock_adjusted_at?: string | null; stock_adjusted_by_name?: string | null
 }
 export interface ShiftRow extends MatUnits {
   material_id: string; material_code: string; material_name: string | null
   opening: number; opening_src: 'COUNT' | 'BOOK'; received: number; used: number; book: number; actual: number | null
   /** 25/11: lần cấp của ca TRƯỚC bị huỷ trong ca này (hàng về lại tồn) — sổ cân: đầu + nhập − dùng + hoàn = sổ */
   returned?: number
+  /** 25/11 (NVL đã mất): trong tồn sổ có phần ĐANG CHẶN (hoàn về lô nhưng không tái dùng được) · điều chỉnh tồn trong ca ·
+   *  đã xoá hàng chặn bởi "Điều chỉnh tồn theo số đếm" của báo cáo này. Sổ cân: đầu + nhập − dùng + hoàn + điều chỉnh = sổ */
+  blocked?: number; adjusted?: number; written_off?: number
   by_batch: Record<string, number>
 }
 export interface ShiftReport {
@@ -646,7 +655,10 @@ export function useShiftReport(id: string | undefined) {
 export const useOpenShift = () => useProdMutation((b: { warehouse_id: string; report_date: string; shift: string }) => post<{ id: string }>('/wms/production/shift-reports', b))
 export const useSaveShift = () => useProdMutation(({ id, ...b }: { id: string; items: { material_id: string; qty_actual: number | null }[]; note?: string | null; close?: boolean }) =>
   (async () => (await apiClient.put(`/wms/production/shift-reports/${id}`, b)).data.data as ShiftReport)())
-export const useBatchStatus = () => useProdMutation(({ id, action }: { id: string; action: 'cancel' }) => post(`/wms/production/batches/${id}/${action}`))
+/** HUỶ MẺ (25/11): mẻ đã cấp NVL gửi ĐỦ các dòng cấp còn hiệu lực + phần chặn (không tái dùng) của từng dòng; mẻ chưa cấp gửi rỗng */
+export const useCancelBatch = () => useProdMutation(({ id, reason, lines }: { id: string; reason?: string; lines?: { consumption_id: string; qty_block: number }[] }) =>
+  post<{ reversed: number; kept: number; blocked: number }>(`/wms/production/batches/${id}/cancel`,
+    { ...(reason ? { reason } : {}), ...(lines?.length ? { lines, qty_semantics: 'base' } : {}) }))
 export const useConsumeScan = () => useProdMutation(({ batchId, entry_id, qty, rotation_override_reason }: { batchId: string; entry_id: string; qty: number; rotation_override_reason?: string }) =>
   post<{ rows: { pallet_code: string; qty: number; remaining: number; rotation_violation?: boolean | null }[] }>(`/wms/production/batches/${batchId}/consume-scan`,
     { entry_id, qty, ...(rotation_override_reason ? { rotation_override_reason } : {}) }))
@@ -661,7 +673,65 @@ export const useExpiryRequest = () => useProdMutation(({ batchId, subject, note 
 /** QA duyệt / từ chối (kèm căn cứ) — quyền production.approve_expired */
 export const useExpiryDecide = () => useProdMutation(({ batchId, subject, decision, note }: { batchId: string; subject: ExpirySubject; decision: 'APPROVED' | 'REJECTED'; note: string }) =>
   post<ExpiryApproval>(`/wms/production/batches/${batchId}/expiry-approvals/decide`, { ...subject, decision, note }))
-export const useReverseConsumption = () => useProdMutation(({ id, reason }: { id: string; reason: string }) => post(`/wms/production/consumption/${id}/reverse`, { reason }))
+/** huỷ một dòng cấp — qty_block (25/11) = phần KHÔNG tái dùng được: hoàn về đúng lô nhưng thành hàng chặn, chờ điều chỉnh */
+export const useReverseConsumption = () => useProdMutation(({ id, reason, qty_block }: { id: string; reason: string; qty_block?: number }) =>
+  post(`/wms/production/consumption/${id}/reverse`, { reason, ...(qty_block ? { qty_block, qty_semantics: 'base' } : {}) }))
+
+// ── HÀNG CHẶN · ĐIỀU CHỈNH TỒN THEO SỐ ĐẾM · SỔ CHÊNH LỆCH (25/11 — NVL đã mất, user chốt) ─────────────────────────────────
+export interface AdjustPlanBlock { block_id: string; pallet_code: string; open: number; take: number; reason: string; created_at: string; created_by_name: string | null }
+export interface AdjustPlanMat extends MatUnits {
+  material_id: string; material_code: string; material_name: string | null
+  book: number; actual: number; diff: number; write_off: number; unexplained: number; blocks: AdjustPlanBlock[]
+}
+export interface AdjustPlan { ok: boolean; reason: string | null; materials: AdjustPlanMat[] }
+export function useShiftAdjustPlan(id: string | undefined, enabled: boolean) {
+  return useQuery({
+    queryKey: ['prod-shift-adjust-plan', id], enabled: !!id && enabled, staleTime: 0,
+    queryFn: async () => (await apiClient.get(`/wms/production/shift-reports/${id}/adjust-plan`)).data.data as AdjustPlan,
+  })
+}
+export const useShiftAdjust = () => useProdMutation(({ id, material_ids }: { id: string; material_ids: string[] }) =>
+  post<{ blocks: number }>(`/wms/production/shift-reports/${id}/adjust`, { material_ids }))
+export const useBlockAct = () => useProdMutation(({ id, kind, qty, note }: { id: string; kind: 'WRITE_OFF' | 'RELEASE'; qty?: number; note?: string }) =>
+  post(`/wms/production/blocks/${id}/${kind === 'WRITE_OFF' ? 'write-off' : 'release'}`, { ...(qty != null ? { qty, qty_semantics: 'base' } : {}), ...(note ? { note } : {}) }))
+export interface VarianceRow extends MatUnits {
+  material_id: string; material_code: string; material_name: string | null
+  /** tồn sổ hiện tại (dùng được + đang chặn) · đang chặn chưa điều chỉnh (hiện tại) */
+  book: number; blocked_open: number
+  /** trong kỳ: chặn mới · bỏ chặn · xoá hàng chặn · điều chỉnh khác (tay / kiểm kê / nạp Excel, có dấu) · số lần điều chỉnh khác */
+  blocked: number; released: number; written_off: number; adjusted: number; adjust_count: number
+  /** chênh lệch so sổ SAP trong kỳ = điều chỉnh khác − xoá hàng chặn */
+  variance: number
+}
+export type VarianceKind = 'BLOCK' | 'RELEASE' | 'WRITE_OFF' | 'ADJUST'
+export interface VarianceEvent extends MatUnits {
+  at: string; kind: VarianceKind; material_id: string; material_code: string; material_name: string | null
+  pallet_code: string; production_date: string | null; batch_lot: string | null
+  /** lượng của tác động · effect = phần làm ĐỔI TỒN SỔ (xoá hàng chặn −, điều chỉnh có dấu; chặn / bỏ chặn = 0) */
+  qty: number; effect: number; note: string | null; actor: string | null; ref: string | null
+}
+export interface BlockRow extends MatUnits {
+  id: string; entry_id: string; pallet_code: string; material_id: string; material_code: string; material_name: string | null
+  production_date: string | null; batch_lot: string | null; qty: number; open: number; written_off: number; released: number
+  reason: string; source: 'REVERSE' | 'BATCH_CANCEL'; batch_id: string | null; batch_code: string | null; created_at: string; created_by_name: string | null
+}
+export interface VarianceParams { warehouse_id: string; date_from: string; date_to: string; material_id?: string; page?: number; page_size?: number }
+export function useStockVariance<T>(part: 'summary' | 'events' | 'blocks', p: VarianceParams, enabled = true) {
+  return useQuery({
+    queryKey: ['prod-stock-variance', part, p], enabled: enabled && !!p.warehouse_id, staleTime: 15_000, placeholderData: keepPreviousData,
+    queryFn: async () => (await apiClient.get('/wms/production/stock-variance', { params: { ...p, part } })).data.data as { rows: T[]; total?: number },
+  })
+}
+/** file Excel: lật trang tới hết (quyền export) */
+export async function fetchVarianceEvents(p: VarianceParams): Promise<VarianceEvent[]> {
+  const out: VarianceEvent[] = []
+  for (let page = 1; page <= 200; page++) {
+    const d = (await apiClient.get('/wms/production/stock-variance/export', { params: { ...p, part: 'events', page, page_size: 2000 } })).data.data as { rows: VarianceEvent[]; total: number }
+    out.push(...d.rows)
+    if (!d.rows.length || out.length >= d.total) break
+  }
+  return out
+}
 
 export interface TankInput { warehouse_id: string; code: string; name?: string; capacity: number; unit: 'L' | 'KG'; note?: string }
 export const useCreateTank = () => useProdMutation((t: TankInput) => post<TankRow>('/wms/production/tanks', t))

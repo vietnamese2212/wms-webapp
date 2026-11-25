@@ -76,6 +76,8 @@ async function cleanup() {
   const batches = await restAll('production_batch', `select=id&warehouse_id=in.(${whs.join(',')})`)
   if (tanks.length) await restWrite('tank_movement', 'DELETE', `tank_id=in.(${tanks.map(t => t.id).join(',')})`)
   if (tanks.length) await restWrite('tank_lot', 'DELETE', `tank_id=in.(${tanks.map(t => t.id).join(',')})`)
+  await restWrite('inventory_block_event', 'DELETE', `warehouse_id=in.(${whs.join(',')})`)   // 25/11 hàng chặn — trước dòng cấp / tồn / báo cáo ca
+  await restWrite('inventory_block', 'DELETE', `warehouse_id=in.(${whs.join(',')})`)
   if (batches.length) await restWrite('batch_consumption', 'DELETE', `batch_id=in.(${batches.map(b => b.id).join(',')})`)
   if (batches.length) await restWrite('mes_expiry_approval', 'DELETE', `batch_id=in.(${batches.map(b => b.id).join(',')})`)
   if (batches.length) await restWrite('batch_pour_scan', 'DELETE', `batch_id=in.(${batches.map(b => b.id).join(',')})`)
@@ -1221,6 +1223,91 @@ try {
       `${JSON.stringify(t5run?.runs ?? null)} / ${JSON.stringify(t5none?.runs ?? null)}`)
   }
 
+  // ── [20] HÀNG CHẶN — "NVL đã mất" (25/11, user chốt: "huỷ lô nào thì tồn lô đó hồi về, block đúng lô; điều chỉnh làm đúng lô block" ·
+  //        kiểm kê đối chiếu SAP ⇒ sổ chênh lệch). Oracle: tự tính tồn tem / phần chặn / tồn sổ rồi so với app.
+  {
+    const T20 = (await api('/wms/production/tanks', 'POST', { warehouse_id: WC, code: 'QA63-T20', capacity: 1000, unit: 'L' })).j?.data
+    await restWrite('InventoryEntry', 'POST', null, [E('QA63_E20', 'QA63_P20', 30, WC, '2026-10-01', '2026-12-31')])   // NSX / HSD sớm nhất ⇒ đầu thứ tự luân chuyển
+    const mkB = async (cycle) => (await api('/wms/production/batches', 'POST', { warehouse_id: WC, material_id: M_BTP, prod_date: todayVN, shift: 'Ca 1', cycle, tank_id: T20?.id })).j?.data
+    const scan = async (bid, qty) => (await api(`/wms/production/batches/${bid}/consume-scan`, 'POST', { entry_id: 'QA63_E20', qty, qty_semantics: 'base' })).j?.data?.rows?.[0]
+    const rem20 = async () => num((await restAll('InventoryEntry', 'select=cartons_remaining&id=eq.QA63_E20'))[0]?.cartons_remaining)
+    const openBlk = async () => (await restAll('inventory_block', 'select=qty,qty_written_off,qty_released&pallet_code=eq.QA63_P20')).reduce((x, k) => x + num(k.qty) - num(k.qty_written_off) - num(k.qty_released), 0)
+    const B20 = await mkB('Q20')
+    const c1 = await scan(B20?.id, 10), c2 = await scan(B20?.id, 6)
+    const rvBad = await api(`/wms/production/consumption/${c1?.id}/reverse`, 'POST', { reason: 'QA63 chặn quá', qty_block: 11, qty_semantics: 'base' })
+    const rv1 = await api(`/wms/production/consumption/${c1?.id}/reverse`, 'POST', { reason: 'QA63 đổ vào mẻ hỏng', qty_block: 4, qty_semantics: 'base' })
+    const r1 = await rem20(), o1 = await openBlk()
+    check('20a. Huỷ cấp 10 chặn 4 ⇒ tem hoàn 6 dùng được (30 − 16 + 6 = 20), 4 chặn ĐÚNG tem; chặn > lượng cấp ⇒ 422 MES_BLOCK_QTY',
+      !!c1?.id && !!c2?.id && rvBad.s === 422 && rvBad.j?.error?.code === 'MES_BLOCK_QTY' && rv1.s === 200 && r1 === 20 && o1 === 4,
+      `scan=${!!c1?.id}/${!!c2?.id} bad=${rvBad.s} ${rvBad.j?.error?.code} rv=${rv1.s} tồn=${r1} chặn=${o1}`)
+    const cxNo = await api(`/wms/production/batches/${B20?.id}/cancel`, 'POST', {})
+    const cxStale = await api(`/wms/production/batches/${B20?.id}/cancel`, 'POST', { reason: 'QA63 mẻ hỏng', lines: [{ consumption_id: c1?.id, qty_block: 0 }], qty_semantics: 'base' })
+    const cxOk = await api(`/wms/production/batches/${B20?.id}/cancel`, 'POST', { reason: 'QA63 mẻ hỏng', lines: [{ consumption_id: c2?.id, qty_block: 6 }], qty_semantics: 'base' })
+    const b20 = (await api(`/wms/production/batches/${B20?.id}`)).j?.data
+    const r2 = await rem20(), o2 = await openBlk()
+    check('20b. Huỷ mẻ đã cấp: không gửi dòng ⇒ 409 BATCH_HAS_CONSUMPTION · sai tập dòng ⇒ 409 MES_LINES_CHANGED · đúng tập, chặn hết 6 ⇒ mẻ Huỷ có lý do, tồn tem giữ 20, chặn 10',
+      cxNo.s === 409 && cxNo.j?.error?.code === 'BATCH_HAS_CONSUMPTION' && cxStale.s === 409 && cxStale.j?.error?.code === 'MES_LINES_CHANGED'
+        && cxOk.s === 200 && b20?.status === 'CANCELLED' && b20?.cancel_reason === 'QA63 mẻ hỏng' && r2 === 20 && o2 === 10
+        && num((b20?.consumption ?? []).find(c => c.id === c2?.id)?.block?.qty) === 6,
+      `http=${cxNo.s}/${cxStale.s}/${cxOk.s} ${cxStale.j?.error?.code} st=${b20?.status} tồn=${r2} chặn=${o2}`)
+    // sổ ca: ca đang mở của kho (mở ở [11]) — đếm = tồn sổ − 10 (phần chặn thật ra đã mất) rồi chốt
+    let S = (await restAll('production_shift_report', `select=id&warehouse_id=eq.${WC}&status=eq.OPEN`))[0]?.id
+    if (!S) S = (await api('/wms/production/shift-reports', 'POST', { warehouse_id: WC, report_date: todayVN, shift: 'Ca 20' })).j?.data?.id
+    const rpO = await api(`/wms/production/shift-reports/${S}`)
+    const rmO = (rpO.j?.data?.rows ?? []).find(r => r.material_id === M_RM)
+    const useRm = (await restAll('InventoryEntry', `select=cartons_remaining&warehouse_id=eq.${WC}&material_id=eq.${M_RM}&status=in.(IN_STOCK,PARTIAL)`)).reduce((x, e) => x + num(e.cartons_remaining), 0)
+    const blkRm = (await restAll('inventory_block', `select=qty,qty_written_off,qty_released&warehouse_id=eq.${WC}&material_id=eq.${M_RM}`)).reduce((x, k) => x + num(k.qty) - num(k.qty_written_off) - num(k.qty_released), 0)
+    check('20c. Báo cáo ca: tồn sổ = tồn dùng được + đang chặn ("tồn về làm tồn ảo trước"), cột chặn = 10',
+      rpO.s === 200 && Math.abs(num(rmO?.book) - (useRm + blkRm)) < 0.001 && num(rmO?.blocked) === 10 && blkRm === 10,
+      `book=${rmO?.book} dùng được=${useRm} chặn=${rmO?.blocked}/${blkRm}`)
+    const planOpen = await api(`/wms/production/shift-reports/${S}/adjust-plan`)
+    const cnt = Math.round((num(rmO?.book) - 10) * 1000) / 1000
+    const sv = await api(`/wms/production/shift-reports/${S}`, 'PUT', { items: [{ material_id: M_RM, qty_actual: cnt }], close: true })
+    const plan = await api(`/wms/production/shift-reports/${S}/adjust-plan`)
+    const pm = (plan.j?.data?.materials ?? []).find(m => m.material_id === M_RM)
+    check('20d. Kế hoạch điều chỉnh: ca chưa chốt ⇒ không cho; chốt (đếm thiếu 10) ⇒ xoá đúng 10 từ 2 lô chặn của tem QA63_P20, không còn thiếu chưa rõ lô',
+      planOpen.s === 200 && planOpen.j?.data?.ok === false && sv.s === 200 && plan.s === 200 && plan.j?.data?.ok === true && num(pm?.write_off) === 10
+        && num(pm?.unexplained) === 0 && (pm?.blocks ?? []).filter(k => num(k.take) > 0).length === 2 && (pm?.blocks ?? []).every(k => k.pallet_code === 'QA63_P20'),
+      `open=${planOpen.s}/${planOpen.j?.data?.ok} close=${sv.s} plan=${plan.s}/${plan.j?.data?.ok} ${JSON.stringify(pm ? { w: pm.write_off, u: pm.unexplained, n: pm.blocks?.length } : null)}`)
+    const adj = await api(`/wms/production/shift-reports/${S}/adjust`, 'POST', { material_ids: [M_RM] })
+    const adj2 = await api(`/wms/production/shift-reports/${S}/adjust`, 'POST', {})
+    const rpA = await api(`/wms/production/shift-reports/${S}`)
+    const rmA = (rpA.j?.data?.rows ?? []).find(r => r.material_id === M_RM)
+    const r3a = await rem20(), o3 = await openBlk()
+    check('20e. Điều chỉnh tồn theo số đếm ⇒ hết chặn, tồn dùng được của tem KHÔNG đổi (20), báo cáo ghi đã xoá 10 + người / lúc; bấm lần hai ⇒ 409 MES_ADJUST_NOT_ALLOWED',
+      adj.s === 200 && o3 === 0 && r3a === 20 && num(rmA?.written_off) === 10 && !!rpA.j?.data?.report?.stock_adjusted_at
+        && adj2.s === 409 && adj2.j?.error?.code === 'MES_ADJUST_NOT_ALLOWED',
+      `http=${adj.s}/${adj2.s} ${adj2.j?.error?.code} chặn=${o3} tồn=${r3a} wo=${rmA?.written_off}`)
+    // bỏ chặn / xoá từng lô (tab Chênh lệch tồn)
+    const B21 = await mkB('Q21')
+    const c3 = await scan(B21?.id, 3)
+    await api(`/wms/production/consumption/${c3?.id}/reverse`, 'POST', { reason: 'QA63 bao rách', qty_block: 3, qty_semantics: 'base' })
+    const k3 = (await restAll('inventory_block', `select=id&consumption_id=eq.${c3?.id}`))[0]?.id
+    const relBad = await api(`/wms/production/blocks/${k3}/release`, 'POST', { qty: 5, qty_semantics: 'base' })
+    const rel = await api(`/wms/production/blocks/${k3}/release`, 'POST', { qty: 2, note: 'QA63 dùng lại được', qty_semantics: 'base' })
+    const wo = await api(`/wms/production/blocks/${k3}/write-off`, 'POST', { note: 'QA63 kiểm kê xác nhận mất' })
+    const r4 = await rem20(), o4 = await openBlk()
+    check('20f. Bỏ chặn quá phần chặn ⇒ 422; bỏ chặn 2 ⇒ tem +2 dùng được (20 − 3 + 0 + 2 = 19); xoá phần còn lại ⇒ hết chặn',
+      !!k3 && relBad.s === 422 && rel.s === 200 && wo.s === 200 && r4 === 19 && o4 === 0, `http=${relBad.s}/${rel.s}/${wo.s} tồn=${r4} chặn=${o4}`)
+    // sổ chênh lệch hôm nay
+    const vq = (part, extra = '') => api(`/wms/production/stock-variance?warehouse_id=${WC}&date_from=${todayVN}&date_to=${todayVN}&part=${part}${extra}`)
+    const vs = await vq('summary'), ve = await vq('events', `&material_id=${M_RM}&page_size=200`), vb = await vq('blocks')
+    const vx = await api(`/wms/production/stock-variance/export?warehouse_id=${WC}&date_from=${todayVN}&date_to=${todayVN}&part=events`)
+    const vBad = await api(`/wms/production/stock-variance?warehouse_id=${WC}&date_from=${todayVN}&date_to=2020-01-01`)
+    const vNot = await api(`/wms/production/stock-variance?warehouse_id=${WP}&date_from=${todayVN}&date_to=${todayVN}`)
+    const vr = (vs.j?.data?.rows ?? []).find(r => r.material_id === M_RM)
+    const kinds = (ve.j?.data?.rows ?? []).filter(e => e.pallet_code === 'QA63_P20').map(e => e.kind)
+    check('20g. Sổ chênh lệch (đối chiếu SAP): xoá hàng chặn 11 (10 theo số đếm + 1 tay) · chặn trong kỳ 13 · bỏ chặn 2 · đang chặn 0 · chênh = điều chỉnh khác − 11; từng tác động đủ 3 chặn / 1 bỏ chặn / 3 xoá; file xuất 200; kỳ ngược 400; kho không phải chế biến 422',
+      vs.s === 200 && num(vr?.written_off) === 11 && num(vr?.blocked) === 13 && num(vr?.released) === 2 && num(vr?.blocked_open) === 0
+        && Math.abs(num(vr?.variance) - (num(vr?.adjusted) - 11)) < 0.001
+        && ve.s === 200 && kinds.filter(k => k === 'BLOCK').length === 3 && kinds.filter(k => k === 'RELEASE').length === 1 && kinds.filter(k => k === 'WRITE_OFF').length === 3
+        && vb.s === 200 && !(vb.j?.data?.rows ?? []).some(b => b.pallet_code === 'QA63_P20') && vx.s === 200 && vBad.s === 400 && vNot.s === 422,
+      `http=${vs.s}/${ve.s}/${vb.s}/${vx.s}/${vBad.s}/${vNot.s} ${JSON.stringify(vr ? { wo: vr.written_off, b: vr.blocked, rel: vr.released, adj: vr.adjusted, v: vr.variance } : null)} kinds=${kinds.join(',')}`)
+    const led20 = await api('/wms/inventory/pallet-ledger?pallet_code=QA63_P20')
+    const lk = new Set((led20.j?.data?.events ?? []).map(e => e.kind))
+    check('20h. Sổ pallet của tem có Chặn · Bỏ chặn · Xoá hàng chặn', led20.s === 200 && lk.has('BLOCKED') && lk.has('BLOCK_RELEASED') && lk.has('BLOCK_WRITTEN_OFF'), `kinds=${[...lk].join(',')}`)
+  }
+
   // ── [14] CHỨC DANH CHỈ CÓ QUYỀN SẢN XUẤT (16/11 — nghiệm thu bằng vai thật): form Mở / Sửa mẻ, Định mức tìm mã qua danh mục Mã hàng ──
   if (!bcrypt) console.log('  ⏭  [14] không load được bcrypt của backend — bỏ qua')
   else {
@@ -1267,6 +1354,14 @@ try {
     const sDashOk = tkView ? await st(tkView, dashP(WC)) : 0
     const sDashScope = tkView ? await st(tkView, dashP(WC2)) : 0
     const sDetScope = tkView ? await st(tkView, `/wms/production/dashboard/detail?warehouse_id=${WC2}&date_from=${todayVN}&date_to=${todayVN}&kind=batches`) : 0
+    // 25/11 hàng chặn: xoá / bỏ chặn / điều chỉnh theo số đếm = quyền Điều chỉnh tồn (inventory.adjust) · huỷ mẻ đã cấp cần thêm "Huỷ dòng cấp" · sổ chênh lệch = quyền xem
+    const sBlkOpen = tkOpen ? await postAs(tkOpen, '/wms/production/blocks/x/write-off', {}) : 0
+    const sAdjView = tkView ? await st(tkView, '/wms/production/shift-reports/x/adjust-plan') : 0
+    const sCxOpen = tkOpen ? await postAs(tkOpen, `/wms/production/batches/${B1.id}/cancel`, { reason: 'QA63', lines: [{ consumption_id: 'x', qty_block: 0 }] }) : 0
+    const sVarView = tkView ? await st(tkView, `/wms/production/stock-variance?warehouse_id=${WC}&date_from=${todayVN}&date_to=${todayVN}`) : 0
+    const sVarScope = tkView ? await st(tkView, `/wms/production/stock-variance?warehouse_id=${WC2}&date_from=${todayVN}&date_to=${todayVN}`) : 0
+    check('14g. Hàng chặn: không có quyền Điều chỉnh tồn ⇒ xoá hàng chặn 403 · xem kế hoạch điều chỉnh 403; huỷ mẻ đã cấp khi thiếu quyền "Huỷ dòng cấp" ⇒ 403; sổ chênh lệch: kho mình 200 · kho ngoài phạm vi 403',
+      sBlkOpen === 403 && sAdjView === 403 && sCxOpen === 403 && sVarView === 200 && sVarScope === 403, `blk=${sBlkOpen} plan=${sAdjView} cancel=${sCxOpen} var=${sVarView}/${sVarScope}`)
     check('14f. Dashboard Báo cáo NVL: chức danh chỉ xem đọc kho mình 200 · kho ngoài phạm vi 403 (cả bảng chi tiết khi bấm vào)', sDashOk === 200 && sDashScope === 403 && sDetScope === 403,
       `dash=${sDashOk}/${sDashScope} detail=${sDetScope}`)
     check('14d. Dữ liệu thô: chức danh chỉ xem đọc kho mình 200 · xuất file 403 (cần quyền export) · kho ngoài phạm vi 403; sơ đồ 2D: không có "Quản lý bồn" 403 · bồn kho ngoài phạm vi 403 · bồn kho mình 200',

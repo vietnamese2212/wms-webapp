@@ -1,7 +1,7 @@
 // TRANG "BÁO CÁO NVL" — 22/11: TAB MẶC ĐỊNH "Tổng quan" (MesDashboard — dashboard theo thời gian 1 ngày → 3 năm, khuôn "trung tâm điều hành",
 // bấm vào số / biểu đồ ⇒ bảng dữ liệu đứng sau). 18/11 f: tab "Theo chu kỳ" (CycleReport — user: "theo chu kỳ, chu kỳ lớn hơn ca, mẻ";
 // báo cáo cuối tách ca · mẻ · nhân sự). 18/11 g: tab "Dữ liệu thô" (ConsumptionRaw — tiêu hao NVL mỗi dòng một phát sinh, đủ cột cho SAP).
-// Tab "Đếm tồn theo ca" = báo cáo theo ca dưới đây (giữ nguyên).
+// Tab "Đếm tồn theo ca" = báo cáo theo ca dưới đây. 25/11 tab "Chênh lệch tồn" (StockVariance — kiểm kê đối chiếu SAP: hàng chặn + điều chỉnh).
 // BÁO CÁO SỬ DỤNG NVL THEO CA (MES 14/11/2026) — thay biểu mẫu giấy NB-QA-BM-CB.01 (user: "mục tiêu là bỏ các tờ giấy này đi").
 // Một báo cáo = MỘT CA của một kho chế biến. Mọi con số tự ra từ các lần cấp nguyên liệu cho mẻ; người chỉ nhập TỒN CUỐI THỰC TẾ rồi CHỐT ca.
 // Cột đúng thứ tự tờ giấy: Tồn đầu thực tế · Nhập · dùng theo TỪNG MẺ (BTP / chu kỳ / mẻ) · Tổng sử dụng · Tồn cuối thực tế · Tồn cuối sổ sách · Chênh lệch.
@@ -11,11 +11,13 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import { CycleReport } from '@/components/wms/production/CycleReport'
 import { MesDashboard } from '@/components/wms/production/MesDashboard'
 import { ConsumptionRaw } from '@/components/wms/production/ConsumptionRaw'
+import { StockVariance } from '@/components/wms/production/StockVariance'
+import { ShiftAdjustSheet } from '@/components/wms/production/BlockSheets'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { useMobileTabs } from '@/hooks/useMobileSurface'
 import type { AxiosError } from 'axios'
 import * as XLSX from 'xlsx'
-import { Plus, FileDown, Save, CheckCheck } from 'lucide-react'
+import { Plus, FileDown, Save, CheckCheck, Scale } from 'lucide-react'
 import { TableBody, TableCell, TableRow } from '@/components/ui/table'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -53,7 +55,7 @@ const MOBILE_COLS: NumCol[] = [
 ]
 
 // tab cấp trang — key khớp PAGE_TABS['/wms/production/usage-report'] (config/mobileSurface.ts)
-const TABS = [{ key: 'dash', label: 'Tổng quan' }, { key: 'cycle', label: 'Theo chu kỳ' }, { key: 'raw', label: 'Dữ liệu thô' }, { key: 'shift', label: 'Đếm tồn theo ca' }] as const
+const TABS = [{ key: 'dash', label: 'Tổng quan' }, { key: 'cycle', label: 'Theo chu kỳ' }, { key: 'raw', label: 'Dữ liệu thô' }, { key: 'shift', label: 'Đếm tồn theo ca' }, { key: 'variance', label: 'Chênh lệch tồn' }] as const
 
 export default function ProductionUsageReport() {
   const f = useWmsFilterStore(s => s.productionReport)
@@ -76,7 +78,7 @@ export default function ProductionUsageReport() {
       ))}
     </div>
   )
-  return f.rtab === 'shift' ? <ShiftReportView tabBar={tabBar} /> : f.rtab === 'raw' ? <ConsumptionRaw tabBar={tabBar} /> : f.rtab === 'cycle' ? <CycleReport tabBar={tabBar} /> : <MesDashboard tabBar={tabBar} />
+  return f.rtab === 'variance' ? <StockVariance tabBar={tabBar} /> : f.rtab === 'shift' ? <ShiftReportView tabBar={tabBar} /> : f.rtab === 'raw' ? <ConsumptionRaw tabBar={tabBar} /> : f.rtab === 'cycle' ? <CycleReport tabBar={tabBar} /> : <MesDashboard tabBar={tabBar} />
 }
 
 function ShiftReportView({ tabBar }: { tabBar: ReactNode }) {
@@ -84,6 +86,9 @@ function ShiftReportView({ tabBar }: { tabBar: ReactNode }) {
   const perms = useAuthStore(s => s.user)?.module_permissions as ModulePermissions | null ?? null
   const canWrite = can(perms, 'production', 'shift_report')
   const canExport = can(perms, 'production', 'export')
+  // 25/11 (NVL đã mất, user chốt): "Điều chỉnh tồn theo số đếm" — quyền Điều chỉnh tồn của Tồn kho (cùng sức nặng: sửa số tồn)
+  const canAdjust = can(perms, 'inventory', 'adjust')
+  const [adjOpen, setAdjOpen] = useState(false)
   const { data: { kitchens } } = useProductionWarehouses()
   // 25/11 (F4 rà soát MES): CÙNG kho với 3 tab còn lại của trang (bộ lọc productionReport — đổi Kho toàn cục cũng theo), không giữ state riêng
   const fr = useWmsFilterStore(s => s.productionReport)
@@ -153,6 +158,10 @@ function ShiftReportView({ tabBar }: { tabBar: ReactNode }) {
 
   // 25/11 (user chốt): huỷ cấp lần cấp của ca đã chốt ⇒ cột "Hoàn từ ca trước" — chỉ hiện khi ca có hoàn (giữ đúng mẫu giấy lúc không có)
   const hasRet = rows.some(r => Number(r.returned ?? 0) > 0)
+  // 25/11 (NVL đã mất): cột "Điều chỉnh" chỉ hiện khi ca có điều chỉnh tồn (tay / kiểm kê / xoá hàng chặn); tồn sổ GỒM phần đang chặn
+  const hasAdj = rows.some(r => Number(r.adjusted ?? 0) !== 0)
+  const hasBlk = rows.some(r => Number(r.blocked ?? 0) > 0)
+  const shortage = rows.some(r => { const d = diffOf(r); return d != null && d < 0 })
   function exportExcel() {
     if (!rep) return
     const whName = kitchens.find(k => k.id === rep.warehouse_id)?.name ?? ''
@@ -160,20 +169,21 @@ function ShiftReportView({ tabBar }: { tabBar: ReactNode }) {
     const aoa: unknown[][] = [
       ['BÁO CÁO SỬ DỤNG NGUYÊN VẬT LIỆU'],
       [`Kho chế biến: ${whName}`, '', '', `Ngày: ${formatDate(rep.report_date)}`, `Ca: ${rep.shift}`, `Từ ${formatDateTime(rep.from_at)}${rep.to_at ? ` đến ${formatDateTime(rep.to_at)}` : ' — CHƯA CHỐT'}`],
-      [...head, ...batches.map(b => `BTP: ${b.material_code}`), 'Tổng SDụng thực tế', ...(hasRet ? ['Hoàn từ ca trước'] : []), 'Tồn cuối thực tế', 'Tồn cuối sổ sách', 'Chênh lệch NL dư'],
-      ['', '', '', '', '', ...batches.map(b => `Chu kỳ: ${b.cycle ?? ''}`), '', ...(hasRet ? [''] : []), '', '', ''],
-      ['', '', '', '', '', ...batches.map(b => `Mẻ: ${b.batch_code}`), '', ...(hasRet ? [''] : []), '', '', ''],
+      [...head, ...batches.map(b => `BTP: ${b.material_code}`), 'Tổng SDụng thực tế', ...(hasRet ? ['Hoàn từ ca trước'] : []), ...(hasAdj ? ['Điều chỉnh tồn'] : []), 'Tồn cuối thực tế', 'Tồn cuối sổ sách', ...(hasBlk ? ['Trong đó đang chặn'] : []), 'Chênh lệch NL dư'],
+      ['', '', '', '', '', ...batches.map(b => `Chu kỳ: ${b.cycle ?? ''}`), '', ...(hasRet ? [''] : []), ...(hasAdj ? [''] : []), '', '', ...(hasBlk ? [''] : []), ''],
+      ['', '', '', '', '', ...batches.map(b => `Mẻ: ${b.batch_code}`), '', ...(hasRet ? [''] : []), ...(hasAdj ? [''] : []), '', '', ...(hasBlk ? [''] : []), ''],
       ...rows.map(r => {
         const d = diffOf(r)
         return [r.material_code, r.material_name ?? '', unitCode(r.base_unit), Number(r.opening), Number(r.received),
-          ...batches.map(b => (r.by_batch[b.id] != null ? Number(r.by_batch[b.id]) : '')), Number(r.used), ...(hasRet ? [Number(r.returned ?? 0) || ''] : []), actualOf(r) ?? '', Number(r.book), d ?? '']
+          ...batches.map(b => (r.by_batch[b.id] != null ? Number(r.by_batch[b.id]) : '')), Number(r.used), ...(hasRet ? [Number(r.returned ?? 0) || ''] : []), ...(hasAdj ? [Number(r.adjusted ?? 0) || ''] : []), actualOf(r) ?? '', Number(r.book), ...(hasBlk ? [Number(r.blocked ?? 0) || ''] : []), d ?? '']
       }),
       [],
       [`Giao ca: ${rep.note ?? ''}`],
       [`Người mở: ${rep.opened_by_name ?? ''}`, '', '', `Người chốt: ${rep.closed_by_name ?? ''}`],
+      ...(rep.stock_adjusted_at ? [[`Điều chỉnh tồn theo số đếm: ${rep.stock_adjusted_by_name ?? ''} · ${formatDateTime(rep.stock_adjusted_at)}`]] : []),
     ]
     const ws = XLSX.utils.aoa_to_sheet(sanitizeAoa(aoa))
-    ws['!cols'] = [{ wch: 16 }, { wch: 28 }, { wch: 9 }, { wch: 14 }, { wch: 10 }, ...batches.map(() => ({ wch: 18 })), { wch: 16 }, ...(hasRet ? [{ wch: 16 }] : []), { wch: 16 }, { wch: 16 }, { wch: 16 }]
+    ws['!cols'] = [{ wch: 16 }, { wch: 28 }, { wch: 9 }, { wch: 14 }, { wch: 10 }, ...batches.map(() => ({ wch: 18 })), { wch: 16 }, ...(hasRet ? [{ wch: 16 }] : []), ...(hasAdj ? [{ wch: 14 }] : []), { wch: 16 }, { wch: 16 }, ...(hasBlk ? [{ wch: 16 }] : []), { wch: 16 }]
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'BCSD NVL')
     void saveWorkbook(wb, `bao_cao_su_dung_nvl_${rep.report_date}_${rep.shift.replace(/\s+/g, '')}.xlsx`)
@@ -185,9 +195,10 @@ function ShiftReportView({ tabBar }: { tabBar: ReactNode }) {
     ...batches.map(b => ({ id: `b_${b.id}`, label: `${b.material_code}${b.cycle ? ` · CK ${b.cycle}` : ''} · ${b.batch_code}`, w: 150, align: 'right' as const })),
     { id: 'used', label: 'Tổng sử dụng', w: 110, align: 'right' },
     ...(hasRet ? [{ id: 'ret', label: 'Hoàn từ ca trước', w: 120, align: 'right' as const }] : []),
+    ...(hasAdj ? [{ id: 'adj', label: 'Điều chỉnh', w: 100, align: 'right' as const }] : []),
     { id: 'actual', label: 'Tồn cuối thực tế', w: 130, align: 'right' },
     { id: 'book', label: 'Tồn cuối sổ sách', w: 120, align: 'right' }, { id: 'diff', label: 'Chênh lệch', w: 110, align: 'right' },
-  ], [batches, hasRet])
+  ], [batches, hasRet, hasAdj])
 
   const hasOpen = reports.some(r => r.status === 'OPEN')
   const actions: ActionItem[] = []
@@ -196,14 +207,24 @@ function ShiftReportView({ tabBar }: { tabBar: ReactNode }) {
     actions.push({ key: 'draft', icon: Save, label: 'Lưu số đếm', tip: 'Lưu các ô tồn cuối thực tế vừa nhập (chưa chốt ca)', primary: true, onClick: () => void save(false), disabled: !changed.length || invalid || saveMut.isPending })
   }
   if (canWrite && !hasOpen && !!wh) actions.push({ key: 'open', icon: Plus, label: 'Mở ca', tip: 'Mở báo cáo cho ca mới — tính từ lúc chốt ca trước', primary: true, variant: 'default', onClick: () => setOpenForm(true) })
+  // ca đã chốt MỚI NHẤT, chưa điều chỉnh, có mã đếm thiếu ⇒ xoá các lô đang chặn của mã đó (xem trước rồi xác nhận)
+  if (canAdjust && rep && !isOpen && rep.latest_closed && !rep.stock_adjusted_at && shortage)
+    actions.push({ key: 'adjust', icon: Scale, label: 'Điều chỉnh tồn theo số đếm', primary: true, onClick: () => setAdjOpen(true),
+      tip: 'Mã đếm thiếu: xoá khỏi tồn các lô đang chặn (NVL hoàn về khi huỷ cấp nhưng không tái dùng được) — đúng lô đã chặn, có xem trước' })
   if (canExport && rep) actions.push({ key: 'xlsx', icon: FileDown, label: 'Xuất Excel', tip: 'Xuất báo cáo ca theo mẫu NB-QA-BM-CB.01', onClick: exportExcel, mobileHidden: true })
 
   const diffCell = (r: ShiftRow) => {
     const d = diffOf(r)
     if (d == null) return dash
-    if (d === 0) return <Check className="inline h-3.5 w-3.5 text-green-600" aria-label="Khớp" />
-    return <span className={d < 0 ? 'text-red-600' : 'text-amber-700'}>{d > 0 ? '+' : '−'}{qtyNum(Math.abs(d), r)}</span>
+    const wo = Number(r.written_off ?? 0)
+    const woNote = wo > 0 ? <span className="block text-[10px] font-normal text-slate-500" title="Đã xoá hàng chặn theo số đếm của ca này">đã xoá {qtyNum(wo, r)} chặn</span> : null
+    if (d === 0) return <><Check className="inline h-3.5 w-3.5 text-green-600" aria-label="Khớp" />{woNote}</>
+    return <span className={d < 0 ? 'text-red-600' : 'text-amber-700'}>{d > 0 ? '+' : '−'}{qtyNum(Math.abs(d), r)}{woNote}</span>
   }
+  // tồn sổ GỒM phần đang chặn (NVL hoàn về khi huỷ cấp nhưng không tái dùng được — "tồn về làm tồn ảo trước")
+  const bookCell = (r: ShiftRow) => (
+    <>{qtyNum(Number(r.book), r)}{Number(r.blocked ?? 0) > 0 && <span className="block text-[10px] font-normal text-amber-700" title="Trong tồn sổ có phần đang chặn — không cấp / xuất được, chờ điều chỉnh">gồm {qtyNum(Number(r.blocked), r)} chặn</span>}</>
+  )
   const input = (r: ShiftRow, cls: string) => (
     <Input value={draft[r.material_id] ?? ''} onChange={e => setDraft(s => ({ ...s, [r.material_id]: e.target.value }))} inputMode="decimal" placeholder="đếm"
       aria-label={`Tồn cuối thực tế ${r.material_code}`} className={`${cls} text-right tabular-nums ${parsed(r.material_id) === undefined ? 'border-red-400' : ''}`} />
@@ -233,6 +254,7 @@ function ShiftReportView({ tabBar }: { tabBar: ReactNode }) {
               <span>Từ <b className="tabular-nums">{formatDateTime(rep.from_at)}</b>{rep.to_at ? <> đến <b className="tabular-nums">{formatDateTime(rep.to_at)}</b></> : ' đến bây giờ'}</span>
               {rep.closed_by_name && <span>Chốt: {rep.closed_by_name}</span>}
               {rep.note && <span className="text-slate-500 truncate max-w-full" title={rep.note}>Giao ca: {rep.note}</span>}
+              {rep.stock_adjusted_at && <span className="text-slate-600" data-testid="shift-adjusted">Đã điều chỉnh tồn theo số đếm: {rep.stock_adjusted_by_name ?? ''} · {formatDateTime(rep.stock_adjusted_at)}</span>}
             </div>
           )}
           {err && <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-1.5 text-xs text-red-700">{err}</div>}
@@ -243,7 +265,7 @@ function ShiftReportView({ tabBar }: { tabBar: ReactNode }) {
           { label: 'Nguyên liệu', value: rows.length.toLocaleString('vi-VN') },
           { label: 'Mẻ trong ca', value: batches.length.toLocaleString('vi-VN'), tip: 'Số mẻ có nhận nguyên liệu trong khoảng thời gian của ca' },
           { label: 'Đã đếm', value: `${counted}/${rows.length}`, accent: isOpen && counted < rows.length, tip: 'Số nguyên liệu đã nhập tồn cuối thực tế' },
-          { label: 'Lệch sổ', value: off.toLocaleString('vi-VN'), danger: off > 0, tip: 'Số nguyên liệu có tồn cuối thực tế khác tồn cuối sổ sách. Báo cáo không tự sửa tồn — muốn khớp sổ thì kiểm kê / điều chỉnh tồn.' },
+          { label: 'Lệch sổ', value: off.toLocaleString('vi-VN'), danger: off > 0, tip: 'Số nguyên liệu có tồn cuối thực tế khác tồn cuối sổ sách. Báo cáo không tự sửa tồn. Phần NVL đã chặn khi huỷ cấp: người có quyền Điều chỉnh tồn bấm "Điều chỉnh tồn theo số đếm" ở ca đã chốt mới nhất; phần lệch khác điều chỉnh từng lô ở Tồn kho.' },
         ]} />
         <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
           {!kitchens.length && <p className="p-3 text-xs text-amber-700">Chưa có kho chế biến trong phạm vi — khai kho phụ nội bộ ở Cài đặt WMS → Kho.</p>}
@@ -269,7 +291,7 @@ function ShiftReportView({ tabBar }: { tabBar: ReactNode }) {
                       Number(r.used) > 0 || Number(r.returned ?? 0) > 0
                         ? <span>{Number(r.used) > 0 ? qtyNum(Number(r.used), r) : '0'}{Number(r.returned ?? 0) > 0 && <span className="block text-[10px] font-normal text-amber-700" title="Hoàn từ ca trước">+{qtyNum(Number(r.returned), r)} hoàn</span>}</span>
                         : dash,
-                      <span className="font-normal">{qtyNum(Number(r.book), r)}</span>,
+                      <span className="font-normal">{bookCell(r)}</span>,
                       diffCell(r),
                     ]}
                     aside={editable ? input(r, 'h-10 w-20 text-sm') : <span className="text-xs font-semibold tabular-nums">{r.actual != null ? qtyNum(Number(r.actual), r) : dash}</span>} />
@@ -279,7 +301,7 @@ function ShiftReportView({ tabBar }: { tabBar: ReactNode }) {
           )}
           {rep && (
             <div className="hidden sm:block">
-              <ResizableTable storageKey={`production_usage_cols_v2_${batches.length}${hasRet ? "_r" : ""}`} cols={cols}>
+              <ResizableTable storageKey={`production_usage_cols_v2_${batches.length}${hasRet ? "_r" : ""}${hasAdj ? "_a" : ""}`} cols={cols}>
                 <TableBody>
                   {!rows.length && <TableEmptyRow colSpan={cols.length}>{q.isLoading ? 'Đang tải…' : 'Ca này chưa có nguyên liệu nào (kho chế biến trống, chưa cấp gì).'}</TableEmptyRow>}
                   {rows.map(r => (
@@ -297,8 +319,9 @@ function ShiftReportView({ tabBar }: { tabBar: ReactNode }) {
                       ))}
                       <TableCell className={NUM}>{Number(r.used) > 0 ? qtyNum(Number(r.used), r) : dash}</TableCell>
                       {hasRet && <TableCell className={NUM} title="Lần cấp của ca trước bị huỷ trong ca này — hàng về lại tồn">{Number(r.returned ?? 0) > 0 ? qtyNum(Number(r.returned), r) : dash}</TableCell>}
+                      {hasAdj && <TableCell className={NUM} title="Điều chỉnh tồn trong ca: tay / kiểm kê / nạp Excel / xoá hàng chặn">{Number(r.adjusted ?? 0) !== 0 ? <span className={Number(r.adjusted) < 0 ? 'text-red-600' : 'text-amber-700'}>{Number(r.adjusted) > 0 ? '+' : '−'}{qtyNum(Math.abs(Number(r.adjusted)), r)}</span> : dash}</TableCell>}
                       <TableCell className={`${NUM} !py-0.5`}>{editable ? input(r, 'h-7 w-full text-[11px]') : r.actual != null ? qtyNum(Number(r.actual), r) : dash}</TableCell>
-                      <TableCell className={NUM}>{qtyNum(Number(r.book), r)}</TableCell>
+                      <TableCell className={NUM}>{bookCell(r)}</TableCell>
                       <TableCell className={NUM}>{diffCell(r)}</TableCell>
                     </TableRow>
                   ))}
@@ -308,6 +331,8 @@ function ShiftReportView({ tabBar }: { tabBar: ReactNode }) {
           )}
         </div>
       </div>
+      {rep && <ShiftAdjustSheet open={adjOpen} onClose={() => setAdjOpen(false)} reportId={rep.id}
+        title={`${rep.shift} ngày ${formatDate(rep.report_date)} — ${kitchens.find(k => k.id === rep.warehouse_id)?.name ?? 'kho chế biến'}`} />}
       <OpenShiftSheet open={openForm} onClose={() => setOpenForm(false)} busy={openMut.isPending}
         onOpen={async (date, shift) => { const r = await openMut.mutateAsync({ warehouse_id: wh, report_date: date, shift }); setPick(r.id) }} />
       {confirmNode}

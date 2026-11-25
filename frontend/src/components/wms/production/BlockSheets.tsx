@@ -29,7 +29,7 @@ const BLOCK_HINT = 'Phần chặn vẫn nằm trong tồn sổ của kho nhưng 
 
 /** XÁC NHẬN "Hoàn hết" / "Chặn hết" (user 25/11: "cần phải được confirm, trên confirm có diễn giải") — MỘT nội dung cho form huỷ mẻ
  *  và form huỷ một dòng: liệt kê dòng bị áp + hệ quả lên tồn. Nút chỉ điền sẵn ô Chặn; ghi thật khi bấm Huỷ. */
-function fillConfirm(full: boolean, lines: ConsumptionRow[], what: string): ConfirmOptions {
+function fillConfirm(full: boolean, lines: ConsumptionRow[], what: string, submit: string): ConfirmOptions {
   const shown = lines.slice(0, 6)
   const list = (
     <ul className="my-1.5 space-y-0.5" data-testid="fill-confirm-lines">
@@ -39,15 +39,15 @@ function fillConfirm(full: boolean, lines: ConsumptionRow[], what: string): Conf
       {lines.length > shown.length && <li className="text-slate-400">… và {lines.length - shown.length} dòng khác</li>}
     </ul>
   )
-  const tail = <p className="mt-2 text-slate-500">Nút này chỉ điền sẵn ô Chặn — vẫn sửa được từng dòng trước khi bấm Huỷ.</p>
+  const tail = <p className="mt-2 text-slate-500">Nút này chỉ điền sẵn ô Chặn — vẫn sửa được từng dòng trước khi bấm {submit}.</p>
   return full ? {
     title: `Chặn hết ${what}?`,
-    confirmLabel: 'Chặn hết',
+    confirmLabel: 'Chặn hết', cancelLabel: 'Quay lại',
     body: (
       <div className="whitespace-normal" data-testid="fill-confirm" data-kind="block">
         <p>Coi như <b>toàn bộ</b> NVL đã cấp dưới đây <b>đã đổ vào mẻ / hỏng, không dùng lại được</b>:</p>
         {list}
-        <p className="mt-2 font-semibold text-slate-700">Khi bấm Huỷ:</p>
+        <p className="mt-2 font-semibold text-slate-700">Khi bấm nút đỏ <b>{submit}</b> ở cuối form:</p>
         <ul className="space-y-0.5">
           <li>• Tồn dùng được của các tem này <b>không tăng</b> — không ai cấp / xuất lại được.</li>
           <li>• Toàn bộ lượng trên thành <b>hàng chặn</b> của đúng tem đó: vẫn nằm trong tồn sổ, kèm lý do huỷ.</li>
@@ -58,12 +58,12 @@ function fillConfirm(full: boolean, lines: ConsumptionRow[], what: string): Conf
     ),
   } : {
     title: `Hoàn hết ${what} về kho?`,
-    confirmLabel: 'Hoàn hết',
+    confirmLabel: 'Hoàn hết', cancelLabel: 'Quay lại',
     body: (
       <div className="whitespace-normal" data-testid="fill-confirm" data-kind="return">
         <p>Coi như <b>toàn bộ</b> NVL đã cấp dưới đây <b>còn nguyên, dùng lại được</b>:</p>
         {list}
-        <p className="mt-2 font-semibold text-slate-700">Khi bấm Huỷ:</p>
+        <p className="mt-2 font-semibold text-slate-700">Khi bấm nút đỏ <b>{submit}</b> ở cuối form:</p>
         <ul className="space-y-0.5">
           <li>• Mỗi dòng trả <b>đủ</b> về đúng tem / lô đã cấp, cấp / xuất lại được ngay.</li>
           <li>• Không ghi hàng chặn nào.</li>
@@ -124,9 +124,9 @@ export function ReverseLineSheet({ line, onClose }: { line: ConsumptionRow | nul
             <div className="mt-1 flex items-center gap-2 flex-wrap">
               <QtyInput value={block} mat={line.material} onChange={setBlock} className={bad ? '[&_input]:border-red-400' : ''} />
               <button type="button" className="text-[11px] text-blue-600 hover:underline"
-                onClick={async () => { if (await ask(fillConfirm(true, [line], 'dòng cấp này')) !== null) setBlock(qty) }}>Chặn hết</button>
+                onClick={async () => { if (await ask(fillConfirm(true, [line], 'dòng cấp này', 'Huỷ dòng cấp')) !== null) setBlock(qty) }}>Chặn hết</button>
               {block > 0 && <button type="button" className="text-[11px] text-slate-500 hover:underline"
-                onClick={async () => { if (await ask(fillConfirm(false, [line], 'dòng cấp này')) !== null) setBlock(0) }}>Hoàn hết</button>}
+                onClick={async () => { if (await ask(fillConfirm(false, [line], 'dòng cấp này', 'Huỷ dòng cấp')) !== null) setBlock(0) }}>Hoàn hết</button>}
             </div>
             <p className="mt-1 text-[11px] text-slate-600">
               Hoàn về dùng được: <b>{qtyCode(Math.max(0, r3(qty - block)), line.material)}</b>
@@ -162,7 +162,7 @@ export function CancelBatchSheet({ open, onClose, batchId, batchCode, lines, onD
   const nBlocked = lines.filter(c => bOf(c) > 0).length
   const setAll = (full: boolean) => setBlock(Object.fromEntries(lines.map(c => [c.id, full ? Number(c.qty) : 0])))
   const askAll = async (full: boolean) => {
-    if (await ask(fillConfirm(full, lines, `${lines.length} dòng NVL của mẻ ${batchCode}`)) !== null) setAll(full)
+    if (await ask(fillConfirm(full, lines, `${lines.length} dòng NVL của mẻ ${batchCode}`, 'Huỷ mẻ')) !== null) setAll(full)
   }
   async function go() {
     setErr('')

@@ -2,6 +2,7 @@
 
 > Tạo 14/11/2026 cùng giai đoạn 1 MES (kế hoạch `docs/plans/MES_PHASE1_PLAN.md`, memory `mes-phase1-design-2026-11-14`).
 > **Trước khi sửa module này: đọc file này + mọi file ở mục "Giao thoa với".**
+> **Lỗi đã biết, chưa sửa (rà soát 25/11):** `docs/plans/MES_REVIEW_2026-11-25.md` — bảng từng mục, 7 đợt sửa, câu hỏi nghiệp vụ chờ chốt.
 
 **Trang:** Mẻ chế biến (bàn làm việc của mẻ) · Bồn · Báo cáo NVL · Định mức · Cài đặt MES — nhóm menu CẤP 1 "Sản xuất (MES)" đứng TRÊN Kho (WMS) (user chốt 14/11 tối: "cho MES lên phía trên của WMS") (user chốt 14/11 "tách MES riêng": chỉ tách menu, vẫn chung app + chung DB; Sổ đóng gói giữ ở Kho (WMS) → Nhập hàng; đường dẫn `/wms/production…` không đổi)
 

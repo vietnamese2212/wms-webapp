@@ -12,7 +12,7 @@ import { useDebouncedValue } from '@/hooks/useDebouncedValue'
 import { useGlobalScopeStore } from '@/stores/globalScopeStore'
 import { useMaterialsByIds, useMachines } from '@/api/hooks'
 import { defaultExtraForms } from '@/config/processForms'
-import { useProductionTanks, useProductionWarehouses, useNextBatchCode, useCreateBatch, useUpdateBatch, useProcessForms, useSetBatchForms, useShiftNames, defaultKitchen, useSemiFinishedSearch, useRecipes, SEMI_FINISHED_PLACEHOLDER, type BatchDetail } from '@/api/productionHooks'
+import { useProductionTanks, useProductionWarehouses, useNextBatchCode, useCreateBatch, useUpdateBatch, useProcessForms, useShiftNames, defaultKitchen, useSemiFinishedSearch, useRecipes, SEMI_FINISHED_PLACEHOLDER, type BatchDetail } from '@/api/productionHooks'
 import { NoSemiFinishedHint } from './NoSemiFinishedHint'
 import { unitCode } from '@/utils/unitCode'
 import { parseVnNumber, vnNumberInput } from '@/utils/vnNumber'
@@ -48,7 +48,6 @@ export function BatchFormSheet({ open, onClose, batch, template, onSaved }: {
   const { data: processForms = [] } = useProcessForms()
   const [extras, setExtras] = useState<string[]>([])
   const [extrasTouched, setExtrasTouched] = useState(false)
-  const setForms = useSetBatchForms()
   const [err, setErr] = useState('')
   const create = useCreateBatch()
   const shiftNames = useShiftNames(shift || null)
@@ -120,7 +119,7 @@ export function BatchFormSheet({ open, onClose, batch, template, onSaved }: {
   const codePreview = filled ? batch?.batch_code : next.data?.code
   const codeChanges = editing && !filled && !!codePreview && codePreview !== batch?.batch_code
 
-  const saving = create.isPending || update.isPending || setForms.isPending
+  const saving = create.isPending || update.isPending
   const plannedNum = planned.trim() ? parseVnNumber(planned) : null
   const plannedBad = !planned.trim() || plannedNum == null || plannedNum <= 0
   const overRoom = !!selTank && plannedNum != null && plannedNum > selTank.free + 0.0005 && !filled
@@ -130,13 +129,14 @@ export function BatchFormSheet({ open, onClose, batch, template, onSaved }: {
     setErr('')
     try {
       if (batch) {
+        const same = (a: string[], b: string[]) => a.length === b.length && a.every(c => b.includes(c))
+        const formsChanged = batch.status === 'OPEN' && (mat !== batch.material_id || !same(extras, batch.extra_forms ?? []))
+        // MỘT lệnh sửa (25/11 F9): phiếu bổ sung đi cùng, server ghi tất cả trong một giao dịch — lỗi thì không ghi gì
         const r = await update.mutateAsync({ id: batch.id, prod_date: date, machine_code: machine || null, shift,
           planned_qty: plannedNum, note: note || null,
           ...(filled ? {} : { ...(cycleNorm !== batch.cycle ? { cycle: cycleNorm } : {}), ...(noNum !== batch.batch_no ? { batch_no: noNum ?? undefined } : {}), ...(tank !== batch.tank_id ? { tank_id: tank } : {}) }),
-          ...(mat !== batch.material_id ? { material_id: mat } : {}) })
-        const same = (a: string[], b: string[]) => a.length === b.length && a.every(c => b.includes(c))
-        if (batch.status === 'OPEN' && (mat !== batch.material_id || !same(extras, batch.extra_forms ?? [])))
-          await setForms.mutateAsync({ id: batch.id, forms: extras })
+          ...(mat !== batch.material_id ? { material_id: mat } : {}),
+          ...(formsChanged ? { extra_forms: extras } : {}) })
         onSaved?.(r.id); onClose()
       } else {
         const r = await create.mutateAsync({ warehouse_id: wh, material_id: mat, prod_date: date, cycle: cycleNorm, batch_no: noNum ?? undefined, tank_id: tank,

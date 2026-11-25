@@ -1,5 +1,5 @@
 // FILE SINH TỰ ĐỘNG — `node scripts/gen-db-types.mjs` (từ information_schema STAGING). KHÔNG sửa tay.
-// Sinh lúc 2026-11-25T05:01:28.494Z · 127 bảng/view · 273 hàm · 0 enum
+// Sinh lúc 2026-11-25T05:10:43.428Z · 127 bảng/view · 277 hàm · 0 enum
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[]
 
 export type Database = {
@@ -7521,6 +7521,10 @@ export type Database = {
         Args: { p: Json | null }
         Returns: Json
       }
+      mes_batch_approve: {
+        Args: { p: Json | null }
+        Returns: Json
+      }
       mes_batch_board: {
         Args: { p_batch_id: string | null }
         Returns: Json
@@ -7579,6 +7583,10 @@ export type Database = {
       }
       mes_batch_steps: {
         Args: { p_ids: unknown | null }
+        Returns: Json
+      }
+      mes_batch_update: {
+        Args: { p: Json | null }
         Returns: Json
       }
       mes_close_run: {
@@ -7661,6 +7669,10 @@ export type Database = {
         Args: { p_material: string | null; p_date: string | null; p_lot: string | null }
         Returns: string
       }
+      mes_next_batch_no: {
+        Args: { p_wh: string | null; p_cycle: string | null; p_tank: string | null }
+        Returns: number
+      }
       mes_open_batch_wh: {
         Args: { p_batch_id: string | null }
         Returns: string
@@ -7734,6 +7746,10 @@ export type Database = {
         Returns: Json
       }
       mes_tank_transfer: {
+        Args: { p: Json | null }
+        Returns: Json
+      }
+      mes_tank_update: {
         Args: { p: Json | null }
         Returns: Json
       }

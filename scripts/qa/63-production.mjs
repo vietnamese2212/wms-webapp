@@ -178,6 +178,16 @@ try {
   check('1f. Gõ số mẻ đã có trong chu kỳ ⇒ 409 BATCH_NO_DUP', dup.s === 409 && dup.j?.error?.code === 'BATCH_NO_DUP', `http=${dup.s} ${dup.j?.error?.code}`)
   const over = await api('/wms/production/batches', 'POST', NEW({ material_id: M_BTP, tank_id: T1.id, planned_qty: 1 }))
   check('1h. Bồn 1.000 đã đặt đủ cho mẻ 1 (kế hoạch 1.000) ⇒ mẻ có kế hoạch nữa bị 409 MES_OVER_CAPACITY', over.s === 409 && over.j?.error?.code === 'MES_OVER_CAPACITY', `http=${over.s} ${over.j?.error?.code}`)
+  // 25/11 rà soát B2: mẻ số 2 bị huỷ ⇒ số kế tiếp (gợi ý + tự lấy) nhảy sang 3, không va mã lô của mẻ huỷ cùng bồn
+  const z1 = await api('/wms/production/batches', 'POST', NEW({ material_id: M_BTP2, tank_id: T4.id, cycle: 'QZ' }))
+  const z2 = await api('/wms/production/batches', 'POST', NEW({ material_id: M_BTP2, tank_id: T4.id, cycle: 'QZ' }))
+  await api(`/wms/production/batches/${z2.j?.data?.id}/cancel`, 'POST', {})
+  const ncZ = await api(`/wms/production/batches/next-code?warehouse_id=${WC}&cycle=QZ&tank_id=${T4.id}`)
+  const z3 = await api('/wms/production/batches', 'POST', NEW({ material_id: M_BTP2, tank_id: T4.id, cycle: 'QZ' }))
+  check('1i. Mẻ 2 của chu kỳ bị huỷ ⇒ gợi ý số kế 3 và mở mẻ không gõ số ra số 3 (trước: gợi ý 2 ⇒ 409 MES_CODE_USED)',
+    z2.j?.data?.batch_no === 2 && ncZ.j?.data?.next_no === 3 && z3.s === 201 && z3.j?.data?.batch_no === 3,
+    `z2=${z2.j?.data?.batch_no} next=${ncZ.j?.data?.next_no} z3=${z3.s} ${z3.j?.data?.batch_no ?? z3.j?.error?.code}`)
+  for (const z of [z1, z3]) if (z.j?.data?.id) await api(`/wms/production/batches/${z.j.data.id}/cancel`, 'POST', {})
 
   // ── [2] tra tem ──
   const s2a = await api(`/wms/production/batches/${B1.id}/scan-check?code=QA63_P1`)
@@ -750,6 +760,12 @@ try {
     bx.s === 201 && num(BX?.requirement_count) === 2 && upMat.s === 200 && boardX.length === 0 && upBack.s === 200
       && num(boardX2.find(r => r.material_id === M_RM)?.required) === 10 && num(boardX2.find(r => r.material_id === M_EA)?.required) === 4,
     `http=${bx.s}/${upMat.s}/${upBack.s} board=${boardX.length} → ${JSON.stringify(boardX2.map(r => [r.material_id, r.required]))}`)
+  // 25/11 rà soát B4: sửa mẻ đổi bồn + kế hoạch quá bồn mới ⇒ 409 và mẻ KHÔNG đổi gì (trước: kế hoạch / ghi chú đã ghi rồi mới báo lỗi)
+  const upHalf = await api(`/wms/production/batches/${BX?.id}`, 'PATCH', { tank_id: T4.id, planned_qty: 1_000_000, note: 'QA63 sửa dở' })
+  const bxNow = (await restAll('production_batch', `select=planned_qty,tank_id,note&id=eq.${BX?.id}`))[0]
+  check('10j2. Sửa mẻ đổi bồn + kế hoạch vượt bồn mới ⇒ 409 MES_OVER_CAPACITY, mẻ giữ nguyên kế hoạch / bồn / ghi chú (một giao dịch)',
+    upHalf.s === 409 && upHalf.j?.error?.code === 'MES_OVER_CAPACITY' && num(bxNow?.planned_qty) === 200 && bxNow?.tank_id === T6.id && bxNow?.note !== 'QA63 sửa dở',
+    `http=${upHalf.s} ${upHalf.j?.error?.code} ${JSON.stringify(bxNow)}`)
   if (BX?.id) await api(`/wms/production/batches/${BX.id}/cancel`, 'POST', {})
   // (18/11) không còn "đóng mẻ" ⇒ mẻ KHÔNG MỞ duy nhất là mẻ đã huỷ (BX vừa huỷ ở trên)
   const rqClosed = await api(`/wms/production/batches/${BX?.id ?? 'x'}/requirements`, 'PUT', { items: [] })

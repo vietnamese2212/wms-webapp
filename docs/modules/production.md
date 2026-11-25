@@ -30,8 +30,10 @@ Luồng: **trưởng ca** tạo mẻ + duyệt → **QA** duyệt → **công nh
 |---|---|
 | Tạo mẻ thiếu chu kỳ / bồn | 400 — chu kỳ (1–6 chữ số), bồn bắt buộc; số mẻ trống ⇒ số kế tiếp của chu kỳ (1–9999) |
 | Mã lô | Không gõ tay. `<chữ nhà máy><chu kỳ><số mẻ 4 số><mã bồn>` (vd `B300001BD62`) — hàm `mes_batch_code`; chữ nhà máy = `Warehouse.nmsx_code` của kho chế biến, trống thì của kho cha; cả hai trống ⇒ 422 `MES_NO_PLANT` |
-| Hai mẻ cùng chu kỳ cùng số | 409 `BATCH_NO_DUP` (chỉ mục duy nhất `(warehouse_id, cycle, batch_no)` trừ mẻ đã huỷ); mã lô trùng mẻ ĐÃ HUỶ ⇒ 409 `MES_CODE_USED` |
-| Bồn đang chứa / đã đặt cho mã BTP khác | 409 `MES_MIX_MATERIAL` ngay lúc tạo mẻ / đổi bồn |
+| Hai mẻ cùng chu kỳ cùng số | 409 `BATCH_NO_DUP` (chỉ mục duy nhất `(warehouse_id, cycle, batch_no)` trừ mẻ đã huỷ); mã lô trùng mẻ ĐÃ HUỶ ⇒ 409 `MES_CODE_USED` (khi GÕ số). Để trống số ⇒ số kế tiếp = lớn nhất (bỏ mẻ huỷ) + 1, nhảy qua số mà mã lô ghép ra trùng mẻ đã huỷ trên CÙNG bồn — một hàm `mes_next_batch_no` cho cả gợi ý ở form lẫn hàm tạo mẻ (25/11 B2) |
+| Bồn đang chứa / đã đặt cho mã BTP khác | 409 `MES_MIX_MATERIAL` ngay lúc tạo mẻ / đổi bồn / **chuyển bồn** (25/11 B6: chuyển vào bồn đã đặt cho mẻ chưa nạp mang mã khác cũng chặn; đủ chỗ khi nạp / chuyển vẫn theo lượng THỰC chứa — user chốt) |
+| Sửa mẻ (25/11 B4) | MỘT giao dịch `mes_batch_update`: khoá bồn cũ + mới rồi mẻ, kiểm, ghi, ghép lại mã lô, tính lại bàn NVL, đặt phiếu bổ sung (PATCH nhận `extra_forms`). Lỗi ở bất kỳ bước nào ⇒ không ghi gì. Tạo mẻ cũng vậy: áp công thức + phiếu bổ sung nằm trong `mes_batch_create` (lỗi ⇒ không có mẻ) |
+| Sửa bồn (25/11 B8) | `mes_tank_update` khoá bồn: còn hàng HOẶC đã đặt cho mẻ chưa nạp ⇒ không đổi đơn vị, không ngừng dùng (409 `TANK_NOT_EMPTY`); sức chứa không nhỏ hơn lượng đang chứa |
 | Kế hoạch > chỗ trống của bồn | 409 `MES_OVER_CAPACITY`. Chỗ trống = sức chứa − đang chứa − Σ (kế hoạch − đã nạp) của các mẻ ĐANG MỞ khác đã đặt bồn đó (`mes_tank_room_check`, gọi sau khi khoá dòng bồn). Sửa kế hoạch cũng kiểm lại |
 | Đổi chu kỳ / số mẻ / bồn TRƯỚC khi nạp | Được (`mes_batch_identity`): mã lô ghép lại; tem đã in mất hiệu lực (`label_ver` +1, `label_at` = null), PATCH trả `relabel: true`, trang mẻ hiện băng "in lại tem" |
 | Đổi bồn SAU khi nạp | 409 `MES_FILLED` — mã lô đứng yên; đưa sang bồn khác = Chuyển bồn ở trang Bồn |

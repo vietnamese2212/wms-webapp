@@ -11,7 +11,7 @@ import { ok, fail, failAny } from '../../utils/response'
 import { resolveActorId, resolveActorName } from '../../utils/actor'
 import { normalizeQR } from '../../utils/qrParser'
 import { qtyIntegerError } from '../../utils/qtyUnits'
-import type { Tables, TablesUpdate } from '../../types/database'
+import type { Tables, TablesUpdate, Json } from '../../types/database'
 import { normalizeBatchCode } from '../../utils/batchCode'
 import { normalizeCycle, CYCLE_RE, parseBatchLabel, batchLabelQr } from '../../utils/batchLabel'
 import { processBlocksError } from '../../utils/processBlocks'
@@ -149,18 +149,21 @@ export async function nextCode(req: Request, res: Response) {
     if (!(await inScope(req, q.warehouse_id))) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
     const { data: plant } = await db.rpc('mes_plant_letter', { p_wh: q.warehouse_id })
     const cycle = normalizeCycle(q.cycle)
+    // bồn phải thuộc đúng kho đang mở mẻ (route hai id — B11 rà soát 25/11)
+    const { data: t, error: tErr } = q.tank_id
+      ? await db.from('production_tank').select('code').eq('id', q.tank_id).eq('warehouse_id', q.warehouse_id).maybeSingle()
+      : { data: null, error: null }
+    if (tErr) return fail(res, tErr)
     let next_no: number | null = null
     if (CYCLE_RE.test(cycle)) {
-      const { data: top } = await db.from('production_batch').select('batch_no').eq('warehouse_id', q.warehouse_id).eq('cycle', cycle)
-        .neq('status', 'CANCELLED').not('batch_no', 'is', null).order('batch_no', { ascending: false }).limit(1)
-      next_no = Math.min((top?.[0]?.batch_no ?? 0) + 1, 9999)
+      // MỘT luật số kế tiếp với hàm tạo mẻ (mes_next_batch_no — nhảy qua mã lô của mẻ đã huỷ trên cùng bồn, B2 rà soát 25/11)
+      const { data: nx, error: nErr } = await db.rpc('mes_next_batch_no', { p_wh: q.warehouse_id, p_cycle: cycle, p_tank: t ? q.tank_id! : null })
+      if (nErr) return mesFail(res, nErr)
+      next_no = Number(nx)
     }
     const no = q.batch_no ?? next_no
     let code: string | null = null
-    if (plant && CYCLE_RE.test(cycle) && no && q.tank_id) {
-      const { data: t } = await db.from('production_tank').select('code').eq('id', q.tank_id).maybeSingle()
-      if (t) code = `${plant}${cycle}${String(no).padStart(4, '0')}${t.code}`
-    }
+    if (plant && CYCLE_RE.test(cycle) && no && t) code = `${plant}${cycle}${String(no).padStart(4, '0')}${t.code}`
     return ok(res, { plant: plant || null, cycle, next_no, code })
   } catch (e) { return failAny(res, e) }
 }
@@ -253,16 +256,11 @@ export async function createBatch(req: Request, res: Response) {
         warehouse_id: body.warehouse_id, material_id: m.id, prod_date: body.prod_date, cycle, batch_no: body.batch_no ?? null, tank_id: body.tank_id,
         machine_code: body.machine_code ? body.machine_code.toUpperCase() : null, shift: body.shift || null,
         planned_qty: body.planned_qty == null ? null : round3(body.planned_qty), note: body.note || null, ...a,
+        // bàn làm việc (chép ĐỊNH MỨC — công thức chọn hoặc mặc định) + phiếu bổ sung làm TRONG hàm tạo mẻ, cùng giao dịch:
+        // lỗi ⇒ không có mẻ nào (25/11 B3 — trước đây nuốt lỗi, trả 201 với bàn trống / mất phiếu bổ sung)
+        recipe_id: body.recipe_id ?? null, ...(body.extra_forms ? { extra_forms: body.extra_forms } : {}),
       } })
-      if (!error) {
-        const row = data as { id: string }
-        // bàn làm việc: chép ĐỊNH MỨC của mã BTP thành yêu cầu nguyên liệu của mẻ (không có định mức ⇒ bàn trống, người mở tự khai)
-        const { data: ap, error: apErr } = await db.rpc('mes_batch_apply_recipe', { p: { batch_id: row.id, recipe_id: body.recipe_id ?? null, actor_name: a.actor_name } })
-        if (apErr) console.error('[production] apply recipe', apErr.message)
-        const { error: fErr } = await db.rpc('mes_batch_set_forms', { p: { batch_id: row.id, ...(body.extra_forms ? { forms: body.extra_forms } : {}) } })
-        if (fErr) console.error('[production] set forms', fErr.message)
-        return ok(res, { ...row, requirement_count: (ap as { count?: number } | null)?.count ?? 0 }, 201)
-      }
+      if (!error) return ok(res, data as { id: string; requirement_count: number }, 201)
       if (error.code !== '23505') return mesFail(res, error)
       if (body.batch_no) return fail(res, 409, 'BATCH_NO_DUP', `Chu kỳ ${cycle} đã có mẻ số ${body.batch_no} — đổi số mẻ hoặc để trống cho app lấy số kế tiếp`)
       await jitter(attempt)   // hai người cùng mở mẻ một lúc ⇒ người sau lấy số kế
@@ -279,6 +277,7 @@ export const zBatchUpdate = z.object({
   cycle: zText(1, 20).optional(), batch_no: z.number().int().min(1).max(9999).optional(), tank_id: zText(1, 64).optional(),
   machine_code: zText(0, 20).nullable().optional(), shift: zText(1, 40).optional(),   // ca bắt buộc (21/11): sửa mẻ không xoá được ca
   planned_qty: z.number().positive().max(10_000_000).nullable().optional(), note: zText(0, 500).nullable().optional(),
+  extra_forms: z.array(zText(1, 20)).max(20).optional(),   // phiếu bổ sung — lưu CÙNG lệnh sửa (25/11 F9: trước là hai API nối nhau)
 })
 export async function updateBatch(req: Request, res: Response) {
   try {
@@ -287,65 +286,38 @@ export async function updateBatch(req: Request, res: Response) {
     if (!b) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy mẻ')
     if (!(await inScope(req, b.warehouse_id))) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
     if (b.status === 'CANCELLED') return fail(res, 409, 'BATCH_CANCELLED', 'Mẻ đã huỷ — không sửa được')
-    const patch: TablesUpdate<'production_batch'> = { updated_at: nowIso() }
-    if (body.prod_date !== undefined) patch.prod_date = body.prod_date
-    if (body.machine_code !== undefined) patch.machine_code = body.machine_code ? body.machine_code.toUpperCase() : null
-    if (body.shift !== undefined) patch.shift = body.shift || null
-    if (body.note !== undefined) patch.note = body.note || null
-    const matChanged = body.material_id !== undefined && body.material_id !== b.material_id
-    const planChanged = body.planned_qty !== undefined && (body.planned_qty ?? null) !== (b.planned_qty == null ? null : Number(b.planned_qty))
-    if ((matChanged || planChanged) && b.qa_ok_at) return fail(res, 409, 'MES_APPROVED', APPROVED_MSG)
-    if (planChanged) patch.planned_qty = body.planned_qty == null ? null : round3(body.planned_qty)
-    if (matChanged) {
-      const [{ count: nc }, { count: nm }] = await Promise.all([
-        db.from('batch_consumption').select('id', { count: 'exact', head: true }).eq('batch_id', b.id).is('reversed_at', null),
-        db.from('tank_movement').select('id', { count: 'exact', head: true }).eq('batch_id', b.id),
-      ])
-      if ((nc ?? 0) > 0 || (nm ?? 0) > 0)
-        return fail(res, 409, 'BATCH_LOCKED', 'Mẻ đã có NVL rút vào hoặc đã nạp bồn — không đổi được mã bán thành phẩm (chuỗi truy xuất đã ghi theo mã cũ)')
-      const { data: m } = await db.from('Material').select('id, material_code, base_unit, is_active, is_semi_finished').eq('id', body.material_id as string).maybeSingle()
+    // kiểm tĩnh (danh mục) ở đây; mọi kiểm theo TRẠNG THÁI mẻ / bồn nằm trong mes_batch_update sau khoá
+    if (body.material_id !== undefined && body.material_id !== b.material_id) {
+      const { data: m, error: mErr } = await db.from('Material').select('id, material_code, base_unit, is_active, is_semi_finished').eq('id', body.material_id).maybeSingle()
+      if (mErr) return fail(res, mErr)
       if (!m) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy mã bán thành phẩm')
       const btpErr = btpUseError(m)
       if (btpErr) return fail(res, 422, btpErr.code, btpErr.message)
-      patch.material_id = m.id
     }
-    // chu kỳ / số mẻ / bồn ⇒ hàm DB khoá bồn, kiểm chỗ, ghép lại mã lô
     const cycle = body.cycle !== undefined ? normalizeCycle(body.cycle) : undefined
     if (cycle !== undefined && !CYCLE_RE.test(cycle)) return fail(res, 422, 'MES_CYCLE', 'Chu kỳ gồm 1–6 chữ / số, viết liền')
-    const idChanged = (cycle !== undefined && cycle !== b.cycle) || (body.batch_no !== undefined && body.batch_no !== b.batch_no)
-      || (body.tank_id !== undefined && body.tank_id !== b.tank_id)
-    const tankId = body.tank_id ?? b.tank_id
-    // kế hoạch / mã đổi mà bồn giữ nguyên ⇒ vẫn phải vừa bồn (đổi bồn thì hàm mes_batch_identity tự kiểm)
-    if ((planChanged || matChanged) && tankId && !(body.tank_id !== undefined && body.tank_id !== b.tank_id) && b.status === 'OPEN') {
-      const { count: nf } = await db.from('tank_movement').select('id', { count: 'exact', head: true }).eq('batch_id', b.id).eq('kind', 'FILL')
-      if (!nf) {
-        const { error: roomErr } = await db.rpc('mes_tank_room_check', { p_tank: tankId, p_wh: b.warehouse_id, p_material: patch.material_id ?? b.material_id,
-          p_planned: (patch.planned_qty !== undefined ? patch.planned_qty : b.planned_qty) as number, p_exclude: b.id })
-        if (roomErr) return mesFail(res, roomErr)
-      }
+    // 25/11 (B4 rà soát): MỘT giao dịch — khoá bồn + mẻ, kiểm, ghi, đổi mã lô, tính lại bàn NVL, đặt phiếu bổ sung. Lỗi ⇒ không ghi gì.
+    // Trước đây ghi patch trước rồi mới đổi mã lô / tính bàn ⇒ lỗi giữa chừng để mẻ mang kế hoạch / mã mới mà bàn không bao giờ tính lại.
+    const p: Record<string, unknown> = { batch_id: b.id, actor_name: actor(req).actor_name }
+    if (body.material_id !== undefined) p.material_id = body.material_id
+    if (body.planned_qty !== undefined) p.planned_qty = body.planned_qty == null ? null : round3(body.planned_qty)
+    if (body.prod_date !== undefined) p.prod_date = body.prod_date
+    if (body.machine_code !== undefined) p.machine_code = body.machine_code ?? null
+    if (body.shift !== undefined) p.shift = body.shift
+    if (body.note !== undefined) p.note = body.note ?? null
+    if (cycle !== undefined) p.cycle = cycle
+    if (body.batch_no !== undefined) p.batch_no = body.batch_no
+    if (body.tank_id !== undefined) p.tank_id = body.tank_id
+    if (body.extra_forms !== undefined) p.extra_forms = body.extra_forms
+    const { data, error } = await db.rpc('mes_batch_update', { p: p as Json })
+    if (error) {
+      if (error.code === '23505') return fail(res, 409, 'BATCH_NO_DUP', 'Chu kỳ này đã có mẻ mang số đó — đổi số mẻ')
+      const code = MES_RE.exec(String(error.message ?? ''))?.[1]
+      if (code === 'BATCH_LOCKED' || code === 'BATCH_CANCELLED') return fail(res, 409, code, String(error.message).split('|')[1]?.trim() ?? '')
+      return mesFail(res, error)
     }
-    const { data, error } = await db.from('production_batch').update(patch).eq('id', b.id).select('*')
-    if (error) return fail(res, error)
-    if (!data?.length) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy mẻ')
-    let ident: { batch_code?: string; relabel?: boolean } = {}
-    if (idChanged) {
-      const { data: idr, error: idErr } = await db.rpc('mes_batch_identity', { p: {
-        batch_id: b.id, ...(cycle !== undefined ? { cycle } : {}), ...(body.batch_no !== undefined ? { batch_no: body.batch_no } : {}),
-        ...(body.tank_id !== undefined ? { tank_id: body.tank_id } : {}),
-      } })
-      if (idErr) return idErr.code === '23505' ? fail(res, 409, 'BATCH_NO_DUP', 'Chu kỳ này đã có mẻ mang số đó — đổi số mẻ') : mesFail(res, idErr)
-      ident = (idr ?? {}) as typeof ident
-    }
-    // bàn làm việc theo kịp mẻ (C114): đổi mã BTP ⇒ chép định mức mã mới; đổi kế hoạch ⇒ yêu cầu nhân theo tỷ lệ kế hoạch mới / cũ
-    if (matChanged || planChanged) {
-      const { error: rErr } = await db.rpc('mes_batch_requirements_refresh', { p: { batch_id: b.id, reset: matChanged, old_planned: b.planned_qty, actor_name: actor(req).actor_name } })
-      if (matChanged) {   // phiếu bổ sung theo mã mới (phiếu đã ghi giữ nguyên)
-        const { error: fErr } = await db.rpc('mes_batch_set_forms', { p: { batch_id: b.id } })
-        if (fErr) console.error('[production] set forms', fErr.message)
-      }
-      if (rErr) return fail(res, 409, 'MES_REQUIREMENTS_STALE', 'Đã lưu mẻ nhưng chưa tính lại được nguyên liệu yêu cầu — bấm "Chép lại theo định mức" trên bàn của mẻ')
-    }
-    return ok(res, { ...data[0], ...(ident.batch_code ? { batch_code: ident.batch_code } : {}), relabel: ident.relabel === true })
+    const row = data as Record<string, unknown> & { relabel?: boolean }
+    return ok(res, { ...row, relabel: row.relabel === true })
   } catch (e) { return failAny(res, e) }
 }
 
@@ -371,29 +343,15 @@ async function approveStep(req: Request, res: Response, step: 'lead' | 'qa') {
   if (!b) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy mẻ')
   if (!(await inScope(req, b.warehouse_id))) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
   if (b.status !== 'OPEN') return fail(res, 409, 'BATCH_STATUS', 'Mẻ không còn mở')
-  const a = actor(req)
-  const col = step === 'lead' ? 'lead_ok_at' : 'qa_ok_at'
-  if (step === 'lead' && approve) {
-    const { count } = await db.from('batch_requirement').select('id', { count: 'exact', head: true }).eq('batch_id', b.id).is('removed_at', null)
-    if (!count) return fail(res, 409, 'MES_EMPTY_SHEET', 'Phiếu của mẻ chưa có nguyên liệu nào — khai nguyên liệu rồi mới duyệt')
+  // 25/11 (G3 rà soát): mes_batch_approve khoá mẻ rồi mới kiểm — QA bỏ duyệt chờ lượt nạp bồn đang chạy; trước đây phép đếm
+  // "đã nạp" chạy rời, lỗi đọc ⇒ count rỗng ⇒ cho bỏ duyệt cả mẻ đã nạp
+  const { data, error } = await db.rpc('mes_batch_approve', { p: { batch_id: b.id, step, approve, ...actor(req) } })
+  if (error) {
+    const m = MES_RE.exec(String(error.message ?? ''))
+    if (m?.[1] === 'BATCH_STATUS') return fail(res, 409, 'BATCH_STATUS', m[2].trim())
+    return mesFail(res, error)
   }
-  if (step === 'lead' && !approve && b.qa_ok_at) return fail(res, 409, 'MES_APPROVED', 'QA đã duyệt — QA bỏ duyệt trước')
-  if (step === 'qa' && approve && !b.lead_ok_at) return fail(res, 409, 'MES_NOT_APPROVED', 'Trưởng ca chưa duyệt phiếu')
-  if (step === 'qa' && !approve) {
-    const { count } = await db.from('tank_movement').select('id', { count: 'exact', head: true }).eq('batch_id', b.id)
-    if (count) return fail(res, 409, 'MES_FILLED', 'Mẻ đã nạp bồn — không bỏ duyệt được nữa')
-  }
-  const patch: TablesUpdate<'production_batch'> = step === 'lead'
-    ? { lead_ok_at: approve ? nowIso() : null, lead_ok_by: approve ? a.actor_id : null, lead_ok_by_name: approve ? a.actor_name : null, updated_at: nowIso() }
-    : { qa_ok_at: approve ? nowIso() : null, qa_ok_by: approve ? a.actor_id : null, qa_ok_by_name: approve ? a.actor_name : null, updated_at: nowIso() }
-  let q = db.from('production_batch').update(patch).eq('id', b.id).eq('status', 'OPEN')
-  q = approve ? q.is(col, null) : q.not(col, 'is', null)
-  if (step === 'lead' && !approve) q = q.is('qa_ok_at', null)
-  if (step === 'qa' && approve) q = q.not('lead_ok_at', 'is', null)
-  const { data, error } = await q.select('*')
-  if (error) return fail(res, error)
-  if (!data?.length) return fail(res, 409, 'BATCH_STATUS', 'Phiếu vừa được người khác duyệt / bỏ duyệt — tải lại')
-  return ok(res, data[0])
+  return ok(res, data)
 }
 export async function approveLead(req: Request, res: Response) { try { return await approveStep(req, res, 'lead') } catch (e) { return failAny(res, e) } }
 export async function approveQa(req: Request, res: Response) { try { return await approveStep(req, res, 'qa') } catch (e) { return failAny(res, e) } }
@@ -585,23 +543,33 @@ export async function confirmProcessLog(req: Request, res: Response) {
     const b = await loadBatch(req.params.id)
     if (!b) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy mẻ')
     if (!(await inScope(req, b.warehouse_id))) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
+    // 25/11 (B12 rà soát): cùng luật với ghi phiếu (putProcessLog · mes_log_cell) — mẻ đã huỷ thì phiếu khoá
+    if (b.status === 'CANCELLED') return fail(res, 409, 'BATCH_CANCELLED', 'Mẻ đã huỷ — không xác nhận phiếu được')
     const { confirm } = req.body as z.infer<typeof zProcessLogConfirm>
     const a = actor(req)
     // xác nhận ⇒ chụp mẫu đang áp vào phiếu (nếu phiếu chưa có bản sửa riêng) — hồ sơ lô không đổi khi mẫu chung sửa về sau
     // bỏ xác nhận ⇒ bản chụp còn y hệt mẫu chung thì gỡ, để phiếu lại "theo mẫu chung" (không hiện thành "sửa riêng")
     let snap: { blocks?: TablesUpdate<'batch_process_log'>['blocks'] } = {}
-    const { data: cur } = await db.from('batch_process_log').select('blocks').eq('batch_id', b.id).eq('form', form).maybeSingle()
+    const { data: cur, error: curErr } = await db.from('batch_process_log').select('blocks').eq('batch_id', b.id).eq('form', form).maybeSingle()
+    if (curErr) return fail(res, curErr)
     if (cur && (confirm ? cur.blocks == null : cur.blocks != null)) {
-      const { data: pf } = await db.from('production_process_form').select('blocks').eq('code', form).maybeSingle()
+      const { data: pf, error: pfErr } = await db.from('production_process_form').select('blocks').eq('code', form).maybeSingle()
+      if (pfErr) return fail(res, pfErr)
       if (pf && confirm) snap = { blocks: pf.blocks }
       if (pf && !confirm && JSON.stringify(pf.blocks) === JSON.stringify(cur.blocks)) snap = { blocks: null }
     }
-    const { data, error } = await db.from('batch_process_log')
+    let q = db.from('batch_process_log')
       .update(confirm ? { ...snap, confirmed_at: nowIso(), confirmed_by: a.actor_id, confirmed_by_name: a.actor_name, updated_at: nowIso() }
         : { ...snap, confirmed_at: null, confirmed_by: null, confirmed_by_name: null, updated_at: nowIso() })
-      .eq('batch_id', b.id).eq('form', form).select('*')
+      .eq('batch_id', b.id).eq('form', form)
+    // chụp mẫu chỉ khi phiếu VẪN chưa có bản sửa riêng (CAS) — không đè bản sửa riêng vừa lưu giữa lúc đọc và lúc ghi
+    if (confirm && snap.blocks !== undefined) q = q.is('blocks', null)
+    const { data, error } = await q.select('*')
     if (error) return fail(res, error)
-    if (!data?.length) return fail(res, 404, 'NOT_FOUND', 'Phiếu chưa có nội dung — ghi phiếu trước rồi mới xác nhận')
+    if (!data?.length) {
+      if (cur) return fail(res, 409, 'BUSY', 'Phiếu vừa được sửa — tải lại rồi xác nhận')
+      return fail(res, 404, 'NOT_FOUND', 'Phiếu chưa có nội dung — ghi phiếu trước rồi mới xác nhận')
+    }
     return ok(res, data[0])
   } catch (e) { return failAny(res, e) }
 }
@@ -1274,22 +1242,21 @@ export async function updateTank(req: Request, res: Response) {
     const t = await loadTank(req.params.id)
     if (!t) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy bồn')
     if (!(await inScope(req, t.warehouse_id))) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
-    const { data: lots } = await db.from('tank_lot').select('qty_remaining').eq('tank_id', t.id).eq('status', 'ACTIVE').limit(500)
-    const content = (lots ?? []).reduce((s, l) => s + Number(l.qty_remaining), 0)
-    if (content > 0) {
-      if (body.unit !== undefined && body.unit !== t.unit) return fail(res, 409, 'TANK_NOT_EMPTY', 'Bồn đang có hàng — không đổi đơn vị được')
-      if (body.capacity !== undefined && body.capacity < content) return fail(res, 409, 'TANK_NOT_EMPTY', `Bồn đang chứa ${content} ${t.unit} — sức chứa không được nhỏ hơn`)
-      if (body.is_active === false) return fail(res, 409, 'TANK_NOT_EMPTY', 'Bồn đang có hàng — rút / chuyển / xả hết trước khi ngừng dùng')
+    // 25/11 (B8 rà soát): mes_tank_update khoá bồn rồi mới kiểm — bồn còn hàng HOẶC đã đặt cho mẻ chưa nạp thì không đổi đơn vị /
+    // không ngừng dùng (trước đây đọc tồn bồn ngoài giao dịch và bỏ qua mẻ đã đặt ⇒ mẻ kẹt không nạp được)
+    const p: Record<string, unknown> = { tank_id: t.id, actor_name: resolveActorName(req) }
+    if (body.name !== undefined) p.name = body.name ?? null
+    if (body.capacity !== undefined) p.capacity = body.capacity
+    if (body.unit !== undefined) p.unit = body.unit
+    if (body.is_active !== undefined) p.is_active = body.is_active
+    if (body.note !== undefined) p.note = body.note ?? null
+    const { data, error } = await db.rpc('mes_tank_update', { p: p as Json })
+    if (error) {
+      const m = MES_RE.exec(String(error.message ?? ''))
+      if (m?.[1] === 'TANK_NOT_EMPTY') return fail(res, 409, 'TANK_NOT_EMPTY', m[2].trim())
+      return mesFail(res, error)
     }
-    const patch: TablesUpdate<'production_tank'> = { updated_at: nowIso(), updated_by: resolveActorName(req) }
-    if (body.name !== undefined) patch.name = body.name || null
-    if (body.capacity !== undefined) patch.capacity = body.capacity
-    if (body.unit !== undefined) patch.unit = body.unit
-    if (body.is_active !== undefined) patch.is_active = body.is_active
-    if (body.note !== undefined) patch.note = body.note || null
-    const { data, error } = await db.from('production_tank').update(patch).eq('id', t.id).select('*')
-    if (error) return fail(res, error)
-    return ok(res, data?.[0] ?? null)
+    return ok(res, data)
   } catch (e) { return failAny(res, e) }
 }
 
@@ -1427,6 +1394,10 @@ export async function pourScan(req: Request, res: Response) {
     const b = await loadBatch(batchId)
     if (!b) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy mẻ')
     if (!(await inScope(req, b.warehouse_id))) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
+    if (body.batch_id) {   // route hai id (B11 rà soát 25/11): bồn phải cùng kho với mẻ — không để thông báo lộ mã bồn kho khác
+      const t = await loadTank(body.tank_id)
+      if (!t || t.warehouse_id !== b.warehouse_id) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy bồn ở kho của mẻ')
+    }
     const { error } = await db.rpc('mes_pour_scan', { p: { batch_id: b.id, tank_id: body.tank_id, label_code: label.batch_code, pallet_no: label.pallet_no,
       pallet_total: label.pallet_total, label_ver: label.label_ver, ...actor(req) } })
     if (error) return mesFail(res, error)

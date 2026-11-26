@@ -1121,41 +1121,6 @@ try {
         && closeOk.s === 200 && !!closeOk.j?.data?.confirmed_at && gRej?.stage === 'rejected' && gRej?.log_pending === false,
       `http=${closeMiss.s}/${endCell.s}/${closeOk.s} ${closeMiss.j?.error?.message} gate=${gRej?.stage}/${gRej?.log_pending}`)
 
-    // ── [16p] QA BỒN ĐẠT mà phiếu chưa đóng ⇒ "Chờ đóng phiếu" (26/11 — user chốt) — mẻ riêng ở bồn riêng ──
-    {
-      const T7 = (await api('/wms/production/tanks', 'POST', { warehouse_id: WC2, code: 'QA63-T7', capacity: 500, unit: 'L' })).j?.data
-      const FC = (await api('/wms/production/batches', 'POST', { warehouse_id: WC2, material_id: M_BTP, prod_date: todayVN, shift: 'Ca 1', cycle: 'Q4', tank_id: T7?.id, planned_qty: 10 })).j?.data
-      await api(`/wms/production/batches/${FC?.id}/requirements`, 'PUT', { reason: 'QA63 khai phiếu', items: [{ material_id: M_RM, qty: 1 }] })
-      await api(`/wms/production/batches/${FC?.id}/approve-lead`, 'POST', { approve: true })
-      await api(`/wms/production/batches/${FC?.id}/approve-qa`, 'POST', { approve: true })
-      // phiếu của mẻ = bản sửa riêng không có ô bắt buộc (không phụ thuộc cấu hình mẫu MIX trên staging)
-      const st = await api(`/wms/production/batches/${FC?.id}/process-log/MIX/start`, 'POST', {})
-      await api(`/wms/production/batches/${FC?.id}/process-log/MIX`, 'PUT', { data: { qa63_note: 'ok' }, blocks: [{ type: 'fields', title: 'QA63', fields: [{ key: 'qa63_note', label: 'Ghi chú', kind: 'text' }] }] })
-      const cs = await api(`/wms/production/batches/${FC?.id}/consume-scan`, 'POST', { entry_id: 'QA63_E16', qty: 1, qty_semantics: 'base' })
-      const lb = await api(`/wms/production/batches/${FC?.id}/labels`, 'POST', { count: 1 })
-      const ps = await api('/wms/production/pour-scan', 'POST', { batch_id: FC?.id, tank_id: T7?.id, code: lb.j?.data?.labels?.[0]?.qr })
-      const fl = await api(`/wms/production/tanks/${T7?.id}/fill`, 'POST', { batch_id: FC?.id, qty: 10 })
-      const qa = await api(`/wms/production/tanks/${T7?.id}/qa`, 'POST', { qa_status: 'RELEASED' })
-      const g1 = (await api(`/wms/production/batches/${FC?.id}`)).j?.data?.gate
-      const ls = await api(`/wms/production/batches?warehouse_id=${WC2}&search=QQ40001`)
-      const lr = (ls.j?.data?.rows ?? []).find(r => r.id === FC?.id)
-      const lsC = await api(`/wms/production/batches?warehouse_id=${WC2}&stage=closing`)
-      const cyc = (await api(`/wms/production/cycles/report?warehouse_id=${WC2}&cycle=Q4`)).j?.data
-      const cb = (cyc?.batches ?? []).find(b => b.id === FC?.id)
-      check('16p. QA bồn ĐẠT mà phiếu chưa đóng ⇒ tình trạng "closing" (Chờ đóng phiếu), bước "close" — trang mẻ · danh sách (dòng + ô tổng + lọc) · báo cáo chu kỳ cùng giá trị',
-        st.s === 200 && cs.s === 200 && lb.s === 200 && ps.s === 200 && fl.s === 200 && qa.s === 200
-          && g1?.stage === 'closing' && g1?.step === 'close' && g1?.log_pending === true && lr?.stage === 'closing'
-          && num(ls.j?.data?.summary?.closing) === 1 && (lsC.j?.data?.rows ?? []).some(r => r.id === FC?.id) && (lsC.j?.data?.rows ?? []).every(r => r.stage === 'closing')
-          && cb?.stage === 'closing',
-        `http=${st.s}/${cs.s}/${lb.s}/${ps.s}/${fl.s}/${qa.s} gate=${g1?.stage}/${g1?.step}/${g1?.log_pending} list=${lr?.stage} sum=${ls.j?.data?.summary?.closing} cyc=${cb?.stage}`)
-      const cl1 = await api(`/wms/production/batches/${FC?.id}/process-log/MIX/confirm`, 'POST', { confirm: true })
-      const g2 = (await api(`/wms/production/batches/${FC?.id}`)).j?.data?.gate
-      const re = await api(`/wms/production/batches/${FC?.id}/process-log/MIX/confirm`, 'POST', { confirm: false })
-      const g3 = (await api(`/wms/production/batches/${FC?.id}`)).j?.data?.gate
-      check('16q. Đóng phiếu ⇒ "released" (QA đạt), hết bước; mở lại phiếu ⇒ về "closing"',
-        cl1.s === 200 && g2?.stage === 'released' && g2?.step === null && g2?.log_pending === false && re.s === 200 && g3?.stage === 'closing' && g3?.step === 'close',
-        `http=${cl1.s}/${re.s} ${g2?.stage}/${g2?.step} → ${g3?.stage}/${g3?.step}`)
-    }
 
     // ── [17] BÁO CÁO NVL THEO CHU KỲ + MẺ TRÊN SƠ ĐỒ BỒN (18/11 f — "theo chu kỳ, tách ca, mẻ, nhân sự"; "mẻ hiện trên sơ đồ, liên kết tình trạng") ──
     const cl = await api(`/wms/production/cycles?warehouse_id=${WC2}`)
@@ -1246,6 +1211,42 @@ try {
         `http=${y3.s}/${yBad.s} ${JSON.stringify((Y3?.buckets ?? []).map(b => b.k + ':' + b.batches))} prev=${Y3?.prev_from}→${Y3?.prev_to}`)
     }
 
+    // (đặt SAU [19] dashboard: mẻ này cùng kho 2, cùng ngày — đứng trước sẽ đổi số đếm của dashboard)
+    // ── [16p] QA BỒN ĐẠT mà phiếu chưa đóng ⇒ "Chờ đóng phiếu" (26/11 — user chốt) — mẻ riêng ở bồn riêng ──
+    {
+      const T7 = (await api('/wms/production/tanks', 'POST', { warehouse_id: WC2, code: 'QA63-T7', capacity: 500, unit: 'L' })).j?.data
+      const FC = (await api('/wms/production/batches', 'POST', { warehouse_id: WC2, material_id: M_BTP, prod_date: todayVN, shift: 'Ca 1', cycle: 'Q4', tank_id: T7?.id, planned_qty: 10 })).j?.data
+      await api(`/wms/production/batches/${FC?.id}/requirements`, 'PUT', { reason: 'QA63 khai phiếu', items: [{ material_id: M_RM, qty: 1 }] })
+      await api(`/wms/production/batches/${FC?.id}/approve-lead`, 'POST', { approve: true })
+      await api(`/wms/production/batches/${FC?.id}/approve-qa`, 'POST', { approve: true })
+      // phiếu của mẻ = bản sửa riêng không có ô bắt buộc (không phụ thuộc cấu hình mẫu MIX trên staging)
+      const st = await api(`/wms/production/batches/${FC?.id}/process-log/MIX/start`, 'POST', {})
+      await api(`/wms/production/batches/${FC?.id}/process-log/MIX`, 'PUT', { data: { qa63_note: 'ok' }, blocks: [{ type: 'fields', title: 'QA63', fields: [{ key: 'qa63_note', label: 'Ghi chú', kind: 'text' }] }] })
+      const cs = await api(`/wms/production/batches/${FC?.id}/consume-scan`, 'POST', { entry_id: 'QA63_E16', qty: 1, qty_semantics: 'base' })
+      const lb = await api(`/wms/production/batches/${FC?.id}/labels`, 'POST', { count: 1 })
+      const ps = await api('/wms/production/pour-scan', 'POST', { batch_id: FC?.id, tank_id: T7?.id, code: lb.j?.data?.labels?.[0]?.qr })
+      const fl = await api(`/wms/production/tanks/${T7?.id}/fill`, 'POST', { batch_id: FC?.id, qty: 10 })
+      const qa = await api(`/wms/production/tanks/${T7?.id}/qa`, 'POST', { qa_status: 'RELEASED' })
+      const g1 = (await api(`/wms/production/batches/${FC?.id}`)).j?.data?.gate
+      const ls = await api(`/wms/production/batches?warehouse_id=${WC2}&search=QQ40001`)
+      const lr = (ls.j?.data?.rows ?? []).find(r => r.id === FC?.id)
+      const lsC = await api(`/wms/production/batches?warehouse_id=${WC2}&stage=closing`)
+      const cyc = (await api(`/wms/production/cycles/report?warehouse_id=${WC2}&cycle=Q4`)).j?.data
+      const cb = (cyc?.batches ?? []).find(b => b.id === FC?.id)
+      check('16p. QA bồn ĐẠT mà phiếu chưa đóng ⇒ tình trạng "closing" (Chờ đóng phiếu), bước "close" — trang mẻ · danh sách (dòng + ô tổng + lọc) · báo cáo chu kỳ cùng giá trị',
+        st.s === 200 && cs.s === 200 && lb.s === 200 && ps.s === 200 && fl.s === 200 && qa.s === 200
+          && g1?.stage === 'closing' && g1?.step === 'close' && g1?.log_pending === true && lr?.stage === 'closing'
+          && num(ls.j?.data?.summary?.closing) === 1 && (lsC.j?.data?.rows ?? []).some(r => r.id === FC?.id) && (lsC.j?.data?.rows ?? []).every(r => r.stage === 'closing')
+          && cb?.stage === 'closing',
+        `http=${st.s}/${cs.s}/${lb.s}/${ps.s}/${fl.s}/${qa.s} gate=${g1?.stage}/${g1?.step}/${g1?.log_pending} list=${lr?.stage} sum=${ls.j?.data?.summary?.closing} cyc=${cb?.stage}`)
+      const cl1 = await api(`/wms/production/batches/${FC?.id}/process-log/MIX/confirm`, 'POST', { confirm: true })
+      const g2 = (await api(`/wms/production/batches/${FC?.id}`)).j?.data?.gate
+      const re = await api(`/wms/production/batches/${FC?.id}/process-log/MIX/confirm`, 'POST', { confirm: false })
+      const g3 = (await api(`/wms/production/batches/${FC?.id}`)).j?.data?.gate
+      check('16q. Đóng phiếu ⇒ "released" (QA đạt), hết bước; mở lại phiếu ⇒ về "closing"',
+        cl1.s === 200 && g2?.stage === 'released' && g2?.step === null && g2?.log_pending === false && re.s === 200 && g3?.stage === 'closing' && g3?.step === 'close',
+        `http=${cl1.s}/${re.s} ${g2?.stage}/${g2?.step} → ${g3?.stage}/${g3?.step}`)
+    }
     // ── [18] DỮ LIỆU THÔ TIÊU HAO NVL (18/11 g) + SƠ ĐỒ BỒN 2D ──
     const revN = live16.filter(x => !!x.reversed_at).length
     const rawQ = await api(`/wms/production/consumption-raw?warehouse_id=${WC2}&cycle=q2&page_size=1000`)

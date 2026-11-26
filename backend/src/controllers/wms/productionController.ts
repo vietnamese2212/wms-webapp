@@ -31,6 +31,7 @@ import {
 import { vnDayOf, utcMs } from '../../utils/dates'
 import { parseSheetByHeader, expandMergedCells, readWorkbookSafe, BAD_EXCEL_MSG } from '../../utils/excelHeader'
 import { isPreflight, buildPreflight } from '../../utils/uploadPreflight'
+import { MES_BATCH_STAGES } from '../../utils/mesStage'
 import {
   RECIPE_IMPORT_FIELDS, RECIPE_IMPORT_MAX_ROWS, RECIPE_IMPORT_MAX_RECIPES, codeKey, planRecipeImport, btpImportError, type ImpMaterial, type ImpExisting,
 } from '../../utils/recipeImport'
@@ -131,7 +132,7 @@ async function productionWhError(whId: string): Promise<string | null> {
 export const zBatchListQuery = z.object({
   warehouse_id: zText(1, 64).optional(),
   // tình trạng của mẻ (18/11 — hàm SQL mes_batch_stage, một luật cho dòng · ô tổng · lọc) thay lọc Trạng thái + QA
-  stage: z.enum(['new', 'wait_lead', 'wait_qa', 'working', 'filled', 'released', 'rejected', 'cancelled']).optional(),
+  stage: z.enum(MES_BATCH_STAGES).optional(),   // một bản: utils/mesStage.ts (26/11 + closing — C142)
   date_from: zDay.optional(), date_to: zDay.optional(),
   search: zText(0, 80).optional(),
   page: z.coerce.number().int().min(1).max(100000).optional(),

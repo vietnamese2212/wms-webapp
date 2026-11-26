@@ -13,7 +13,10 @@ import { fetchAllRowsParallel, fetchAllByIdChunks, fetchUpTo, LIST_TOO_LARGE_MSG
 import { categoryAllowed, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
 import { safeSearch, safeFilterValue } from '../../utils/search'
 import { isNccGoodsCategory, categoryRequiresNcc } from '../../utils/warehouseTypeMeta'
-import { hasEntry, qtyIntegerError, qtyLabel, type MatUnits } from '../../utils/qtyUnits'
+import { hasEntry, qtyIntegerError, qtyLabel, qtyFromEntryBase, type MatUnits } from '../../utils/qtyUnits'
+import { parseSheetByHeader, expandMergedCells, readWorkbookSafe, BAD_EXCEL_MSG, type FieldDef } from '../../utils/excelHeader'
+import { isPreflight, buildPreflight } from '../../utils/uploadPreflight'
+import { parseVnNumber } from '../../utils/vnNumber'
 import { requireBaseQty } from '../../utils/qtySemantics'
 import { parseListParam } from '../../utils/httpQuery'
 import { getInboundEditWindowDays, getReceiptRatingCfg } from '../../utils/settings'
@@ -763,10 +766,11 @@ export async function createOrder(req: Request, res: Response) {
 
 // ─── NHẬP NHIỀU MÃ — một chứng từ, nhiều mã, nhiều NCC (26/11) ─────────────────
 // User 26/11 (nhập nội bộ ở kho chế biến: 1 phiếu vài chục mã của nhiều NCC — Nhập SX từng mã một lâu, Nhập NCC bắt chọn từng NCC).
-// Chốt: khai trước mã + số lượng; mỗi MÃ một phiếu FACTORY như Nhập SX (quét / lưu thủ công / hoàn thành dùng nguyên màn chi tiết),
-// cùng `receipt_group`; vị trí MẶC ĐỊNH cho cả nhóm (màn quét đổi được từng tem); NCC tuỳ chọn cho cả nhóm — để trống thì đọc trên tem;
-// dùng ở MỌI kho. MỘT request, kiểm hết rồi mới ghi (một dòng lỗi là không ghi gì), ghi một lô.
-// `receipt_group` có sẵn = THÊM mã vào nhóm đang có ("Sửa nhóm").
+// Chốt: khai trước mã + số lượng (form hoặc UPLOAD Excel — upload chỉ TẠO nhóm mới); mỗi MÃ một phiếu FACTORY như Nhập SX (quét / lưu
+// thủ công / hoàn thành dùng nguyên màn chi tiết), cùng `receipt_group`; vị trí MẶC ĐỊNH cho cả nhóm (màn quét đổi được từng tem);
+// NCC tuỳ chọn cho cả nhóm — để trống thì đọc trên tem; dùng ở MỌI kho. Loại kho: form chọn một loại; upload lấy THEO TỪNG MÃ.
+// Thao tác cả nhóm: huỷ (phiếu chưa có hàng) · hoàn thành (phiếu đã nhận) · Sửa nhóm đổi NCC / vị trí → mọi phiếu chưa quét.
+// MỘT bộ kiểm (prepareGroup) cho form, upload (kiểm trước + ghi) — kiểm hết rồi mới ghi, ghi một lô.
 export const zCreateGroup = z.object({
   warehouse_id:   zText(1, 64),
   warehouse_type: zText(1, 30),
@@ -784,122 +788,420 @@ export const zCreateGroup = z.object({
   })).min(1).max(200),
 })
 const GROUP_SEQ_RETRIES = 8
+const GROUP_MAX_LINES = 200
+
+type GroupHead = {
+  warehouse_id: string; warehouse_type: string | null   // null = loại kho theo TỪNG MÃ (upload)
+  import_date: string; shift_id: string; location_id?: string | null; notes?: string | null; ncc_id?: string | null
+  putaway_override_reason?: string | null
+}
+type GroupLine = { material_id: string; planned_cartons: number; notes?: string | null }
+type GroupMat = { id: string; material_code: string; category: string | null; no_qr_tracking: boolean | null; is_non_stock: boolean | null } & MatUnits
+type GroupPrep = {
+  fatal?: { status: number; code: string; message: string }
+  errors: string[]
+  wh?: { id: string; code: string | null; inventory_mode: string | null }
+  matById: Map<string, GroupMat>
+  isQrLine: (id: string) => boolean
+  putWarn: string | null
+}
+const GROUP_MAT_COLS = 'id, material_code, category, no_qr_tracking, is_non_stock, base_unit, entry_unit, units_per_carton'
+
+/** Vị trí mặc định của nhóm: có thật · đang hoạt động · đúng kho · hợp loại hàng của MỌI mã có tem (cùng luật cửa đổi vị trí phiếu). */
+async function groupLocationError(locationId: string, warehouseId: string, cats: (string | null)[]): Promise<string | null> {
+  const { data: loc } = await supabase.from('Location').select('id, location_code, is_active, categories, warehouse_id').eq('id', locationId).maybeSingle()
+  if (!loc) return 'Không tìm thấy vị trí mặc định'
+  const l = loc as { location_code: string; is_active: boolean; categories: string[] | null; warehouse_id: string | null }
+  if (!l.is_active) return `Vị trí ${l.location_code} không hoạt động`
+  if (l.warehouse_id !== warehouseId) return `Vị trí ${l.location_code} không thuộc kho của phiếu`
+  const locCats = l.categories ?? []
+  const bad = [...new Set(cats.filter((c): c is string => !!c && locCats.length > 0 && !locCats.includes(c)))]
+  return bad.length ? `Vị trí ${l.location_code} thuộc loại "${locCats.join(', ')}" — không nhận hàng loại ${bad.join(', ')}. Chọn vị trí dùng chung hoặc đúng loại.` : null
+}
+
+async function prepareGroup(req: Request, h: GroupHead, lines: GroupLine[], receiptGroup: string | null): Promise<GroupPrep> {
+  const empty: GroupPrep = { errors: [], matById: new Map(), isQrLine: () => false, putWarn: null }
+  if (h.warehouse_type && !categoryAllowed(req, h.warehouse_type)) return { ...empty, fatal: { status: 403, code: 'FORBIDDEN', message: CATEGORY_FORBIDDEN_MSG } }
+  const matIds = [...new Set(lines.map(l => l.material_id))]
+  const [{ data: wh }, mats, exist] = await Promise.all([
+    supabase.from('Warehouse').select('id, code, inventory_mode').eq('id', h.warehouse_id).maybeSingle(),
+    fetchAllByIdChunks(matIds, chunk => supabase.from('Material').select(GROUP_MAT_COLS).in('id', chunk)),
+    receiptGroup
+      ? supabase.from('ProductionImport').select('id, material_id, warehouse_id, status').eq('receipt_group', receiptGroup).neq('status', 'CANCELLED')
+      : Promise.resolve({ data: null }),
+  ])
+  if (!wh) return { ...empty, fatal: { status: 404, code: 'NOT_FOUND', message: 'Không tìm thấy kho' } }
+  const w = wh as { id: string; code: string | null; inventory_mode: string | null }
+  if (w.inventory_mode === 'NONE') return { ...empty, fatal: { status: 400, code: 'VALIDATION_ERROR', message: 'Kho không theo dõi tồn (NONE) — không thể tạo phiếu nhập kho' } }
+
+  const matById = new Map((mats as GroupMat[]).map(m => [m.id, m]))
+  const codeOf = (id: string) => matById.get(id)?.material_code ?? id
+  const errs: string[] = []
+  const seen = new Set<string>(), dup = new Set<string>()
+  for (const l of lines) { if (seen.has(l.material_id)) dup.add(codeOf(l.material_id)); seen.add(l.material_id) }
+  if (dup.size) errs.push(`Mã hàng bị trùng: ${[...dup].join(', ')}`)
+  if (lines.length > GROUP_MAX_LINES) errs.push(`Tối đa ${GROUP_MAX_LINES} mã một nhóm — đang có ${lines.length}, hãy tách chứng từ`)
+  const missing = matIds.filter(id => !matById.has(id))
+  if (missing.length) errs.push(`Không tìm thấy ${missing.length} mã hàng`)
+  if (h.warehouse_type) {
+    const wrongCat = matIds.filter(id => matById.has(id) && matById.get(id)!.category !== h.warehouse_type).map(codeOf)
+    if (wrongCat.length) errs.push(`Mã không thuộc loại kho ${h.warehouse_type}: ${wrongCat.join(', ')}`)
+  } else {
+    // upload: loại kho THEO TỪNG MÃ — mã chưa khai loại kho / ngoài loại hàng được giao thì báo
+    const noCat = matIds.filter(id => matById.has(id) && !matById.get(id)!.category).map(codeOf)
+    if (noCat.length) errs.push(`Mã chưa khai loại kho (sửa ở Mã hàng): ${noCat.join(', ')}`)
+    const outScope = matIds.filter(id => { const c = matById.get(id)?.category; return !!c && !categoryAllowed(req, c) }).map(codeOf)
+    if (outScope.length) errs.push(`Mã ngoài loại hàng bạn được giao: ${outScope.join(', ')}`)
+  }
+  const nonStock = matIds.filter(id => matById.get(id)?.is_non_stock).map(codeOf)
+  if (nonStock.length) errs.push(`Mã phi hàng hoá không nhập kho: ${nonStock.join(', ')}`)
+  for (const l of lines) {
+    const m = matById.get(l.material_id)
+    const ie = m ? qtyIntegerError(l.planned_cartons, m) : null
+    if (ie) errs.push(`${m!.material_code}: ${ie}`)
+  }
+  if (receiptGroup) {
+    const ex = ((exist as { data: unknown }).data ?? []) as { material_id: string | null; warehouse_id: string | null }[]
+    if (!ex.length) return { ...empty, fatal: { status: 404, code: 'NOT_FOUND', message: 'Không tìm thấy nhóm phiếu (đã huỷ hết?)' } }
+    if (ex.some(o => o.warehouse_id !== h.warehouse_id)) return { ...empty, fatal: { status: 422, code: 'GROUP_WAREHOUSE', message: 'Nhóm phiếu thuộc kho khác' } }
+    const had = new Set(ex.map(o => o.material_id))
+    const again = matIds.filter(id => had.has(id)).map(codeOf)
+    if (again.length) errs.push(`Đã có trong nhóm (sửa số lượng ở dòng sẵn có): ${again.join(', ')}`)
+  }
+
+  // Mã theo tem cần vị trí; mã không tem (hoặc kho QTY) nhập số lượng ở trang chi tiết — không vị trí (như Nhập SX)
+  const isQrLine = (id: string) => !effectiveNoQr(matById.get(id)?.no_qr_tracking, w.inventory_mode)
+  const qrIds = matIds.filter(id => matById.has(id) && isQrLine(id))
+  let putWarn: string | null = null
+  if (qrIds.length && !h.location_id) {
+    errs.push(`Chọn vị trí mặc định — ${qrIds.length} mã quản lý theo tem cần chỗ cất`)
+  } else if (qrIds.length && h.location_id) {
+    const locErr = await groupLocationError(h.location_id, h.warehouse_id, qrIds.map(id => h.warehouse_type ?? matById.get(id)?.category ?? null))
+    if (locErr) errs.push(locErr)
+    else if (!errs.length) {
+      // Quy tắc cất hàng chấm CẢ LÔ mã vào vị trí mặc định trong một lần (ràng buộc trên tập như Chuyển vị trí hàng loạt)
+      const put = await guardPutawayBatch({
+        warehouseId: h.warehouse_id, locationId: h.location_id,
+        entries: qrIds.map(id => ({ material_id: id, ncc_id: h.ncc_id ?? null, category: matById.get(id)?.category ?? null })),
+        overrideReason: h.putaway_override_reason, canOverride: canPutawayOverride(req),
+      })
+      if (put.error) return { ...empty, fatal: { status: put.error.code === 'FORBIDDEN' ? 403 : 422, code: put.error.code, message: put.error.message } }
+      putWarn = put.warning
+    }
+  }
+  return { errors: errs, wh: w, matById, isQrLine, putWarn }
+}
+
+/** Ghi CẢ LÔ (một insert) — cấp số phiếu liền nhau; đua với người khác cùng kho cùng ngày ⇒ 23505 ⇒ đếm lại, thử lại (không ghi dở). */
+async function insertGroup(req: Request, h: GroupHead, lines: GroupLine[], prep: GroupPrep, group: string): Promise<{ orders: unknown[] } | { fatal: { status: number; code: string; message: string } }> {
+  const importedBy = actorUuid(req)   // người nhập = người đang đăng nhập (token phát từ Employee)
+  const todayStr = vnDate()
+  const [y, mo, d] = todayStr.split('-')
+  const ddmmyy = `${d}${mo}${y.slice(2)}`
+  const whCode = prep.wh?.code ? String(prep.wh.code) : 'XX'
+  const importPrefix = `${whCode}_N_${ddmmyy}_`
+  for (let attempt = 0; attempt < GROUP_SEQ_RETRIES; attempt++) {
+    const { data: existingCodes } = await supabase.from('ProductionImport')
+      .select('import_code').ilike('import_code', `${importPrefix}%`)
+    const maxSeq = (existingCodes ?? []).reduce((max: number, r: { import_code: string }) => {
+      const n = parseInt(r.import_code.slice(importPrefix.length), 10)
+      return isNaN(n) ? max : Math.max(max, n)
+    }, 0)
+    const now = new Date().toISOString()
+    const rows = lines.map((l, i) => ({
+      id:              randomUUID(),
+      import_code:     generateImportCode(whCode, ddmmyy, maxSeq + 1 + i),
+      warehouse_id:    h.warehouse_id,
+      material_id:     l.material_id,
+      location_id:     prep.isQrLine(l.material_id) ? (h.location_id ?? null) : null,
+      shift_id:        h.shift_id,
+      import_date:     h.import_date,
+      notes:           l.notes ?? h.notes ?? null,
+      imported_by:     importedBy,
+      created_by:      importedBy,
+      status:          'OPEN',
+      source_type:     'FACTORY',
+      warehouse_type:  h.warehouse_type ?? prep.matById.get(l.material_id)?.category ?? null,
+      planned_cartons: l.planned_cartons,
+      ncc_id:          h.ncc_id ?? null,
+      receipt_group:   group,
+      created_at:      now,
+      updated_at:      now,
+    }))
+    const { data, error } = await supabase.from('ProductionImport').insert(rows).select(ORDER_SELECT)
+    if (!error) {
+      for (const o of data ?? []) applyInboundMode(o as Parameters<typeof applyInboundMode>[0])
+      return { orders: data ?? [] }
+    }
+    if (error.code === '23505') { await new Promise(r => setTimeout(r, 20 + Math.floor(Math.random() * (60 + attempt * 40)))); continue }
+    if (error.code === '23503') return { fatal: { status: 404, code: 'NOT_FOUND', message: 'Không tìm thấy kho, ca, vị trí hoặc NCC — tải lại trang rồi thử lại' } }
+    throw error
+  }
+  return { fatal: { status: 409, code: 'DUPLICATE', message: 'Không cấp được số phiếu (nhiều người tạo cùng lúc) — bấm lại' } }
+}
 
 export async function createOrderGroup(req: Request, res: Response) {
   try {
     const b = req.body as z.infer<typeof zCreateGroup>
     if (!guardWhCreate(req, res, b.warehouse_id)) return
-    if (!categoryAllowed(req, b.warehouse_type)) return fail(res, 403, 'FORBIDDEN', CATEGORY_FORBIDDEN_MSG)
-
-    const matIds = [...new Set(b.lines.map(l => l.material_id))]
-    const [{ data: wh }, mats, exist] = await Promise.all([
-      supabase.from('Warehouse').select('id, code, inventory_mode').eq('id', b.warehouse_id).maybeSingle(),
-      fetchAllByIdChunks(matIds, chunk => supabase.from('Material')
-        .select('id, material_code, category, no_qr_tracking, is_non_stock, base_unit, entry_unit, units_per_carton').in('id', chunk)),
-      b.receipt_group
-        ? supabase.from('ProductionImport').select('id, material_id, warehouse_id, status').eq('receipt_group', b.receipt_group).neq('status', 'CANCELLED')
-        : Promise.resolve({ data: null }),
-    ])
-    if (!wh) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy kho')
-    if (wh.inventory_mode === 'NONE') return fail(res, 400, 'VALIDATION_ERROR', 'Kho không theo dõi tồn (NONE) — không thể tạo phiếu nhập kho')
-
-    type GMat = { id: string; material_code: string; category: string | null; no_qr_tracking: boolean | null; is_non_stock: boolean | null } & MatUnits
-    const matById = new Map((mats as GMat[]).map(m => [m.id, m]))
-    const codeOf = (id: string) => matById.get(id)?.material_code ?? id
-    // Kiểm hết — gom mọi lỗi theo dòng rồi trả một lần (người dùng sửa một lượt, không phải bấm lại nhiều lần)
-    const errs: string[] = []
-    const seen = new Set<string>(), dup = new Set<string>()
-    for (const l of b.lines) { if (seen.has(l.material_id)) dup.add(codeOf(l.material_id)); seen.add(l.material_id) }
-    if (dup.size) errs.push(`Mã hàng bị trùng: ${[...dup].join(', ')}`)
-    const missing = matIds.filter(id => !matById.has(id))
-    if (missing.length) errs.push(`Không tìm thấy ${missing.length} mã hàng`)
-    const wrongCat = matIds.filter(id => matById.has(id) && matById.get(id)!.category !== b.warehouse_type).map(codeOf)
-    if (wrongCat.length) errs.push(`Mã không thuộc loại kho ${b.warehouse_type}: ${wrongCat.join(', ')}`)
-    const nonStock = matIds.filter(id => matById.get(id)?.is_non_stock).map(codeOf)
-    if (nonStock.length) errs.push(`Mã phi hàng hoá không nhập kho: ${nonStock.join(', ')}`)
-    for (const l of b.lines) {
-      const m = matById.get(l.material_id)
-      const ie = m ? qtyIntegerError(l.planned_cartons, m) : null
-      if (ie) errs.push(`${m!.material_code}: ${ie}`)
+    const h: GroupHead = { warehouse_id: b.warehouse_id, warehouse_type: b.warehouse_type, import_date: b.import_date, shift_id: b.shift_id,
+      location_id: b.location_id ?? null, notes: b.notes ?? null, ncc_id: b.ncc_id ?? null, putaway_override_reason: b.putaway_override_reason ?? null }
+    const lines: GroupLine[] = b.lines.map(l => ({ material_id: l.material_id, planned_cartons: l.planned_cartons }))
+    const prep = await prepareGroup(req, h, lines, b.receipt_group ?? null)
+    if (prep.fatal) return fail(res, prep.fatal.status, prep.fatal.code, prep.fatal.message)
+    if (prep.errors.length) {
+      const locMissing = prep.errors.some(e => e.startsWith('Chọn vị trí mặc định'))
+      return fail(res, 422, locMissing && prep.errors.length === 1 ? 'LOCATION_REQUIRED' : 'VALIDATION_ERROR', prep.errors.join(' · '))
     }
-    if (b.receipt_group) {
-      const ex = (exist.data ?? []) as { material_id: string | null; warehouse_id: string | null }[]
-      if (!ex.length) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy nhóm phiếu (đã huỷ hết?)')
-      if (ex.some(o => o.warehouse_id !== b.warehouse_id)) return fail(res, 422, 'GROUP_WAREHOUSE', 'Nhóm phiếu thuộc kho khác')
-      const had = new Set(ex.map(o => o.material_id))
-      const again = matIds.filter(id => had.has(id)).map(codeOf)
-      if (again.length) errs.push(`Đã có trong nhóm (sửa số lượng ở dòng sẵn có): ${again.join(', ')}`)
-    }
-    if (errs.length) return fail(res, 422, 'VALIDATION_ERROR', errs.join(' · '))
+    const r = await insertGroup(req, h, lines, prep, b.receipt_group ?? randomUUID())
+    if ('fatal' in r) return fail(res, r.fatal.status, r.fatal.code, r.fatal.message)
+    emitInboundChanged()
+    ok(res, { receipt_group: (r.orders[0] as { receipt_group?: string } | undefined)?.receipt_group ?? null, orders: r.orders, ...(prep.putWarn ? { putaway_warning: prep.putWarn } : {}) })
+  } catch (e) { console.error(e); if (isQueryTimeout(e)) { fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return }; fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+}
 
-    // Mã theo tem cần vị trí; mã không tem (hoặc kho QTY) nhập số lượng ở trang chi tiết — không vị trí (như Nhập SX)
-    const isQrLine = (id: string) => !effectiveNoQr(matById.get(id)?.no_qr_tracking, wh.inventory_mode)
-    const qrIds = matIds.filter(isQrLine)
-    if (qrIds.length && !b.location_id)
-      return fail(res, 422, 'LOCATION_REQUIRED', `Chọn vị trí mặc định — ${qrIds.length} mã quản lý theo tem cần chỗ cất`)
-    let putWarn: string | null = null
-    if (qrIds.length && b.location_id) {
-      // Quy tắc cất hàng chấm CẢ LÔ mã vào vị trí mặc định trong một lần (ràng buộc trên tập như Chuyển vị trí hàng loạt)
+// ── UPLOAD Excel (26/11 — user: "tính năng upload để làm cho nhanh"; chốt CHỈ TẠO NHÓM MỚI, loại kho THEO TỪNG MÃ) ──
+// Đầu phiếu (kho · vị trí mặc định · ngày · ca · NCC · ghi chú) chọn trên form tab "Nhập nhiều mã", gửi kèm file. File: Mã hàng * ·
+// Số thùng · Số lẻ (ĐVT gốc) · Ghi chú. Đọc cột theo TÊN (sheet đầu); mã trùng trong file ⇒ cộng gộp + cảnh báo. Kiểm trước (?preflight=1)
+// chạy CÙNG bộ kiểm với lần ghi; một lỗi là không ghi gì.
+export const zGroupUploadQuery = z.object({ preflight: z.enum(['1']).optional() })
+const zGroupUploadHead = z.object({
+  warehouse_id: zText(1, 64), import_date: zDay, shift_id: zText(1, 64),
+  location_id: zText(1, 64).optional(), notes: zText(0, 500).optional(), ncc_id: zText(1, 64).optional(),
+  putaway_override_reason: zText(0, 300).optional(),
+})
+const GROUP_UPLOAD_FIELDS: FieldDef[] = [
+  { key: 'material_code', label: 'Mã hàng',          aliases: ['ma hang', 'ma', 'ma nvl', 'material', 'material code'], required: true },
+  { key: 'cartons',       label: 'Số thùng',         aliases: ['so thung', 'thung'] },
+  { key: 'base',          label: 'Số lẻ (ĐVT gốc)', aliases: ['so le', 'so le dvt goc', 'so luong', 'so luong dvt goc', 'sl', 'le', 'hop', 'hop le', 'kg'] },
+  { key: 'note',          label: 'Ghi chú',          aliases: ['ghi chu', 'note'] },
+]
+export async function uploadOrderGroup(req: Request, res: Response) {
+  try {
+    if (!req.file) return fail(res, 400, 'VALIDATION_ERROR', 'Không có file upload')
+    const hp = zGroupUploadHead.safeParse(req.body ?? {})
+    if (!hp.success) return fail(res, 400, 'VALIDATION', `Thiếu thông tin đầu phiếu (${hp.error.issues[0]?.path.join('.') ?? '?'}) — chọn Kho, Ngày, Ca trên form rồi nạp lại`)
+    const hb = hp.data
+    if (!guardWhCreate(req, res, hb.warehouse_id)) return
+    const wb = readWorkbookSafe(req.file.buffer)
+    if (!wb) return fail(res, 400, 'VALIDATION_ERROR', BAD_EXCEL_MSG)
+    const ws = wb.Sheets[wb.SheetNames[0]]
+    expandMergedCells(ws)
+    const { rows, missingRequired, rowNums } = parseSheetByHeader(ws, GROUP_UPLOAD_FIELDS)
+    if (missingRequired.length) return fail(res, 400, 'VALIDATION_ERROR', `File thiếu cột bắt buộc: ${missingRequired.join(', ')} — tải file mẫu ở nút "Nạp Excel"`)
+    const used = rows.map((r, i) => ({ r, row: rowNums[i] })).filter(x => String(x.r.material_code ?? '').trim())
+    if (!used.length) return fail(res, 400, 'VALIDATION_ERROR', 'Sheet đầu tiên không có dòng mã hàng nào')
+    if (used.length > 1000) return fail(res, 400, 'VALIDATION_ERROR', `File có ${used.length.toLocaleString('vi-VN')} dòng — tối đa 1.000, hãy tách file`)
+
+    const key = (v: unknown) => String(v ?? '').trim().toUpperCase()
+    const codes = [...new Set(used.map(x => key(x.r.material_code)))]
+    const matByCode = new Map<string, GroupMat>()
+    for (let i = 0; i < codes.length; i += 300) {
+      const { data, error } = await supabase.from('Material').select(GROUP_MAT_COLS).in('material_code', codes.slice(i, i + 300))
+      if (error) throw error
+      for (const m of (data ?? []) as GroupMat[]) matByCode.set(key(m.material_code), m)
+    }
+    const errors: string[] = [], warnings: string[] = []
+    const byMat = new Map<string, { qty: number; notes: string[]; rows: number[] }>()
+    for (const { r, row } of used) {
+      const code = key(r.material_code)
+      const m = matByCode.get(code)
+      if (!m) { errors.push(`Dòng ${row}: mã "${String(r.material_code).trim()}" không có trong danh mục Mã hàng`); continue }
+      const c = r.cartons === '' || r.cartons == null ? 0 : parseVnNumber(r.cartons)
+      const bq = r.base === '' || r.base == null ? 0 : parseVnNumber(r.base)
+      if (c == null || bq == null || c < 0 || bq < 0) { errors.push(`Dòng ${row}: số lượng của ${m.material_code} không hợp lệ`); continue }
+      if (c > 0 && !hasEntry(m)) { errors.push(`Dòng ${row}: mã ${m.material_code} không khai quy cách thùng — ghi số lượng ở cột "Số lẻ (ĐVT gốc)"`); continue }
+      const qty = qtyFromEntryBase(c, bq, m)
+      if (!(qty > 0)) { errors.push(`Dòng ${row}: thiếu số lượng của ${m.material_code}`); continue }
+      const cur = byMat.get(m.id) ?? { qty: 0, notes: [], rows: [] }
+      cur.qty += qty; cur.rows.push(row)
+      const note = String(r.note ?? '').trim()
+      if (note) cur.notes.push(note)
+      byMat.set(m.id, cur)
+    }
+    for (const [id, v] of byMat) if (v.rows.length > 1)
+      warnings.push(`Mã ${[...matByCode.values()].find(m => m.id === id)?.material_code} có ${v.rows.length} dòng (dòng ${v.rows.join(', ')}) — đã cộng gộp thành một phiếu`)
+    const lines: GroupLine[] = [...byMat].map(([material_id, v]) => ({ material_id, planned_cartons: Math.round(v.qty * 1000) / 1000, notes: v.notes.length ? v.notes.join(' · ').slice(0, 500) : null }))
+    const h: GroupHead = { warehouse_id: hb.warehouse_id, warehouse_type: null, import_date: hb.import_date, shift_id: hb.shift_id,
+      location_id: hb.location_id ?? null, notes: hb.notes ?? null, ncc_id: hb.ncc_id ?? null, putaway_override_reason: hb.putaway_override_reason ?? null }
+    const prep = lines.length ? await prepareGroup(req, h, lines, null) : null
+    if (prep?.fatal) return fail(res, prep.fatal.status, prep.fatal.code, prep.fatal.message)
+    if (prep) errors.push(...prep.errors)
+    const qrCount = prep ? lines.filter(l => prep.isQrLine(l.material_id)).length : 0
+    const cats = prep ? [...new Set(lines.map(l => prep.matById.get(l.material_id)?.category).filter(Boolean))] : []
+
+    if (isPreflight(req)) return ok(res, buildPreflight({
+      unit: 'mã', total: lines.length, toInsert: lines.length, toUpdate: 0, errors, warnings, mode: 'all_or_nothing',
+      extra: [
+        { label: 'Mã có tem (cất vào vị trí mặc định)', value: qrCount },
+        { label: 'Mã không tem (lưu thủ công ở phiếu)', value: lines.length - qrCount },
+        { label: 'Loại kho', value: cats.join(', ') || '—' },
+      ],
+    }))
+    if (errors.length) return ok(res, { inserted: 0, errors })
+    if (!prep || !lines.length) return fail(res, 400, 'VALIDATION_ERROR', 'File không có mã nào dùng được')
+    const r = await insertGroup(req, h, lines, prep, randomUUID())
+    if ('fatal' in r) return fail(res, r.fatal.status, r.fatal.code, r.fatal.message)
+    emitInboundChanged()
+    const first = r.orders[0] as { id?: string; receipt_group?: string } | undefined
+    ok(res, { inserted: r.orders.length, errors: [], warnings, receipt_group: first?.receipt_group ?? null, first_order_id: first?.id ?? null,
+      ...(prep.putWarn ? { putaway_warning: prep.putWarn } : {}) })
+  } catch (e) { console.error(e); if (isQueryTimeout(e)) { fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return }; fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+}
+
+// ── THAO TÁC CẢ NHÓM (26/11 — user chốt: Huỷ cả nhóm · Hoàn thành cả nhóm · Sửa nhóm đổi NCC / vị trí → mọi phiếu chưa quét) ──
+// Cùng điều kiện với cửa của TỪNG phiếu: huỷ chỉ phiếu chưa có hàng (cancelOrder); hoàn thành chỉ phiếu đã nhận hàng. `?preview=1`
+// trả trước danh sách sẽ làm / giữ lại (hộp xác nhận liệt kê) — không ghi gì. Phiếu nhóm là FACTORY, không gắn lệnh TMS / chuyến nguồn
+// nên không có bước nối của chuyển kho; phiếu nào lỡ mang các gắn đó thì giữ lại, làm ở trang phiếu.
+export const zGroupParams = z.object({ group: z.string().uuid() })
+export const zGroupActQuery = z.object({ preview: z.enum(['1']).optional() })
+export const zGroupPatch = z.object({
+  location_id: zText(1, 64).optional(), ncc_id: zText(1, 64).nullable().optional(),
+  putaway_override_reason: zText(0, 300).nullable().optional(),
+  qty_semantics: z.literal('base').optional(),
+}).refine(b => b.location_id !== undefined || b.ncc_id !== undefined, 'Cần location_id hoặc ncc_id')
+
+type GroupOrderRow = {
+  id: string; import_code: string; status: string; warehouse_id: string; warehouse_type: string | null; material_id: string | null
+  location_id: string | null; ncc_id: string | null; planned_cartons: number | null; posm_entry_id: string | null; posm_cartons: number | null
+  tms_order_id: string | null; from_gdo_id: string | null; return_id: string | null
+  material: { material_code: string; no_qr_tracking: boolean | null; category: string | null; base_unit: string | null; entry_unit: string | null; units_per_carton: number | null } | null
+}
+type GroupState = GroupOrderRow & { received: number; pallets: number }
+/** Nạp trọn nhóm + số đã nhận của từng phiếu; gác phạm vi kho + loại hàng (thiếu quyền một loại trong nhóm ⇒ 403). null = đã trả lỗi. */
+async function loadGroupState(req: Request, res: Response, group: string): Promise<{ whId: string; inventoryMode: string | null; orders: GroupState[] } | null> {
+  const { data, error } = await supabase.from('ProductionImport')
+    .select('id, import_code, status, warehouse_id, warehouse_type, material_id, location_id, ncc_id, planned_cartons, posm_entry_id, posm_cartons, tms_order_id, from_gdo_id, return_id, material:Material(material_code, no_qr_tracking, category, base_unit, entry_unit, units_per_carton)')
+    .eq('receipt_group', group).neq('status', 'CANCELLED').order('import_code')
+  if (error) throw error
+  const rows = (data ?? []) as unknown as GroupOrderRow[]
+  if (!rows.length) { fail(res, 404, 'NOT_FOUND', 'Không tìm thấy nhóm phiếu'); return null }
+  const whId = rows[0].warehouse_id
+  if (!guardWhCreate(req, res, whId)) return null
+  if (rows.some(o => !categoryAllowed(req, o.warehouse_type))) { fail(res, 403, 'FORBIDDEN', CATEGORY_FORBIDDEN_MSG); return null }
+  const ids = rows.map(o => o.id)
+  const ents = await fetchAllByIdChunks(ids, chunk => supabase.from('InventoryEntry').select('import_order_id, cartons_imported').in('import_order_id', chunk))
+  const posmIds = rows.map(o => o.posm_entry_id).filter((x): x is string => !!x)
+  const livePosm = new Set(posmIds.length
+    ? ((await fetchAllByIdChunks(posmIds, chunk => supabase.from('InventoryEntry').select('id').in('id', chunk))) as { id: string }[]).map(e => e.id)
+    : [])
+  const agg = new Map<string, { q: number; n: number }>()
+  for (const e of ents as { import_order_id: string; cartons_imported: number | null }[]) {
+    const a = agg.get(e.import_order_id) ?? { q: 0, n: 0 }; a.q += Number(e.cartons_imported) || 0; a.n += 1; agg.set(e.import_order_id, a)
+  }
+  const { data: wh } = await supabase.from('Warehouse').select('inventory_mode').eq('id', whId).maybeSingle()
+  const orders = rows.map(o => {
+    const a = agg.get(o.id) ?? { q: 0, n: 0 }
+    // phiếu không tem lưu thủ công GÓP vào dòng tồn chung (không trỏ import_order_id) — đóng góp nằm ở posm_cartons khi dòng chung còn
+    const posm = o.posm_entry_id && livePosm.has(o.posm_entry_id) && !agg.has(o.id) ? Number(o.posm_cartons) || 0 : 0
+    return { ...o, received: a.q + posm, pallets: a.n + (posm > 0 ? 1 : 0) }
+  })
+  return { whId, inventoryMode: (wh as { inventory_mode?: string | null } | null)?.inventory_mode ?? null, orders }
+}
+/** Ghi theo lô 300 id (nhóm thêm mã nhiều lần có thể vượt trần một câu) — trả tổng số dòng đã ghi */
+async function forGroupIdChunks(ids: string[], fn: (chunk: string[]) => Promise<number>): Promise<number> {
+  let n = 0
+  for (let i = 0; i < ids.length; i += 300) n += await fn(ids.slice(i, i + 300))
+  return n
+}
+const brief = (o: GroupState) => ({ id: o.id, import_code: o.import_code, material_code: o.material?.material_code ?? null, planned: o.planned_cartons, received: o.received, pallets: o.pallets,
+  base_unit: o.material?.base_unit ?? null, entry_unit: o.material?.entry_unit ?? null, units_per_carton: o.material?.units_per_carton ?? null })
+
+// POST /wms/inbound-orders/group/:group/cancel[?preview=1] — HUỶ CẢ NHÓM: xoá mọi phiếu ĐANG MỞ CHƯA CÓ HÀNG (như Huỷ ở từng phiếu);
+// phiếu đã có pallet / đã lưu thủ công / đã hoàn thành giữ lại và báo ra.
+export async function cancelOrderGroup(req: Request, res: Response) {
+  try {
+    const st = await loadGroupState(req, res, String(req.params.group)); if (!st) return
+    const will = st.orders.filter(o => o.status === 'OPEN' && o.pallets === 0 && !o.tms_order_id && !o.from_gdo_id && !o.return_id)
+    const keep = st.orders.filter(o => !will.includes(o)).map(o => ({ ...brief(o),
+      reason: o.status === 'COMPLETED' ? 'đã hoàn thành' : o.pallets > 0 ? 'đã có hàng — xoá pallet ở phiếu trước' : 'phiếu gắn chuyển kho / trả về — huỷ ở trang phiếu' }))
+    if (req.query.preview === '1') return ok(res, { will: will.map(brief), keep })
+    if (will.length) {
+      await forGroupIdChunks(will.map(o => o.id), async chunk => {
+        const { error } = await supabase.from('ProductionImport').delete().in('id', chunk).eq('status', 'OPEN')
+        if (error) throw error
+        return chunk.length
+      })
+      emitInboundChanged()
+    }
+    ok(res, { cancelled: will.length, kept: keep })
+  } catch (e) { console.error(e); if (isQueryTimeout(e)) { fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return }; fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+}
+
+// POST /wms/inbound-orders/group/:group/complete[?preview=1] — HOÀN THÀNH CẢ NHÓM: mọi phiếu ĐANG MỞ ĐÃ NHẬN HÀNG ⇒ COMPLETED (CAS
+// status OPEN như cửa từng phiếu); phiếu chưa nhận gì giữ mở. Preview nêu riêng phiếu nhận THIẾU so kế hoạch để người bấm quyết.
+export async function completeOrderGroup(req: Request, res: Response) {
+  try {
+    const st = await loadGroupState(req, res, String(req.params.group)); if (!st) return
+    const open = st.orders.filter(o => o.status === 'OPEN')
+    const will = open.filter(o => o.pallets > 0 && !o.tms_order_id && !o.from_gdo_id && !o.return_id)
+    const short = will.filter(o => o.planned_cartons != null && o.received + 1e-9 < Number(o.planned_cartons)).map(brief)
+    const keep = open.filter(o => !will.includes(o)).map(o => ({ ...brief(o), reason: o.pallets === 0 ? 'chưa nhận hàng' : 'phiếu gắn chuyển kho / trả về — hoàn thành ở trang phiếu' }))
+    if (req.query.preview === '1') return ok(res, { will: will.map(brief), short, keep, done: st.orders.filter(o => o.status === 'COMPLETED').length })
+    let completed = 0
+    if (will.length) {
+      const done = { status: 'COMPLETED', updated_by: resolveActorId(req, undefined), updated_at: new Date().toISOString() }
+      completed = await forGroupIdChunks(will.map(o => o.id), async chunk => {
+        const { data, error } = await supabase.from('ProductionImport').update(done).in('id', chunk).eq('status', 'OPEN').select('id')
+        if (error) throw error
+        return (data ?? []).length
+      })
+      emitInboundChanged()
+    }
+    ok(res, { completed, kept: keep })
+  } catch (e) { console.error(e); if (isQueryTimeout(e)) { fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return }; fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+}
+
+// PATCH /wms/inbound-orders/group/:group — Sửa nhóm đổi NCC / VỊ TRÍ MẶC ĐỊNH ⇒ áp cho MỌI phiếu đang mở CHƯA CÓ HÀNG (user chốt);
+// phiếu đã quét giữ nguyên (pallet đã nằm chỗ cũ). Vị trí chỉ áp cho mã có tem; cùng kiểm vị trí + quy tắc cất hàng như lúc tạo nhóm.
+export async function patchOrderGroup(req: Request, res: Response) {
+  try {
+    const b = req.body as z.infer<typeof zGroupPatch>
+    const st = await loadGroupState(req, res, String(req.params.group)); if (!st) return
+    const targets = st.orders.filter(o => o.status === 'OPEN' && o.pallets === 0)
+    const qrTargets = targets.filter(o => !effectiveNoQr(o.material?.no_qr_tracking, st.inventoryMode))
+    if (b.location_id !== undefined && qrTargets.length) {
+      const locErr = await groupLocationError(b.location_id, st.whId, qrTargets.map(o => o.warehouse_type))
+      if (locErr) return fail(res, 422, 'LOCATION_INVALID', locErr)
       const put = await guardPutawayBatch({
-        warehouseId: b.warehouse_id, locationId: b.location_id,
-        entries: qrIds.map(id => ({ material_id: id, ncc_id: b.ncc_id ?? null, category: matById.get(id)?.category ?? null })),
+        warehouseId: st.whId, locationId: b.location_id,
+        entries: qrTargets.map(o => ({ material_id: o.material_id ?? '', ncc_id: (b.ncc_id !== undefined ? b.ncc_id : o.ncc_id) ?? null, category: o.warehouse_type })),
         overrideReason: b.putaway_override_reason, canOverride: canPutawayOverride(req),
       })
       if (put.error) return fail(res, put.error.code === 'FORBIDDEN' ? 403 : 422, put.error.code, put.error.message)
-      putWarn = put.warning
     }
-
-    const importedBy = actorUuid(req)   // người nhập = người đang đăng nhập (token phát từ Employee)
-    const group = b.receipt_group ?? randomUUID()
-    const todayStr = vnDate()
-    const [y, mo, d] = todayStr.split('-')
-    const ddmmyy = `${d}${mo}${y.slice(2)}`
-    const whCode = wh.code ? String(wh.code) : 'XX'
-    const importPrefix = `${whCode}_N_${ddmmyy}_`
-
-    // Cấp số phiếu cho CẢ LÔ rồi ghi một lần; đua với người khác cùng kho cùng ngày ⇒ 23505 ⇒ đếm lại, thử lại (không ghi dở)
-    let created: unknown[] | null = null
-    for (let attempt = 0; attempt < GROUP_SEQ_RETRIES && !created; attempt++) {
-      const { data: existingCodes } = await supabase.from('ProductionImport')
-        .select('import_code').ilike('import_code', `${importPrefix}%`)
-      const maxSeq = (existingCodes ?? []).reduce((max: number, r: { import_code: string }) => {
-        const n = parseInt(r.import_code.slice(importPrefix.length), 10)
-        return isNaN(n) ? max : Math.max(max, n)
-      }, 0)
-      const now = new Date().toISOString()
-      const rows = b.lines.map((l, i) => ({
-        id:              randomUUID(),
-        import_code:     generateImportCode(whCode, ddmmyy, maxSeq + 1 + i),
-        warehouse_id:    b.warehouse_id,
-        material_id:     l.material_id,
-        location_id:     isQrLine(l.material_id) ? (b.location_id ?? null) : null,
-        shift_id:        b.shift_id,
-        import_date:     b.import_date,
-        notes:           b.notes ?? null,
-        imported_by:     importedBy,
-        created_by:      importedBy,
-        status:          'OPEN',
-        source_type:     'FACTORY',
-        warehouse_type:  b.warehouse_type,
-        planned_cartons: l.planned_cartons,
-        ncc_id:          b.ncc_id ?? null,
-        receipt_group:   group,
-        created_at:      now,
-        updated_at:      now,
-      }))
-      const { data, error } = await supabase.from('ProductionImport').insert(rows).select(ORDER_SELECT)
-      if (!error) { created = data ?? []; break }
-      if (error.code === '23505') {
-        await new Promise(r => setTimeout(r, 20 + Math.floor(Math.random() * (60 + attempt * 40))))
-        continue
-      }
-      if (error.code === '23503') return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy kho, ca, vị trí hoặc NCC — tải lại trang rồi thử lại')
-      throw error
+    const now = new Date().toISOString()
+    const actorId = resolveActorId(req, undefined)
+    let locUpdated = 0, nccUpdated = 0
+    if (b.location_id !== undefined && qrTargets.length) {
+      const { data: loc } = await supabase.from('Location').select('location_code').eq('id', b.location_id).maybeSingle()
+      const code = (loc as { location_code?: string } | null)?.location_code ?? ''
+      // lịch sử vị trí từng phiếu (như cửa đổi vị trí) — phiếu đổi thật mới ghi; nhóm ≤ 200 phiếu, ghi song song từng phiếu vì mỗi phiếu một mảng lịch sử
+      const changed = qrTargets.filter(o => o.location_id !== b.location_id)
+      const hist = changed.length
+        ? await fetchAllByIdChunks(changed.map(o => o.id), chunk => supabase.from('ProductionImport').select('id, location_history').in('id', chunk))
+        : []
+      const histById = new Map((hist as { id: string; location_history: unknown }[]).map(r => [r.id, r]))
+      // vị trí MẶC ĐỊNH của PHIẾU (chưa có pallet nào) — không phải đổi chỗ pallet; dựng patch riêng như cửa đổi vị trí phiếu (setOrderLocation)
+      const phieuPatch = (id: string): Record<string, unknown> => ({
+        location_id: b.location_id, updated_by: actorId, updated_at: now,
+        location_history: appendLocHistory(histById.get(id) ?? { location_history: null }, code, 'detail', req.user),
+      })
+      const results = await Promise.all(changed.map(o => supabase.from('ProductionImport')
+        .update(phieuPatch(o.id)).eq('id', o.id).eq('status', 'OPEN').select('id')))
+      for (const r of results) { if (r.error) throw r.error; locUpdated += (r.data ?? []).length }
     }
-    if (!created) return fail(res, 409, 'DUPLICATE', 'Không cấp được số phiếu (nhiều người tạo cùng lúc) — bấm lại')
-    for (const o of created) applyInboundMode(o as Parameters<typeof applyInboundMode>[0])
-    emitInboundChanged()
-    ok(res, { receipt_group: group, orders: created, ...(putWarn ? { putaway_warning: putWarn } : {}) })
+    if (b.ncc_id !== undefined && targets.length) {
+      nccUpdated = await forGroupIdChunks(targets.map(o => o.id), async chunk => {
+        const { data, error } = await supabase.from('ProductionImport').update({ ncc_id: b.ncc_id, updated_by: actorId, updated_at: now })
+          .in('id', chunk).eq('status', 'OPEN').select('id')
+        if (error) throw error
+        return (data ?? []).length
+      })
+    }
+    if (locUpdated || nccUpdated) emitInboundChanged()
+    const kept = st.orders.filter(o => o.status === 'OPEN' && o.pallets > 0).map(brief)
+    ok(res, { location_updated: locUpdated, ncc_updated: nccUpdated, kept })
   } catch (e) { console.error(e); if (isQueryTimeout(e)) { fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return }; fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 

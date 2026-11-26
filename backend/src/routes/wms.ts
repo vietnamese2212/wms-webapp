@@ -200,6 +200,12 @@ router.get('/inbound-orders/facets',                    inbound.listOrdersFacets
 router.post('/inbound-orders',                          requirePerm('inbound', 'create'), inbound.createOrder)
 // Nhập nhiều mã (26/11): một chứng từ nhiều mã nhiều NCC ⇒ mỗi mã một phiếu, chung receipt_group — kiểm hết rồi ghi một lô
 router.post('/inbound-orders/group',                    requirePerm('inbound', 'create'), validate({ body: inbound.zCreateGroup }), inbound.createOrderGroup)
+// Upload Excel chỉ TẠO nhóm mới (26/11) — đầu phiếu gửi kèm file; ?preflight=1 kiểm trước không ghi
+router.post('/inbound-orders/group/upload',             requirePerm('inbound', 'create'), validate({ query: inbound.zGroupUploadQuery }), upload.single('file'), excelFromStorage, inbound.uploadOrderGroup)
+// Thao tác CẢ NHÓM (26/11): huỷ phiếu chưa có hàng · hoàn thành phiếu đã nhận · Sửa nhóm đổi NCC / vị trí cho phiếu chưa quét (?preview=1 = xem trước)
+router.post('/inbound-orders/group/:group/cancel',      requirePerm('inbound', 'cancel'),   validate({ params: inbound.zGroupParams, query: inbound.zGroupActQuery }), inbound.cancelOrderGroup)
+router.post('/inbound-orders/group/:group/complete',    requirePerm('inbound', 'complete'), validate({ params: inbound.zGroupParams, query: inbound.zGroupActQuery }), inbound.completeOrderGroup)
+router.patch('/inbound-orders/group/:group',            requirePerm('inbound', 'edit'),     validate({ params: inbound.zGroupParams, body: inbound.zGroupPatch }), inbound.patchOrderGroup)
 router.get('/inbound-orders/:id',                       inbound.getOrder)
 router.patch('/inbound-orders/:id',                     requirePerm('inbound', 'edit'), inbound.updateOrder)
 router.patch('/inbound-orders/:id/location',            requireAnyPerm(['inbound', 'edit_pallet'], ['inbound', 'force_edit_pallet']), inbound.setOrderLocation)

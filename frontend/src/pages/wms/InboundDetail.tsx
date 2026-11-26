@@ -9,6 +9,7 @@ import { format, parseISO }    from 'date-fns'
 import { vi }                  from 'date-fns/locale'
 import { TableSkeleton }       from '@/components/shared/TableSkeleton'
 import { InboundScanSheet, InboundGroupScanSheet } from '@/components/wms/InboundScanSheet'
+import { useConfirmDialog } from '@/components/shared/ConfirmDialog'
 import { InboundReturnPanel, NppReturnTag } from '@/components/wms/InboundReturnPanel'
 import { Button }              from '@/components/ui/button'
 import { Input }               from '@/components/ui/input'
@@ -20,7 +21,7 @@ import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { FormSheet } from '@/components/shared/FormSheet'
 import { usePopoverAnchor } from '@/components/shared/usePopoverAnchor'
 import {
-  useInboundOrder, useInboundOrders, useCancelInboundOrder,
+  useInboundOrder, useInboundOrders, useCancelInboundOrder, useInboundGroupActs, type InboundGroupBrief,
   useCompleteInboundOrder, useUncompleteInboundOrder,
   useScanManualPallet, useDeletePalletEntry, useDeletePalletEntries,
   useLocationsReal, useLocationsByIds, useUpdateInboundOrder, useUpdatePalletEntry, useSetInboundOrderLocation,
@@ -252,6 +253,10 @@ export default function InboundDetail() {
   const [showGroupScan,     setShowGroupScan]     = useState(false)
   const { data: groupOrders = [] } = useInboundOrders(order?.receipt_group ? { receipt_group: order.receipt_group } : undefined)
   const groupScanable = (groupOrders as InboundOrder[]).filter(o => o.status === 'OPEN' && o.material?.no_qr_tracking !== true)
+  // Thao tác CẢ NHÓM (26/11, user chốt): Hoàn thành cả nhóm · Huỷ cả nhóm — xem trước trên máy chủ, hộp xác nhận liệt kê từng phiếu
+  const groupActs = useInboundGroupActs()
+  const [askGroup, groupConfirmNode] = useConfirmDialog()
+  const [groupBusy, setGroupBusy] = useState<'cancel' | 'complete' | null>(null)
   const [pdaScan,           setPdaScan]           = useState<string | null>(null)   // tem bắn bằng cò súng cấp trang
   const [showLocHistory,    setShowLocHistory]    = useState(false)
   const [showManualDialog,  setShowManualDialog]  = useState(false)
@@ -395,6 +400,64 @@ export default function InboundDetail() {
     return <div className="p-6"><TableSkeleton rows={8} cols={7} /></div>
   }
 
+  // ── THAO TÁC CẢ NHÓM "Nhập nhiều mã" (26/11) ──
+  const grpErr = (e: unknown, fb: string) => setActError((e as AxiosError<{ error?: { message?: string } }>)?.response?.data?.error?.message ?? fb)
+  const grpLine = (b: InboundGroupBrief) => (
+    <li key={b.id}>• <span className="font-mono font-semibold">{b.material_code ?? '—'}</span> <span className="text-slate-400">{b.import_code}</span>
+      {' · '}nhận {qtyLabel(b.received, b)}{b.planned != null ? ` / KH ${qtyLabel(Number(b.planned), b)}` : ''}
+      {b.reason ? <span className="text-slate-500"> — {b.reason}</span> : null}</li>
+  )
+  const grpList = (arr: InboundGroupBrief[] = [], max = 8) => (
+    <ul className="my-1 space-y-0.5 text-[12px]">{arr.slice(0, max).map(grpLine)}{arr.length > max && <li className="text-slate-400">… và {arr.length - max} phiếu khác</li>}</ul>
+  )
+  async function runGroupComplete() {
+    const g = order!.receipt_group
+    if (!g) return
+    setActError(null); setGroupBusy('complete')
+    try {
+      const pv = await groupActs.complete.mutateAsync({ group: g, preview: true })
+      const will = pv.will ?? [], short = pv.short ?? [], keep = pv.keep ?? []
+      if (!will.length) { setActError(keep.length ? `Chưa phiếu nào trong nhóm nhận hàng — ${keep.length} phiếu giữ mở` : 'Nhóm không còn phiếu nào đang mở'); return }
+      const yes = await askGroup({
+        title: `Hoàn thành ${will.length} phiếu của nhóm?`, confirmLabel: 'Hoàn thành', cancelLabel: 'Quay lại',
+        body: (
+          <div className="whitespace-normal" data-testid="group-complete-confirm">
+            <p>Hoàn thành <b>{will.length}</b> phiếu đã nhận hàng:</p>{grpList(will)}
+            {short.length > 0 && (<><p className="mt-2 font-semibold text-amber-700">Trong đó {short.length} phiếu nhận THIẾU so kế hoạch:</p>{grpList(short)}</>)}
+            {keep.length > 0 && (<><p className="mt-2 text-slate-600">Giữ mở {keep.length} phiếu:</p>{grpList(keep)}</>)}
+            <p className="mt-2 text-slate-500">Phiếu đã hoàn thành không quét thêm được — cần quét tiếp thì Gỡ hoàn thành ở từng phiếu.</p>
+          </div>
+        ),
+      })
+      if (yes === null) return
+      await groupActs.complete.mutateAsync({ group: g, preview: false })
+    } catch (e) { grpErr(e, 'Không hoàn thành được nhóm phiếu') } finally { setGroupBusy(null) }
+  }
+  async function runGroupCancel() {
+    const g = order!.receipt_group
+    if (!g) return
+    setActError(null); setGroupBusy('cancel')
+    try {
+      const pv = await groupActs.cancel.mutateAsync({ group: g, preview: true })
+      const will = pv.will ?? [], keep = pv.keep ?? []
+      if (!will.length) { setActError(`Không có phiếu nào huỷ được — ${keep.length} phiếu đã có hàng hoặc đã hoàn thành (xoá pallet ở từng phiếu trước)`); return }
+      const yes = await askGroup({
+        title: `Huỷ ${will.length} phiếu chưa nhận hàng của nhóm?`, confirmLabel: 'Huỷ phiếu', cancelLabel: 'Quay lại',
+        body: (
+          <div className="whitespace-normal" data-testid="group-cancel-confirm">
+            <p>Huỷ (xoá) <b>{will.length}</b> phiếu chưa có pallet / chưa lưu hàng:</p>{grpList(will)}
+            {keep.length > 0 && (<><p className="mt-2 text-slate-600">Giữ lại {keep.length} phiếu:</p>{grpList(keep)}</>)}
+            <p className="mt-2 text-red-600">Không hoàn tác được.</p>
+          </div>
+        ),
+      })
+      if (yes === null) return
+      await groupActs.cancel.mutateAsync({ group: g, preview: false })
+      if (will.some(o => o.id === order!.id)) navigate('/wms/inbound')
+    } catch (e) { grpErr(e, 'Không huỷ được nhóm phiếu') } finally { setGroupBusy(null) }
+  }
+  const groupOpen = (groupOrders as InboundOrder[]).filter(o => o.status === 'OPEN').length
+
   // ── Cụm action header (ActionCluster) — desktop inline, mobile nút chính + menu ⋮ ──
   const headerActionItems: ActionItem[] = []
   if (isOpen && entries.length === 0 && can(perms, 'inbound', 'cancel'))
@@ -415,6 +478,20 @@ export default function InboundDetail() {
       primary: true, variant: 'success', busy: completing,
       onClick: () => setCompleteDlg('complete'),
     })
+  if (order.receipt_group && groupOpen > 0 && can(perms, 'inbound', 'complete'))
+    headerActionItems.push({
+      key: 'group-complete', icon: CheckCircle2, label: `Hoàn thành cả nhóm`,
+      tip: 'Hoàn thành mọi phiếu ĐÃ nhận hàng của nhóm — xem trước danh sách (phiếu nhận thiếu, phiếu giữ mở) trước khi xác nhận',
+      className: 'border-green-200 text-green-700 hover:bg-green-50', busy: groupBusy === 'complete',
+      onClick: () => { void runGroupComplete() },
+    })
+  if (order.receipt_group && groupOpen > 0 && can(perms, 'inbound', 'cancel'))
+    headerActionItems.push({
+      key: 'group-cancel', icon: XCircle, label: 'Huỷ cả nhóm', admin: true,
+      tip: 'Huỷ mọi phiếu CHƯA nhận hàng của nhóm — phiếu đã có pallet giữ lại (không hoàn tác được)',
+      danger: true, className: 'border-red-200 text-red-600 hover:bg-red-50', busy: groupBusy === 'cancel',
+      onClick: () => { void runGroupCancel() },
+    })
   if (isCompleted && can(perms, 'inbound', 'uncomplete'))
     headerActionItems.push({
       key: 'uncomplete', icon: RotateCcw, label: 'Gỡ hoàn thành', admin: true,
@@ -425,6 +502,7 @@ export default function InboundDetail() {
 
   return (
     <>
+      {groupConfirmNode}
       {showGroupScan && (
         <InboundGroupScanSheet
           orders={groupOrders as InboundOrder[]}

@@ -1227,6 +1227,50 @@ export function useCreateInboundGroup() {
   })
 }
 
+/** Upload Excel "Nhập nhiều mã" (26/11) — CHỈ tạo nhóm mới (user chốt); đầu phiếu (kho · vị trí · ngày · ca · NCC · ghi chú) đi kèm file.
+ *  preflight = kiểm trước, không ghi (chuẩn upload 2 pha). Loại kho theo từng mã. */
+export function useUploadInboundGroup() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async ({ file, preflight, head }: { file: File; preflight: boolean; head: Record<string, string | undefined> }) => {
+      const { body, headers } = await excelUploadBody(file, head)
+      return (await apiClient.post(`/wms/inbound-orders/group/upload${preflight ? '?preflight=1' : ''}`, body, { headers, timeout: 120000 })).data.data as
+        UploadResult & Partial<UploadPreflight> & { first_order_id?: string | null; receipt_group?: string | null }
+    },
+    onSuccess: (_d, v) => { if (!v.preflight) qc.invalidateQueries({ queryKey: ['inbound-orders'] }) },
+  })
+}
+
+/** Một phiếu trong báo cáo thao tác cả nhóm (xem trước / kết quả) — số theo BASE của mã */
+export interface InboundGroupBrief {
+  id: string; import_code: string; material_code: string | null; planned: number | null; received: number; pallets: number
+  base_unit: string | null; entry_unit: string | null; units_per_carton: number | null; reason?: string
+}
+/** Thao tác CẢ NHÓM "Nhập nhiều mã" (26/11): huỷ phiếu chưa có hàng · hoàn thành phiếu đã nhận · Sửa nhóm đổi NCC / vị trí cho phiếu chưa quét.
+ *  preview = máy chủ trả danh sách sẽ làm / giữ lại, không ghi (hộp xác nhận liệt kê). */
+export function useInboundGroupActs() {
+  const qc = useQueryClient()
+  const inv = () => { qc.invalidateQueries({ queryKey: ['inbound-orders'] }); qc.invalidateQueries({ queryKey: ['inbound-order'] }) }
+  const cancel = useMutation({
+    mutationFn: async ({ group, preview }: { group: string; preview: boolean }) =>
+      (await apiClient.post(`/wms/inbound-orders/group/${group}/cancel${preview ? '?preview=1' : ''}`, {})).data.data as
+        { will?: InboundGroupBrief[]; keep?: InboundGroupBrief[]; kept?: InboundGroupBrief[]; cancelled?: number },
+    onSuccess: (_d, v) => { if (!v.preview) inv() },
+  })
+  const complete = useMutation({
+    mutationFn: async ({ group, preview }: { group: string; preview: boolean }) =>
+      (await apiClient.post(`/wms/inbound-orders/group/${group}/complete${preview ? '?preview=1' : ''}`, {})).data.data as
+        { will?: InboundGroupBrief[]; short?: InboundGroupBrief[]; keep?: InboundGroupBrief[]; kept?: InboundGroupBrief[]; completed?: number; done?: number },
+    onSuccess: (_d, v) => { if (!v.preview) inv() },
+  })
+  const patch = useMutation({
+    mutationFn: async ({ group, ...body }: { group: string; location_id?: string; ncc_id?: string | null }) =>
+      (await apiClient.patch(`/wms/inbound-orders/group/${group}`, body)).data.data as { location_updated: number; ncc_updated: number; kept: InboundGroupBrief[] },
+    onSuccess: inv,
+  })
+  return { cancel, complete, patch }
+}
+
 // ── NHẬP HÀNG TRẢ VỀ (26/10) — số lượng luôn BASE ──
 export interface ReturnTripHit { gdo_id: string; group_code: string | null; license_plate: string | null; delivery_date: string | null; completed_at: string | null; dos: string[]; customers: string[]; returns: string[] }
 export interface ReturnMat { id: string; material_code: string; short_name: string | null; base_unit: string | null; entry_unit: string | null; units_per_carton: number | null; category: string | null; no_qr_tracking: boolean | null }

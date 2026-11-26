@@ -1559,6 +1559,65 @@ try {
     check('23e. (C138) Quét tem mã CHƯA khai quy cách pallet mà không gõ số lượng ⇒ 422 QTY_REQUIRED, không tạo pallet 0',
       sq0.s === 422 && sq0.j?.error?.code === 'QTY_REQUIRED' && ent0.length === 0,
       `http=${sq0.s} ${sq0.j?.error?.code ?? ''} ${sq0.j?.error?.message ?? ''} pallet=${JSON.stringify(ent0)}`)
+
+    // ── 23f–i (26/11 lượt 2): UPLOAD chỉ tạo nhóm mới (loại kho THEO TỪNG MÃ) · Hoàn thành / Huỷ cả nhóm · Sửa nhóm đổi vị trí / NCC ──
+    const upGroup = async (aoa, preflight, head = {}) => {
+      const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), 'Nhập nhiều mã')
+      const fd = new FormData()
+      fd.append('file', new Blob([Buffer.from(XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }))], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), 'qa63_nhom.xlsx')
+      for (const [k, v] of Object.entries({ warehouse_id: WC, import_date: todayVN, shift_id: shift?.id, location_id: 'QA63_LOC1', ...head })) if (v != null) fd.append(k, String(v))
+      const r = await fetch(`${BASE}/api/wms/inbound-orders/group/upload${preflight ? '?preflight=1' : ''}`, { method: 'POST', headers: { Authorization: `Bearer ${authToken()}` }, body: fd })
+      let j = null; try { j = JSON.parse(await r.text()) } catch { /* không JSON */ }
+      return { s: r.status, j }
+    }
+    const HEAD = ['Mã hàng *', 'Tên hàng', 'Số thùng', 'Số lẻ (ĐVT gốc)', 'Ghi chú']
+    const upBefore = (await restAll('ProductionImport', `select=id&warehouse_id=eq.${WC}`)).length
+    const pf = await upGroup([HEAD, ['QA63G1', 'đường', '', 10, ''], ['qa63nt2', 'bao bì', '', 5, 'thùng ngoài'], ['QA63G1', '', '', 5, ''], ['QA63KHONGCO', '', '', 3, '']], true)
+    const pfd = pf.j?.data
+    const upMid = (await restAll('ProductionImport', `select=id&warehouse_id=eq.${WC}`)).length
+    const up = await upGroup([HEAD, ['QA63G1', 'đường', '', 10, ''], ['qa63nt2', 'bao bì', '', 5, 'thùng ngoài'], ['QA63G1', '', '', 5, '']], false)
+    const upGrp = up.j?.data?.receipt_group
+    const upRows = upGrp ? await restAll('ProductionImport', `select=id,material_id,warehouse_type,location_id,planned_cartons,notes&receipt_group=eq.${upGrp}`) : []
+    const uG1 = upRows.find(r => r.material_id === M_G1), uNT2 = upRows.find(r => r.material_id === M_NT2)
+    check('23f. Upload Nhập nhiều mã: kiểm trước KHÔNG ghi (mã lạ báo theo dòng Excel, mã trùng cộng gộp + cảnh báo); file sạch ⇒ MỘT nhóm trộn RM01 + PK01 (loại kho theo từng mã), mã trùng gộp 15, mã không tem không vị trí',
+      pf.s === 200 && pfd?.preflight === true && (pfd?.errors ?? []).some(e => /QA63KHONGCO/.test(e) && /Dòng 5/.test(e)) && (pfd?.warnings ?? []).some(w => /cộng gộp/.test(w))
+        && upMid === upBefore && up.s === 200 && num(up.j?.data?.inserted) === 2 && upRows.length === 2
+        && uG1?.warehouse_type === 'RM01' && uG1?.location_id === 'QA63_LOC1' && num(uG1?.planned_cartons) === 15
+        && uNT2?.warehouse_type === 'PK01' && uNT2?.location_id == null && /thùng ngoài/.test(uNT2?.notes ?? ''),
+      `pf=${pf.s} lỗi=${JSON.stringify(pfd?.errors)} cảnh báo=${JSON.stringify(pfd?.warnings)} ghi giữa=${upMid - upBefore} up=${up.s} ${up.j?.error?.message ?? ''} rows=${JSON.stringify(upRows.map(r => [r.warehouse_type, r.location_id, r.planned_cartons]))}`)
+
+    // 23g HOÀN THÀNH CẢ NHÓM (nhóm 23a: G1 · G2 · NT · G3) — chỉ phiếu đã nhận; nhận thiếu nêu riêng ở xem trước
+    const oNT = byMat.get(M_NT)
+    const sv = oNT ? await api(`/wms/inbound-orders/${oNT.id}/scan-manual`, 'POST', { cartons: 15, production_date: dayAgo(3) }) : { s: 0 }
+    const cpv = grp ? await api(`/wms/inbound-orders/group/${grp}/complete?preview=1`, 'POST', {}) : { s: 0 }
+    const cp = grp ? await api(`/wms/inbound-orders/group/${grp}/complete`, 'POST', {}) : { s: 0 }
+    const afterCp = grp ? await restAll('ProductionImport', `select=id,material_id,status&receipt_group=eq.${grp}`) : []
+    check('23g. Hoàn thành cả nhóm: xem trước = 1 phiếu đã nhận (mã không tem lưu 15/20 ⇒ nằm trong danh sách nhận THIẾU), 3 phiếu chưa nhận giữ mở; xác nhận ⇒ đúng phiếu đó COMPLETED',
+      sv.s === 200 && cpv.s === 200 && (cpv.j?.data?.will ?? []).length === 1 && cpv.j?.data?.will?.[0]?.id === oNT?.id && (cpv.j?.data?.short ?? []).length === 1
+        && (cpv.j?.data?.keep ?? []).length === 3 && cp.s === 200 && num(cp.j?.data?.completed) === 1
+        && afterCp.find(r => r.id === oNT?.id)?.status === 'COMPLETED' && afterCp.filter(r => r.status === 'OPEN').length === 3,
+      `lưu=${sv.s} ${sv.j?.error?.message ?? ''} xem=${cpv.s} will=${(cpv.j?.data?.will ?? []).length} short=${(cpv.j?.data?.short ?? []).length} keep=${(cpv.j?.data?.keep ?? []).length} làm=${cp.s}/${cp.j?.data?.completed}`)
+
+    // 23h HUỶ CẢ NHÓM — chỉ phiếu đang mở chưa có hàng; phiếu đã hoàn thành giữ lại
+    const xpv = grp ? await api(`/wms/inbound-orders/group/${grp}/cancel?preview=1`, 'POST', {}) : { s: 0 }
+    const xc = grp ? await api(`/wms/inbound-orders/group/${grp}/cancel`, 'POST', {}) : { s: 0 }
+    const afterX = grp ? await restAll('ProductionImport', `select=id,status&receipt_group=eq.${grp}`) : []
+    check('23h. Huỷ cả nhóm: xem trước = 3 phiếu chưa nhận sẽ huỷ, phiếu đã hoàn thành giữ lại; xác nhận ⇒ còn đúng 1 phiếu (đã hoàn thành)',
+      xpv.s === 200 && (xpv.j?.data?.will ?? []).length === 3 && (xpv.j?.data?.keep ?? []).length === 1
+        && xc.s === 200 && num(xc.j?.data?.cancelled) === 3 && afterX.length === 1 && afterX[0].status === 'COMPLETED',
+      `xem=${xpv.s} will=${(xpv.j?.data?.will ?? []).length} keep=${(xpv.j?.data?.keep ?? []).length} huỷ=${xc.s}/${xc.j?.data?.cancelled} còn=${JSON.stringify(afterX.map(r => r.status))}`)
+
+    // 23i SỬA NHÓM đổi vị trí / NCC ⇒ mọi phiếu CHƯA quét (vị trí chỉ cho mã có tem); vị trí kho khác ⇒ 422
+    await restWrite('Location', 'POST', '', [{ id: 'QA63_LOC2', location_code: 'QA63_L2', row: 'A', shelf: '2', max_pallets: 99, warehouse_id: WC, sub_code: 'QA63', updated_at: ts() },
+      { id: 'QA63_LOCX', location_code: 'QA63_LX', row: 'A', shelf: '3', max_pallets: 99, warehouse_id: WC2, sub_code: 'QA63', updated_at: ts() }])
+    const nccP = (await restAll('TransportCompany', 'select=id&type=eq.NCC&limit=1'))[0]
+    const pt = upGrp ? await api(`/wms/inbound-orders/group/${upGrp}`, 'PATCH', { location_id: 'QA63_LOC2', ...(nccP ? { ncc_id: nccP.id } : {}) }) : { s: 0 }
+    const ptBad = upGrp ? await api(`/wms/inbound-orders/group/${upGrp}`, 'PATCH', { location_id: 'QA63_LOCX' }) : { s: 0 }
+    const afterPt = upGrp ? await restAll('ProductionImport', `select=material_id,location_id,ncc_id&receipt_group=eq.${upGrp}`) : []
+    check('23i. Sửa nhóm đổi vị trí (+ NCC) ⇒ mọi phiếu chưa quét: mã có tem sang QA63_L2, mã không tem vẫn không vị trí, NCC đổi cả hai; vị trí thuộc kho khác ⇒ 422',
+      pt.s === 200 && afterPt.find(r => r.material_id === M_G1)?.location_id === 'QA63_LOC2' && afterPt.find(r => r.material_id === M_NT2)?.location_id == null
+        && (!nccP || afterPt.every(r => r.ncc_id === nccP.id)) && ptBad.s === 422,
+      `patch=${pt.s} ${pt.j?.error?.message ?? ''} kho khác=${ptBad.s} rows=${JSON.stringify(afterPt.map(r => [r.location_id, r.ncc_id ? 'ncc' : null]))}`)
   }
 } finally {
   await cleanup()

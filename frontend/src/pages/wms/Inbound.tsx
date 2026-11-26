@@ -1,6 +1,8 @@
-﻿import React, { useCallback, useEffect, useMemo, useState } from 'react'
+﻿import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Plus, PackagePlus, X, ChevronDown, User, MapPin, Pencil, Bookmark, Rows3, AlignJustify, ArrowRight, AlertTriangle, Undo2 } from 'lucide-react'
+import { Plus, PackagePlus, X, ChevronDown, User, MapPin, Pencil, Bookmark, Rows3, AlignJustify, ArrowRight, AlertTriangle, Undo2, Upload } from 'lucide-react'
+import { UploadExcelDialog } from '@/components/shared/UploadExcelDialog'
+import { downloadTemplate } from '@/utils/excelTemplate'
 import { InboundReturnSheet } from '@/components/wms/InboundReturnSheet'
 import { toast } from '@/components/ui/use-toast'
 import { ScanIcon } from '@/components/shared/ScanIcon'
@@ -22,7 +24,7 @@ import { FormSheet } from '@/components/shared/FormSheet'
 import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { Label }               from '@/components/ui/label'
 import {
-  useInboundOrders, useCreateInboundOrder, useCreateInboundGroup,
+  useInboundOrders, useCreateInboundOrder, useCreateInboundGroup, useUploadInboundGroup, useInboundGroupActs,
   useInboundOrdersPaged, useInboundSummary, useInboundFacets, inboundListParamsOf,
   useWarehouses, useMaterials, useMaterialsByCodes, useLocationsReal, useLocationsByIds, useImportShifts,
   useWarehouseZones,
@@ -217,6 +219,9 @@ function CreateOrderDialog({ open, onClose, editGroup, onPickReturn }: { open: b
   // MULTI = "Nhập nhiều mã" (26/11): một chứng từ nhiều mã nhiều NCC — dùng CHUNG bảng dòng hàng của tab NCC,
   // thay ô "Xe đang vào cổng" bằng "Vị trí mặc định", NCC tuỳ chọn (để trống = đọc trên tem). Mỗi mã một phiếu SX, chung nhóm.
   const [sourceType,   setSourceType]   = useState<'FACTORY' | 'NCC' | 'MULTI'>('FACTORY')
+  // Sửa nhóm "Nhập nhiều mã": NCC / vị trí lúc mở — đổi thì áp cho MỌI phiếu chưa quét của nhóm (user chốt 26/11)
+  const origGroupLoc = useRef('')
+  const origGroupNcc = useRef('')
   const isTableMode = sourceType === 'NCC' || sourceType === 'MULTI'
   const [nccId,        setNccId]        = useState('')       // NCC chọn (bắt buộc khi Nhập NCC)
   const [showFactoryNcc, setShowFactoryNcc] = useState(false) // Nhập SX: bật chọn NCC (tùy chọn)
@@ -247,7 +252,9 @@ function CreateOrderDialog({ open, onClose, editGroup, onPickReturn }: { open: b
         setGateRegId((first as any).gate_registration_id ?? '')
         setImportDate(((first as any).import_date ?? '').slice(0, 10) || format(new Date(), 'yyyy-MM-dd'))
         setShiftId((first as any).shift_id ?? '')
-        setMaterialId(''); setLocationId(first.receipt_group ? (first.location_id ?? '') : '')
+        const grpLoc = first.receipt_group ? (editGroup.find(o => o.location_id)?.location_id ?? '') : ''
+        setMaterialId(''); setLocationId(grpLoc)
+        origGroupLoc.current = grpLoc; origGroupNcc.current = (first as { ncc_id?: string | null }).ncc_id ?? ''
         setNotes('')
         setNccId((first as any).ncc_id ?? ''); setShowFactoryNcc(false)
         setNccRows([emptyNccRow()]); setNccSaving(false); setNccErr(''); setNccDropdownIdx(null)
@@ -419,6 +426,9 @@ function CreateOrderDialog({ open, onClose, editGroup, onPickReturn }: { open: b
   const { mutateAsync: updateOrderAsync } = useUpdateInboundOrder()
   const { mutateAsync: cancelOrderAsync }  = useCancelInboundOrder()
   const { mutateAsync: createGroupAsync }  = useCreateInboundGroup()
+  const { mutateAsync: uploadGroupAsync }  = useUploadInboundGroup()
+  const { patch: patchGroup }              = useInboundGroupActs()
+  const [showGroupUpload, setShowGroupUpload] = useState(false)
   // Kho theo dõi tồn bằng số lượng (QTY / QTY_DATE): mọi mã nhập tay, không cần vị trí — còn lại phải có vị trí mặc định
   const multiNeedsLoc = !isQtyLike((warehouses as { id: string; inventory_mode?: string | null }[]).find(w => w.id === warehouseId)?.inventory_mode)
 
@@ -606,6 +616,12 @@ function CreateOrderDialog({ open, onClose, editGroup, onPickReturn }: { open: b
     if (validRows.length && multiNeedsLoc && !locationId) { setNccErr('Vui lòng chọn Vị trí mặc định cho phiếu'); return }
     setNccSaving(true); setNccErr('')
     try {
+      if (editing && group) {
+        const locChanged = !!locationId && locationId !== origGroupLoc.current
+        const nccChanged = (nccId || '') !== origGroupNcc.current
+        if (locChanged || nccChanged)
+          await patchGroup.mutateAsync({ group, ...(locChanged ? { location_id: locationId } : {}), ...(nccChanged ? { ncc_id: nccId || null } : {}) })
+      }
       if (editing) {
         await Promise.all(editRows.filter(r => !r.toCancel).map(r =>
           updateOrderAsync({ id: r.id, import_date: importDate, shift_id: shiftId, notes: r.notes, planned_cartons: r.planned_cartons ?? undefined })))
@@ -1011,7 +1027,7 @@ function CreateOrderDialog({ open, onClose, editGroup, onPickReturn }: { open: b
                         <SingleSelect
                           value={locationId}
                           onChange={setLocationId}
-                          disabled={!subType}
+                          disabled={!warehouseId}
                           searchPlaceholder="Tìm vị trí…"
                           triggerClassName="h-8"
                           serverSearch
@@ -1019,7 +1035,7 @@ function CreateOrderDialog({ open, onClose, editGroup, onPickReturn }: { open: b
                           selectedLabel={locationId
                             ? ([...filteredLocs, ...locPicked] as { id: string; location_code: string }[]).find(l => l.id === locationId)?.location_code
                             : undefined}
-                          placeholder={!subType ? 'Chọn loại kho trước' : 'Chọn vị trí'}
+                          placeholder={!warehouseId ? 'Chọn kho trước' : 'Chọn vị trí'}
                           options={filteredLocs.map(l => ({ value: l.id, label: l.location_code, node: <PutawayOption loc={l} /> }))}
                         />
                       </div>
@@ -1027,12 +1043,14 @@ function CreateOrderDialog({ open, onClose, editGroup, onPickReturn }: { open: b
                         warehouseId={warehouseId || null}
                         materialId={null}
                         nccId={nccId || null}
-                        disabled={!subType}
+                        disabled={!warehouseId}
                         onPicked={loc => setLocationId(loc.id)}
                         className="h-8 w-8 sm:h-8 sm:w-8"
                       />
                     </div>
-                    <p className="mt-0.5 text-[9px] text-slate-400">Áp cho cả phiếu — lúc quét đổi được vị trí từng tem</p>
+                    <p className="mt-0.5 text-[9px] text-slate-400">{editGroup?.length
+                      ? 'Đổi ở đây áp cho mọi phiếu CHƯA quét của nhóm (phiếu đã quét giữ nguyên)'
+                      : 'Áp cho cả phiếu — lúc quét đổi được vị trí từng tem'}</p>
                   </div>
                 ) : (
                 <div>
@@ -1272,7 +1290,19 @@ function CreateOrderDialog({ open, onClose, editGroup, onPickReturn }: { open: b
             {/* Section 2: Danh sách hàng */}
             <div className="space-y-1.5">
               <div className="flex items-center justify-between">
-                <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wider">{editGroup?.length ? 'Thêm hàng mới vào nhóm' : 'Danh sách hàng'}</p>
+                <div className="flex items-center gap-2">
+                  <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wider">{editGroup?.length ? 'Thêm hàng mới vào nhóm' : 'Danh sách hàng'}</p>
+                  {sourceType === 'MULTI' && !editGroup?.length && (
+                    <button type="button"
+                      disabled={!warehouseId || !importDate || !shiftId}
+                      title={!warehouseId || !importDate || !shiftId ? 'Chọn Kho, Ngày nhập, Ca nhập (và vị trí mặc định) ở trên trước — file chỉ có mã + số lượng' : 'Nạp mã + số lượng từ file Excel — kiểm trước, chưa ghi gì cho tới khi bấm Xác nhận'}
+                      onClick={() => setShowGroupUpload(true)}
+                      className="inline-flex items-center gap-1 rounded border border-blue-200 bg-blue-50 px-2 py-0.5 text-[10px] font-medium text-blue-700 hover:bg-blue-100 disabled:opacity-40 disabled:cursor-not-allowed"
+                      data-testid="group-upload-btn">
+                      <Upload className="h-3 w-3" /> Nạp Excel
+                    </button>
+                  )}
+                </div>
                 {gateRegId && activePlanLines.length > 0 && (
                   <button type="button" onClick={loadFromPlan}
                     className="text-[10px] text-blue-600 hover:text-blue-700 underline">
@@ -1328,6 +1358,35 @@ function CreateOrderDialog({ open, onClose, editGroup, onPickReturn }: { open: b
 
             {nccErr && <p className="text-xs text-red-500">{nccErr}</p>}
 
+            {showGroupUpload && (
+              <UploadExcelDialog
+                title="Nạp danh sách Nhập nhiều mã từ Excel"
+                hint={`Đầu phiếu lấy từ form: kho ${(warehouses as { id: string; name: string }[]).find(w => w.id === warehouseId)?.name ?? ''} · ngày ${importDate} · ca ${(shifts as { id: string; name: string }[]).find(s => s.id === shiftId)?.name ?? ''}${locationId ? ' · vị trí mặc định đã chọn' : ''}${nccId ? ' · NCC đã chọn' : ' · NCC đọc trên tem'}. File chỉ có Mã hàng + số lượng; loại kho theo từng mã. Mỗi mã thành một phiếu trong cùng nhóm — một dòng lỗi là không tạo gì.`}
+                onClose={() => setShowGroupUpload(false)}
+                onDownloadTemplate={async () => { await downloadTemplate({
+                  file: 'mau_nhap_nhieu_ma.xlsx', sheet: 'Nhập nhiều mã', title: 'NẠP DANH SÁCH NHẬP NHIỀU MÃ TỪ EXCEL',
+                  header: [['Mã hàng *', 'Tên hàng', 'Số thùng', 'Số lẻ (ĐVT gốc)', 'Ghi chú']],
+                  notes: [
+                    'Kho, vị trí mặc định, ngày, ca, NCC chọn trên form "Nhập nhiều mã" — file chỉ có mã và số lượng.',
+                    'Loại kho lấy theo từng mã — một file trộn được NVL và bao bì.',
+                    'Mã có quy cách thùng: ghi Số thùng (+ Số lẻ nếu có). Mã tính KG, L, cái…: ghi ở cột Số lẻ (ĐVT gốc).',
+                    'Một mã ghi nhiều dòng thì app cộng gộp thành một phiếu. Cột Tên hàng chỉ để dễ đọc — app không dùng.',
+                  ],
+                  examples: [['210000262', 'Đường kính trắng', '', 1000, ''], ['220000105', 'Sữa bột gầy (bao 25 kg)', '', 500, 'xe 2'], ['310000044', 'Thùng carton 24 hộp', 12, 0, '']],
+                  colWidths: [16, 30, 10, 16, 24],
+                }) }}
+                onUpload={async (file, preflight) => {
+                  const r = await uploadGroupAsync({ file, preflight, head: {
+                    warehouse_id: warehouseId, import_date: importDate, shift_id: shiftId,
+                    location_id: locationId || undefined, ncc_id: nccId || undefined, notes: notes || undefined,
+                  } })
+                  if (!preflight && r.inserted > 0 && r.first_order_id) {
+                    setShowGroupUpload(false); onClose(); navigate(`/wms/inbound/${r.first_order_id}`)
+                  }
+                  return r
+                }}
+              />
+            )}
           </>)}
         </div>
     </FormSheet>

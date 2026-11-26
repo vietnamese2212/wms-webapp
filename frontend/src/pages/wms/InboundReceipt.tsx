@@ -23,7 +23,8 @@ import { TableEmptyRow } from '@/components/shared/TableEmptyRow'
 import { InboundGroupScanSheet } from '@/components/wms/InboundScanSheet'
 import { useReceiptGroupActions } from '@/components/wms/ReceiptGroupActions'
 import { CreateOrderDialog } from '@/pages/wms/Inbound'
-import { qtyLabel } from '@/utils/qtyUnits'
+// ĐVT in bằng MÃ của app ("50 KG") — user 17/11 "hạn chế văn viết, dùng đơn vị tính của app"; mã có thùng vẫn "N thùng + M hộp"
+import { qtyCode } from '@/utils/unitCode'
 import { formatDate, formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 import { unlockAudio } from '@/utils/audio'
 import { useWedgeScanner } from '@/hooks/useWedgeScanner'
@@ -53,8 +54,8 @@ function DiffCell({ l }: { l: InboundReceiptLine }) {
   if (l.planned_cartons == null || l.diff == null) return <span className="text-slate-300">—</span>
   const m = l.material
   if (Math.abs(l.diff) < 1e-9) return <span className="text-green-700 font-semibold">Đủ</span>
-  if (l.diff < 0) return <span className={l.received > 0 ? 'text-red-600 font-semibold' : 'text-slate-500'}>Thiếu {qtyLabel(-l.diff, m)}</span>
-  return <span className="text-blue-700 font-semibold" title={l.over_plan === 'BLOCK' ? 'Kho đặt chặn nhập vượt — phần thừa có từ trước khi đặt luật' : 'Nhận nhiều hơn kế hoạch'}>Thừa {qtyLabel(l.diff, m)}</span>
+  if (l.diff < 0) return <span className={l.received > 0 ? 'text-red-600 font-semibold' : 'text-slate-500'}>Thiếu {qtyCode(-l.diff, m)}</span>
+  return <span className="text-blue-700 font-semibold" title={l.over_plan === 'BLOCK' ? 'Kho đặt chặn nhập vượt — phần thừa có từ trước khi đặt luật' : 'Nhận nhiều hơn kế hoạch'}>Thừa {qtyCode(l.diff, m)}</span>
 }
 
 export default function InboundReceipt() {
@@ -136,7 +137,7 @@ export default function InboundReceipt() {
   if (openLines.length > 0 && can(perms, 'inbound', 'complete')) headerItems.push({
     key: 'complete', icon: CheckCircle2, label: 'Hoàn thành phiếu', variant: 'success', primary: true,
     tip: 'Hoàn thành mọi mã ĐÃ nhận hàng — xem trước mã nhận thiếu / thừa, mã giữ mở rồi mới xác nhận',
-    className: 'border-green-200 text-green-700 hover:bg-green-50', busy: acts.busy === 'complete',
+    busy: acts.busy === 'complete',
     onClick: () => { void acts.runComplete(group!) },
   })
   if (openLines.length > 0 && can(perms, 'inbound', 'edit')) headerItems.push({
@@ -219,8 +220,8 @@ export default function InboundReceipt() {
                       {l.no_qr && <span className="ml-1 text-[9px] text-slate-400 font-normal">(không tem)</span>}
                     </TableCell>
                     <TableCell className="px-2 py-1.5 text-[11px] text-right whitespace-nowrap" data-testid="receipt-line-diff"><DiffCell l={l} /></TableCell>
-                    <TableCell className="px-2 py-1.5 text-[11px] text-right tabular-nums whitespace-nowrap font-semibold">{qtyLabel(l.received, l.material)}</TableCell>
-                    <TableCell className="px-2 py-1.5 text-[11px] text-right tabular-nums whitespace-nowrap">{l.planned_cartons != null ? qtyLabel(l.planned_cartons, l.material) : '—'}</TableCell>
+                    <TableCell className="px-2 py-1.5 text-[11px] text-right tabular-nums whitespace-nowrap font-semibold">{qtyCode(l.received, l.material)}</TableCell>
+                    <TableCell className="px-2 py-1.5 text-[11px] text-right tabular-nums whitespace-nowrap">{l.planned_cartons != null ? qtyCode(l.planned_cartons, l.material) : '—'}</TableCell>
                     <TableCell className="px-2 py-1.5 text-[11px] text-right tabular-nums">{l.pallets}</TableCell>
                     <TableCell className="px-2 py-1.5 text-[10px] whitespace-nowrap">{l.warehouse_type ?? '—'}</TableCell>
                     <TableCell className="px-2 py-1.5 text-[10px] font-mono whitespace-nowrap">{l.no_qr ? <span className="text-slate-300">—</span> : (l.location?.location_code ?? <span className="text-amber-600 font-sans">chọn khi quét</span>)}</TableCell>
@@ -263,7 +264,7 @@ export default function InboundReceipt() {
                       <TableRow key={e.id} className="cursor-pointer hover:bg-slate-50" onClick={() => navigate(`/wms/inbound/${e.import_order_id}`)}>
                         <TableCell className="px-2 py-1 text-[10px] font-mono whitespace-nowrap truncate sticky left-0 z-10 bg-white" title={e.pallet_code}>{e.pallet_code}</TableCell>
                         <TableCell className="px-2 py-1 text-[10px] font-mono whitespace-nowrap">{e.material_code ?? '—'}</TableCell>
-                        <TableCell className="px-2 py-1 text-[11px] text-right tabular-nums whitespace-nowrap">{qtyLabel(Number(e.cartons_imported) || 0, m)}</TableCell>
+                        <TableCell className="px-2 py-1 text-[11px] text-right tabular-nums whitespace-nowrap">{qtyCode(Number(e.cartons_imported) || 0, m)}</TableCell>
                         <TableCell className="px-2 py-1 text-[10px] font-mono whitespace-nowrap">{e.location?.location_code ?? '—'}</TableCell>
                         <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{e.production_date ? formatDate(e.production_date.slice(0, 10)) : '—'}</TableCell>
                         <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap text-slate-500"><Clock className="inline h-3 w-3 mr-0.5 text-slate-300" />{formatTimestampDate(e.created_at, true)} {formatTimestampTime(e.created_at, false)}</TableCell>

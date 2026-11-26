@@ -218,7 +218,7 @@ export function InboundScanSheet({ order, onClose, employeeId, allLocations, onL
     // Đang chờ xác nhận Lưu: bắn LẠI đúng tem đó = bấm Lưu (giống Xuất; camera đứng yên KHÔNG tự lưu).
     // Tem khác trong lúc đang chờ → bỏ qua (buộc "Quét tiếp"/Lưu trước).
     if (pendingQR) {
-      const savable = serverCheckOk && !serverChecking && !nccMissing
+      const savable = serverCheckOk && !serverChecking && !nccMissing && Number(cartons) > 0
       if (src === 'wedge' && savable && normalizeQR(raw) === normalizeQR(pendingQR)) { playBeep(); handleSave() }
       return
     }
@@ -386,7 +386,9 @@ export function InboundScanSheet({ order, onClose, employeeId, allLocations, onL
   // Tem V1 hàng NCC: đoạn 4 QR = mã NCC, BE tự resolve → không chặn ở FE (BE 422 nếu resolve thất bại)
   const v1AutoNcc = !!pendingQR && !pendingQR.includes(';') && isNccCategory(matCategory, whTypeMeta)
   const nccMissing = nccRequired && !nccId && !v1AutoNcc
-  const canSave = !!pendingQR && serverCheckOk && !saving && !serverChecking && !nccMissing
+  // C138 (26/11): số lượng 0 (mã chưa khai quy cách pallet, người quét chưa gõ số) ⇒ không cho Lưu — máy chủ cũng chặn 422 QTY_REQUIRED
+  const qtyMissing = !(Number(cartons) > 0)
+  const canSave = !!pendingQR && serverCheckOk && !saving && !serverChecking && !nccMissing && !qtyMissing
   // Số lượt quét của PHIẾU NÀY đang chờ mạng (hàng đợi offline)
   const queuedThisOrder = useScanQueue(s =>
     s.items.filter(i => i.status === 'pending' && i.orderId === order.id).length)
@@ -535,6 +537,9 @@ export function InboundScanSheet({ order, onClose, employeeId, allLocations, onL
                 {/* BASE UNIT: 2 ô Thùng + Hộp — value/onChange = BASE (hộp), quy đổi tại rìa như mọi sheet quét */}
                 <QtyInput value={Math.max(0, Number(cartons) || 0)} mat={order.material}
                   onChange={b => setCartons(String(b))} />
+                {qtyMissing && (
+                  <p className="text-[10px] font-medium text-red-600" data-testid="scan-qty-missing">Mã chưa khai quy cách pallet — gõ số lượng của pallet rồi mới Lưu</p>
+                )}
                 {outboundCartons != null && (
                   <p className="text-[10px] text-slate-500">Phiếu xuất: <span className="font-semibold text-slate-700">{qtyLabel(outboundCartons ?? 0, order.material)}</span></p>
                 )}

@@ -1544,6 +1544,10 @@ export async function scanQR(req: Request, res: Response) {
     }
     // Số nhận lượt này (BASE): người quét khai, không khai thì định mức thùng/pallet
     let qtyIn = cartons_override ? Number(cartons_override) : effCartonsPerPallet(material, orderWarehouseId) * qtyFactor
+    // C138 (26/11, nghiệm thu "Nhập nhiều mã" bằng vai Phó phòng QA): mã CHƯA khai quy cách pallet + người quét không gõ số
+    // ⇒ qtyIn = 0 ⇒ từng tạo PALLET 0 KG (staging 26/11: 219/398 mã RM01, 535/1005 mã PK01 chưa khai quy cách). Chặn — phải gõ số.
+    if (!(qtyIn > 0))
+      return fail(res, 422, 'QTY_REQUIRED', `Mã ${(material as { material_code?: string }).material_code ?? ''} chưa khai quy cách pallet — gõ số lượng của pallet này rồi mới Lưu`)
     // Phiếu trả THEO CHUYẾN (user 26/10): chỉ nhận tem đã đi trên chuyến đó (lập tay thì không ràng); mỗi tem chỉ "trả về"
     // tới số tem đó đã xuất − đã nhận về, phần VƯỢT là HÀNG THỪA ⇒ tự tách TEM CON mang NSX / lô tem gốc (sổ nhận trả ghi
     // `surplus`, truy xuất lô không trừ phần thừa khỏi "đã giao khách").

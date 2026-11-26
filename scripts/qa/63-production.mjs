@@ -1551,6 +1551,14 @@ try {
     check('23d. Sửa nhóm — thêm mã vào nhóm có sẵn: mã đã có ⇒ 422 · mã mới ⇒ 200 vào CÙNG nhóm (4 phiếu) · nhóm của kho khác ⇒ 422',
       aAgain.s === 422 && aNew.s === 200 && aNew.j?.data?.receipt_group === grp && after === 4 && aOther.s === 422,
       `có sẵn=${aAgain.s} mới=${aNew.s} kho khác=${aOther.s} ${aOther.j?.error?.code ?? ''} nhóm=${after}`)
+    // 23e (C138): mã CHƯA khai quy cách pallet + quét không gõ số ⇒ từng tạo PALLET 0 KG (bắt ở nghiệm thu Nhập nhiều mã)
+    const dmy = `${todayVN.slice(8, 10)}${todayVN.slice(5, 7)}${todayVN.slice(2, 4)}`
+    const oG1 = byMat.get(M_G1)
+    const sq0 = oG1 ? await api(`/wms/inbound-orders/${oG1.id}/scan`, 'POST', { qr_code: `${dmy}_QA63G1_QA63_10009402_1_B`, location_id: 'QA63_LOC1' }) : { s: 0 }
+    const ent0 = await restAll('InventoryEntry', `select=id,cartons_imported&material_id=eq.${M_G1}`)
+    check('23e. (C138) Quét tem mã CHƯA khai quy cách pallet mà không gõ số lượng ⇒ 422 QTY_REQUIRED, không tạo pallet 0',
+      sq0.s === 422 && sq0.j?.error?.code === 'QTY_REQUIRED' && ent0.length === 0,
+      `http=${sq0.s} ${sq0.j?.error?.code ?? ''} ${sq0.j?.error?.message ?? ''} pallet=${JSON.stringify(ent0)}`)
   }
 } finally {
   await cleanup()

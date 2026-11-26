@@ -30,9 +30,10 @@ import { useWedgeScanner } from '@/hooks/useWedgeScanner'
 
 // Cột hai bảng (kéo giãn được, lưu theo khoá) — bảng nghiệp vụ dùng ResizableTable như mọi trang (luật C40)
 const LINE_COLS: RtColDef[] = [
-  { id: 'code', label: 'Mã hàng', w: 110 }, { id: 'name', label: 'Tên hàng', w: 220 }, { id: 'type', label: 'Loại kho', w: 70 },
-  { id: 'plan', label: 'Kế hoạch', w: 110, align: 'right' }, { id: 'got', label: 'Đã nhận', w: 110, align: 'right' },
-  { id: 'diff', label: 'Chênh', w: 120, align: 'right' }, { id: 'pl', label: 'Pallet', w: 60, align: 'right' },
+  // Chênh (thiếu / thừa) ngay sau Tên hàng: điện thoại 390 px thấy luôn mà không cần kéo ngang
+  { id: 'code', label: 'Mã hàng', w: 90 }, { id: 'name', label: 'Tên hàng', w: 170 }, { id: 'diff', label: 'Chênh', w: 120, align: 'right' },
+  { id: 'got', label: 'Đã nhận', w: 110, align: 'right' }, { id: 'plan', label: 'Kế hoạch', w: 110, align: 'right' },
+  { id: 'pl', label: 'Pallet', w: 60, align: 'right' }, { id: 'type', label: 'Loại kho', w: 70 },
   { id: 'loc', label: 'Vị trí', w: 110 }, { id: 'st', label: 'Trạng thái', w: 90 }, { id: 'act', label: '', w: 84, stickyRight: true },
 ]
 const PALLET_COLS: RtColDef[] = [
@@ -133,7 +134,7 @@ export default function InboundReceipt() {
     onClick: () => { unlockAudio(); setGunCode(undefined); setShowScan(true) },
   })
   if (openLines.length > 0 && can(perms, 'inbound', 'complete')) headerItems.push({
-    key: 'complete', icon: CheckCircle2, label: 'Hoàn thành phiếu', variant: 'success',
+    key: 'complete', icon: CheckCircle2, label: 'Hoàn thành phiếu', variant: 'success', primary: true,
     tip: 'Hoàn thành mọi mã ĐÃ nhận hàng — xem trước mã nhận thiếu / thừa, mã giữ mở rồi mới xác nhận',
     className: 'border-green-200 text-green-700 hover:bg-green-50', busy: acts.busy === 'complete',
     onClick: () => { void acts.runComplete(group!) },
@@ -205,7 +206,7 @@ export default function InboundReceipt() {
           </h2>
         </div>
         <div className="overflow-x-auto bg-white" data-testid="receipt-lines">
-          <ResizableTable storageKey="inbound_receipt_lines_v1" cols={LINE_COLS}>
+          <ResizableTable storageKey="inbound_receipt_lines_v2" cols={LINE_COLS}>
             <TableBody>
               {lines.map(l => {
                 const st = lineState(l)
@@ -217,11 +218,11 @@ export default function InboundReceipt() {
                       {l.material?.short_name ?? l.material?.material_description ?? '—'}
                       {l.no_qr && <span className="ml-1 text-[9px] text-slate-400 font-normal">(không tem)</span>}
                     </TableCell>
-                    <TableCell className="px-2 py-1.5 text-[10px] whitespace-nowrap">{l.warehouse_type ?? '—'}</TableCell>
-                    <TableCell className="px-2 py-1.5 text-[11px] text-right tabular-nums whitespace-nowrap">{l.planned_cartons != null ? qtyLabel(l.planned_cartons, l.material) : '—'}</TableCell>
-                    <TableCell className="px-2 py-1.5 text-[11px] text-right tabular-nums whitespace-nowrap font-semibold">{qtyLabel(l.received, l.material)}</TableCell>
                     <TableCell className="px-2 py-1.5 text-[11px] text-right whitespace-nowrap" data-testid="receipt-line-diff"><DiffCell l={l} /></TableCell>
+                    <TableCell className="px-2 py-1.5 text-[11px] text-right tabular-nums whitespace-nowrap font-semibold">{qtyLabel(l.received, l.material)}</TableCell>
+                    <TableCell className="px-2 py-1.5 text-[11px] text-right tabular-nums whitespace-nowrap">{l.planned_cartons != null ? qtyLabel(l.planned_cartons, l.material) : '—'}</TableCell>
                     <TableCell className="px-2 py-1.5 text-[11px] text-right tabular-nums">{l.pallets}</TableCell>
+                    <TableCell className="px-2 py-1.5 text-[10px] whitespace-nowrap">{l.warehouse_type ?? '—'}</TableCell>
                     <TableCell className="px-2 py-1.5 text-[10px] font-mono whitespace-nowrap">{l.no_qr ? <span className="text-slate-300">—</span> : (l.location?.location_code ?? <span className="text-amber-600 font-sans">chọn khi quét</span>)}</TableCell>
                     <TableCell className="px-2 py-1.5 whitespace-nowrap"><Badge variant={st.variant} className="px-1.5 py-0 text-[9px] font-medium">{st.label}</Badge></TableCell>
                     <TableCell className="px-2 py-1.5 whitespace-nowrap text-right sticky right-0 bg-white">

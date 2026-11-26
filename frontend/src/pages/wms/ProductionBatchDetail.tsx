@@ -299,7 +299,7 @@ function ProductionBatchDetail() {
   // ĐÓNG PHIẾU — bước cuối (26/11): sau QA bồn, QA mở phiếu chưa đóng (ưu tiên phiếu còn ô bắt buộc) rồi bấm "Đóng phiếu" trong phiếu
   if (closeForm && P('qa_release')) {
     const short = processForms.find(d => d.code === closeForm)?.short ?? closeForm
-    actions.push({ key: 'close', icon: FileCheck, label: 'Đóng phiếu', ops: true, primary: true,
+    actions.push({ key: 'close', icon: FileCheck, label: 'Đóng phiếu', ...opsOf('close'),
       tip: `Mở phiếu ${short}: kiểm đủ ô bắt buộc rồi bấm "Đóng phiếu" — phiếu khoá, mẻ xong`, onClick: () => setLogForm(closeForm) })
   }
   // ── QUẢN TRỊ (⋮) ──

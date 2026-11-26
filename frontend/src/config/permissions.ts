@@ -363,7 +363,7 @@ export const MODULES = {
       open_batch:  'Mở / sửa / đóng / mở lại / huỷ MẺ chế biến',
       consume:     'Rút nguyên liệu vào mẻ (quét tem hoặc chọn lô)',
       reverse:     'Huỷ dòng rút nguyên liệu ghi nhầm (hoàn tồn)',
-      qa_release:  'QA đạt / không đạt / chờ — bấm ở BỒN (áp cho mọi mẻ đang trong bồn) · xác nhận phiếu theo dõi',
+      qa_release:  'QA đạt / không đạt / chờ — bấm ở BỒN (áp cho mọi mẻ đang trong bồn) · đóng phiếu theo dõi (sau QA bồn)',
       manage_tank: 'Khai danh mục BỒN (mã, sức chứa, đơn vị, ngừng dùng)',
       tank_ops:    'Nạp mẻ vào bồn · chuyển bồn · điều chỉnh mức · xả bỏ',
       export:      'Xuất Excel danh sách mẻ',
@@ -376,7 +376,7 @@ export const MODULES = {
       print_label:  'In TEM PALLET của mẻ (QR 1/n … n/n) để dán lên pallet nguyên liệu đã cấp',
       pour:         'ĐỔ BỒN: khai chu kỳ · số mẻ · bồn rồi quét tem pallet của mẻ',
       approve_expired: 'QA DUYỆT / TỪ CHỐI cấp NGUYÊN LIỆU HẾT HẠN vào mẻ (từng tem / lô, từng mẻ, kèm căn cứ)',
-      process_log: 'Ghi PHIẾU THEO DÕI của mẻ (và sửa riêng cấu trúc phiếu cho lần đó tại bàn) — QA xác nhận phiếu dùng quyền "QA giữ / thả / loại"',
+      process_log: 'Ghi PHIẾU THEO DÕI của mẻ (và sửa riêng cấu trúc phiếu cho lần đó tại bàn) — QA đóng phiếu dùng quyền "QA giữ / thả / loại"',
     },
   },
   materials: {

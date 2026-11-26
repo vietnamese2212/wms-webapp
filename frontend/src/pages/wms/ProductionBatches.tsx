@@ -130,6 +130,7 @@ export default function ProductionBatches() {
           { label: 'Chờ QA duyệt', value: nf(sum?.wait_qa), accent: Number(sum?.wait_qa ?? 0) > 0, tip: BATCH_STAGE.wait_qa.tip },
           { label: 'Đang làm', value: nf(sum?.working), tip: BATCH_STAGE.working.tip },
           { label: 'Chờ QA bồn', value: nf(sum?.filled), tip: BATCH_STAGE.filled.tip },
+          ...(Number(sum?.closing ?? 0) > 0 ? [{ label: 'Chờ đóng phiếu', value: nf(sum?.closing), accent: true, tip: BATCH_STAGE.closing.tip }] : []),
           { label: 'QA đạt', value: nf(sum?.released) },
           { label: 'QA loại', value: nf(sum?.rejected), danger: Number(sum?.rejected ?? 0) > 0, tip: BATCH_STAGE.rejected.tip },
           ...(totalPages > 1 ? [{ label: 'Trang', value: `${page}/${totalPages}` }] : []),

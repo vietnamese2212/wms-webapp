@@ -1,21 +1,23 @@
 // TÌNH TRẠNG MẺ (18/11 — user: "xem lại màu sắc của Mẻ thay đổi theo tình trạng — Duyệt 1 một màu, Chờ QA duyệt một màu, QA block
 // thì có symbol, đang làm, đã làm xong"). Tình trạng do DB tính — hàm mes_batch_stage (dòng danh sách `stage`, trang mẻ `gate.stage`),
 // một luật cho dòng · ô tổng · lọc · trang mẻ; ở đây CHỈ vẽ: nhãn + màu nhãn · màu chữ của dòng / mã lô · chấm tab "Đang làm".
-// Thứ tự = thứ tự công việc: chờ duyệt → chờ QA duyệt → đang làm → chờ QA bồn (đã nạp — xong phần sản xuất) → QA đạt / QA loại.
-import { ShieldX, ShieldCheck, ShieldQuestion, UserCheck, FileText, Printer, ArrowDownToLine, Container, FlaskConical, Ban, CircleDashed, type LucideIcon } from 'lucide-react'
+// Thứ tự = thứ tự công việc: chờ duyệt → chờ QA duyệt → đang làm → chờ QA bồn (đã nạp — xong phần sản xuất) → chờ đóng phiếu → QA đạt / QA loại.
+// 26/11 (user chốt): phiếu theo dõi MỞ trước khi cấp NVL (giờ bắt đầu), ĐÓNG sau QA bồn ⇒ QA bồn đạt mà phiếu chưa đóng = "Chờ đóng phiếu".
+import { ShieldX, ShieldCheck, ShieldQuestion, UserCheck, FileText, FileCheck, Printer, ArrowDownToLine, Container, FlaskConical, Ban, CircleDashed, type LucideIcon } from 'lucide-react'
 import { ScanIcon } from '@/components/shared/ScanIcon'
 import { StatusBadge, type BadgeTone } from '@/components/shared/StatusBadge'
 import { rowText, statusText, type RowStatusKey } from '@/lib/rowStatus'
 
-export type BatchStage = 'new' | 'wait_lead' | 'wait_qa' | 'working' | 'filled' | 'released' | 'rejected' | 'cancelled'
-export const BATCH_STAGES: BatchStage[] = ['new', 'wait_lead', 'wait_qa', 'working', 'filled', 'released', 'rejected', 'cancelled']
+export type BatchStage = 'new' | 'wait_lead' | 'wait_qa' | 'working' | 'filled' | 'closing' | 'released' | 'rejected' | 'cancelled'
+export const BATCH_STAGES: BatchStage[] = ['new', 'wait_lead', 'wait_qa', 'working', 'filled', 'closing', 'released', 'rejected', 'cancelled']
 export const BATCH_STAGE: Record<BatchStage, { label: string; tone: BadgeTone; row: RowStatusKey; dot: string; tip: string }> = {
   new:       { label: 'Mới mở',       tone: 'slate',  row: 'pending',    dot: 'bg-slate-400',  tip: 'Chưa cấp nguyên liệu' },
   wait_lead: { label: 'Chờ duyệt',    tone: 'slate',  row: 'pending',    dot: 'bg-slate-400',  tip: 'Chờ trưởng ca duyệt phiếu (duyệt 1)' },
   wait_qa:   { label: 'Chờ QA duyệt', tone: 'purple', row: 'review',     dot: 'bg-purple-500', tip: 'Trưởng ca đã duyệt (duyệt 1) — chờ QA duyệt phiếu (duyệt 2)' },
-  working:   { label: 'Đang làm',     tone: 'amber',  row: 'inProgress', dot: 'bg-amber-500',  tip: 'Đang làm: cấp nguyên liệu → ghi phiếu → in tem pallet → check trước khi đổ bồn → nạp BTP vào bồn (cột Tình trạng ghi bước đang tới)' },
+  working:   { label: 'Đang làm',     tone: 'amber',  row: 'inProgress', dot: 'bg-amber-500',  tip: 'Đang làm: mở phiếu → cấp nguyên liệu → in tem pallet → check trước khi đổ bồn → nạp BTP vào bồn (cột Tình trạng ghi bước đang tới)' },
   filled:    { label: 'Chờ QA bồn',   tone: 'blue',   row: 'full',       dot: 'bg-blue-500',   tip: 'Đã nạp BTP vào bồn (xong phần sản xuất) — chờ QA kết luận ở bồn' },
-  released:  { label: 'QA đạt',       tone: 'green',  row: 'assigned',   dot: 'bg-green-500',  tip: 'Đã nạp bồn, QA bồn đạt — mẻ xong' },
+  closing:   { label: 'Chờ đóng phiếu', tone: 'pink', row: 'scanDone',   dot: 'bg-pink-500',   tip: 'QA bồn đạt — chờ đóng phiếu theo dõi (ghi đủ ô bắt buộc, QA đóng phiếu) để xong mẻ' },
+  released:  { label: 'QA đạt',       tone: 'green',  row: 'assigned',   dot: 'bg-green-500',  tip: 'Đã nạp bồn, QA bồn đạt, phiếu đã đóng — mẻ xong' },
   rejected:  { label: 'QA loại',      tone: 'red',    row: 'paused',     dot: 'bg-red-500',    tip: 'QA bồn không đạt — bồn chặn đóng gói tới khi xả bỏ' },
   cancelled: { label: 'Đã huỷ',       tone: 'slate',  row: 'cancelled',  dot: 'bg-slate-300',  tip: 'Mẻ đã huỷ' },
 }
@@ -24,15 +26,16 @@ export const stageOf = (s: string | null | undefined): BatchStage => (s && s in 
 
 // BƯỚC CỦA MẺ (18/11 d — user: "Tình trạng: thể hiện chính xác đang ở bước nào"): MỘT bộ tên cho dải bước của trang mẻ và cho cột
 // Tình trạng của danh sách. Bước đang tới do DB tính (mes_batch_gate.step) — ở đây chỉ có tên.
-export type BatchStep = 'lead' | 'qa' | 'rm' | 'log' | 'label' | 'pour' | 'fill' | 'tankqa'
+// 26/11: thứ tự lead → qa → log (MỞ phiếu — ghi giờ bắt đầu, trước khi cấp NVL) → rm → label → pour → fill → tankqa → close (ĐÓNG phiếu)
+export type BatchStep = 'lead' | 'qa' | 'log' | 'rm' | 'label' | 'pour' | 'fill' | 'tankqa' | 'close'
 export const BATCH_STEP_LABEL: Record<BatchStep, string> = {
-  lead: 'Trưởng ca duyệt', qa: 'QA duyệt', rm: 'Cấp nguyên liệu', log: 'Ghi phiếu', label: 'In tem pallet',
-  pour: 'Check trước khi đổ bồn', fill: 'Nạp BTP vào bồn', tankqa: 'QA bồn',
+  lead: 'Trưởng ca duyệt', qa: 'QA duyệt', log: 'Mở phiếu', rm: 'Cấp nguyên liệu', label: 'In tem pallet',
+  pour: 'Check trước khi đổ bồn', fill: 'Nạp BTP vào bồn', tankqa: 'QA bồn', close: 'Đóng phiếu',
 }
 const stepOf = (s: string | null | undefined): BatchStep | null => (s && s in BATCH_STEP_LABEL ? (s as BatchStep) : null)
 /** tên NGẮN của bước — ô nhỏ trên sơ đồ bồn (18/11 f); chữ đầy đủ ở title */
 export const BATCH_STEP_SHORT: Record<BatchStep, string> = {
-  lead: 'Chờ duyệt', qa: 'Chờ QA duyệt', rm: 'Cấp NVL', log: 'Ghi phiếu', label: 'In tem', pour: 'Check đổ bồn', fill: 'Nạp bồn', tankqa: 'QA bồn',
+  lead: 'Chờ duyệt', qa: 'Chờ QA duyệt', log: 'Mở phiếu', rm: 'Cấp NVL', label: 'In tem', pour: 'Check đổ bồn', fill: 'Nạp bồn', tankqa: 'QA bồn', close: 'Đóng phiếu',
 }
 /** nhãn ngắn của tình trạng (mẻ đang làm: bước ngắn) */
 export function stageShort(stage: string | null | undefined, step?: string | null): string {
@@ -51,6 +54,7 @@ export const STAGE_CHIP: Record<BatchStage, string> = {
   wait_qa:   'border-purple-300 bg-purple-50 text-purple-800',
   working:   'border-amber-300 bg-amber-50 text-amber-900',
   filled:    'border-blue-300 bg-blue-50 text-blue-800',
+  closing:   'border-pink-300 bg-pink-50 text-pink-800',
   released:  'border-green-300 bg-green-50 text-green-800',
   rejected:  'border-red-300 bg-red-50 text-red-800',
   cancelled: 'border-slate-200 bg-slate-50 text-slate-400',
@@ -95,6 +99,7 @@ const STAGE_SYMBOL: Record<BatchStage, { icon: SymbolIcon; cls: string }> = {
   wait_qa:   { icon: ShieldQuestion, cls: 'text-purple-600' },
   working:   { icon: ScanIcon,       cls: 'text-amber-600' },
   filled:    { icon: FlaskConical,   cls: 'text-blue-600' },
+  closing:   { icon: FileCheck,      cls: 'text-pink-600' },
   released:  { icon: ShieldCheck,    cls: 'text-green-600' },
   rejected:  { icon: ShieldX,        cls: 'text-red-600' },
   cancelled: { icon: Ban,            cls: 'text-slate-400' },
@@ -119,8 +124,8 @@ export function StageSymbol({ stage, step, className = 'h-3.5 w-3.5' }: { stage:
 export function StageLegend() {
   const items: { stage: BatchStage; step?: BatchStep }[] = [
     { stage: 'wait_lead' }, { stage: 'wait_qa' },
-    { stage: 'working', step: 'rm' }, { stage: 'working', step: 'log' }, { stage: 'working', step: 'label' }, { stage: 'working', step: 'pour' }, { stage: 'working', step: 'fill' },
-    { stage: 'filled' }, { stage: 'released' }, { stage: 'rejected' }, { stage: 'cancelled' }, { stage: 'new' },
+    { stage: 'working', step: 'log' }, { stage: 'working', step: 'rm' }, { stage: 'working', step: 'label' }, { stage: 'working', step: 'pour' }, { stage: 'working', step: 'fill' },
+    { stage: 'filled' }, { stage: 'closing' }, { stage: 'released' }, { stage: 'rejected' }, { stage: 'cancelled' }, { stage: 'new' },
   ]
   return (
     <div className="space-y-1 text-xs" data-testid="stage-legend">

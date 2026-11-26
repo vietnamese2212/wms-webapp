@@ -14,7 +14,7 @@ import React from 'react'
  *   orange = cảnh báo vận hành (storage/lưu bãi…)
  * KHÔNG tự chế `bg-*-100 text-*-700` rải rác nữa — thêm tone mới thì thêm vào bảng TONE.
  */
-export type BadgeTone = 'green' | 'blue' | 'amber' | 'red' | 'slate' | 'sky' | 'purple' | 'orange'
+export type BadgeTone = 'green' | 'blue' | 'amber' | 'red' | 'slate' | 'sky' | 'purple' | 'orange' | 'pink'
 
 const TONE: Record<BadgeTone, string> = {
   green:  'bg-green-100 text-green-700',
@@ -25,6 +25,7 @@ const TONE: Record<BadgeTone, string> = {
   sky:    'bg-sky-100 text-sky-700',
   purple: 'bg-purple-100 text-purple-700',
   orange: 'bg-orange-100 text-orange-700',
+  pink:   'bg-pink-100 text-pink-700',     // 26/11: mẻ Chờ đóng phiếu (MES)
 }
 
 export function StatusBadge({ tone, children, className, title }: {

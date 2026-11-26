@@ -47,9 +47,24 @@ Luồng: **trưởng ca** tạo mẻ + duyệt → **QA** duyệt → **công nh
 | Phiếu: ghi TỪNG Ô (18/11 — user: "chỉ để 1 nút mở phiếu ghi nhận tình trạng Bắt đầu, và cho nút ở các input, bấm vào sẽ hiện lên yêu cầu Input, nếu thời gian thì tự lấy thời gian") | Một hàm `mes_log_cell` (thay `mes_log_stamp`), khoá tư vấn theo (mẻ, phiếu), gộp đúng MỘT khoá vào `batch_process_log.data` ⇒ nhiều người ghi các ô khác nhau không đè nhau. `POST …/process-log/:form/start` = BẮT ĐẦU: tạo phiếu (điền sẵn máy / kế hoạch) + giờ máy chủ vào mốc giờ đầu tiên của phiếu (đã có thì không ghi gì). `POST …/process-log/:form/cell {key, value?}` — ô của nhóm ô HOẶC ô của bảng theo dõi: không gửi value + ô Giờ ⇒ giờ máy chủ + người bấm (ô đã có giờ ⇒ 409 `MES_ALREADY`); gửi value ⇒ ghi ('' = xoá ô; ô Giờ phải HH:MM ⇒ 422 `MES_TIME`; ô lạ ⇒ 422 `MES_KEY`), ô đã có ⇒ giữ người ghi đầu + thêm `edited_by` / `edited_at`. PUT trọn phiếu vẫn còn (gói QA, sửa cấu trúc); `data` vắng = chỉ lưu cấu trúc, giữ nguyên giá trị. Trước đây PUT `edited_by` / `edited_at` |
 | Ô "bắt buộc" của mẫu phiếu | Cờ `required` trên ô (Cài đặt MES → Mẫu phiếu → ⋯ "Bắt buộc ghi trước khi nạp bồn"). Kiểm trên các phiếu mẻ ĐÃ MỞ; mẻ chưa mở phiếu nào mà có mẫu đang dùng mang ô bắt buộc ⇒ "Chưa ghi phiếu theo dõi" |
 
+**PHIẾU THEO DÕI: MỞ TRƯỚC KHI CẤP NVL · ĐÓNG SAU QA BỒN (26/11 — user chốt; migration `20261126g`).** User: "Bắt buộc phải mở phiếu mới có thể cấp NVL được, để lấy được thời gian bắt đầu, còn đóng phiếu thì sau QA bồn"; ô bắt buộc thôi chặn nạp bồn, thành điều kiện đóng phiếu; phiếu vẫn ghi suốt quá trình; QA bồn đạt mà phiếu chưa đóng ⇒ "Chờ đóng phiếu". Áp cho kho bật cờ chặn theo bước.
+
+| Tình huống | Kết quả |
+|---|---|
+| Đủ hai duyệt, phiếu CHÍNH (mẫu đang dùng, không phải phiếu bổ sung) chưa bấm "Bắt đầu" ⇒ cấp NVL (quét tem · chọn lô) | 409 `MES_LOG_NOT_STARTED` nêu tên phiếu; `gate.can_consume = false`, `need_open`, bước đang tới `log` (Mở phiếu); nút Quét cấp NVL khoá kèm lý do trong ⋮ |
+| Bấm "Bắt đầu phiếu" | Phiếu mở + giờ bắt đầu (như cũ) ⇒ cấp được; bước `rm` |
+| Phiếu còn ô bắt buộc trống khi nạp BTP vào bồn | KHÔNG chặn (trước 26/11 chặn) — `fill_blockers` không còn dòng phiếu |
+| Đóng phiếu (`POST …/process-log/:form/confirm {confirm:true}`, quyền `qa_release`) trước QA bồn | 409 `MES_LOG_CLOSE_EARLY` |
+| Đóng phiếu sau QA bồn mà phiếu còn ô bắt buộc trống | 409 `MES_LOG_REQUIRED` nêu ô |
+| QA bồn ĐẠT, còn phiếu của mẻ chưa đóng (phiếu chính · phiếu bổ sung đã chọn · mọi phiếu đã mở) | Tình trạng `closing` "Chờ đóng phiếu" (hồng), bước `close`; đóng hết ⇒ `released` "QA đạt"; mở lại (bỏ xác nhận) ⇒ về `closing` |
+| QA bồn KHÔNG ĐẠT | Vẫn "QA loại"; phiếu đóng được (cùng điều kiện ô bắt buộc) |
+| Kho không bật cờ | Không chặn gì mới; bước đang tới vẫn xếp Mở phiếu trước Cấp NVL |
+
+Một chỗ cho mỗi luật: phiếu chưa mở = `mes_log_unopened` (cổng cấp + cổng của mẻ) · phiếu chưa đóng = `mes_log_pending` (tình trạng — truyền vào `mes_batch_stage` ở cả ba nơi gọi) · đóng phiếu đọc `mes_batch_gate` (`confirmProcessLog`). Dải bước trang mẻ 9 bước: Trưởng ca duyệt · QA duyệt · **Mở phiếu** · Cấp nguyên liệu · In tem pallet · Check trước khi đổ bồn · Nạp BTP vào bồn · QA bồn · **Đóng phiếu**. Nút: Duyệt → QA duyệt → Bắt đầu phiếu / Phiếu theo dõi → Quét cấp NVL → … → Tới bồn → **Đóng phiếu** (QA, mở phiếu chưa đóng). Trong phiếu: nút "QA xác nhận" đổi tên **Đóng phiếu** (khoá kèm lý do khi chưa tới bước), "Bỏ xác nhận" ⇒ **Mở lại phiếu**. Gói 63 [16d2] [16j] [16m3] [16o] [16p] [16q].
+
 **Cờ `Warehouse.mes_flow_gate`** (Cài đặt MES → "Luồng làm việc của mẻ" → "Chặn theo từng bước"; mặc định TẮT = như trước; staging bật cho Chế biến Ba Vì). Chỉ cờ này gác HAI chỗ chặn (25/11 N1: chặn cấp NVL kiểm trong DB — hàm `mes_consume_flow_gate` gọi trong `mes_consume_scan` / `mes_consume_lot` sau khoá mẻ; controller gọi CÙNG hàm sớm chỉ để báo lỗi trước. Huỷ cấp và xin / duyệt NVL hết hạn KHÔNG bị chặn):
 - **cấp nguyên liệu** khi chưa đủ hai duyệt ⇒ 409 `MES_NOT_APPROVED` — `consumeGateError` dùng ở CẢ HAI cửa cấp (quét tem · chọn lô);
-- **nạp bồn** ⇒ 409 `MES_NOT_READY` kèm danh sách còn thiếu: hai duyệt · nguyên liệu dưới cận dưới mức lệch (cấp vượt vẫn chỉ tô đỏ) · ô bắt buộc · chưa in tem · chưa quét đủ n/n tem tại đúng bồn.
+- **nạp bồn** ⇒ 409 `MES_NOT_READY` kèm danh sách còn thiếu: hai duyệt · nguyên liệu dưới cận dưới mức lệch (cấp vượt vẫn chỉ tô đỏ) · chưa in tem · chưa quét đủ n/n tem tại đúng bồn (26/11: ô bắt buộc của phiếu KHÔNG còn chặn nạp — thành điều kiện đóng phiếu; cấp NVL thêm điều kiện phiếu chính đã mở).
 Một hàm `mes_batch_gate(batch_id)` cho cả màn hình (`getBatch` trả `gate`) lẫn hàm nạp bồn — đừng tự tính điều kiện ở chỗ khác. Mã lô mới, chu kỳ / số mẻ / bồn bắt buộc, QA ở bồn, đúng bồn mới nạp: áp cho MỌI kho, không cần cờ.
 
 **Màn hình:**

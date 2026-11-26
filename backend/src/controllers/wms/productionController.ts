@@ -85,6 +85,21 @@ async function loadBatch(id: string): Promise<BatchRow | null> {
   if (error) throw error   // 25/11 B9: lỗi đọc ⇒ 503 qua failAny, không thành 404 "không tìm thấy mẻ"
   return (data as BatchRow | null) ?? null
 }
+/** Phần cổng của mẻ (mes_batch_gate) mà việc ĐÓNG phiếu đọc. Tình trạng đã qua QA bồn: chờ đóng phiếu · QA đạt · QA loại. */
+type CloseGate = { flow_gate: boolean; stage: string | null; missing: { form: string; label: string }[] }
+const CLOSABLE_STAGES = new Set(['closing', 'released', 'rejected'])
+function closeGateOf(j: unknown): CloseGate {
+  const o = (j && typeof j === 'object' && !Array.isArray(j) ? j : {}) as Record<string, unknown>
+  const miss = Array.isArray(o.missing) ? o.missing : []
+  return {
+    flow_gate: o.flow_gate === true,
+    stage: typeof o.stage === 'string' ? o.stage : null,
+    missing: miss.flatMap(m => {
+      const r = (m && typeof m === 'object' ? m : {}) as Record<string, unknown>
+      return typeof r.form === 'string' ? [{ form: r.form, label: String(r.label ?? r.key ?? '') }] : []
+    }),
+  }
+}
 /** QA đã duyệt phiếu ⇒ phiếu khoá: muốn sửa định mức / kế hoạch / mã thì QA bỏ duyệt trước (user chốt 17/11). */
 const APPROVED_MSG = 'QA đã duyệt phiếu của mẻ — bỏ duyệt rồi mới sửa được'
 /** Kho bật "luồng chặt" (Warehouse.mes_flow_gate): chưa đủ hai bước duyệt thì CHƯA cấp nguyên liệu. Luật nằm ở MỘT hàm DB
@@ -420,7 +435,7 @@ const zFormField = z.object({
   key: z.string().regex(/^[a-z][a-z0-9_]{0,29}$/), label: zText(1, 120), kind: zFieldKind,
   unit: z.string().trim().max(20).optional(), min: z.number().finite().optional(), max: z.number().finite().optional(),
   wide: z.boolean().optional(), prefill: z.enum(['machine_code', 'planned_qty']).optional(),
-  required: z.boolean().optional(),   // 17/11: ô phải ghi trước khi nạp bồn (hàm mes_batch_gate đọc)
+  required: z.boolean().optional(),   // ô phải ghi trước khi ĐÓNG phiếu (26/11 — trước: trước khi nạp bồn; hàm mes_batch_gate đọc)
 }).strict()
 const zFieldsBlock = z.object({ type: z.literal('fields'), title: zText(1, 80), hint: z.string().trim().max(160).optional(), fields: z.array(zFormField).min(1).max(60) }).strict()
 const zGridBlock = z.object({
@@ -560,6 +575,20 @@ export async function confirmProcessLog(req: Request, res: Response) {
     // 25/11 (B12 rà soát): cùng luật với ghi phiếu (putProcessLog · mes_log_cell) — mẻ đã huỷ thì phiếu khoá
     if (b.status === 'CANCELLED') return fail(res, 409, 'BATCH_CANCELLED', 'Mẻ đã huỷ — không xác nhận phiếu được')
     const { confirm } = req.body as z.infer<typeof zProcessLogConfirm>
+    // 26/11 (user chốt): ĐÓNG phiếu (QA xác nhận) sau QA bồn; ô bắt buộc = điều kiện đóng phiếu (thôi chặn nạp bồn). Kho chặn theo bước.
+    // Đọc cổng của mẻ (mes_batch_gate: stage + missing) — không tự tính điều kiện ở đây. Bỏ xác nhận không bị chặn.
+    if (confirm) {
+      const { data: gj, error: gErr } = await db.rpc('mes_batch_gate', { p_batch_id: b.id })
+      if (gErr) return fail(res, gErr)
+      const g = closeGateOf(gj)
+      if (g.flow_gate) {
+        if (!CLOSABLE_STAGES.has(g.stage ?? ''))
+          return fail(res, 409, 'MES_LOG_CLOSE_EARLY', 'Đóng phiếu sau khi QA kết luận ở bồn — mẻ chưa qua bước QA bồn (vẫn ghi phiếu được bình thường)')
+        const miss = g.missing.filter(m => m.form === form)
+        if (miss.length)
+          return fail(res, 409, 'MES_LOG_REQUIRED', `Phiếu còn ${miss.length} ô bắt buộc chưa ghi: ${miss.slice(0, 5).map(m => m.label).join(', ')}${miss.length > 5 ? '…' : ''}`)
+      }
+    }
     const a = actor(req)
     // xác nhận ⇒ chụp mẫu đang áp vào phiếu (nếu phiếu chưa có bản sửa riêng) — hồ sơ lô không đổi khi mẫu chung sửa về sau
     // bỏ xác nhận ⇒ bản chụp còn y hệt mẫu chung thì gỡ, để phiếu lại "theo mẫu chung" (không hiện thành "sửa riêng")

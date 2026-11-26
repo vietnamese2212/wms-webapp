@@ -14,7 +14,7 @@ export interface ProcessField {
   wide?: boolean
   /** phiếu mới tự điền từ mẻ */
   prefill?: Prefill
-  /** 17/11: ô PHẢI ghi trước khi nạp bồn (kho bật luồng chặt — hàm DB mes_batch_gate đọc cờ này) */
+  /** ô PHẢI ghi trước khi ĐÓNG phiếu (26/11 — trước đó: trước khi nạp bồn; kho bật luồng chặt — hàm DB mes_batch_gate đọc cờ này) */
   required?: boolean
 }
 export interface FieldsBlock { type: 'fields'; title: string; hint?: string; fields: ProcessField[] }

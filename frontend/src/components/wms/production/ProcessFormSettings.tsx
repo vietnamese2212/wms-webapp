@@ -174,7 +174,7 @@ export function ProcessFormSettings({ canConfigure }: { canConfigure: boolean })
             </div>
             <ExtraFormScope draft={draft} setDraft={setDraft} disabled={!canConfigure} />
             {invalid && dirty && <p className="text-[11px] text-amber-700">{invalid}</p>}
-            <p className="text-[10px] text-slate-500">Sửa mẫu áp cho phiếu mới và phiếu chưa sửa riêng. Phiếu đã sửa riêng tại bàn hoặc đã được QA xác nhận giữ nguyên cấu trúc của nó; giá trị đã ghi không bao giờ mất.</p>
+            <p className="text-[10px] text-slate-500">Sửa mẫu áp cho phiếu mới và phiếu chưa sửa riêng. Phiếu đã sửa riêng tại bàn hoặc đã đóng (QA) giữ nguyên cấu trúc của nó; giá trị đã ghi không bao giờ mất.</p>
           </div>
           {view === 'edit'
             ? <ProcessFormEditor blocks={draft.blocks} onChange={b => setDraft({ ...draft, blocks: b })} lockedKeys={lockedKeys} disabled={!canConfigure} />

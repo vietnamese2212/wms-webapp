@@ -44,7 +44,8 @@ const ddmm = (day: string) => (/^\d{4}-\d{2}-\d{2}/.test(day) ? `${day.slice(8, 
 /** mẻ đã huỷ không vào bảng NVL × mẻ */
 export const liveBatches = <B extends CycleBatchLike>(bs: B[]): B[] => bs.filter(b => b.status !== 'CANCELLED')
 /** mẻ đã nạp bồn (đã xong phần sản xuất) — phiếu coi như đóng: thiếu dưới mức lệch là thiếu thật */
-export const isFilled = (b: Pick<CycleBatchLike, 'stage'>) => b.stage === 'filled' || b.stage === 'released' || b.stage === 'rejected'
+// 26/11: 'closing' (QA bồn đạt, chờ đóng phiếu) cũng là mẻ đã nạp
+export const isFilled = (b: Pick<CycleBatchLike, 'stage'>) => b.stage === 'filled' || b.stage === 'closing' || b.stage === 'released' || b.stage === 'rejected'
 /** NVL tính KG (cộng dồn được với nhau) */
 export const isKgRow = (r: Pick<CycleRowLike, 'base_unit'>) => (r.base_unit ?? '').trim().toUpperCase() === 'KG'
 

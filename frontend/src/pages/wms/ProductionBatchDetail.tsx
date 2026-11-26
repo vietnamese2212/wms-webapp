@@ -5,7 +5,7 @@
 import { Fragment, useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import type { AxiosError } from 'axios'
-import { ArrowLeft, Plus, Pencil, XCircle, ShieldCheck, Container, Undo2, Copy, AlertTriangle, ListChecks, Check, Printer, Play, FileText, ArrowDownToLine, RotateCcw, Search, ChevronDown, ChevronRight, Bookmark } from 'lucide-react'
+import { ArrowLeft, Plus, Pencil, XCircle, ShieldCheck, Container, Undo2, Copy, AlertTriangle, ListChecks, Check, Printer, Play, FileText, FileCheck, ArrowDownToLine, RotateCcw, Search, ChevronDown, ChevronRight, Bookmark } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { MesStockDialog } from '@/components/wms/production/MesStockGroups'
@@ -216,18 +216,25 @@ function ProductionBatchDetail() {
   const labelsOk = !!g?.label_valid && !!g?.label_count
   const scannedAll = labelsOk && (g?.scanned ?? 0) >= (g?.label_count ?? 0)
   const rmOk = reqRows.length > 0 && (g?.short.length ?? 0) === 0
-  const logOk = !!g && !g.need_log && g.missing.length === 0
   const no4 = b.batch_no ? String(b.batch_no).padStart(4, '0') : '—'
+  // PHIẾU CỦA MẺ: phiếu chính (mẫu đang dùng) + phiếu bổ sung đã chọn + phiếu đã ghi
+  const logged = (b.process_logs ?? []).map(l => l.form)
+  const batchForms = formsOfBatch(processForms, b.extra_forms ?? [], logged)
+  const closedForms = new Set((b.process_logs ?? []).filter(l => !!l.confirmed_at).map(l => l.form))
+  // 26/11 (user chốt): MỞ phiếu (Bắt đầu — giờ bắt đầu của mẻ) trước khi cấp NVL; ĐÓNG phiếu sau QA bồn (ô bắt buộc là điều kiện đóng)
+  const logOpened = g && 'need_open' in g ? !g.need_open : logged.length > 0
   const L = BATCH_STEP_LABEL   // MỘT bộ tên bước cho dải bước này và cột Tình trạng của danh sách
   const stepDefs = [
     { key: 'lead', label: L.lead, done: !!b.lead_ok_at },
     { key: 'qa', label: L.qa, done: !!b.qa_ok_at },
+    { key: 'log', label: L.log, done: logOpened },
     { key: 'rm', label: L.rm, done: rmOk, detail: reqRows.length ? `${reqDone}/${reqRows.length}` : undefined },
-    { key: 'log', label: L.log, done: logOk, detail: g?.missing.length ? `còn ${g.missing.length} ô` : undefined },
     { key: 'label', label: L.label, done: labelsOk, detail: labelsOk ? `${g?.label_count} tem` : undefined },
     { key: 'pour', label: L.pour, done: scannedAll, detail: labelsOk ? `${g?.scanned}/${g?.label_count}` : undefined },
     { key: 'fill', label: L.fill, done: hasFill },
     { key: 'tankqa', label: L.tankqa, done: hasFill && b.qa_status === 'RELEASED', bad: b.qa_status === 'REJECTED' },
+    { key: 'close', label: L.close, done: !!g && g.log_pending === false,
+      detail: batchForms.length ? `${batchForms.filter(d => closedForms.has(d.code)).length}/${batchForms.length} phiếu` : undefined },
   ]
   // BƯỚC ĐANG TỚI do DB tính (mes_batch_gate.step — cùng giá trị cột Tình trạng của danh sách, 18/11 d); API cũ chưa có thì tự tính như trước
   const curKey = g && 'step' in g ? (g.step ?? null) : (stepDefs.find(s => !s.done)?.key ?? null)
@@ -235,8 +242,8 @@ function ProductionBatchDetail() {
   // bước nào là VIỆC CỦA NGƯỜI ĐANG XEM (quyền của chức danh — cùng quyền gác nút của bước đó): bước đang tới không phải việc của mình
   // ⇒ dải in "chờ" (user 18/11 "các user tương tác theo quyền hạn của nó … có nên cho họ thấy không")
   const mineOf: Record<string, boolean> = {
-    lead: P('approve_lead'), qa: P('approve_qa'), rm: P('consume'), log: P('process_log'),
-    label: P('print_label'), pour: P('pour') || P('tank_ops'), fill: P('tank_ops'), tankqa: P('qa_release'),
+    lead: P('approve_lead'), qa: P('approve_qa'), log: P('process_log'), rm: P('consume'),
+    label: P('print_label'), pour: P('pour') || P('tank_ops'), fill: P('tank_ops'), tankqa: P('qa_release'), close: P('qa_release'),
   }
   const steps: FlowStep[] = stepDefs.map((s, i) => ({ key: s.key, label: s.label, detail: s.detail, mine: mineOf[s.key], state: s.bad ? 'bad' : i === cur ? 'now' : s.done ? 'done' : 'todo' }))
   // luồng chặt: chỉ BƯỚC ĐANG TỚI là nút chính (bước trước xong mới tới bước sau); không chặt: như trước (Cấp NVL + Nạp bồn)
@@ -245,11 +252,13 @@ function ProductionBatchDetail() {
   const canConsume = open && !hasFill && P('consume') && (g?.can_consume ?? true)
   const canFill = b.status !== 'CANCELLED' && b.qa_status !== 'REJECTED' && P('tank_ops')
   const canEditTank = open && P('open_batch') && !b.movements.length
-  const logged = (b.process_logs ?? []).map(l => l.form)
-  const batchForms = formsOfBatch(processForms, b.extra_forms ?? [], logged)
   const canEditForms = open && (P('open_batch') || P('approve_lead') || P('approve_qa'))
   const addableForms = processForms.filter(d => d.optional && d.is_active && !(b.extra_forms ?? []).includes(d.code) && !logged.includes(d.code))
-  const firstForm = g?.missing[0]?.form ?? batchForms.find(d => !logged.includes(d.code))?.code ?? batchForms[0]?.code ?? null
+  // phiếu của nút: phiếu chính chưa mở ⇒ còn ô bắt buộc ⇒ phiếu chưa ghi ⇒ phiếu chưa đóng ⇒ phiếu đầu
+  const mainUnopened = batchForms.find(d => !d.optional && !logged.includes(d.code))?.code
+  const firstForm = mainUnopened ?? g?.missing[0]?.form ?? batchForms.find(d => !logged.includes(d.code))?.code
+    ?? batchForms.find(d => !closedForms.has(d.code))?.code ?? batchForms[0]?.code ?? null
+  const closeForm = curKey === 'close' ? (g?.missing[0]?.form ?? batchForms.find(d => !closedForms.has(d.code))?.code ?? null) : null
   // ── NÚT CỦA MẺ (18/11 — user: "cái nào liên quan tới VẬN HÀNH đưa ra ngoài theo tuần tự công việc, cái nào liên quan tới QUẢN TRỊ
   //    (sửa, đóng, duplicate…) thì để trong 3 chấm"). Vận hành (`ops`) xếp ĐÚNG thứ tự dải bước, luôn ngoài ⋮ kể cả điện thoại, có chữ;
   //    nút nền xanh = bước đang tới (luồng chặt) / Cấp NVL + Nạp bồn (không chặt). Quản trị (`admin`) luôn trong ⋮, kể cả máy tính.
@@ -259,16 +268,21 @@ function ProductionBatchDetail() {
     actions.push({ key: 'ok-lead', icon: ShieldCheck, label: 'Duyệt phiếu', tip: 'Trưởng ca duyệt phiếu nguyên liệu của mẻ (duyệt 1)', ...opsOf('lead'), onClick: () => void doApprove('lead', true), disabled: busy })
   if (open && !!b.lead_ok_at && !b.qa_ok_at && P('approve_qa'))
     actions.push({ key: 'ok-qa', icon: ShieldCheck, label: 'QA duyệt', tip: 'QA duyệt phiếu của mẻ (duyệt 2) — duyệt xong phiếu khoá, mới cấp nguyên liệu', ...opsOf('qa'), onClick: () => void doApprove('qa', true), disabled: busy })
-  if (canConsume)
-    actions.push({ key: 'consume', icon: ScanIcon, label: 'Quét cấp NVL', tip: 'Quét tem nguyên liệu để cấp cho mẻ — app tự khớp vào đúng dòng của bàn và điền sẵn lượng còn thiếu', ...opsOf('rm'), onClick: () => { setFocusId(null); setConsumeOpen(true) } })
-  // phiếu theo dõi: mở phiếu cần ghi trước (còn ô bắt buộc / chưa ghi); phiếu đó chưa ghi gì ⇒ "Bắt đầu phiếu" (ghi giờ bắt đầu)
-  if (open && firstForm && P('process_log')) {
+  // phiếu theo dõi (26/11: MỞ phiếu trước khi cấp NVL): phiếu chưa ghi gì ⇒ "Bắt đầu phiếu" (ghi giờ bắt đầu); đã mở ⇒ "Phiếu theo dõi"
+  //   — ghi suốt quá trình; tới bước Đóng phiếu thì QA có nút riêng ở cuối
+  if (open && firstForm && P('process_log') && !(closeForm && P('qa_release'))) {
     const startLog = !logged.includes(firstForm)
     const short = processForms.find(d => d.code === firstForm)?.short ?? firstForm
     actions.push({ key: 'log', icon: startLog ? Play : FileText, label: startLog ? 'Bắt đầu phiếu' : 'Phiếu theo dõi',
-      tip: startLog ? `Bắt đầu phiếu ${short}: ghi giờ bắt đầu (giờ máy chủ) rồi mở phiếu để ghi từng ô` : `Mở phiếu ${short} — bấm từng ô để ghi`,
+      tip: startLog ? `Bắt đầu phiếu ${short}: ghi giờ bắt đầu (giờ máy chủ) rồi mở phiếu để ghi từng ô${strict ? ' — phải bắt đầu phiếu rồi mới cấp nguyên liệu' : ''}` : `Mở phiếu ${short} — bấm từng ô để ghi`,
       ...opsOf('log'), busy: logStart.isPending, onClick: () => void openLog(firstForm, startLog) })
   }
+  if (canConsume)
+    actions.push({ key: 'consume', icon: ScanIcon, label: 'Quét cấp NVL', tip: 'Quét tem nguyên liệu để cấp cho mẻ — app tự khớp vào đúng dòng của bàn và điền sẵn lượng còn thiếu', ...opsOf('rm'), onClick: () => { setFocusId(null); setConsumeOpen(true) } })
+  else if (strict && open && !hasFill && P('consume') && !!g?.lead_ok && !!g?.qa_ok && g?.need_open)
+    // đủ hai duyệt mà phiếu chưa mở ⇒ nút KHOÁ kèm lý do, nằm trong ⋮ (như Nạp BTP vào bồn khi chưa đủ điều kiện)
+    actions.push({ key: 'consume', icon: ScanIcon, label: 'Quét cấp NVL', disabled: true, onClick: () => {},
+      tip: `Chưa cấp được: chưa mở phiếu theo dõi (${g.open_forms ?? 'phiếu chính'}) — bấm "Bắt đầu phiếu" để ghi giờ bắt đầu trước` })
   if (open && !!b.tank_id && P('print_label') && (!strict || !!b.qa_ok_at))
     actions.push({ key: 'label', icon: Printer, label: labelsOk ? 'In lại tem' : 'In tem pallet', tip: 'In tem pallet của mẻ (QR 1/n … n/n) để dán lên pallet nguyên liệu đã cấp', ...opsOf('label'), onClick: () => setLabelOpen(true) })
   if (open && labelsOk && !hasFill && (P('pour') || P('tank_ops')))
@@ -282,6 +296,12 @@ function ProductionBatchDetail() {
   // QA kết luận ở Bồn — nút chỉ cho người có quyền QA bồn (qa_release); người khác thấy bước "QA bồn · chờ" trên dải
   if (strict && curKey === 'tankqa' && canSeeTanks && P('qa_release'))
     actions.push({ key: 'tankqa', icon: ShieldCheck, label: `Tới bồn ${b.tank?.code ?? ''}`, tip: 'QA kết luận đạt / không đạt ở trang Bồn (áp cho mọi mẻ đang trong bồn)', ops: true, primary: true, onClick: () => navigate('/wms/production/tanks') })
+  // ĐÓNG PHIẾU — bước cuối (26/11): sau QA bồn, QA mở phiếu chưa đóng (ưu tiên phiếu còn ô bắt buộc) rồi bấm "Đóng phiếu" trong phiếu
+  if (closeForm && P('qa_release')) {
+    const short = processForms.find(d => d.code === closeForm)?.short ?? closeForm
+    actions.push({ key: 'close', icon: FileCheck, label: 'Đóng phiếu', ops: true, primary: true,
+      tip: `Mở phiếu ${short}: kiểm đủ ô bắt buộc rồi bấm "Đóng phiếu" — phiếu khoá, mẻ xong`, onClick: () => setLogForm(closeForm) })
+  }
   // ── QUẢN TRỊ (⋮) ──
   if (can(perms, 'production', 'open_batch') && b.status !== 'CANCELLED')
     actions.push({ key: 'edit', icon: Pencil, label: 'Sửa / đổi bồn', tip: 'Sửa ngày / máy / ca / kế hoạch; đổi chu kỳ · số mẻ · bồn khi chưa nạp bồn (mã lô đổi theo)', admin: true, onClick: () => setEditOpen(true) })
@@ -344,7 +364,9 @@ function ProductionBatchDetail() {
             )}
           </div>
           {strict && b.status !== 'CANCELLED' && <FlowStrip steps={steps} />}
-          {strict && open && !hasFill && !g?.can_consume && <p className="text-[11px] text-amber-700">Phiếu chưa đủ hai bước duyệt (trưởng ca → QA) — chưa cấp nguyên liệu được.</p>}
+          {strict && open && !hasFill && !g?.can_consume && (!g?.lead_ok || !g?.qa_ok
+            ? <p className="text-[11px] text-amber-700">Phiếu chưa đủ hai bước duyệt (trưởng ca → QA) — chưa cấp nguyên liệu được.</p>
+            : g?.need_open && <p className="text-[11px] text-amber-700" data-testid="need-open">Chưa mở phiếu theo dõi ({g.open_forms ?? 'phiếu chính'}) — bấm "Bắt đầu phiếu" để ghi giờ bắt đầu rồi mới cấp nguyên liệu.</p>)}
           {open && hasFill && (P('consume') || P('reverse')) && <p className="text-[11px] text-slate-500" data-testid="nvl-locked">Mẻ đã nạp BTP vào bồn — sổ nguyên liệu đã khoá: không cấp thêm, không huỷ dòng cấp.</p>}
           {open && b.label_ver > 0 && !b.label_at && (
             <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-1.5 text-xs text-amber-800 flex items-center gap-1.5 flex-wrap">
@@ -537,7 +559,7 @@ function ProductionBatchDetail() {
                   className={`rounded-lg border px-3 py-2 space-y-1.5 ${confirmed || pr.state === 'done' ? 'border-green-200 bg-green-50/40' : pr.state === 'progress' ? 'border-amber-200 bg-amber-50/30' : 'border-slate-200'}`}>
                   <div className="flex items-center gap-2">
                     <button type="button" onClick={() => setLogForm(k)} className="text-xs font-semibold text-slate-800 flex-1 min-w-0 truncate text-left hover:underline">{d.title}</button>
-                    {confirmed ? <StatusBadge tone="green">QA đã xác nhận</StatusBadge> : pr.state === 'done' ? <StatusBadge tone="green">Đã ghi đủ</StatusBadge>
+                    {confirmed ? <StatusBadge tone="green">Đã đóng phiếu</StatusBadge> : pr.state === 'done' ? <StatusBadge tone="green">Đã ghi đủ</StatusBadge>
                       : pr.state === 'progress' ? <StatusBadge tone="amber">Đang ghi</StatusBadge> : <StatusBadge tone="slate">Chưa ghi</StatusBadge>}
                   </div>
                   {doneActs.length > 0 && (

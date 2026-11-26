@@ -1,5 +1,5 @@
 // FILE SINH TỰ ĐỘNG — `node scripts/gen-db-types.mjs` (từ information_schema STAGING). KHÔNG sửa tay.
-// Sinh lúc 2026-11-26T08:28:03.789Z · 130 bảng/view · 290 hàm · 0 enum
+// Sinh lúc 2026-11-26T13:05:22.528Z · 130 bảng/view · 292 hàm · 0 enum
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[]
 
 export type Database = {
@@ -7776,7 +7776,7 @@ export type Database = {
         Returns: Json
       }
       mes_batch_stage: {
-        Args: { p_status: string | null; p_qa: string | null; p_lead: string | null; p_qa_ok: string | null; p_filled: boolean | null; p_consumed: boolean | null; p_gate: boolean | null }
+        Args: { p_status: string | null; p_qa: string | null; p_lead: string | null; p_qa_ok: string | null; p_filled: boolean | null; p_consumed: boolean | null; p_gate: boolean | null; p_log_pending: boolean | null }
         Returns: string
       }
       mes_batch_steps: {
@@ -7882,6 +7882,14 @@ export type Database = {
       mes_log_cell: {
         Args: { p: Json | null }
         Returns: Json
+      }
+      mes_log_pending: {
+        Args: { p_batch_id: string | null }
+        Returns: boolean
+      }
+      mes_log_unopened: {
+        Args: { p_batch_id: string | null }
+        Returns: string
       }
       mes_lot_subject: {
         Args: { p_material: string | null; p_date: string | null; p_lot: string | null }

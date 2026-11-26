@@ -69,7 +69,7 @@ function FieldRow({ f, onChange, onMove, onRemove, first, last, disabled }: {
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="text-xs">
             <DropdownMenuItem onClick={() => onChange({ required: f.required ? undefined : true })}>
-              <Check className={`h-3.5 w-3.5 mr-1.5 ${f.required ? '' : 'opacity-0'}`} />Bắt buộc ghi trước khi nạp bồn
+              <Check className={`h-3.5 w-3.5 mr-1.5 ${f.required ? '' : 'opacity-0'}`} />Bắt buộc ghi trước khi đóng phiếu
             </DropdownMenuItem>
             <DropdownMenuItem onClick={() => onChange({ wide: f.wide ? undefined : true })}>
               <Check className={`h-3.5 w-3.5 mr-1.5 ${f.wide ? '' : 'opacity-0'}`} />Ô rộng cả hàng (ghi chú dài)

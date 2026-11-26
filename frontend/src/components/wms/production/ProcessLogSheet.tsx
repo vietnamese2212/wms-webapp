@@ -4,7 +4,8 @@
 // 18/11 — GHI TỪNG Ô (user: "cho nút ở các input, bấm vào sẽ hiện lên yêu cầu Input, nếu thời gian thì tự lấy thời gian"): mỗi ô là MỘT
 // NÚT — ô Giờ còn trống bấm là ghi GIỜ MÁY CHỦ; ô khác (hoặc ô giờ muốn sửa) bấm hiện khung nhập. Mỗi lần ghi lưu NGAY một ô (hàm DB
 // mes_log_cell) ⇒ không còn nút "Lưu phiếu", nhiều người ghi các ô khác nhau không đè nhau. Ô số vượt ngưỡng tô đỏ nhưng VẪN lưu.
-// QA xác nhận ⇒ phiếu khoá (và chụp mẫu đang áp vào phiếu); QA bỏ xác nhận thì sửa lại được.
+// QA ĐÓNG phiếu (xác nhận) ⇒ phiếu khoá (và chụp mẫu đang áp vào phiếu); QA mở lại thì sửa lại được.
+// 26/11 (user chốt): kho chặn theo bước ⇒ đóng phiếu SAU QA bồn và khi đã ghi đủ ô bắt buộc (máy chủ chặn — ở đây chỉ báo trước lý do).
 import { useEffect, useMemo, useState } from 'react'
 import type { AxiosError } from 'axios'
 import * as XLSX from 'xlsx'
@@ -135,7 +136,7 @@ export function ProcessLogBody({ blocks, values, stamps, onTap, editable, onAddR
           enabled:hover:border-sky-400 enabled:hover:bg-sky-50 enabled:active:bg-sky-100 disabled:cursor-default`}>
         <span className="flex items-baseline gap-1 text-[10px] text-slate-500 leading-tight min-w-0">
           <span className="truncate">{f.label}{f.unit ? ` (${f.unit})` : ''}</span>
-          {f.required && <span className="text-red-500 shrink-0" title="Bắt buộc ghi trước khi nạp bồn">*</span>}
+          {f.required && <span className="text-red-500 shrink-0" title="Bắt buộc ghi trước khi đóng phiếu">*</span>}
           {std && <span className="ml-auto shrink-0 text-[9px] text-slate-400">TC {std}</span>}
         </span>
         <span className="flex items-center gap-1 mt-0.5 min-h-[1.25rem] min-w-0">
@@ -233,6 +234,12 @@ export function ProcessLogSheet({ open, onClose, batch, def, canWrite, canConfir
   const structDirty = draft !== undefined && JSON.stringify(draft) !== JSON.stringify(savedBlocks)
   const structErr = mode === 'structure' ? blocksError(blocks) : ''
   const busy = save.isPending || confirm.isPending
+  // ĐÓNG PHIẾU (26/11): lý do chưa đóng được — đọc cổng của mẻ (mes_batch_gate), cùng luật máy chủ chặn
+  const g = batch.gate
+  const missHere = (g?.missing ?? []).filter(m => m.form === form)
+  const closeWhy = !g?.flow_gate ? ''
+    : !['closing', 'released', 'rejected'].includes(g?.stage ?? '') ? 'Đóng phiếu sau khi QA kết luận ở bồn — trong lúc làm vẫn ghi phiếu bình thường'
+    : missHere.length ? `Còn ${missHere.length} ô bắt buộc chưa ghi: ${missHere.slice(0, 5).map(m => m.label).join(', ')}` : ''
 
   // giá trị đã ghi mà cấu trúc hiện tại không còn ô — vẫn nằm trong phiếu, hiện để QA thấy
   const orphans = useMemo(() => {
@@ -289,7 +296,7 @@ export function ProcessLogSheet({ open, onClose, batch, def, canWrite, canConfir
       for (let r = 1; r <= b.rows; r++) aoa.push([r, ...b.cols.flatMap(c => b.cells.map(x => values[gridKey(b.key, r, c.key, x.key)] ?? ''))])
     }
     if (orphans.length) { aoa.push([], ['Ô không còn trong mẫu']); for (const o of orphans) aoa.push([o.label, o.val]) }
-    aoa.push([], [`Người ghi: ${log?.updated_by_name ?? ''}`, `QA xác nhận: ${log?.confirmed_by_name ?? ''}${log?.confirmed_at ? ` (${formatDateTime(log.confirmed_at)})` : ''}`])
+    aoa.push([], [`Người ghi: ${log?.updated_by_name ?? ''}`, `QA đóng phiếu: ${log?.confirmed_by_name ?? ''}${log?.confirmed_at ? ` (${formatDateTime(log.confirmed_at)})` : ''}`])
     const ws = XLSX.utils.aoa_to_sheet(sanitizeAoa(aoa))
     ws['!cols'] = [{ wch: 44 }, { wch: 22 }, { wch: 14 }, { wch: 14 }, { wch: 16 }]
     const wb = XLSX.utils.book_new()
@@ -304,18 +311,20 @@ export function ProcessLogSheet({ open, onClose, batch, def, canWrite, canConfir
         <Button variant="outline" size="sm" className="h-8" onClick={onClose}>Đóng</Button>
         {canExport && log && mode === 'fill' && <Button variant="outline" size="sm" className="h-8 hidden sm:inline-flex" onClick={exportExcel}><FileDown className="h-3.5 w-3.5 mr-1" />Excel</Button>}
         {canConfirm && log && mode === 'fill' && (locked
-          ? <Button variant="outline" size="sm" className="h-8" disabled={busy} onClick={() => void doConfirm(false)}>Bỏ xác nhận</Button>
-          : <Button variant="outline" size="sm" className="h-8" disabled={busy} onClick={() => void doConfirm(true)}><ShieldCheck className="h-3.5 w-3.5 mr-1" />QA xác nhận</Button>)}
+          ? <Button variant="outline" size="sm" className="h-8" disabled={busy} onClick={() => void doConfirm(false)} title="QA mở lại phiếu để sửa">Mở lại phiếu</Button>
+          : <Button size="sm" className="h-8" disabled={busy || !!closeWhy} title={closeWhy || 'QA đóng phiếu — phiếu khoá, không sửa được nữa'}
+              onClick={() => void doConfirm(true)} data-testid="close-log"><ShieldCheck className="h-3.5 w-3.5 mr-1" />Đóng phiếu</Button>)}
         {editable && mode === 'structure' && <Button variant="outline" size="sm" className="h-8" onClick={() => { setDraft(undefined); setMode('fill') }}>Huỷ sửa</Button>}
         {editable && mode === 'structure' && <Button size="sm" className="h-8" disabled={!structDirty || busy || !!structErr} onClick={() => void saveStructure()}>{save.isPending ? 'Đang lưu…' : 'Lưu cấu trúc'}</Button>}
       </>}>
       <div className="space-y-3">
         {err && <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700">{err}</div>}
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-600">
-          {locked ? <StatusBadge tone="green">QA đã xác nhận</StatusBadge> : log ? <StatusBadge tone="amber">Đang ghi</StatusBadge> : <StatusBadge tone="slate">Chưa ghi</StatusBadge>}
+          {locked ? <StatusBadge tone="green">Đã đóng phiếu</StatusBadge> : log ? <StatusBadge tone="amber">Đang ghi</StatusBadge> : <StatusBadge tone="slate">Chưa ghi</StatusBadge>}
           {log?.updated_by_name && <span>Ghi: {log.updated_by_name} · {formatDateTime(log.updated_at)}</span>}
           {log?.confirmed_at && <span>QA: {log.confirmed_by_name ?? '—'} · {formatDateTime(log.confirmed_at)}</span>}
-          {locked && canWrite && <span className="text-amber-700">Phiếu đã khoá — QA bỏ xác nhận mới sửa được.</span>}
+          {locked && canWrite && <span className="text-amber-700">Phiếu đã đóng — QA mở lại mới sửa được.</span>}
+          {!locked && log && canConfirm && closeWhy && <span className="text-slate-500" data-testid="close-why">{closeWhy}</span>}
           {editable && mode === 'fill' && <span className="text-sky-800">Bấm vào từng ô để ghi — ô giờ tự lấy giờ hiện tại, ghi xong lưu ngay.</span>}
         </div>
         {/* thanh cấu trúc: mẫu chung hay đã sửa riêng; vào / ra chế độ sửa cấu trúc */}

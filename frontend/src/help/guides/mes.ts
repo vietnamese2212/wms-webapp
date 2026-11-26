@@ -20,19 +20,20 @@ export const MES_GUIDE: Guide = {
     {
       id: 'bat-dau',
       title: 'Bắt đầu',
-      intro: 'Một mẻ đi qua 8 bước, mỗi bước do một người có quyền làm. App luôn cho biết mẻ đang ở bước nào và đang chờ ai.',
+      intro: 'Một mẻ đi qua 9 bước, mỗi bước do một người có quyền làm. App luôn cho biết mẻ đang ở bước nào và đang chờ ai.',
       steps: [
         {
           title: 'Luồng của một mẻ',
           text: [
             '- **1. Trưởng ca duyệt** phiếu nguyên liệu của mẻ.',
-            '- **2. QA duyệt** phiếu. Đủ hai duyệt mới được cấp nguyên liệu.',
-            '- **3. Cấp nguyên liệu**: công nhân trộn quét tem từng bao / pallet nguyên liệu.',
-            '- **4. Ghi phiếu theo dõi** (phối trộn, dịch thạch…): bấm từng ô, ô giờ tự lấy giờ hiện tại.',
+            '- **2. QA duyệt** phiếu.',
+            '- **3. Mở phiếu theo dõi**: bấm **Bắt đầu phiếu** — app ghi giờ bắt đầu của mẻ. Đủ hai duyệt và đã mở phiếu mới được cấp nguyên liệu. Phiếu ghi tiếp suốt quá trình (bấm từng ô, ô giờ tự lấy giờ hiện tại).',
+            '- **4. Cấp nguyên liệu**: công nhân trộn quét tem từng bao / pallet nguyên liệu.',
             '- **5. In tem pallet của mẻ**: mỗi pallet nguyên liệu đã cấp dán một tem.',
             '- **6. Check trước khi đổ bồn**: đứng ở bồn quét từng tem — đúng mẻ, đúng bồn mới đổ.',
             '- **7. Nạp BTP vào bồn**.',
             '- **8. QA ở bồn**: QA kết luận Đạt / Không đạt cho cả bồn.',
+            '- **9. Đóng phiếu**: sau QA bồn, QA kiểm phiếu đã ghi đủ ô bắt buộc rồi bấm **Đóng phiếu** — mẻ xong.',
             'Phần cài đặt (mã bán thành phẩm, bồn, định mức, mẫu phiếu) chỉ làm một lần, sửa khi có thay đổi.',
           ],
         },
@@ -73,9 +74,9 @@ export const MES_GUIDE: Guide = {
           text: [
             'Vào **Cài đặt MES**, chọn kho chế biến ở thanh trên. Cả trang chỉ có **một nút Lưu** ở góc phải.',
             '- **Đóng gói rút bán thành phẩm khỏi bồn**: bồn còn lô chờ QA thì *Cảnh báo* (vẫn cho rút, báo người đóng trang) hoặc *Chặn* (không rút được tới khi QA thả). Bồn có lô QA loại thì luôn chặn.',
-            '- **Luồng làm việc của mẻ → Chặn theo từng bước**: bật thì chưa đủ hai duyệt chưa cấp được nguyên liệu, và chưa nạp bồn được khi còn thiếu nguyên liệu, ô bắt buộc của phiếu chưa ghi, chưa quét đủ tem tại đúng bồn.',
+            '- **Luồng làm việc của mẻ → Chặn theo từng bước**: bật thì chưa đủ hai duyệt hoặc chưa mở phiếu theo dõi thì chưa cấp được nguyên liệu; chưa nạp bồn được khi còn thiếu nguyên liệu, chưa quét đủ tem tại đúng bồn; phiếu chỉ đóng được sau QA bồn và khi đã ghi đủ ô bắt buộc.',
             '- **Hạn lưu bồn theo mã bán thành phẩm**: số giờ BTP được nằm trong bồn; quá hạn bồn tô đỏ.',
-            'Tab **Mẫu phiếu theo dõi**: sửa danh sách ô của từng phiếu (Phối trộn, Dịch thạch…), ô nào bắt buộc ghi trước khi nạp bồn, ngưỡng tô đỏ. Bấm **Xem thử** để thấy đúng phiếu người ghi sẽ thấy.',
+            'Tab **Mẫu phiếu theo dõi**: sửa danh sách ô của từng phiếu (Phối trộn, Dịch thạch…), ô nào bắt buộc ghi trước khi đóng phiếu, ngưỡng tô đỏ. Bấm **Xem thử** để thấy đúng phiếu người ghi sẽ thấy.',
           ],
           images: [d('12-cai-dat-mes', 'Cài đặt MES — tab Chung'), d('13-mau-phieu', 'Cài đặt MES — tab Mẫu phiếu theo dõi')],
         },
@@ -212,13 +213,14 @@ export const MES_GUIDE: Guide = {
           title: 'B9. Phiếu theo dõi (phối trộn…)',
           who: ['Công nhân trộn', 'QA'],
           text: [
-            'Bấm **Bắt đầu phiếu**: app tạo phiếu, điền sẵn số lượng mẻ và ghi **giờ bắt đầu**.',
+            'Bấm **Bắt đầu phiếu** NGAY SAU hai bước duyệt, trước khi cấp nguyên liệu: app tạo phiếu, điền sẵn số lượng mẻ và ghi **giờ bắt đầu**. Chưa bắt đầu phiếu thì nút **Quét cấp NVL** khoá (kho chặn theo bước).',
             '- Mỗi ô là một nút: **ô giờ** bấm là ghi giờ hiện tại; ô khác bấm để hiện khung nhập → gõ → **Lưu**. Ghi tới đâu lưu tới đó, không có nút "Lưu phiếu".',
             '- Số vượt ngưỡng tiêu chuẩn tô đỏ nhưng vẫn lưu — phiếu ghi đúng thực tế.',
             '- Cần thêm lần / thêm ô cho riêng mẻ này: **+ Thêm ô cho mẻ này**.',
-            'QA kiểm phiếu rồi bấm **QA xác nhận** — phiếu khoá. Bỏ xác nhận mới sửa lại được.',
+            '- Phiếu ghi được suốt quá trình, kể cả sau khi nạp bồn.',
+            '**Đóng phiếu** là bước cuối của mẻ: sau khi QA kết luận ở bồn, mẻ hiện **Chờ đóng phiếu** — QA bấm **Đóng phiếu** trên trang mẻ (hoặc trong phiếu). Còn ô bắt buộc chưa ghi thì chưa đóng được. Đóng xong phiếu khoá; **Mở lại phiếu** mới sửa được.',
           ],
-          images: [m('41-m-phieu', 'Phiếu phối trộn vừa bắt đầu'), m('42-m-nhap-o', 'Bấm ô để nhập'), m('43-m-phieu-da-ghi', 'Phiếu đã ghi, QA xác nhận')],
+          images: [m('41-m-phieu', 'Phiếu phối trộn vừa bắt đầu'), m('42-m-nhap-o', 'Bấm ô để nhập'), m('43-m-phieu-da-ghi', 'Phiếu đã ghi')],
         },
         {
           title: 'B10. In tem pallet của mẻ',
@@ -246,7 +248,7 @@ export const MES_GUIDE: Guide = {
           who: ['Công nhân đổ bồn'],
           text: [
             'Kiểm **Lượng nạp** (điền sẵn = kế hoạch − đã nạp) → **Nạp BTP vào bồn**. Mẻ chuyển sang **Chờ QA bồn**.',
-            'Nút bị khoá thì mở ⋮ để xem lý do còn thiếu (chưa đủ duyệt, nguyên liệu thiếu, ô bắt buộc của phiếu, chưa quét đủ tem).',
+            'Nút bị khoá thì mở ⋮ để xem lý do còn thiếu (chưa đủ duyệt, nguyên liệu thiếu, chưa in tem, chưa quét đủ tem). Phiếu theo dõi không chặn nạp bồn — phiếu đóng sau QA bồn.',
             'Đã nạp thì không đổi bồn của mẻ được nữa; muốn đưa sang bồn khác dùng **Chuyển** ở trang Bồn.',
           ],
           images: [m('54-m-nap-bon', 'Nạp BTP vào bồn'), d('55-me-cho-qa-bon', 'Mẻ đã nạp: chờ QA bồn, nút Tới bồn')],
@@ -259,6 +261,7 @@ export const MES_GUIDE: Guide = {
             '- Ghi chú (bắt buộc khi Không đạt) → bấm **Đạt**, **Không đạt** hoặc **Chờ QA**. Bấm là ghi ngay.',
             '- Kết luận áp cho **mọi mẻ đang có trong bồn**. Nạp thêm mẻ mới thì bồn về "Chờ QA".',
             'Bồn QA đạt hiện xanh lá; đóng gói rút BTP từ bồn ở Sổ đóng gói.',
+            'Mẻ QA đạt mà phiếu theo dõi chưa đóng hiện **Chờ đóng phiếu** (màu hồng) — QA mở trang mẻ, bấm **Đóng phiếu** (xem B9).',
           ],
           images: [d('58-nut-qa-bon', 'Nút QA bồn trên thẻ bồn'), d('59-qa-bon-form', 'QA bồn: ghi chú rồi bấm Đạt'), d('60-bon-qa-dat', 'Bồn QA đạt')],
         },
@@ -341,7 +344,11 @@ export const MES_GUIDE: Guide = {
         },
         {
           title: 'Nút "Nạp BTP vào bồn" bị khoá',
-          text: ['Mở **⋮** trên trang mẻ, nút khoá ghi rõ còn thiếu gì: duyệt, nguyên liệu dưới mức lệch, ô bắt buộc của phiếu, chưa in tem, chưa quét đủ tem tại đúng bồn.'],
+          text: ['Mở **⋮** trên trang mẻ, nút khoá ghi rõ còn thiếu gì: duyệt, nguyên liệu dưới mức lệch, chưa in tem, chưa quét đủ tem tại đúng bồn.'],
+        },
+        {
+          title: 'Nút "Quét cấp NVL" bị khoá',
+          text: ['Đủ hai duyệt mà chưa bấm **Bắt đầu phiếu** thì chưa cấp được — app cần giờ bắt đầu của mẻ. Người có quyền ghi phiếu bấm **Bắt đầu phiếu** trên trang mẻ.'],
         },
         {
           title: 'Muốn đổi bồn của mẻ',

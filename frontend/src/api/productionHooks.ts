@@ -72,7 +72,7 @@ export interface BatchRow {
   rm_lines: number; rm_materials: number; filled: number; in_tank: number
 }
 /** ô tổng của danh sách mẻ: số mẻ theo từng tình trạng (trong bộ lọc ngày / kho / tìm) + total theo cả lọc tình trạng */
-export interface BatchSummary { total: number; new: number; wait_lead: number; wait_qa: number; working: number; filled: number; released: number; rejected: number; cancelled: number }
+export interface BatchSummary { total: number; new: number; wait_lead: number; wait_qa: number; working: number; filled: number; closing?: number; released: number; rejected: number; cancelled: number }
 export interface BatchListParams { warehouse_id?: string; stage?: string; date_from?: string; date_to?: string; search?: string; page?: number; pageSize?: number }
 
 export interface ConsumptionRow {
@@ -125,9 +125,11 @@ export interface BatchGate {
   short: { material_code: string; name: string | null; required: number; issued: number }[]
   missing: { form: string; title: string; key: string; label: string }[]; need_log: boolean
   fill_blockers: string[]
+  /** 26/11: phiếu CHÍNH chưa mở (chưa bấm Bắt đầu) ⇒ chưa cấp NVL được (kho chặn theo bước); tên phiếu chưa mở; còn phiếu chưa đóng */
+  need_open?: boolean; open_forms?: string | null; log_pending?: boolean
   /** tình trạng của mẻ (18/11) — cùng hàm mes_batch_stage với danh sách */
   stage?: string
-  /** BƯỚC ĐANG TỚI (18/11 d): lead · qa · rm · log · label · pour · fill · tankqa; mẻ xong / huỷ = null — dải bước + cột Tình trạng
+  /** BƯỚC ĐANG TỚI (18/11 d; 26/11 Mở phiếu trước Cấp NVL, Đóng phiếu cuối): lead · qa · log · rm · label · pour · fill · tankqa · close; mẻ xong / huỷ = null — dải bước + cột Tình trạng
    *  của danh sách đọc CÙNG giá trị này (không tự tính ở trình duyệt) */
   step?: string | null
   /** mẻ có phiếu nguyên liệu (dòng yêu cầu chưa bỏ) — chưa có thì bước Cấp nguyên liệu chưa xong */

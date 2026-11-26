@@ -803,7 +803,7 @@ export const zCreateGroup = z.object({
   putaway_override_reason: zText(0, 300).nullable().optional(),
   doc_no:         zText(0, 60).nullable().optional(),              // Số chứng từ (số trên giấy / phiếu nội bộ) — tuỳ chọn
   source_type:    z.enum(['FACTORY', 'NCC']).optional(),           // NCC = tab Nhập NCC (phiếu chung theo lượt xe + NCC)
-  gate_registration_id: zText(1, 64).nullable().optional(),
+  gate_registration_id: z.string().uuid().nullable().optional(),   // cột uuid — sai định dạng phải là 400, không rơi xuống DB thành 500
   qty_semantics:  z.literal('base'),
   lines: z.array(z.object({
     material_id:     zText(1, 64),

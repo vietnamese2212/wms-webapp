@@ -1641,14 +1641,15 @@ try {
     // 24b nhóm NCC là phiếu chung: thiếu NCC ⇒ 422 · có NCC, không vị trí (chọn lúc quét) ⇒ 200, dòng nguồn NCC · lượt xe không có ⇒ 404
     const nccNo = await api('/wms/inbound-orders/group', 'POST', { ...base, source_type: 'NCC', lines: [{ material_id: M_G1, planned_cartons: 5 }] })
     const nccOk = nccP ? await api('/wms/inbound-orders/group', 'POST', { ...base, source_type: 'NCC', ncc_id: nccP.id, doc_no: 'QA63-NCC-1', lines: [{ material_id: M_G1, planned_cartons: 5 }] }) : { s: 0 }
-    const nccGate = nccP ? await api('/wms/inbound-orders/group', 'POST', { ...base, source_type: 'NCC', ncc_id: nccP.id, gate_registration_id: 'QA63_KHONG_CO_LUOT', lines: [{ material_id: M_G1, planned_cartons: 5 }] }) : { s: 0 }
+    const nccGate = nccP ? await api('/wms/inbound-orders/group', 'POST', { ...base, source_type: 'NCC', ncc_id: nccP.id, gate_registration_id: '00000000-0000-4000-8000-00000000qa63'.replace('qa63', '0063'), lines: [{ material_id: M_G1, planned_cartons: 5 }] }) : { s: 0 }
+    const nccGateBad = nccP ? await api('/wms/inbound-orders/group', 'POST', { ...base, source_type: 'NCC', ncc_id: nccP.id, gate_registration_id: 'QA63_KHONG_PHAI_UUID', lines: [{ material_id: M_G1, planned_cartons: 5 }] }) : { s: 0 }
     const gN = nccOk.j?.data?.receipt_group
     const nRows = gN ? await restAll('ProductionImport', `select=source_type,location_id,ncc_id&receipt_group=eq.${gN}`) : []
     const hN = gN ? await hd(gN) : null
-    check('24b. Nhóm NCC cũng là phiếu chung: thiếu NCC ⇒ 422 · có NCC, chưa chọn vị trí ⇒ 200, dòng nguồn NCC không vị trí, đầu phiếu nguồn NCC + số chứng từ · lượt xe không có ⇒ 404 (không tạo gì)',
+    check('24b. Nhóm NCC cũng là phiếu chung: thiếu NCC ⇒ 422 · có NCC, chưa chọn vị trí ⇒ 200, dòng nguồn NCC không vị trí, đầu phiếu nguồn NCC + số chứng từ · lượt xe không có ⇒ 404, sai định dạng ⇒ 400 (không tạo gì)',
       nccNo.s === 422 && (!nccP || (nccOk.s === 200 && nRows.length === 1 && nRows[0].source_type === 'NCC' && nRows[0].location_id == null && nRows[0].ncc_id === nccP.id
-        && hN?.source_type === 'NCC' && hN?.doc_no === 'QA63-NCC-1' && nccGate.s === 404)),
-      `thiếu NCC=${nccNo.s} có=${nccOk.s} ${nccOk.j?.error?.message ?? ''} lượt lạ=${nccGate.s} rows=${JSON.stringify(nRows)} đầu=${hN?.source_type}/${hN?.doc_no}`)
+        && hN?.source_type === 'NCC' && hN?.doc_no === 'QA63-NCC-1' && nccGate.s === 404 && nccGateBad.s === 400)),
+      `thiếu NCC=${nccNo.s} có=${nccOk.s} ${nccOk.j?.error?.message ?? ''} lượt lạ=${nccGate.s}/${nccGateBad.s} rows=${JSON.stringify(nRows)} đầu=${hN?.source_type}/${hN?.doc_no}`)
 
     // 24c NHẬP VƯỢT KẾ HOẠCH — cờ 2 tầng Kho + Loại kho; dòng G2 kế hoạch 10 KG (mã có tem, quét tem gõ số)
     const lG2 = (rcp.j?.data?.lines ?? []).find(l => l.material?.id === M_G2)

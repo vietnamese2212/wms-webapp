@@ -129,6 +129,7 @@ export const NHAP_KHO_GUIDE: Guide = {
             '- Khai từng dòng **mã + số lượng**, hoặc dán cột mã rồi cột số lượng từ Excel. Bấm **Tạo N phiếu nhập**: mỗi mã thành một phiếu, các phiếu nối nhau bằng ngoặc ở danh sách.',
             'Quét: mở phiếu bất kỳ của nhóm → **Quét cả nhóm** — quét tem mã nào app tự vào đúng phiếu mã đó. Cần cất tem nào chỗ khác thì bấm **Đổi vị trí** trên màn quét. Vẫn quét riêng từng phiếu như cũ được.',
             'Nhiều mã thì bấm **Nạp Excel** (cạnh "Danh sách hàng", sau khi chọn Kho · Ngày · Ca): tải file mẫu, điền Mã hàng + số lượng, chọn file — app kiểm trước, bấm Xác nhận mới tạo. Loại kho lấy theo từng mã, một file trộn được NVL và bao bì.',
+            'Dán từ Excel cũng được: chép các cột **Mã hàng · Số thùng · Số lẻ** rồi dán vào ô Mã hàng đầu tiên — app tự điền tên và số lượng (mã tính KG chỉ cần 2 cột Mã · Số lượng).',
             'Thiếu / thừa mã: bút **Sửa nhóm** ở dòng phiếu — thêm mã, sửa số lượng, huỷ dòng chưa quét. Đổi NCC / vị trí mặc định ở Sửa nhóm thì mọi phiếu chưa quét đổi theo.',
             'Xong: **Hoàn thành cả nhóm** ở trang phiếu (hoàn thành phiếu đã nhận, báo phiếu nhận thiếu). Bỏ cả chứng từ: **⋮ → Huỷ cả nhóm** (chỉ huỷ phiếu chưa có hàng).',
           ],

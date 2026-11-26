@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type { AxiosError } from 'axios'
+import { replaceEqualDeep } from '@tanstack/react-query'
 import { apiClient, rejectedStaleToken } from '@/api/client'
 import { clearOfflineData } from '@/offline/persist'
 import { setRealtimeAuth } from '@/lib/supabase'
@@ -22,7 +23,7 @@ interface AuthState {
 
 export const useAuthStore = create<AuthState>()(
   persist(
-    (set) => ({
+    (set, get) => ({
       user: null,
       isAuthenticated: false,
       token: null,
@@ -55,7 +56,10 @@ export const useAuthStore = create<AuthState>()(
         try {
           const res = await apiClient.get('/auth/me')
           const { user, token, realtime_token } = res.data.data as { user: User; token: string; realtime_token: string | null }
-          set({ user, token, realtimeToken: realtime_token ?? null })
+          // GIỮ NGUYÊN tham chiếu phần không đổi (C139): /me chạy mỗi 5' + mỗi lần quay lại cửa sổ — trả object MỚI dù
+          // nội dung y hệt ⇒ mọi effect / memo phụ thuộc `user.warehouse_ids`… chạy lại; form Tạo phiếu nhập từng tự xoá
+          // về tab đầu + mất mọi dòng đang khai. replaceEqualDeep trả lại object cũ khi bằng nhau, chỉ thay nhánh thật sự đổi.
+          set({ user: replaceEqualDeep(get().user, user), token, realtimeToken: realtime_token ?? null })
           setRealtimeAuth(realtime_token ?? null)   // tái cấp vé realtime (định kỳ 5' qua Shell)
         } catch (err) {
           // CHỈ đăng xuất khi token thực sự hết hạn/sai (401). Lỗi TẠM THỜI

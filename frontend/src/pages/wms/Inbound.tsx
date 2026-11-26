@@ -1,5 +1,6 @@
 ﻿import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { useQueryClient } from '@tanstack/react-query'
 import { Plus, PackagePlus, X, ChevronDown, User, MapPin, Pencil, Bookmark, Rows3, AlignJustify, ArrowRight, AlertTriangle, Undo2, Upload } from 'lucide-react'
 import { UploadExcelDialog } from '@/components/shared/UploadExcelDialog'
 import { downloadTemplate } from '@/utils/excelTemplate'
@@ -26,7 +27,7 @@ import { Label }               from '@/components/ui/label'
 import {
   useInboundOrders, useCreateInboundOrder, useCreateInboundGroup, useUploadInboundGroup, useInboundGroupActs,
   useInboundOrdersPaged, useInboundSummary, useInboundFacets, inboundListParamsOf,
-  useWarehouses, useMaterials, useMaterialsByCodes, useLocationsReal, useLocationsByIds, useImportShifts,
+  useWarehouses, useMaterials, useMaterialsByCodes, fetchMaterialsByCodes, type MaterialLite, useLocationsReal, useLocationsByIds, useImportShifts,
   useWarehouseZones,
   useActiveGateRegistrations, useInboundPlanLines,
   useUpdateInboundOrder, useCancelInboundOrder, useTransportCompanies,
@@ -53,7 +54,8 @@ import type { PutawayHint } from '@/utils/putaway'
 import { InboundScanSheetById } from '@/components/wms/InboundScanSheet'
 import type { InboundOrder } from '@/types'
 import { unlockAudio } from '@/utils/audio'
-import { qtyEntryText, qtyUnitLabel, qtyEntryDecimal, unitCodeOf, type MatUnits } from '@/utils/qtyUnits'
+import { qtyEntryText, qtyUnitLabel, qtyEntryDecimal, unitCodeOf, qtyFromEntryBase, qtySplit, hasEntry, type MatUnits } from '@/utils/qtyUnits'
+import { pasteGrid, pasteNum } from '@/utils/excelPaste'
 import { QtyInput } from '@/components/shared/QtyInput'
 import { isQtyLike } from '@/utils/inventoryMode'
 import { useActiveInboundStore } from '@/stores/activeInboundStore'
@@ -114,7 +116,7 @@ const NccRowItem = React.memo(function NccRowItem({
   planMatIds: Set<string>
   onCodeChange: (idx: number, code: string) => void
   onCodePaste: (idx: number, e: React.ClipboardEvent) => void
-  onQtyPaste: (idx: number, e: React.ClipboardEvent) => void
+  onQtyPaste: (idx: number, e: React.ClipboardEvent, part: 'entry' | 'base') => void
   onField: (idx: number, field: 'unit_input' | 'planned_qty', val: string) => void
   onRemove: (idx: number) => void
   onDropdownFocus: (idx: number) => void
@@ -187,11 +189,11 @@ const NccRowItem = React.memo(function NccRowItem({
         </div>
       </td>
       {/* BASE UNIT tách 2 cột Thùng | Hộp (mã có entry); mã không entry → cột Hộp là ô base thập phân. value/onChange = BASE */}
-      <td className="px-1.5 py-1 align-top" onPaste={e => onQtyPaste(idx, e)}>
+      <td className="px-1.5 py-1 align-top" onPaste={e => onQtyPaste(idx, e, 'entry')}>
         <QtyInput compact part="entry" value={Math.max(0, Number(row.planned_qty) || 0)} mat={row.mat_units}
           onChange={b => onField(idx, 'planned_qty', String(b))} />
       </td>
-      <td className="px-1.5 py-1 align-top">
+      <td className="px-1.5 py-1 align-top" onPaste={e => onQtyPaste(idx, e, 'base')}>
         <QtyInput compact part="base" value={Math.max(0, Number(row.planned_qty) || 0)} mat={row.mat_units}
           onChange={b => onField(idx, 'planned_qty', String(b))} />
       </td>
@@ -284,7 +286,9 @@ function CreateOrderDialog({ open, onClose, editGroup, onPickReturn }: { open: b
         setEditRows([])
       }
     }
-  }, [open, user?.warehouse_id, user?.warehouse_ids]) // eslint-disable-line
+    // CHỈ chạy khi mở form (C139): bản cũ phụ thuộc cả user.warehouse_ids — /me làm mới 5' một lần + mỗi lần quay lại cửa sổ
+    // ⇒ form đang khai tự xoá về tab đầu, mất hết dòng. Kho mặc định khi user nạp muộn đã có effect riêng bên dưới.
+  }, [open]) // eslint-disable-line
 
   const { data: warehouses = [] } = useWarehouses(true)
   const { data: shifts     = [] } = useImportShifts()
@@ -474,11 +478,14 @@ function CreateOrderDialog({ open, onClose, editGroup, onPickReturn }: { open: b
     return new Set([...seen.entries()].filter(([, n]) => n > 1).map(([c]) => c))
   }, [nccRows, editRows])
 
-  const lookupNccRow = useCallback((code: string): NccMatRow => {
-    const found = nccMatByCode.get(code.trim().toUpperCase())
-    const valid = found && (!subType || found.category === subType) ? found : null
+  // Mã (đã tra) → dòng bảng; mã phi hàng hoá / khác loại kho đang chọn = không nhận (dòng đỏ "Không tìm thấy")
+  const nccRowOf = useCallback((code: string, found: MaterialLite | null | undefined): NccMatRow => {
+    const valid = found && !found.is_non_stock && (!subType || found.category === subType) ? found : null
     return { material_code: code, material_id: valid?.id ?? '', mat_name: valid?.short_name ?? '', mat_unit: unitCodeOf(valid), unit_input: unitCodeOf(valid), planned_qty: '', mat_units: matUnitsOf(valid) }
-  }, [nccMatByCode, subType])
+  }, [subType])
+  const nccRowsRef = useRef(nccRows)
+  nccRowsRef.current = nccRows
+  const qc = useQueryClient()
 
   const handleNccMatCodeChange = useCallback((idx: number, code: string) => {
     const found = nccMatByCode.get(code.trim().toUpperCase())
@@ -491,19 +498,27 @@ function CreateOrderDialog({ open, onClose, editGroup, onPickReturn }: { open: b
     }))
   }, [nccMatByCode, subType])
 
-  const handleNccMatCodePaste = useCallback((idx: number, e: React.ClipboardEvent) => {
-    const text = e.clipboardData.getData('text')
-    const lines = text.split(/[\n\r]+/).map(s => s.trim()).filter(Boolean)
-    if (lines.length <= 1) return
+  // DÁN TỪ EXCEL vào ô Mã hàng (user 26/11 "paste ko paste đc số lượng, mới chỉ paste đc mã"): khối
+  // Mã hàng | Số thùng | Số lẻ — cùng thứ tự cột file mẫu "Nạp Excel" và form Xuất kho; dán 2 cột Mã | SL cũng được
+  // (mã tính KG / L / cái: số đó là đơn vị gốc). Số lượng quy đổi theo hệ số của mã ⇒ TRA MÃ TRÊN SERVER rồi mới điền
+  // (điền trước rồi vá sau là ra số sai). preventDefault TRƯỚC await — sau await trình duyệt đã dán xong.
+  const handleNccMatCodePaste = useCallback(async (idx: number, e: React.ClipboardEvent) => {
+    const grid = pasteGrid(e.clipboardData.getData('text'))?.filter(c => c[0])
+    if (!grid?.length) return                    // một ô đơn: trình duyệt tự dán, ô mã tự tra như gõ tay
     e.preventDefault()
-    const newRows = lines.map(c => lookupNccRow(c))
+    setNccDropdownIdx(null)
+    const matMap = await fetchMaterialsByCodes(qc, grid.map(c => c[0]))
+    const newRows = grid.map(cols => {
+      const row = nccRowOf(cols[0], matMap.get(cols[0].toUpperCase()))
+      const qty = qtyFromEntryBase(pasteNum(cols[1]), pasteNum(cols[2]), row.mat_units)
+      return qty > 0 ? { ...row, planned_qty: String(qty) } : row
+    })
     setNccRows(prev => {
       const before = prev.slice(0, idx)
       const after  = prev.slice(idx + 1).filter(r => r.material_code !== '')
       return [...before, ...newRows, ...after]
     })
-    setNccDropdownIdx(null)
-  }, [lookupNccRow])
+  }, [qc, nccRowOf])
 
   const selectNccMatFromDropdown = useCallback((idx: number, m: any) => {
     setNccRows(prev => prev.map((r, i) => i !== idx ? r : {
@@ -543,17 +558,29 @@ function CreateOrderDialog({ open, onClose, editGroup, onPickReturn }: { open: b
     })
   }, [nccMatByCode, subType, sourceType])
 
-  // Paste cột SL dự kiến từ Excel: điền lần lượt xuống các dòng bắt đầu từ dòng đang dán
-  // (mirror handleNccMatCodePaste — dán cột mã trước, dán cột SL sau)
-  const handleNccQtyPaste = useCallback((idx: number, e: React.ClipboardEvent) => {
-    const text = e.clipboardData.getData('text')
-    const lines = text.split(/[\n\r]+/).map(s => s.trim().replace(/\s/g, '').replace(',', '.')).filter(Boolean)
-    if (lines.length <= 1) return
+  // Dán CỘT số lượng từ Excel vào ô Thùng hoặc ô Lẻ: điền xuống từ dòng đang dán, chỉ thay phần của cột đó
+  // (dán 2 cột Thùng | Lẻ vào ô Thùng thì nhận cả hai). Thùng → đơn vị gốc qua hệ số của mã — bản cũ ghi thẳng
+  // số dán làm đơn vị gốc (dán 10 thùng thành 10 hộp) và ô Lẻ không nhận dán nhiều dòng.
+  const handleNccQtyPaste = useCallback(async (idx: number, e: React.ClipboardEvent, part: 'entry' | 'base') => {
+    const grid = pasteGrid(e.clipboardData.getData('text'))
+    if (!grid?.length) return
     e.preventDefault()
-    setNccRows(prev => prev.map((r, i) =>
-      i >= idx && i - idx < lines.length ? { ...r, planned_qty: lines[i - idx] } : r
-    ))
-  }, [])
+    // dòng có mã mà chưa có hệ số (mã vừa gõ, đang tra) → tra trước, không thì số quy đổi sai
+    const need = nccRowsRef.current.slice(idx, idx + grid.length).filter(r => r.material_code && !r.mat_units).map(r => r.material_code)
+    const matMap = need.length ? await fetchMaterialsByCodes(qc, need) : new Map<string, MaterialLite>()
+    setNccRows(prev => prev.map((r, i) => {
+      const cols = grid[i - idx]
+      if (i < idx || !cols) return r
+      const fill = r.mat_units ? null : nccRowOf(r.material_code, matMap.get(r.material_code.trim().toUpperCase()))
+      const u = r.mat_units ?? fill?.mat_units ?? null
+      const cur = qtySplit(Math.max(0, Number(r.planned_qty) || 0), u)
+      const qty = part === 'entry'
+        ? qtyFromEntryBase(pasteNum(cols[0]), cols.length > 1 ? pasteNum(cols[1]) : hasEntry(u) ? cur.base : 0, u)
+        : qtyFromEntryBase(cur.entry, pasteNum(cols[0]), u)
+      const base = fill?.material_id ? { ...r, ...fill, material_code: r.material_code, unit_input: r.unit_input || fill.unit_input } : r
+      return { ...base, planned_qty: qty > 0 ? String(qty) : '' }
+    }))
+  }, [qc, nccRowOf])
 
   const handleNccDropdownFocus = useCallback((idx: number) => setNccDropdownIdx(idx), [])
   const handleNccDropdownBlur  = useCallback((idx: number) => {
@@ -1292,6 +1319,7 @@ function CreateOrderDialog({ open, onClose, editGroup, onPickReturn }: { open: b
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wider">{editGroup?.length ? 'Thêm hàng mới vào nhóm' : 'Danh sách hàng'}</p>
+                  <span className="hidden sm:inline text-[9px] text-slate-400" data-testid="ncc-paste-hint">dán từ Excel: Mã hàng | Số thùng | Số lẻ</span>
                   {sourceType === 'MULTI' && !editGroup?.length && (
                     <button type="button"
                       disabled={!warehouseId || !importDate || !shiftId}

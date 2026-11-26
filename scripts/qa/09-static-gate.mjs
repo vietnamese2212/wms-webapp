@@ -1111,6 +1111,20 @@ const RULES = [
     count: (s) => countMatches(['backend/src'], ['.ts'],
       (line) => !/^\s*(\/\/|\*|\/\*)/.test(line) && /\.ilike\(\s*['"]name['"]/.test(line), s),
   },
+  // C139 (26/11): /me làm mới mỗi 5' + mỗi lần quay lại cửa sổ. (a) refreshUser phải giữ tham chiếu phần không đổi
+  // (replaceEqualDeep) — trả object mới dù nội dung y hệt là mọi effect / memo phụ thuộc user.* chạy lại; (b) effect KHỞI TẠO
+  // form (deps có `open`) không được phụ thuộc user / mảng-object của user (warehouse_ids…; trường chuỗi so theo giá trị nên vô hại) — bug thật: form Tạo phiếu nhập nhảy về tab đầu, mất mọi dòng đang khai.
+  {
+    key: 'form_reset_on_user_refresh',
+    label: 'effect khởi tạo form phụ thuộc user.* (deps có `open`) hoặc refreshUser thay user không qua replaceEqualDeep — form đang khai tự xoá khi /me làm mới',
+    count: (s) => {
+      let n = countMatches(['frontend/src'], ['.ts', '.tsx'],
+        (line) => { const d = /\}, \[([^\]]*)\]\)/.exec(line)?.[1]; return !!d && /\bopen\b/.test(d) && /\buser\b(?!\??\.)|\buser\??\.(warehouse_ids|allowed_categories|allowed_modules|module_permissions)\b/.test(d) }, s)
+      const auth = readFileSync(join(ROOT, 'frontend/src/stores/authStore.ts'), 'utf8')
+      if (!/set\(\{\s*user:\s*replaceEqualDeep\(/.test(auth)) { n++; if (s && s.length < 5) s.push('frontend/src/stores/authStore.ts (refreshUser)') }
+      return n
+    },
+  },
   {
     key: 'qrscanner_keepmounted_without_active',
     label: 'overlay quét ẩn bằng CSS nhưng <QRScanner> thiếu `active` — camera chạy ngầm sau khi đóng',

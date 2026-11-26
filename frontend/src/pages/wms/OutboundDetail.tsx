@@ -398,11 +398,17 @@ function StartDialog({ open, gdo, onClose, onWaiveGate, onWaiveWeigh }: {
   const [gateRegId,        setGateRegId]        = useState('')
   const [special,          setSpecial]          = useState(false)   // mở khóa: xe đã ra / bốc thêm đơn / vãng lai
 
-  // ── Chuyến xe ở Đăng ký cổng (OUTBOUND, đã vào) — gắn biển số theo đúng CHUYẾN để báo cáo per-chuyến
+  // Chuyến trong khuôn viên (cặp kho cha↔kho phụ · kho phụ xuất tiêu hao — 26/11): biển số tùy chọn, miễn cổng / cân / cửa —
+  // xe nâng/đẩy tay, BE startGDO cũng nới tương ứng. Kho đích do BE trả (`dest_warehouse` = khách trỏ kho, 28/09).
+  const { data: whsForInternal = [], isFetched: whsFetched } = useWarehouses(true)
+  const internalPair = isInSiteTrip(whsForInternal as InSiteWh[], gdo.warehouse_id, gdo.dest_warehouse?.id, gdo.shipto_party)
+
+  // ── Chuyến xe ở Đăng ký cổng (OUTBOUND, đã vào) — gắn biển số theo đúng CHUYẾN để báo cáo per-chuyến.
+  // Chuyến trong khuôn viên không qua cổng ⇒ không tải (vai kho chế biến thường không có quyền xem Đăng ký cổng — 403 thừa, 26/11).
   const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
   const threeDaysAgo = (() => { const d = new Date(today); d.setDate(d.getDate() - 3); return d.toISOString().slice(0, 10) })()
   const { data: gateRegs = [] } = useActiveGateRegistrations(
-    gdo.warehouse_id ? { date_from: threeDaysAgo, date_to: today, warehouse_id: gdo.warehouse_id, direction: 'OUTBOUND' } : undefined
+    gdo.warehouse_id && whsFetched && !internalPair ? { date_from: threeDaysAgo, date_to: today, warehouse_id: gdo.warehouse_id, direction: 'OUTBOUND' } : undefined
   )
   const { data: recentGdos = [] } = useGDOs(
     gdo.warehouse_id ? { warehouse_id: gdo.warehouse_id, date_from: threeDaysAgo, date_to: today } : undefined
@@ -415,11 +421,6 @@ function StartDialog({ open, gdo, onClose, onWaiveGate, onWaiveWeigh }: {
   const gatesWithEntry = (gateRegs as GateReg[]).filter(g => g.entry_at)
   const selectedGate = (gateRegs as GateReg[]).find(g => g.id === gateRegId)
   const effectivePlate = selectedGate?.license_plate ?? licPlate
-
-  // Chuyến trong khuôn viên (cặp kho cha↔kho phụ · kho phụ xuất tiêu hao — 26/11): biển số tùy chọn, miễn cổng / cân / cửa —
-  // xe nâng/đẩy tay, BE startGDO cũng nới tương ứng. Kho đích do BE trả (`dest_warehouse` = khách trỏ kho, 28/09).
-  const { data: whsForInternal = [] } = useWarehouses(true)
-  const internalPair = isInSiteTrip(whsForInternal as InSiteWh[], gdo.warehouse_id, gdo.dest_warehouse?.id, gdo.shipto_party)
 
   // RULE 3 — CỬA XUẤT (09/09): kho có cửa xuất trên Sơ đồ kho ⇒ phải chọn cửa xe đang đậu (BE 422 DOCK_REQUIRED /
   // DOCK_FULL). Cặp nội bộ miễn (hàng đi xe nâng trong khuôn viên). Kho chưa vẽ cửa → ô này không hiện.

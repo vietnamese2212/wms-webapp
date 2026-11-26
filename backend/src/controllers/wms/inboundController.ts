@@ -1602,7 +1602,7 @@ export async function getReceipt(req: Request, res: Response) {
         .select('id, import_date, shift_id, notes, created_at, location_id, gate_registration_id, material:Material(id, material_code, short_name, material_description, no_qr_tracking, category, base_unit, entry_unit, units_per_carton, cartons_per_pallet), location:Location(id, location_code), ncc:TransportCompany!ncc_id(id, name), shift:ImportShift(id, name), warehouse:Warehouse(id, name, code, inventory_mode), gate_registration:gate_registrations(license_plate), imported_by_emp:Employee!imported_by(name)')
         .eq('receipt_group', group).neq('status', 'CANCELLED'),
       fetchAllByIdChunks(ids, chunk => supabase.from('InventoryEntry')
-        .select('id, import_order_id, pallet_code, cartons_imported, cartons_remaining, production_date, created_at, stack_layer, location:Location(location_code)')
+        .select('id, import_order_id, pallet_code, cartons_imported, cartons_remaining, production_date, created_at, stack_layer, location:Location(location_code), created_by_emp:Employee!created_by(name)')
         .in('import_order_id', chunk)),
     ])
     if (hErr) throw hErr
@@ -1629,7 +1629,7 @@ export async function getReceipt(req: Request, res: Response) {
     })
     const first = xById.get(st.orders[0].id)
     const lineOf = new Map(st.orders.map(o => [o.id, o]))
-    const entries = (ents as { id: string; import_order_id: string; pallet_code: string; cartons_imported: number; cartons_remaining: number; production_date: string | null; created_at: string; stack_layer: number | null; location: { location_code: string } | null }[])
+    const entries = (ents as { id: string; import_order_id: string; pallet_code: string; cartons_imported: number; cartons_remaining: number; production_date: string | null; created_at: string; stack_layer: number | null; location: { location_code: string } | null; created_by_emp: { name: string | null } | null }[])
       .map(e => ({ ...e, material_code: lineOf.get(e.import_order_id)?.material?.material_code ?? null }))
       .sort((a, b) => (b.created_at ?? '').localeCompare(a.created_at ?? ''))
     ok(res, {

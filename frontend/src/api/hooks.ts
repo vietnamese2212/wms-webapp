@@ -1288,6 +1288,7 @@ export interface InboundReceiptLine {
 export interface InboundReceiptEntry {
   id: string; import_order_id: string; pallet_code: string; cartons_imported: number; cartons_remaining: number
   production_date: string | null; created_at: string; stack_layer: number | null; location: { location_code: string } | null; material_code: string | null
+  created_by_emp: { name: string | null } | null
 }
 export interface InboundReceiptData {
   receipt: { id: string; receipt_code: string | null; doc_no: string | null; source_type: string; warehouse_id: string; created_at: string | null }

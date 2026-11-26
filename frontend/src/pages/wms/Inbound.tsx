@@ -56,6 +56,7 @@ import type { InboundOrder } from '@/types'
 import { unlockAudio } from '@/utils/audio'
 import { qtyEntryText, qtyUnitLabel, qtyEntryDecimal, unitCodeOf, qtyFromEntryBase, qtySplit, hasEntry, type MatUnits } from '@/utils/qtyUnits'
 import { pasteGrid, pasteNum } from '@/utils/excelPaste'
+import { inboundProgressOf, receiptProgressOf, type InboundProgressInfo } from '@/utils/inboundProgress'
 import { QtyInput } from '@/components/shared/QtyInput'
 import { isQtyLike } from '@/utils/inventoryMode'
 import { useActiveInboundStore } from '@/stores/activeInboundStore'
@@ -2057,7 +2058,7 @@ export function inboundKey(order: InboundOrder): RowStatusKey {
 }
 
 type StatusInfo = { label: string; variant: 'success' | 'info' | 'warning' | 'slate' }
-const INBOUND_BADGE: Record<RowStatusKey, StatusInfo> = {
+export const INBOUND_BADGE: Record<RowStatusKey, StatusInfo> = {
   completed:  { label: 'Hoàn thành', variant: 'success' },
   full:       { label: 'Đầy vị trí', variant: 'info' },
   inProgress: { label: 'Đang nhập',  variant: 'warning' },
@@ -2071,6 +2072,20 @@ const INBOUND_BADGE: Record<RowStatusKey, StatusInfo> = {
 }
 function inboundStatus(order: InboundOrder): StatusInfo {
   return INBOUND_BADGE[inboundKey(order)]
+}
+
+// Ô TIẾN ĐỘ (% + thanh) — MỘT khuôn cho dòng phiếu ở danh sách, dòng mã của trang phiếu chung và dòng phiếu chung (luật % / đủ:
+// utils/inboundProgress.ts — user 26/11 "các format khi hàng đủ, thiếu, xong… tương tự như khi xem ở 1 phiếu bình thường").
+export function InboundProgress({ p }: { p: InboundProgressInfo | null }) {
+  if (!p) return <span className="text-[10px] text-slate-300">—</span>
+  return (
+    <div className="flex flex-col items-end gap-0.5" data-testid="inbound-progress">
+      <span className={`text-[10px] font-semibold tabular-nums ${p.done ? 'text-green-600' : 'text-amber-600'}`}>{p.pct}%</span>
+      <div className="h-1 w-12 rounded-full bg-slate-200 overflow-hidden">
+        <div className={`h-full ${p.done ? 'bg-green-500' : 'bg-amber-500'}`} style={{ width: `${Math.min(100, p.pct)}%` }} />
+      </div>
+    </div>
+  )
 }
 
 function InboundRow({ order, onClick, onDoubleClick, onScan, onEditGroup, onPin, pinned, bracketPos = 'none', dense = true, selected = false }: {
@@ -2223,18 +2238,7 @@ function InboundRow({ order, onClick, onDoubleClick, onScan, onEditGroup, onPin,
 
       {/* Col 9: Tiến độ (Thực nhập / Thùng KH) */}
       <TableCell className="px-2 py-1 whitespace-nowrap text-right">
-        {order.planned_cartons != null && order.planned_cartons > 0 ? (() => {
-          const pct  = Math.round(((order.total_cartons ?? 0) / order.planned_cartons) * 100)
-          const done = pct >= 100
-          return (
-            <div className="flex flex-col items-end gap-0.5">
-              <span className={`text-[10px] font-semibold tabular-nums ${done ? 'text-green-600' : 'text-amber-600'}`}>{pct}%</span>
-              <div className="h-1 w-12 rounded-full bg-slate-200 overflow-hidden">
-                <div className={`h-full ${done ? 'bg-green-500' : 'bg-amber-500'}`} style={{ width: `${Math.min(100, pct)}%` }} />
-              </div>
-            </div>
-          )
-        })() : <span className="text-[10px] text-slate-300">—</span>}
+        <InboundProgress p={inboundProgressOf(order.total_cartons ?? 0, order.planned_cartons)} />
       </TableCell>
 
       {/* Col 10: Biển số xe */}
@@ -2321,7 +2325,7 @@ function ReceiptRow({ lines, open, dense = true, onToggle, onOpen, onScan, onEdi
   const short = withPlan.filter(o => (o.total_cartons ?? 0) > 0 && (o.total_cartons ?? 0) < (o.planned_cartons ?? 0) - 1e-9).length
   const over = withPlan.filter(o => (o.total_cartons ?? 0) > (o.planned_cartons ?? 0) + 1e-9).length
   const pallets = lines.reduce((a, o) => a + (o._count?.inventory_entries ?? 0), 0)
-  const pct = withPlan.length ? Math.round(full / withPlan.length * 100) : null
+  const prog = receiptProgressOf(lines.map(o => ({ received: o.total_cartons ?? 0, planned: o.planned_cartons })))
   const key: RowStatusKey = lines.every(o => o.status === 'COMPLETED') ? 'completed' : got > 0 ? 'inProgress' : 'pending'
   const st = INBOUND_BADGE[key]
   const loc = lines.find(o => o.location?.location_code)?.location?.location_code ?? '—'
@@ -2379,8 +2383,9 @@ function ReceiptRow({ lines, open, dense = true, onToggle, onOpen, onScan, onEdi
           ? <span className="text-[10px] font-semibold">{short ? <span className="text-red-600">thiếu {short}</span> : null}{short && over ? ' · ' : ''}{over ? <span className="text-blue-600">thừa {over}</span> : null}</span>
           : <span className="text-[10px] text-slate-300">—</span>}
       </TableCell>
-      <TableCell className="px-2 py-1 whitespace-nowrap text-right" title="Số mã đã đủ kế hoạch / số mã có kế hoạch">
-        {pct != null ? <span className={`text-[10px] font-semibold tabular-nums ${pct >= 100 ? 'text-green-600' : 'text-amber-600'}`}>{full}/{withPlan.length}</span> : <span className="text-[10px] text-slate-300">—</span>}
+      {/* Tiến độ cùng khuôn % + thanh với dòng phiếu thường; % = trung bình tiến độ từng mã */}
+      <TableCell className="px-2 py-1 whitespace-nowrap text-right" title={withPlan.length ? `${full}/${withPlan.length} mã đủ kế hoạch — % là trung bình tiến độ từng mã` : undefined}>
+        <InboundProgress p={prog} />
       </TableCell>
       <TableCell className="px-2 py-1 whitespace-nowrap">{plate ? <span className="text-[10px] font-mono text-slate-600 truncate block">{plate}</span> : <span className="text-[10px] text-slate-300">—</span>}</TableCell>
       <TableCell className="px-2 py-1 whitespace-nowrap"><span className="text-[10px] text-slate-300">—</span></TableCell>

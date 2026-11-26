@@ -5,10 +5,10 @@
 // Khuôn trang giống InboundDetail (header gọn · SummaryBand · thanh tiêu đề bảng cố định · ActionCluster).
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { ArrowLeft, CheckCircle2, XCircle, Pencil, MapPin, Calendar, Truck, Layers, FileText, Clock, User } from 'lucide-react'
+import { ArrowLeft, CheckCircle2, XCircle, Pencil, MapPin, Calendar, Truck, Layers, FileText, User } from 'lucide-react'
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
-import { useInboundReceipt, useInboundOrders, type InboundReceiptLine } from '@/api/hooks'
+import { useInboundReceipt, useInboundOrders, type InboundReceiptLine, type InboundReceiptMat } from '@/api/hooks'
 import type { InboundOrder } from '@/types'
 import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { SummaryBand } from '@/components/shared/SummaryBand'
@@ -22,40 +22,56 @@ import { ResizableTable, type RtColDef } from '@/components/shared/ResizableTabl
 import { TableEmptyRow } from '@/components/shared/TableEmptyRow'
 import { InboundGroupScanSheet } from '@/components/wms/InboundScanSheet'
 import { useReceiptGroupActions } from '@/components/wms/ReceiptGroupActions'
-import { CreateOrderDialog } from '@/pages/wms/Inbound'
+// Trạng thái · màu chữ · tiến độ: CÙNG khuôn với phiếu thường ở danh sách / trang dòng mã (user 26/11: "các format khi hàng đủ,
+// thiếu, xong… tương tự như khi xem ở 1 phiếu bình thường") — xong = chữ xanh gạch ngang, đang nhập = cam, KH đỏ khi thiếu, % + thanh
+import { CreateOrderDialog, inboundKey, INBOUND_BADGE, InboundProgress } from '@/pages/wms/Inbound'
+import { inboundProgressOf } from '@/utils/inboundProgress'
+import { rowText, statusText, type RowStatusKey } from '@/lib/rowStatus'
 // ĐVT in bằng MÃ của app ("50 KG") — user 17/11 "hạn chế văn viết, dùng đơn vị tính của app"; mã có thùng vẫn "N thùng + M hộp"
-import { qtyCode } from '@/utils/unitCode'
+import { qtyCode, unitCode } from '@/utils/unitCode'
+import { qtyEntryText, qtyUnitLabel, hasEntry } from '@/utils/qtyUnits'
+import { format, parseISO } from 'date-fns'
+import { vi } from 'date-fns/locale'
 import { formatDate, formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 import { unlockAudio } from '@/utils/audio'
 import { useWedgeScanner } from '@/hooks/useWedgeScanner'
 
 // Cột hai bảng (kéo giãn được, lưu theo khoá) — bảng nghiệp vụ dùng ResizableTable như mọi trang (luật C40)
 const LINE_COLS: RtColDef[] = [
-  // Chênh (thiếu / thừa) ngay sau Tên hàng: điện thoại 390 px thấy luôn mà không cần kéo ngang
-  { id: 'code', label: 'Mã hàng', w: 80 }, { id: 'name', label: 'Tên hàng', w: 130 }, { id: 'diff', label: 'Chênh', w: 130, align: 'right' },
-  { id: 'got', label: 'Đã nhận', w: 110, align: 'right' }, { id: 'plan', label: 'Kế hoạch', w: 110, align: 'right' },
+  // Tiến độ + Chênh ngay sau Tên hàng: điện thoại 390 px thấy đủ / thiếu / thừa luôn mà không cần kéo ngang
+  { id: 'code', label: 'Mã hàng', w: 76 }, { id: 'name', label: 'Tên hàng', w: 116 },
+  { id: 'prog', label: 'Tiến độ', w: 58, align: 'right' }, { id: 'diff', label: 'Chênh', w: 124, align: 'right' },
+  { id: 'got', label: 'Thực nhập', w: 100, align: 'right' }, { id: 'plan', label: 'Kế hoạch', w: 100, align: 'right' },
   { id: 'pl', label: 'Pallet', w: 60, align: 'right' }, { id: 'type', label: 'Loại kho', w: 70 },
-  { id: 'loc', label: 'Vị trí', w: 110 }, { id: 'st', label: 'Trạng thái', w: 90 }, { id: 'act', label: '', w: 84 },   // KHÔNG ghim phải: cột trống phần lớn dòng mà nền trắng che cột Chênh trên điện thoại
+  { id: 'loc', label: 'Vị trí', w: 100 }, { id: 'st', label: 'Trạng thái', w: 92 }, { id: 'act', label: '', w: 84 },   // KHÔNG ghim phải: cột trống phần lớn dòng mà nền trắng che cột Chênh trên điện thoại
 ]
+// Bảng pallet cùng cột với bảng pallet của phiếu thường (NSX · Mã pallet · SL · Vị trí · Người quét · Ngày · Giờ) + cột Mã hàng
 const PALLET_COLS: RtColDef[] = [
-  { id: 'tem', label: 'Tem pallet', w: 240 }, { id: 'code', label: 'Mã hàng', w: 110 }, { id: 'qty', label: 'Số lượng', w: 120, align: 'right' },
-  { id: 'loc', label: 'Vị trí', w: 110 }, { id: 'nsx', label: 'NSX', w: 90 }, { id: 'at', label: 'Nhận lúc', w: 120 },
+  { id: 'nsx', label: 'NSX', w: 70 }, { id: 'tem', label: 'Mã pallet', w: 220 }, { id: 'code', label: 'Mã hàng', w: 100 },
+  { id: 'qty', label: 'Số lượng', w: 110, align: 'right' }, { id: 'loc', label: 'Vị trí', w: 90 },
+  { id: 'by', label: 'Người quét', w: 110 }, { id: 'day', label: 'Ngày', w: 72 }, { id: 'time', label: 'Giờ', w: 56 },
 ]
 
-type LineState = { label: string; variant: 'success' | 'info' | 'warning' | 'slate' }
-function lineState(l: InboundReceiptLine): LineState {
-  if (l.status === 'COMPLETED') return { label: 'Hoàn thành', variant: 'success' }
-  if (l.received > 0) return { label: 'Đang nhập', variant: 'warning' }
-  return { label: 'Chưa nhập', variant: 'slate' }
+/** Số + ĐVT nhỏ màu xám như ô Thực nhập / KH của danh sách; mã không quy cách thùng in MÃ ĐVT (KG) */
+function Qty({ q, m, className = '' }: { q: number; m: InboundReceiptMat | null; className?: string }) {
+  return (
+    <>
+      <span className={`font-semibold tabular-nums ${className}`}>{qtyEntryText(q, m)}</span>
+      <span className="text-[9px] text-slate-400 ml-0.5">{hasEntry(m) ? qtyUnitLabel(m) : unitCode(m?.base_unit)}</span>
+    </>
+  )
 }
 
-/** Chênh so kế hoạch: Thiếu (đỏ) · Thừa (xanh) · Đủ (xanh lá). Không kế hoạch ⇒ — */
+/** Chênh so kế hoạch — nhãn như hộp Hoàn thành của phiếu thường: Đủ (xanh lá) · Thiếu (cam) · Thừa (xanh). Chưa nhận ⇒ chữ xám */
 function DiffCell({ l }: { l: InboundReceiptLine }) {
   if (l.planned_cartons == null || l.diff == null) return <span className="text-slate-300">—</span>
   const m = l.material
-  if (Math.abs(l.diff) < 1e-9) return <span className="text-green-700 font-semibold">Đủ</span>
-  if (l.diff < 0) return <span className={l.received > 0 ? 'text-red-600 font-semibold' : 'text-slate-500'}>Thiếu {qtyCode(-l.diff, m)}</span>
-  return <span className="text-blue-700 font-semibold" title={l.over_plan === 'BLOCK' ? 'Kho đặt chặn nhập vượt — phần thừa có từ trước khi đặt luật' : 'Nhận nhiều hơn kế hoạch'}>Thừa {qtyCode(l.diff, m)}</span>
+  const pill = 'rounded-full px-1.5 py-0.5 font-medium'
+  if (Math.abs(l.diff) < 1e-9) return <span className={`${pill} bg-green-50 text-green-700`}>Đủ</span>
+  if (l.diff < 0) return l.received > 0
+    ? <span className={`${pill} bg-amber-50 text-amber-700`}>Thiếu {qtyCode(-l.diff, m)}</span>
+    : <span className="text-slate-400">Thiếu {qtyCode(-l.diff, m)}</span>
+  return <span className={`${pill} bg-blue-50 text-blue-700`} title={l.over_plan === 'BLOCK' ? 'Kho đặt chặn nhập vượt — phần thừa có từ trước khi đặt luật' : 'Nhận nhiều hơn kế hoạch'}>Thừa {qtyCode(l.diff, m)}</span>
 }
 
 export default function InboundReceipt() {
@@ -110,6 +126,13 @@ export default function InboundReceipt() {
   ], [lines])
   const entries = useMemo(() => (data?.entries ?? []).filter(e => !matFilter || e.import_order_id === matFilter), [data, matFilter])
   const lineById = useMemo(() => new Map(lines.map(l => [l.id, l])), [lines])
+  const orderById = useMemo(() => new Map((orders as InboundOrder[]).map(o => [o.id, o])), [orders])
+  // Trạng thái dòng mã = đúng hàm của danh sách (inboundKey: Hoàn thành · Đầy vị trí · Đang nhập · Chưa nhập); dòng chưa về kịp ⇒ suy từ số nhận
+  const keyOf = (l: InboundReceiptLine): RowStatusKey => {
+    const o = orderById.get(l.id)
+    if (o) return inboundKey(o)
+    return l.status === 'COMPLETED' ? 'completed' : (l.pallets > 0 || l.received > 0) ? 'inProgress' : 'pending'
+  }
 
   if (isLoading && !data) return <div className="p-6"><TableSkeleton rows={8} cols={7} /></div>
   if (!data) {
@@ -125,7 +148,9 @@ export default function InboundReceipt() {
   const nOver = withPlan.filter(l => (l.diff ?? 0) > 1e-9).length
   const nFull = withPlan.filter(l => Math.abs(l.diff ?? 1) < 1e-9).length
   const pallets = lines.reduce((a, l) => a + l.pallets, 0)
-  const stKey = allDone ? { label: 'Hoàn thành', variant: 'success' as const } : got > 0 ? { label: 'Đang nhập', variant: 'warning' as const } : { label: 'Chưa nhập', variant: 'slate' as const }
+  // Phiếu chung: cùng luật với dòng phiếu chung ở danh sách (ReceiptRow)
+  const rKey: RowStatusKey = allDone ? 'completed' : got > 0 ? 'inProgress' : 'pending'
+  const stKey = INBOUND_BADGE[rKey]
   const overMode = lines.find(l => l.over_plan)?.over_plan ?? null
 
   const headerItems: ActionItem[] = []
@@ -171,7 +196,7 @@ export default function InboundReceipt() {
                 <ArrowLeft className="h-4 w-4" />
               </button>
               <span className="text-[10px] px-1.5 py-0.5 rounded bg-sky-100 text-sky-700 font-semibold shrink-0">PHIẾU CHUNG</span>
-              <span className="font-semibold font-mono text-xs sm:text-sm break-all" data-testid="receipt-code">{receipt.receipt_code ?? '—'}</span>
+              <span className={`font-semibold font-mono text-xs sm:text-sm break-all ${statusText(rKey)}`} data-testid="receipt-code">{receipt.receipt_code ?? '—'}</span>
               <Badge variant={stKey.variant} className="px-1.5 py-0 text-[9px] font-medium shrink-0">{stKey.label}</Badge>
             </div>
             <ActionCluster mobileInline items={headerItems} />
@@ -207,24 +232,28 @@ export default function InboundReceipt() {
           </h2>
         </div>
         <div className="overflow-x-auto bg-white" data-testid="receipt-lines">
-          <ResizableTable storageKey="inbound_receipt_lines_v3" cols={LINE_COLS}>
+          <ResizableTable storageKey="inbound_receipt_lines_v4" cols={LINE_COLS}>
             <TableBody>
               {lines.map(l => {
-                const st = lineState(l)
+                const key = keyOf(l)
+                const st = INBOUND_BADGE[key]
                 const needManual = l.no_qr && l.status === 'OPEN' && !l.posm_entry_id && can(perms, 'inbound', 'scan')
                 return (
-                  <TableRow key={l.id} className="cursor-pointer hover:bg-slate-50" onClick={() => navigate(`/wms/inbound/${l.id}`)} data-testid="receipt-line">
-                    <TableCell className="px-2 py-1.5 text-[10px] font-mono whitespace-nowrap sticky left-0 z-10 bg-white">{l.material?.material_code ?? '—'}</TableCell>
+                  <TableRow key={l.id} className={`cursor-pointer ${rowText(key)}`} onClick={() => navigate(`/wms/inbound/${l.id}`)} data-testid="receipt-line" data-status={key}>
+                    <TableCell className="px-2 py-1.5 text-[10px] font-mono text-slate-500 whitespace-nowrap sticky left-0 z-10 bg-white">{l.material?.material_code ?? '—'}</TableCell>
                     <TableCell className="px-2 py-1.5 text-[11px] font-medium truncate" title={l.material?.short_name ?? undefined}>
                       {l.material?.short_name ?? l.material?.material_description ?? '—'}
                       {l.no_qr && <span className="ml-1 text-[9px] text-slate-400 font-normal">(không tem)</span>}
                     </TableCell>
-                    <TableCell className="px-2 py-1.5 text-[11px] text-right whitespace-nowrap" data-testid="receipt-line-diff"><DiffCell l={l} /></TableCell>
-                    <TableCell className="px-2 py-1.5 text-[11px] text-right tabular-nums whitespace-nowrap font-semibold">{qtyCode(l.received, l.material)}</TableCell>
-                    <TableCell className="px-2 py-1.5 text-[11px] text-right tabular-nums whitespace-nowrap">{l.planned_cartons != null ? qtyCode(l.planned_cartons, l.material) : '—'}</TableCell>
-                    <TableCell className="px-2 py-1.5 text-[11px] text-right tabular-nums">{l.pallets}</TableCell>
+                    <TableCell className="px-2 py-1.5 whitespace-nowrap text-right"><InboundProgress p={inboundProgressOf(l.received, l.planned_cartons)} /></TableCell>
+                    <TableCell className="px-2 py-1.5 text-[10px] text-right whitespace-nowrap" data-testid="receipt-line-diff"><DiffCell l={l} /></TableCell>
+                    <TableCell className="px-2 py-1.5 text-[10px] text-right whitespace-nowrap"><Qty q={l.received} m={l.material} /></TableCell>
+                    <TableCell className="px-2 py-1.5 text-[10px] text-right whitespace-nowrap">
+                      {l.planned_cartons != null ? <Qty q={l.planned_cartons} m={l.material} className={l.received < l.planned_cartons - 1e-9 ? 'text-red-600' : ''} /> : <span className="text-slate-300">—</span>}
+                    </TableCell>
+                    <TableCell className="px-2 py-1.5 text-right whitespace-nowrap"><span className="text-[10px] font-semibold tabular-nums">{l.pallets}</span><span className="text-[9px] text-slate-400 ml-0.5">pl</span></TableCell>
                     <TableCell className="px-2 py-1.5 text-[10px] whitespace-nowrap">{l.warehouse_type ?? '—'}</TableCell>
-                    <TableCell className="px-2 py-1.5 text-[10px] font-mono whitespace-nowrap">{l.no_qr ? <span className="text-slate-300">—</span> : (l.location?.location_code ?? <span className="text-amber-600 font-sans">chọn khi quét</span>)}</TableCell>
+                    <TableCell className="px-2 py-1.5 text-[10px] font-mono font-semibold whitespace-nowrap">{l.no_qr ? <span className="text-slate-300">—</span> : (l.location?.location_code ?? <span className="text-amber-600 font-sans font-normal">chọn khi quét</span>)}</TableCell>
                     <TableCell className="px-2 py-1.5 whitespace-nowrap"><Badge variant={st.variant} className="px-1.5 py-0 text-[9px] font-medium">{st.label}</Badge></TableCell>
                     <TableCell className="px-2 py-1.5 whitespace-nowrap text-right">
                       {needManual && (
@@ -253,21 +282,24 @@ export default function InboundReceipt() {
           </div>
         </div>
         <div className="overflow-x-auto bg-white pb-20" data-testid="receipt-pallets">
-          <ResizableTable storageKey="inbound_receipt_pallets_v1" cols={PALLET_COLS}>
+          <ResizableTable storageKey="inbound_receipt_pallets_v2" cols={PALLET_COLS}>
             <TableBody>
               {entries.length === 0
-                ? <TableEmptyRow colSpan={6}>Chưa có pallet nào — bấm Quét hoặc bóp cò súng</TableEmptyRow>
-                : <WindowedRows scrollRef={scrollRef} count={entries.length} colSpan={6} row={i => {
+                ? <TableEmptyRow colSpan={8}>Chưa có pallet nào — bấm Quét hoặc bóp cò súng</TableEmptyRow>
+                : <WindowedRows scrollRef={scrollRef} count={entries.length} colSpan={8} row={i => {
                     const e = entries[i]
                     const m = lineById.get(e.import_order_id)?.material ?? null
                     return (
                       <TableRow key={e.id} className="cursor-pointer hover:bg-slate-50" onClick={() => navigate(`/wms/inbound/${e.import_order_id}`)}>
-                        <TableCell className="px-2 py-1 text-[10px] font-mono whitespace-nowrap truncate sticky left-0 z-10 bg-white" title={e.pallet_code}>{e.pallet_code}</TableCell>
-                        <TableCell className="px-2 py-1 text-[10px] font-mono whitespace-nowrap">{e.material_code ?? '—'}</TableCell>
-                        <TableCell className="px-2 py-1 text-[11px] text-right tabular-nums whitespace-nowrap">{qtyCode(Number(e.cartons_imported) || 0, m)}</TableCell>
-                        <TableCell className="px-2 py-1 text-[10px] font-mono whitespace-nowrap">{e.location?.location_code ?? '—'}</TableCell>
-                        <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap">{e.production_date ? formatDate(e.production_date.slice(0, 10)) : '—'}</TableCell>
-                        <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap text-slate-500"><Clock className="inline h-3 w-3 mr-0.5 text-slate-300" />{formatTimestampDate(e.created_at, true)} {formatTimestampTime(e.created_at, false)}</TableCell>
+                        <TableCell className="px-2 py-1 text-[10px] whitespace-nowrap text-slate-500">{e.production_date ? format(parseISO(e.production_date), 'dd-MM-yy', { locale: vi }) : '—'}</TableCell>
+                        {/* whitespace-pre: tem V2 có đệm SPACE trong mã (như bảng pallet của phiếu thường) */}
+                        <TableCell className="px-2 py-1 text-[10px] font-mono font-semibold whitespace-pre truncate" title={e.pallet_code}>{e.pallet_code}</TableCell>
+                        <TableCell className="px-2 py-1 text-[10px] font-mono text-slate-500 whitespace-nowrap">{e.material_code ?? '—'}</TableCell>
+                        <TableCell className="px-2 py-1 text-[10px] text-right whitespace-nowrap"><Qty q={Number(e.cartons_imported) || 0} m={m} /></TableCell>
+                        <TableCell className="px-2 py-1 text-[10px] font-mono text-slate-600 whitespace-nowrap">{e.location?.location_code ?? '—'}</TableCell>
+                        <TableCell className="px-2 py-1 text-[10px] text-slate-500 whitespace-nowrap truncate">{e.created_by_emp?.name ?? '—'}</TableCell>
+                        <TableCell className="px-2 py-1 text-[10px] text-slate-500 whitespace-nowrap">{formatTimestampDate(e.created_at, true)}</TableCell>
+                        <TableCell className="px-2 py-1 text-[10px] text-slate-500 whitespace-nowrap tabular-nums">{formatTimestampTime(e.created_at)}</TableCell>
                       </TableRow>
                     )
                   }} />}

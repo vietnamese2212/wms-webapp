@@ -20,6 +20,13 @@
 
 Nhập kho
 
+## 26/11 — Hàng không tem theo NSX ở kho QR (user: "bắt nhập nếu có config như vậy ở kho cb")
+- Cờ 2 tầng `Warehouse.noqr_date_tracking` + `warehouse_type_configs.noqr_date_tracking` (null = theo kho) — Cài đặt WMS → Kho → nhóm NHẬP "Hàng không tem" (chỉ hiện khi kho quản lý theo tem). Mặc định TẮT = hành vi cũ.
+- Bật ⇒ hàng KHÔNG TEM của kho QR chạy luật tồn gộp của kho QTY_DATE: Lưu thủ công bắt NSX (thiếu ⇒ 422 `NSX_REQUIRED`, NSX tương lai ⇒ 422 `NSX_FUTURE`), mỗi NSX một dòng tồn (unique `uq_inventory_active_wh_pallet` đã có NSX trong khoá), cùng NSX cộng dồn.
+- MỘT câu trả lời cho mọi cửa: `services/noQrPool.ts` → `noQrPoolPolicy(kho, loại)` (`byDate`, `poolMode`). Không so `inventory_mode === 'QTY_DATE'` rải rác nữa. Trang phiếu nhận kết luận qua `noqr_pool_by_date` của GET phiếu.
+- Hộp Lưu thủ công: ô NSX để TRỐNG (trước tự điền hôm nay — bấm Lưu là thành NSX sai), không chọn được ngày tương lai.
+- Đang bật cho Chế biến Ba Vì trên staging. Cấp NVL vào mẻ không tem vốn đã đi theo lô (NSX + số lô) — không đổi. Gói 63 [21].
+
 ## 19/11 — Kho phụ nội bộ tạo phiếu nhập trực tiếp được
 
 Trước đó (10/07 → 19/11) `createOrder` chặn kho phụ (`Warehouse.parent_warehouse_id`) tạo phiếu không phải TRANSFER — 400 "Kho phụ nội bộ chỉ nhận hàng qua chuyển kho từ kho parent" (mà form vẫn mở, điền xong mới báo). User chốt 19/11 (kho chế biến chạy app trước, Kho Ba Vì chưa chạy): "cứ cho nhập đi thôi, không sao" — bỏ hẳn chặn cho MỌI kho phụ. Rủi ro đã nói với user: khi kho cha cũng chạy app, một lô có thể bị nhập hai lần (kho cha nhập NCC + kho phụ nhập lại thay vì nhận chuyển kho). Chiều XUẤT của kho phụ giữ luật cũ (chỉ xuất trả kho cha hoặc xuất tiêu hao). Gói 63 [0a] gác.

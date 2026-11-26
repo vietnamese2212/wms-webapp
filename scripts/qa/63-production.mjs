@@ -38,6 +38,11 @@
 //        Σ SL có dấu = sổ; lọc ngày VN · chặn khoảng sai; file xuất 3 phần (phát sinh · định mức – thực cấp · nạp bồn); phân trang server;
 //        SƠ ĐỒ BỒN 2D: lưu chỗ đặt (map_x / map_y), chặn dữ liệu sai; ống ra = sổ đóng gói đang mở rút từ bồn. [14d] quyền view / export /
 //        manage_tank + phạm vi kho của hai cửa mới.
+//   [21] HÀNG KHÔNG TEM THEO NSX ở kho QR (26/11 — user "bắt nhập nếu có config như vậy ở kho cb"): cờ tắt = hành vi cũ (không NSX);
+//        bật ở tầng Kho ⇒ Lưu thủ công thiếu NSX 422 · NSX tương lai 422 · mỗi NSX một dòng tồn, cùng NSX cộng dồn; loại kho khai TẮT ⇒
+//        mã loại đó không bị bắt; hộp Lưu số lượng của chuyến xuất liệt kê theo NSX, ghi nhận trừ NSX cũ trước / đúng NSX đã chọn
+//   [22] CHUYẾN TRONG KHUÔN VIÊN (26/11 — "bản chất kho chế biến đâu có yêu cầu biển số xe"): kho phụ xuất tiêu hao (không ship-to)
+//        Bắt đầu KHÔNG biển số ⇒ 200; kho thường không ship-to vẫn bắt biển số ⇒ 400
 // Fixture QA63: kho cha QA63_PARENT + kho phụ QA63_CB (+ QA63_CB2 để thử chéo kho) · mã NVL/BTP QA63* · tem QA63_* — dọn bằng PostgREST.
 import { randomUUID } from 'crypto'
 import { login, api, rawFetch, restAll, restWrite, check, finish, BASE, authToken } from './lib.mjs'
@@ -49,6 +54,7 @@ await login()
 const todayVN = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
 const WP = 'QA63_PARENT', WC = 'QA63_CB', WC2 = 'QA63_CB2'
 const M_RM = 'QA63_RM1', M_BTP = 'QA63_BTP1', M_BTP2 = 'QA63_BTP2', M_EA = 'QA63_EA1', M_RM2 = 'QA63_RM2'
+const M_NT = 'QA63_NT1', M_NT2 = 'QA63_NT2'   // [21] hàng KHÔNG TEM: RM01 (theo NSX) · PK01 (loại kho tắt riêng)
 const qaX = (await restAll('QAStatus', 'select=id&code=eq.X'))[0]?.id
 const ts = () => new Date().toISOString()
 const JT_OPEN = 'QA63_JT_OPEN', JT_VIEW = 'QA63_JT_VIEW'
@@ -71,6 +77,20 @@ async function cleanup() {
   const roleEmps = await restAll('Employee', 'select=id&email=like.qa63role*')
   for (const e of roleEmps) { await restWrite('UserWarehouseAccess', 'DELETE', `employee_id=eq.${e.id}`); await restWrite('Employee', 'DELETE', `id=eq.${e.id}`) }
   await restWrite('JobTitle', 'DELETE', `id=in.(${JT_OPEN},${JT_VIEW})`)
+  // [21] / [22] chuyến xuất ở kho thử: vết quét → dòng hàng → DO → chuyến (theo khoá ngoại), TRƯỚC tồn và mã hàng
+  const gdos = await restAll('GroupDeliveryOrder', `select=id&warehouse_id=in.(${whs.join(',')})`)
+  if (gdos.length) {
+    const dos = await restAll('OutboundDelivery', `select=id&gdo_id=in.(${gdos.map(g => g.id).join(',')})`)
+    const its = dos.length ? await restAll('OutboundItem', `select=id&do_id=in.(${dos.map(d => d.id).join(',')})`) : []
+    if (its.length) {
+      await restWrite('OutboundScanEntry', 'DELETE', `item_id=in.(${its.map(i => i.id).join(',')})`)
+      await restWrite('wms_tasks', 'DELETE', `item_id=in.(${its.map(i => i.id).join(',')})`)
+      await restWrite('OutboundItem', 'DELETE', `id=in.(${its.map(i => i.id).join(',')})`)
+    }
+    await restWrite('wms_tasks', 'DELETE', `gdo_id=in.(${gdos.map(g => g.id).join(',')})`)
+    if (dos.length) await restWrite('OutboundDelivery', 'DELETE', `id=in.(${dos.map(d => d.id).join(',')})`)
+    await restWrite('GroupDeliveryOrder', 'DELETE', `id=in.(${gdos.map(g => g.id).join(',')})`)
+  }
   const runs = await restAll('packing_runs', `select=id&warehouse_id=in.(${whs.join(',')})`)
   const tanks = await restAll('production_tank', `select=id&warehouse_id=in.(${whs.join(',')})`)
   const batches = await restAll('production_batch', `select=id&warehouse_id=in.(${whs.join(',')})`)
@@ -97,7 +117,7 @@ async function cleanup() {
   await restWrite('InventoryEntry', 'DELETE', `warehouse_id=in.(${whs.join(',')})`)
   await restWrite('ProductionImport', 'DELETE', `warehouse_id=in.(${whs.join(',')})`)   // phiếu nhập trực tiếp ở kho phụ ([0a])
   await restWrite('warehouse_type_configs', 'DELETE', `warehouse_id=in.(${whs.join(',')})`)
-  await restWrite('Material', 'DELETE', `id=in.(${[M_RM, M_BTP, M_BTP2, M_EA, M_RM2].join(',')})`)
+  await restWrite('Material', 'DELETE', `id=in.(${[M_RM, M_BTP, M_BTP2, M_EA, M_RM2, M_NT, M_NT2].join(',')})`)
   await restWrite('Warehouse', 'DELETE', `id=in.(${WC},${WC2})`)
   await restWrite('Warehouse', 'DELETE', `id=eq.${WP}`)
 }
@@ -1391,6 +1411,84 @@ try {
   check('15d. Mã tính KG bật / tắt cờ BTP qua form Mã hàng ⇒ 200, ghi đúng', fOn.s === 200 && fOn.j?.data?.is_semi_finished === true && fOff.s === 200 && rmFlag?.is_semi_finished === false,
     `http=${fOn.s}/${fOff.s} now=${rmFlag?.is_semi_finished}`)
   if (fNew.s === 200) await restWrite('Material', 'DELETE', 'material_code=eq.QA63BTPX')
+
+  // ── [21] HÀNG KHÔNG TEM THEO NSX ở kho QR (26/11 — NVL không tem nhập Chế biến Ba Vì từng không có NSX ⇒ không HSD, không FEFO) ──
+  {
+    const dayAgo = (n) => new Date(Date.now() - n * 86400000).toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
+    const D1 = dayAgo(20), D2 = dayAgo(10), DF = dayAgo(-5)
+    await restWrite('Material', 'POST', null, [
+      { id: M_NT, material_code: 'QA63NT1', material_description: 'QA63 NVL không tem', short_name: 'QA63 NVL không tem', base_unit: 'KG', category: 'RM01', no_qr_tracking: true, shelf_life_days: 365, updated_at: ts() },
+      { id: M_NT2, material_code: 'QA63NT2', material_description: 'QA63 bao bì không tem', short_name: 'QA63 bao bì không tem', base_unit: 'EA', category: 'PK01', no_qr_tracking: true, shelf_life_days: null, updated_at: ts() },
+    ])
+    const newOrder = async (mat) => (await api('/wms/inbound-orders', 'POST', { warehouse_id: WC, material_id: mat, source_type: 'FACTORY', import_date: todayVN, planned_cartons: 100 })).j?.data?.order?.id
+    const save = (oid, body) => api(`/wms/inbound-orders/${oid}/scan-manual`, 'POST', body)
+    const poolRows = (mat) => restAll('InventoryEntry', `select=id,production_date,cartons_remaining&warehouse_id=eq.${WC}&material_id=eq.${mat}&order=production_date.asc.nullsfirst`)
+    const qOf = (rows, d) => num(rows.find(r => String(r.production_date ?? '').slice(0, 10) === d)?.cartons_remaining)
+    const show = (rows) => JSON.stringify(rows.map(r => [String(r.production_date ?? '').slice(0, 10) || null, num(r.cartons_remaining)]))
+
+    const o0 = await newOrder(M_NT)
+    const d0 = o0 ? await api(`/wms/inbound-orders/${o0}`) : { s: 0 }
+    const s0 = o0 ? await save(o0, { cartons: 4 }) : { s: 0 }
+    const r0 = await poolRows(M_NT)
+    check('21a. Cờ TẮT (mặc định) = hành vi cũ: Lưu thủ công hàng không tem không cần NSX ⇒ 1 dòng tồn NSX trống; trang phiếu báo không bắt NSX',
+      !!o0 && s0.s === 200 && r0.length === 1 && r0[0].production_date == null && d0.j?.data?.noqr_pool_by_date === false,
+      `order=${!!o0} http=${s0.s} ${s0.j?.error?.message ?? ''} rows=${show(r0)} flag=${d0.j?.data?.noqr_pool_by_date}`)
+    await restWrite('InventoryEntry', 'DELETE', `warehouse_id=eq.${WC}&material_id=eq.${M_NT}`)   // dòng NSX trống không lẫn vào phép trừ theo NSX ở 21e
+
+    const on = await api(`/masterdata/warehouses/${WC}`, 'PUT', { noqr_date_tracking: true })
+    const whOn = (await restAll('Warehouse', `select=noqr_date_tracking&id=eq.${WC}`))[0]
+    const o1 = await newOrder(M_NT)
+    const d1 = o1 ? await api(`/wms/inbound-orders/${o1}`) : { s: 0 }
+    const s1miss = o1 ? await save(o1, { cartons: 10 }) : { s: 0 }
+    const s1fut = o1 ? await save(o1, { cartons: 10, production_date: DF }) : { s: 0 }
+    const r1 = await poolRows(M_NT)
+    check('21b. Bật "Hàng không tem theo NSX" ở tầng Kho (Cài đặt WMS) ⇒ trang phiếu báo bắt NSX; Lưu thủ công thiếu NSX ⇒ 422 NSX_REQUIRED · NSX tương lai ⇒ 422 NSX_FUTURE; không ghi tồn',
+      on.s === 200 && whOn?.noqr_date_tracking === true && d1.j?.data?.noqr_pool_by_date === true
+        && s1miss.s === 422 && s1miss.j?.error?.code === 'NSX_REQUIRED' && s1fut.s === 422 && s1fut.j?.error?.code === 'NSX_FUTURE' && r1.length === 0,
+      `put=${on.s} db=${whOn?.noqr_date_tracking} flag=${d1.j?.data?.noqr_pool_by_date} miss=${s1miss.s}/${s1miss.j?.error?.code} fut=${s1fut.s}/${s1fut.j?.error?.code} rows=${r1.length}`)
+
+    const s1 = o1 ? await save(o1, { cartons: 10, production_date: D1 }) : { s: 0 }
+    const o2 = await newOrder(M_NT); const s2 = o2 ? await save(o2, { cartons: 10, production_date: D2 }) : { s: 0 }
+    const o3 = await newOrder(M_NT); const s3 = o3 ? await save(o3, { cartons: 5, production_date: D1 }) : { s: 0 }
+    const r3 = await poolRows(M_NT)
+    check('21c. Mỗi NSX một dòng tồn; cùng NSX cộng dồn vào dòng đó (D1 10 + 5 = 15 · D2 10)',
+      s1.s === 200 && s2.s === 200 && s3.s === 200 && r3.length === 2 && qOf(r3, D1) === 15 && qOf(r3, D2) === 10,
+      `http=${s1.s}/${s2.s}/${s3.s} rows=${show(r3)}`)
+
+    const tcfg = await api(`/masterdata/warehouses/${WC}/type-configs`, 'PUT', { items: [{ type_code: 'PK01', noqr_date_tracking: false }] })
+    const o4 = await newOrder(M_NT2); const s4 = o4 ? await save(o4, { cartons: 7 }) : { s: 0 }
+    const r4 = await poolRows(M_NT2)
+    const o5 = await newOrder(M_NT); const s5 = o5 ? await save(o5, { cartons: 1 }) : { s: 0 }
+    check('21d. Loại kho PK01 khai TẮT (kho vẫn bật) ⇒ mã PK01 lưu không cần NSX (1 dòng NSX trống); mã RM01 vẫn bị bắt NSX',
+      tcfg.s === 200 && s4.s === 200 && r4.length === 1 && r4[0].production_date == null && s5.s === 422 && s5.j?.error?.code === 'NSX_REQUIRED',
+      `cfg=${tcfg.s} ${tcfg.j?.error?.message ?? ''} pk=${s4.s} rows=${r4.length} rm=${s5.s}/${s5.j?.error?.code}`)
+
+    // ── [22] CHUYẾN TRONG KHUÔN VIÊN: kho phụ xuất tiêu hao không cần biển số; kho thường vẫn cần ──
+    const g = await api('/wms/outbound', 'POST', { delivery_date: todayVN, warehouse_id: WC, customer_name: 'QA63 xuất tiêu hao', delivery_code: `QA63XTH${Date.now() % 1e7}`, warehouse_type: 'RM01', items: [{ material_code: 'QA63NT1', cartons_ordered: 8 }] })
+    const GID = g.j?.data?.id
+    const st = GID ? await api(`/wms/outbound/${GID}/start`, 'POST', {}) : { s: 0 }
+    const gRow = GID ? (await restAll('GroupDeliveryOrder', `select=started_at,license_plate&id=eq.${GID}`))[0] : null
+    const gp = await api('/wms/outbound', 'POST', { delivery_date: todayVN, warehouse_id: WP, customer_name: 'QA63 kho thường', delivery_code: `QA63XTP${Date.now() % 1e7}`, warehouse_type: 'RM01', items: [{ material_code: 'QA63NT1', cartons_ordered: 1 }] })
+    const stp = gp.j?.data?.id ? await api(`/wms/outbound/${gp.j.data.id}/start`, 'POST', {}) : { s: 0 }
+    check('22a. Kho phụ xuất tiêu hao (không ship-to): Bắt đầu KHÔNG biển số ⇒ 200, chuyến đã bắt đầu, biển số trống',
+      g.s < 300 && st.s === 200 && !!gRow?.started_at && !gRow?.license_plate, `create=${g.s} ${g.j?.error?.message ?? ''} start=${st.s} ${st.j?.error?.message ?? ''}`)
+    check('22b. Kho thường (không phải kho phụ), không ship-to: Bắt đầu không biển số vẫn ⇒ 400 (luật cũ giữ nguyên)',
+      gp.s < 300 && stp.s === 400, `create=${gp.s} start=${stp.s} ${stp.j?.error?.message ?? ''}`)
+
+    // 21e — cửa XUẤT của tồn gộp theo NSX: hộp Lưu số lượng + ghi nhận (cùng hàm `noQrPoolPolicy` với cửa nhập)
+    const gd = GID ? await api(`/wms/outbound/${GID}`) : null
+    const IID = gd?.j?.data?.delivery_orders?.[0]?.items?.[0]?.id
+    const stock = IID ? await api(`/wms/outbound/${GID}/items/${IID}/manual-stock`) : { s: 0 }
+    const pools = stock.j?.data?.date_pools ?? []
+    const mc1 = IID ? await api(`/wms/outbound/${GID}/items/${IID}/manual-complete`, 'POST', { cartons: 5 }) : { s: 0 }
+    const rA = await poolRows(M_NT)
+    const mc2 = IID ? await api(`/wms/outbound/${GID}/items/${IID}/manual-complete`, 'POST', { cartons: 8, production_date: D2 }) : { s: 0 }
+    const rB = await poolRows(M_NT)
+    check('21e. Chuyến xuất: hộp Lưu số lượng liệt kê tồn theo NSX (cũ trước); ghi 5 ⇒ trừ NSX cũ nhất (D1 15→10); sửa lên 8 chọn NSX D2 ⇒ phần thêm 3 trừ đúng D2 (10→7)',
+      stock.s === 200 && stock.j?.data?.pool_by_date === true && pools.length === 2 && String(pools[0]?.production_date ?? '').slice(0, 10) === D1
+        && mc1.s === 200 && qOf(rA, D1) === 10 && qOf(rA, D2) === 10 && mc2.s === 200 && qOf(rB, D1) === 10 && qOf(rB, D2) === 7,
+      `stock=${stock.s} byDate=${stock.j?.data?.pool_by_date} pools=${JSON.stringify(pools)} mc=${mc1.s}/${mc2.s} ${mc1.j?.error?.message ?? ''} ${mc2.j?.error?.message ?? ''} A=${show(rA)} B=${show(rB)}`)
+  }
 } finally {
   await cleanup()
   const left = await restAll('Warehouse', `select=id&id=in.(${WP},${WC},${WC2})`)

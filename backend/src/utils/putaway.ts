@@ -178,6 +178,8 @@ export function applyPutawayBody(
   // Tự ra lệnh fill (15/09) — cùng validator cho cả 2 tầng; null ở tầng LOẠI = "theo kho"
   // đã được `applyWhTypeConfigBody` xử trước khi gọi vào đây.
   if (body.auto_fill !== undefined) target.auto_fill = Boolean(body.auto_fill)
+  // Hàng không tem theo NSX ở kho QR (26/11) — cùng validator cho cả 2 tầng; null ở tầng LOẠI = theo kho
+  if (body.noqr_date_tracking !== undefined) target.noqr_date_tracking = Boolean(body.noqr_date_tracking)
   // `production_qa_gate` KHÔNG nhận ở đây nữa (14/11 tối, user: "setting MES chuyển sang Cài đặt MES") —
   // cửa ghi DUY NHẤT là PUT /wms/production/settings (quyền production.configure).
   return null
@@ -615,6 +617,7 @@ export const WH_TYPE_CFG_COLS = [
   'work_mode', 'lower_from_level',     // cách làm việc 2 tầng (10/09, Directed Work 1c) — xem resolveWorkMode
   'auto_fill',                         // tự ra lệnh fill hàng nhặt lẻ (15/09) — xem resolveAutoFill
   'production_qa_gate',                // MES 14/11: rút BTP chưa QA thả — xem resolveProductionQaGate
+  'noqr_date_tracking',                // 26/11: hàng không tem ở kho QR theo NSX — xem resolveNoQrDateTracking
 ] as const
 export type WhTypeCfgCol = typeof WH_TYPE_CFG_COLS[number]
 
@@ -719,6 +722,19 @@ export function resolveAutoFill(
   const row = typeRowOf(typeRows, category)
   const m = mergedConfig(wh, row)
   return { enabled: m.auto_fill === true, source: !!row && row.auto_fill != null ? 'TYPE' : 'WAREHOUSE' }
+}
+
+// ─── HÀNG KHÔNG TEM THEO NSX 2 tầng (26/11) ──────────────────────────────────────────────────────
+// Kho QR bật ⇒ hàng không tem chạy luật tồn gộp theo NSX của kho QTY_DATE. Ở đây chỉ ghép tầng; câu hỏi
+// "tồn gộp của mã này có tách NSX không" (kèm chế độ kho) trả lời ở `services/noQrPool.ts` — mọi cửa nhập / xuất gọi chỗ đó.
+export function resolveNoQrDateTracking(
+  wh: Record<string, unknown> | null | undefined,
+  typeRows: WhTypeConfigRow[] | null | undefined,
+  category: string | null | undefined,
+): { enabled: boolean; source: 'WAREHOUSE' | 'TYPE' } {
+  const row = typeRowOf(typeRows, category)
+  const m = mergedConfig(wh, row)
+  return { enabled: m.noqr_date_tracking === true, source: !!row && row.noqr_date_tracking != null ? 'TYPE' : 'WAREHOUSE' }
 }
 
 export function resolvePutawayRules(

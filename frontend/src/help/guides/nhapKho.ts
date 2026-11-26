@@ -122,6 +122,13 @@ export const NHAP_KHO_GUIDE: Guide = {
           ],
         },
         {
+          title: 'Hàng không tem: Lưu thủ công + NSX',
+          text: [
+            'Mã hàng không theo dõi tem thì phiếu không có bước quét: mở phiếu → nút **Lưu thủ công** → gõ **Số lượng thực nhập**.',
+            'Kho bật **Hàng không tem theo NSX** (Cài đặt WMS → Kho → nhóm NHẬP; kho chế biến đang bật) thì phải chọn thêm **NSX** in trên bao bì — ô để trống, không chọn được ngày tương lai. Mỗi NSX thành một dòng tồn riêng nên app tính được hạn dùng và lấy hàng NSX cũ trước.',
+          ],
+        },
+        {
           title: 'Sửa / xoá pallet quét nhầm',
           text: [
             'Ở bảng **Pallet đã quét** (máy tính), cuối mỗi dòng có **bút chì** (Sửa số lượng, tầng) và **thùng rác** (Xóa pallet).',

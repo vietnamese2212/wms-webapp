@@ -7,6 +7,7 @@ import { parseInboundQR, type ParsedQR } from '../../utils/qrParser'
 import { getLabelFormat } from './systemSettingController'
 import { emitInboundChanged } from '../../lib/events'
 import { effectiveNoQr } from '../../lib/inventoryMode'
+import { noQrPoolPolicy, nsxRequiredMessage } from '../../services/noQrPool'
 import { effCartonsPerPallet } from '../../utils/palletCalc'
 import { fetchAllRowsParallel, fetchAllByIdChunks, fetchUpTo, LIST_TOO_LARGE_MSG, rowCapForBytes, isQueryTimeout, QUERY_TIMEOUT_MSG } from '../../utils/pagination'
 import { categoryAllowed, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
@@ -773,6 +774,11 @@ export async function getOrder(req: Request, res: Response) {
     if (!categoryAllowed(req, (order as { warehouse_type?: string | null }).warehouse_type))
       return fail(res, 403, 'FORBIDDEN', CATEGORY_FORBIDDEN_MSG)
     applyInboundMode(order as unknown as Parameters<typeof applyInboundMode>[0])
+    // Hộp Lưu thủ công cần biết có bắt NSX không — BE trả KẾT LUẬN (cùng hàm với cửa ghi), FE không tự suy từ chế độ kho
+    const om = order as { warehouse_id?: string | null; material?: { no_qr_tracking?: boolean | null; category?: string | null } | null }
+    const noqrPoolByDate = om.material?.no_qr_tracking === true
+      ? (await noQrPoolPolicy(om.warehouse_id, om.material?.category ?? null)).byDate
+      : false
 
     let allEntries = entries ?? []
 
@@ -829,6 +835,7 @@ export async function getOrder(req: Request, res: Response) {
       inventory_entries: allEntries,
       _count: { inventory_entries: allEntries.length },
       from_gdo_delivery_codes: fromGdoDeliveryCodes,
+      noqr_pool_by_date: noqrPoolByDate,
     })
   } catch (e) { console.error(e); if (isQueryTimeout(e)) { fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return }; fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
@@ -1777,22 +1784,23 @@ export async function scanManual(req: Request, res: Response) {
     const retHeadM = isReturn ? await returnHead((order as { return_id?: string | null }).return_id) : null
     const roomM = retHeadM?.gdo_id ? await tripMaterialRoom(retHeadM.gdo_id, order.material_id) : null
 
-    // Kho QTY_DATE: pool tách theo NSX. Ưu tiên body production_date (người nhận SỬA được NSX khi tem
-    // thực tế lệch dữ liệu quét) → fallback NSX của PHIẾU (transfer_production_date — kế thừa từ tem
-    // quét xuất, bulk "Nhận đủ theo xuất" không gửi body). Không có cả hai → 422. Mode khác bỏ qua.
-    const { data: whRow } = warehouseId
-      ? await supabase.from('Warehouse').select('inventory_mode').eq('id', warehouseId).maybeSingle()
-      : { data: null }
-    const whInvMode = (whRow as { inventory_mode?: string | null } | null)?.inventory_mode ?? null
+    // Tồn gộp THEO NSX (kho QTY_DATE, hoặc kho QR bật "Hàng không tem theo NSX" — 26/11, `noQrPoolPolicy`): pool tách
+    // theo NSX. Ưu tiên body production_date (người nhận SỬA được NSX khi tem thực tế lệch dữ liệu quét) → fallback NSX
+    // của PHIẾU (transfer_production_date — kế thừa từ tem quét xuất, bulk "Nhận đủ theo xuất" không gửi body).
+    // Không có cả hai → 422. Còn lại: 1 dòng / (kho, mã), không NSX.
+    const pool = await noQrPoolPolicy(warehouseId, manualCategory)
     const phieuNsx = ((order as { transfer_production_date?: string | null }).transfer_production_date ?? '').slice(0, 10)
     const bodyNsx = String(production_date ?? '').slice(0, 10)
-    const prodDate = whInvMode === 'QTY_DATE' ? (/^\d{4}-\d{2}-\d{2}$/.test(bodyNsx) ? bodyNsx : phieuNsx) : ''
-    if (whInvMode === 'QTY_DATE' && !/^\d{4}-\d{2}-\d{2}$/.test(prodDate)) {
-      return fail(res, 422, 'NSX_REQUIRED', 'Kho theo dõi tồn theo date — phải nhập NSX (ngày sản xuất) khi lưu thủ công')
+    const prodDate = pool.byDate ? (/^\d{4}-\d{2}-\d{2}$/.test(bodyNsx) ? bodyNsx : phieuNsx) : ''
+    if (pool.byDate && !/^\d{4}-\d{2}-\d{2}$/.test(prodDate)) {
+      return fail(res, 422, 'NSX_REQUIRED', nsxRequiredMessage(pool))
+    }
+    if (pool.byDate && prodDate > vnDate()) {
+      return fail(res, 422, 'NSX_FUTURE', `NSX ${prodDate} là ngày tương lai — kiểm tra lại ngày sản xuất trên bao bì`)
     }
 
     // Mã không-QR: 1 entry shared cho mỗi (kho, vật tư), pallet_code = mã hàng.
-    // (Kho QTY_DATE: 1 entry / (kho, vật tư, NSX) — nhiều dòng active cùng mã, khác production_date.)
+    // (Tồn gộp theo NSX: 1 entry / (kho, vật tư, NSX) — nhiều dòng active cùng mã, khác production_date.)
     // Đóng góp của từng phiếu lưu ở ProductionImport.posm_cartons (detail hiển thị đúng phần của phiếu).
     const sharedPalletCode = ((order as any).material as any)?.material_code
       ?? `POSM-${order.material_id.replace(/-/g, '').slice(0, 12)}`
@@ -1804,13 +1812,13 @@ export async function scanManual(req: Request, res: Response) {
     //       KHÔNG trả 409 (tự merge, người dùng không phải bấm lại).
     let entryId: string | null = null
     for (let attempt = 0; attempt < 15 && !entryId; attempt++) {
-      // QTY_DATE: lọc ĐÚNG NSX ngay từ DB (kho tích lũy 1 dòng/NSX — tránh kéo cả trăm dòng + cap 1000)
+      // Theo NSX: lọc ĐÚNG NSX ngay từ DB (kho tích lũy 1 dòng/NSX — tránh kéo cả trăm dòng + cap 1000)
       let candQ = supabase
         .from('InventoryEntry')
         .select('id, cartons_remaining, cartons_imported, warehouse_id, production_date, location:Location!location_id(warehouse_id)')
         .eq('pallet_code', sharedPalletCode)
         .in('status', ['IN_STOCK', 'PARTIAL', 'LOOSE_PICKING'])
-      if (whInvMode === 'QTY_DATE') candQ = candQ.eq('production_date', `${prodDate}T00:00:00`)
+      if (pool.byDate) candQ = candQ.eq('production_date', `${prodDate}T00:00:00`)
       const { data: candidates } = await candQ
       const existingPallet = ((candidates ?? []) as any[])
         .find(e => (e.warehouse_id ?? e.location?.warehouse_id) === warehouseId) ?? null
@@ -1868,7 +1876,7 @@ export async function scanManual(req: Request, res: Response) {
     const orderPatch: Record<string, unknown> = { posm_entry_id: entryId, posm_cartons: cartonsNum, updated_at: now }
     if (employee_id) orderPatch.imported_by = employee_id
     // Đồng bộ nhãn NSX của phiếu = NSX thực lưu (người nhận sửa NSX / phiếu chưa gắn NSX gõ tay)
-    if (whInvMode === 'QTY_DATE' && prodDate && prodDate !== phieuNsx) orderPatch.transfer_production_date = prodDate
+    if (pool.byDate && prodDate && prodDate !== phieuNsx) orderPatch.transfer_production_date = prodDate
     const { error: markErr } = await supabase
       .from('ProductionImport')
       .update(orderPatch)

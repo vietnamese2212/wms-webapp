@@ -866,6 +866,7 @@ export interface WhTypeConfig {
   auto_fill?:                  boolean | null   // tự ra lệnh fill (15/09) — null = theo kho
   work_mode?:                  string | null
   lower_from_level?:           number | null
+  noqr_date_tracking?:         boolean | null   // hàng không tem theo NSX ở kho QR (26/11) — null = theo kho
 }
 
 export function useWhTypeConfigs(warehouseId: string | null | undefined) {
@@ -4454,7 +4455,7 @@ export function useManualItemStock(gdoId: string | undefined, itemId: string | u
     queryKey: ['manual-item-stock', gdoId, itemId],
     queryFn: async () => {
       const { data } = await apiClient.get(`/wms/outbound/${gdoId}/items/${itemId}/manual-stock`)
-      return data.data as { cartons_imported: number; cartons_remaining: number; cartons_ordered: number; cartons_scanned: number; inventory_mode: string | null; has_pool: boolean; date_pools?: { production_date: string | null; cartons_remaining: number }[] }
+      return data.data as { cartons_imported: number; cartons_remaining: number; cartons_ordered: number; cartons_scanned: number; inventory_mode: string | null; has_pool: boolean; pool_by_date?: boolean; date_pools?: { production_date: string | null; cartons_remaining: number }[] }
     },
     enabled: !!gdoId && !!itemId,
     staleTime: 0,

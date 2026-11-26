@@ -301,6 +301,8 @@ export interface InboundOrder {
   planned_cartons?:     number | null
   posm_entry_id?:       string | null
   transfer_production_date?: string | null
+  // 26/11 — chi tiết phiếu: hàng không tem của phiếu lưu thủ công phải có NSX (tồn gộp theo NSX) — BE kết luận
+  noqr_pool_by_date?: boolean
   created_at:      string
   updated_at:      string
   inventory_entries?: PalletEntry[]

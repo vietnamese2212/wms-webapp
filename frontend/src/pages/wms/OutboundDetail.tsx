@@ -8,6 +8,7 @@ import { formatDate, formatDateTime, formatTimestampTime, normalizeLicensePlate 
 import { isQaHeld } from '@/utils/qaHold'
 import { backTarget } from '@/lib/returnTo'
 import { isQtyLike } from '@/utils/inventoryMode'
+import { isInSiteTrip, type InSiteWh } from '@/utils/inSiteTrip'
 import { qtyLabel, qtyEntryText, qtyUnitLabel, qtyEntryDecimal, qtySplit, hasEntry, type MatUnits } from '@/utils/qtyUnits'
 import { QtyInput } from '@/components/shared/QtyInput'
 import { ArrowLeft, CheckCircle2, AlertTriangle, Truck, Package, ClipboardList, Play, Pause, ChevronRight, ChevronDown, Bookmark, X, RotateCcw, Pencil, Search, PenSquare, Trash2, Printer, Boxes, Info, Scale, DoorOpen, ListChecks, CalendarClock } from 'lucide-react'
@@ -415,19 +416,10 @@ function StartDialog({ open, gdo, onClose, onWaiveGate, onWaiveWeigh }: {
   const selectedGate = (gateRegs as GateReg[]).find(g => g.id === gateRegId)
   const effectivePlate = selectedGate?.license_plate ?? licPlate
 
-  // Chuyển nội bộ parent↔kho phụ (cùng site): biển số tùy chọn — xe nâng/đẩy tay, BE startGDO cũng nới tương ứng.
-  // 28/09: kho đích do BE trả (`dest_warehouse` = khách trỏ kho) — FE không tự so mã kho / `shipto_codes` nữa.
+  // Chuyến trong khuôn viên (cặp kho cha↔kho phụ · kho phụ xuất tiêu hao — 26/11): biển số tùy chọn, miễn cổng / cân / cửa —
+  // xe nâng/đẩy tay, BE startGDO cũng nới tương ứng. Kho đích do BE trả (`dest_warehouse` = khách trỏ kho, 28/09).
   const { data: whsForInternal = [] } = useWarehouses(true)
-  const internalPair = (() => {
-    type W = { id: string; parent_warehouse_id?: string | null }
-    const whs = whsForInternal as W[]
-    const destId = gdo.dest_warehouse?.id
-    if (!gdo.warehouse_id || !destId) return false
-    const dest = whs.find(w => w.id === destId)
-    if (!dest) return false
-    const src = whs.find(w => w.id === gdo.warehouse_id)
-    return dest.parent_warehouse_id === gdo.warehouse_id || (src?.parent_warehouse_id ?? null) === dest.id
-  })()
+  const internalPair = isInSiteTrip(whsForInternal as InSiteWh[], gdo.warehouse_id, gdo.dest_warehouse?.id, gdo.shipto_party)
 
   // RULE 3 — CỬA XUẤT (09/09): kho có cửa xuất trên Sơ đồ kho ⇒ phải chọn cửa xe đang đậu (BE 422 DOCK_REQUIRED /
   // DOCK_FULL). Cặp nội bộ miễn (hàng đi xe nâng trong khuôn viên). Kho chưa vẽ cửa → ô này không hiện.
@@ -542,7 +534,12 @@ function StartDialog({ open, gdo, onClose, onWaiveGate, onWaiveWeigh }: {
           )}
 
           <div className="space-y-1">
-            <Label className="text-xs">Chuyến xe / Biển số {gateWaived ? '' : '*'}</Label>
+            <Label className="text-xs">Chuyến xe / Biển số {gateWaived || internalPair ? '' : '*'}</Label>
+            {internalPair && (
+              <p className="text-[11px] text-violet-700" data-testid="insite-plate-note">
+                {gdo.shipto_party ? 'Chuyển nội bộ kho cha ↔ kho phụ' : 'Xuất tiêu hao tại kho phụ'} — không cần biển số, không qua cổng / cân / cửa xuất.
+              </p>
+            )}
             <ChuyenPicker gates={gatesWithEntry} value={gateRegId}
               onPick={id => { setGateRegId(id); if (id) setLicPlate('') }}
               freePlate={licPlate} onFreeText={p => { setLicPlate(p); setGateRegId('') }}
@@ -961,8 +958,9 @@ function ManualCompleteDialog({ gdoId, itemId, matName, mat, initialCartons, onC
   // Khả dụng CO GIÃN theo chính đơn này = tồn pool + số item này đã lấy (giảm/gỡ luôn được, kể cả pool đang 0).
   // Kho NONE (và mã không theo dõi pool) không có trần tồn → chỉ chặn theo kế hoạch.
   const scanned    = stock?.cartons_scanned ?? 0
-  const hasCeiling = stock != null && (stock.has_pool || isQtyLike(stock.inventory_mode))
-  const isQtyDate  = stock?.inventory_mode === 'QTY_DATE'
+  // Tồn gộp theo NSX (kho QTY_DATE · kho QR bật "Hàng không tem theo NSX" — 26/11): BE trả kết luận `pool_by_date`
+  const isQtyDate  = stock?.pool_by_date ?? stock?.inventory_mode === 'QTY_DATE'
+  const hasCeiling = stock != null && (stock.has_pool || isQtyLike(stock.inventory_mode) || isQtyDate)
   const datePools  = stock?.date_pools ?? []
   // Chọn NSX cụ thể → trần khả dụng theo pool NSX đó; FEFO → tổng mọi NSX
   const poolRemaining = prodDate

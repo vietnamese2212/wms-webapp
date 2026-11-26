@@ -44,6 +44,9 @@ export interface StrategyValue {
   // thứ tự cho 3 vai. Không có ô này trong app thì cả tính năng không bật được — đúng lỗi 10/09.
   work_mode:                  string | null
   lower_from_level:           number | null
+  // HÀNG KHÔNG TEM THEO NSX (26/11): kho QR bật ⇒ lưu thủ công bắt NSX, tồn gộp tách theo NSX, xuất / cấp theo luân
+  // chuyển. Chỉ có nghĩa ở kho quản lý theo tem — form chỉ hiện ô khi kho là QR (prop invMode).
+  noqr_date_tracking:         boolean | null
 }
 
 export const STRATEGY_EMPTY: StrategyValue = {
@@ -53,7 +56,7 @@ export const STRATEGY_EMPTY: StrategyValue = {
   putaway_enforced: null, putaway_enforced_off: null,
   putaway_same_mat_date_pref: null, putaway_fallback: null,
   loose_mode: null, loose_max_cartons: null, auto_fill: null,
-  work_mode: null, lower_from_level: null,
+  work_mode: null, lower_from_level: null, noqr_date_tracking: null,
 }
 
 export const STRATEGY_WAREHOUSE_DEFAULT: StrategyValue = {
@@ -63,7 +66,7 @@ export const STRATEGY_WAREHOUSE_DEFAULT: StrategyValue = {
   putaway_enforced: [], putaway_enforced_off: null,
   putaway_same_mat_date_pref: 'NONE', putaway_fallback: 'BY_CODE',
   loose_mode: 'REMAINDER', loose_max_cartons: null, auto_fill: false,
-  work_mode: 'MANUAL', lower_from_level: 2,
+  work_mode: 'MANUAL', lower_from_level: 2, noqr_date_tracking: false,
 }
 
 export const LOOSE_MODE_OPTS = [
@@ -137,6 +140,8 @@ export interface StrategyProps {
   inherited: StrategyValue
   onPatch: (patch: Partial<StrategyValue>) => void
   idPrefix: string
+  /** Chế độ quản tồn của KHO (QR / QTY / QTY_DATE / NONE) — ô chỉ có nghĩa ở kho QR mới hiện khi biết chế độ */
+  invMode?: string | null
 }
 
 // Mọi helper của hai khu (XUẤT · NHẬP) dựng từ MỘT chỗ — thuần closure, không hook, nên hai component
@@ -314,6 +319,19 @@ export function InboundStrategyFields(props: StrategyProps) {
   const { own, value, inherited, sel, put, withInherit, isType, idPrefix, boolCtl, eff, dateLabel, enfCtl, enforced, onPatch } = buildCtx(props)
   return (
     <>
+      {/* ───────── NHẬP — hàng không tem ở kho QR (26/11) ───────── */}
+      {props.invMode === 'QR' && (
+        <SettingsGroup area="NHẬP" title="Hàng không tem"
+          tip={<>
+            Áp cho mã <b>không theo dõi tem</b> (Lưu thủ công). Hàng có tem không đổi gì — NSX đã nằm trên tem.
+            Kho <b>Tồn số lượng theo date</b> luôn theo NSX, không cần ô này.
+          </>}>
+          <SettingRow label={<>Theo dõi theo NSX{own(value.noqr_date_tracking)}</>}
+            desc={<>Bật = Lưu thủ công <b>bắt nhập NSX</b>, mỗi NSX là một dòng tồn riêng ⇒ tính được HSD, lấy / cấp hàng theo thứ tự luân chuyển (chọn được NSX). Tắt = một dòng tồn mỗi mã, không có NSX.</>}
+            htmlFor={isType ? undefined : `${idPrefix}-noqrdate`}
+            control={boolCtl('noqr_date_tracking', `${idPrefix}-noqrdate`)} />
+        </SettingsGroup>
+      )}
       {/* ───────── NHẬP — thang 3 bước ───────── */}
       <SettingsGroup area="NHẬP" title="Cất hàng (gợi ý vị trí)"
         tip={<>

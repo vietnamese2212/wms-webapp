@@ -252,9 +252,12 @@ export default function InboundDetail() {
   const [showLocHistory,    setShowLocHistory]    = useState(false)
   const [showManualDialog,  setShowManualDialog]  = useState(false)
   const [manualCartons,     setManualCartons]     = useState('')
-  // Kho QTY_DATE: pool tách theo NSX → lưu thủ công bắt buộc nhập NSX (default hôm nay giờ VN)
-  const whQtyDate = (order?.warehouse as { inventory_mode?: string | null } | undefined)?.inventory_mode === 'QTY_DATE'
-  const [manualProdDate,    setManualProdDate]    = useState(() => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' }))
+  // Tồn gộp theo NSX (kho QTY_DATE · kho QR bật "Hàng không tem theo NSX" — 26/11): lưu thủ công BẮT BUỘC nhập NSX.
+  // BE trả kết luận `noqr_pool_by_date` (cùng hàm với cửa ghi). Ô NSX để TRỐNG — người lưu phải chọn đúng ngày trên bao bì
+  // (26/11 user "bắt nhập"; điền sẵn hôm nay thì bấm Lưu là thành NSX sai mà không ai biết).
+  const whQtyDate = order?.noqr_pool_by_date
+    ?? (order?.warehouse as { inventory_mode?: string | null } | undefined)?.inventory_mode === 'QTY_DATE'
+  const [manualProdDate,    setManualProdDate]    = useState('')
   const [manualFeedback,    setManualFeedback]    = useState<{ type: 'success' | 'error'; msg: string } | null>(null)
 
   const [editState, setEditState] = useState<{ entry: PalletEntry; cartons: number; stack: number } | null>(null)
@@ -280,7 +283,7 @@ export default function InboundDetail() {
     if (!manualCartons || isNaN(c) || c < 0) { setManualFeedback({ type: 'error', msg: 'Nhập số thùng hợp lệ' }); return }
     // Phiếu chuyển kho đã gắn NSX (kế thừa tem quét xuất) → BE dùng NSX phiếu, không cần gõ
     const phieuNsx = order?.transfer_production_date ?? null
-    if (whQtyDate && !phieuNsx && !manualProdDate) { setManualFeedback({ type: 'error', msg: 'Kho theo dõi tồn theo date — nhập NSX' }); return }
+    if (whQtyDate && !phieuNsx && !manualProdDate) { setManualFeedback({ type: 'error', msg: 'Chọn NSX (ngày sản xuất) trên bao bì' }); return }
     saveManual(
       { orderId: order!.id, cartons: c, employee_id: user?.id, ...(whQtyDate ? { production_date: phieuNsx ?? manualProdDate } : {}) },
       {
@@ -478,10 +481,12 @@ export default function InboundDetail() {
                   <Input
                     type="date"
                     value={manualProdDate}
+                    max={new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })}
                     onChange={e => setManualProdDate(e.target.value)}
                     className="h-9"
+                    aria-label="NSX (ngày sản xuất)"
                   />
-                  <p className="text-[10px] text-slate-400">Kho theo dõi tồn theo date — mỗi NSX là 1 dòng tồn riêng (xuất trừ FEFO)</p>
+                  <p className="text-[10px] text-slate-400">Kho theo dõi hàng không tem theo NSX — mỗi NSX là một dòng tồn riêng, tính HSD và lấy hàng theo thứ tự luân chuyển</p>
                 </div>
               )
             )}

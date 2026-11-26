@@ -55,6 +55,9 @@ dòng đọc keyset (`archive_fetch`) → CSV.gz `ledger-archive/<bảng>/<YYYY-
 Đo: sổ vết 544 B/dòng trong DB → 54 B trong tệp (nhỏ hơn 10 lần). Gói 23 khối **[archive]** (gieo 05/2014 ở 4 sổ + dòng OD 60 / 5 ngày; ổ khoá
 busy; recent) · gói 61 **[4d3]**.
 
+## 26/11 — Cờ "Hàng không tem theo NSX" (2 tầng)
+`noqr_date_tracking` ở `Warehouse` (NOT NULL default false) + `warehouse_type_configs` (null = theo kho), nằm trong `WH_TYPE_CFG_COLS`, ghép tầng ở `resolveNoQrDateTracking`. Ô ở nhóm NHẬP "Hàng không tem" của `InboundStrategyFields` — chỉ hiện khi kho QR (prop `invMode`). Quyền: như mọi cờ chiến thuật (manage_warehouse / manage_type). Luật áp: inbound.md 26/11.
+
 ## Form Kho 28/09 — ship-to nhận, kho nhận chưa trỏ, điểm giao không giới hạn
 
 Ô "Mã ship-to phụ" (gõ tay) ⇒ **"Ship-to nhận vào kho này"**: `MultiSelectFilter` tìm khách trên server (`useCustomers search`), nhãn mã đã chọn ghim vào options; giá trị ban đầu = `shiptos` (list API `/masterdata/warehouses` trả từ `Customer.warehouse_id`); lưu vẫn gửi `shipto_codes` (danh sách mã) nhưng BE chỉ đồng bộ vào Customer, **không ghi cột `Warehouse.shipto_codes`** nữa (cột chết, DROP đợt sau). Khu XUẤT thêm nhóm **"Kho nhận (chuyển kho)"** → `unlinked_shipto_policy` Không / Nhắc / Chặn hoàn thành (mặc định Không = hành vi cũ; khuyên bật Nhắc ở kho xuất thật). "Điểm giao tối đa một chuyến" cho phép **trống = không giới hạn** (1–50; DB CHECK đổi theo). Tạo kho ⇒ khách đã có cùng mã tự trỏ kho.

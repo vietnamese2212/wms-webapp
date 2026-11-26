@@ -1,5 +1,5 @@
 // FILE SINH TỰ ĐỘNG — `node scripts/gen-db-types.mjs` (từ information_schema STAGING). KHÔNG sửa tay.
-// Sinh lúc 2026-11-25T07:11:58.279Z · 129 bảng/view · 290 hàm · 0 enum
+// Sinh lúc 2026-11-26T04:12:13.591Z · 129 bảng/view · 290 hàm · 0 enum
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[]
 
 export type Database = {
@@ -2521,6 +2521,7 @@ export type Database = {
           mes_dev_target_pct: number | null
           mes_pass_target_pct: number | null
           mes_block_reverse_closed: boolean
+          noqr_date_tracking: boolean
         }
         Insert: {
           id: string
@@ -2583,6 +2584,7 @@ export type Database = {
           mes_dev_target_pct?: number | null
           mes_pass_target_pct?: number | null
           mes_block_reverse_closed?: boolean
+          noqr_date_tracking?: boolean
         }
         Update: {
           id?: string
@@ -2645,6 +2647,7 @@ export type Database = {
           mes_dev_target_pct?: number | null
           mes_pass_target_pct?: number | null
           mes_block_reverse_closed?: boolean
+          noqr_date_tracking?: boolean
         }
         Relationships: []
       }
@@ -6824,6 +6827,7 @@ export type Database = {
           lower_from_level: number | null
           auto_fill: boolean | null
           production_qa_gate: string | null
+          noqr_date_tracking: boolean | null
         }
         Insert: {
           id: string
@@ -6854,6 +6858,7 @@ export type Database = {
           lower_from_level?: number | null
           auto_fill?: boolean | null
           production_qa_gate?: string | null
+          noqr_date_tracking?: boolean | null
         }
         Update: {
           id?: string
@@ -6884,6 +6889,7 @@ export type Database = {
           lower_from_level?: number | null
           auto_fill?: boolean | null
           production_qa_gate?: string | null
+          noqr_date_tracking?: boolean | null
         }
         Relationships: []
       }
@@ -8212,7 +8218,7 @@ export type Database = {
         Returns: boolean
       }
       unaccent: {
-        Args: { arg1: string | null } | { arg1: unknown | null; arg2: string | null }
+        Args: { arg1: unknown | null; arg2: string | null } | { arg1: string | null }
         Returns: string
       }
       unaccent_init: {

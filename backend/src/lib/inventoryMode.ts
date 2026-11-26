@@ -13,6 +13,13 @@ export function isQtyLike(inventoryMode: string | null | undefined): boolean {
   return inventoryMode === 'QTY' || inventoryMode === 'QTY_DATE'
 }
 
+// TỒN GỘP (hàng không tem) TÁCH THEO NSX — kho QTY_DATE luôn; kho QR khi bật "Hàng không tem theo NSX" (26/11, cờ 2 tầng
+// Kho + Loại kho, ghép ở services/noQrPool.ts). Kho QTY / NONE bỏ qua cờ: QTY muốn theo NSX thì đổi chế độ sang QTY_DATE.
+// Mọi cửa nhập / xuất hàng không tem hỏi câu này qua `noQrPoolPolicy` — không so `=== 'QTY_DATE'` rải rác nữa.
+export function poolTracksDate(inventoryMode: string | null | undefined, noqrDateTracking: boolean): boolean {
+  return inventoryMode === 'QTY_DATE' || (inventoryMode === 'QR' && noqrDateTracking)
+}
+
 export function effectiveNoQr(
   materialNoQr: boolean | null | undefined,
   inventoryMode: string | null | undefined,

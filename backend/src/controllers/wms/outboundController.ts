@@ -4,6 +4,7 @@ import * as XLSX from 'xlsx'
 import { supabase, db } from '../../lib/supabase'
 import { ok, fail, recordBackgroundFailure } from '../../utils/response'
 import { effectiveNoQr, markItemsNoQrIfQty, isQtyLike } from '../../lib/inventoryMode'
+import { noQrPoolPolicy } from '../../services/noQrPool'
 import { effCartonsPerPallet } from '../../utils/palletCalc'
 import { sumLoads, type LoadMat } from '../../utils/loadCalc'
 import { loadUtilization } from '../../services/freight'
@@ -1476,9 +1477,14 @@ async function internalOrbitError(sourceWhId: string | null | undefined, shipto:
   return null
 }
 
-// Cặp parent↔con (cùng site) → biển số tùy chọn (chuyển nội bộ bằng xe nâng/đẩy tay).
-async function isInternalPair(sourceWhId: string | null | undefined, shipto: string | null | undefined): Promise<boolean> {
+// CHUYẾN TRONG KHUÔN VIÊN → biển số tuỳ chọn, miễn cổng / cân / cửa xuất (hàng đi xe nâng / đẩy tay, không lên xe tải):
+//   • cặp parent↔kho phụ (cùng site), hai chiều;
+//   • kho phụ XUẤT TIÊU HAO (không ship-to) — 26/11 user: "bản chất kho chế biến đâu có yêu cầu biển số xe". Luật quỹ đạo
+//     (`internalOrbitError`) đã chỉ cho kho phụ xuất về kho cha hoặc tiêu hao, nên mọi chuyến của kho phụ đều ở trong khuôn viên.
+// FE hỏi cùng câu ở `utils/inSiteTrip.ts` (`isInSiteTrip`) — sửa luật thì sửa cả hai.
+async function isInSiteTrip(sourceWhId: string | null | undefined, shipto: string | null | undefined): Promise<boolean> {
   if (!sourceWhId) return false
+  if (!String(shipto ?? '').trim()) return (await parentOfWh(sourceWhId)) != null
   const dest = await orbitWhByShipto(shipto)
   if (!dest) return false
   if (dest.parent_warehouse_id === sourceWhId) return true
@@ -1785,7 +1791,7 @@ export async function quickExportGDO(req: Request, res: Response) {
     const orbitErr = await internalOrbitError(warehouse_id, shipto_party)
     if (orbitErr) return fail(res, orbitErr, 400)
     // Biển số bắt buộc, TRỪ chuyển nội bộ parent↔kho phụ (xe nâng/đẩy tay trong site)
-    const qxInternal = !license_plate?.trim() && (await isInternalPair(warehouse_id, shipto_party))
+    const qxInternal = !license_plate?.trim() && (await isInSiteTrip(warehouse_id, shipto_party))
     if (!license_plate?.trim() && !qxInternal)
       return fail(res, 'Biển số xe là bắt buộc', 400)
 
@@ -2020,7 +2026,7 @@ export async function quickExportExistingGDO(req: Request, res: Response) {
     const qxeGateWaived  = !!(gdo as { gate_waived_at?: string | null }).gate_waived_at
     const qxeWeighWaived = !!(gdo as { weigh_waived_at?: string | null }).weigh_waived_at
     const qxeInternal = !license_plate?.trim() &&
-      (await isInternalPair(gdo.warehouse_id as string, (gdo as { shipto_party?: string | null }).shipto_party))
+      (await isInSiteTrip(gdo.warehouse_id as string, (gdo as { shipto_party?: string | null }).shipto_party))
     if (!license_plate?.trim() && !qxeGateWaived && !qxeInternal)
       return fail(res, 'Biển số xe là bắt buộc', 400)
 
@@ -3174,7 +3180,7 @@ export async function startGDO(req: Request, res: Response) {
     const gateWaived  = !!(cur as { gate_waived_at?: string | null } | null)?.gate_waived_at
     const weighWaived = !!(cur as { weigh_waived_at?: string | null } | null)?.weigh_waived_at
     const isInternal = !license_plate?.trim() &&
-      (await isInternalPair((cur as { warehouse_id?: string | null } | null)?.warehouse_id, (cur as { shipto_party?: string | null } | null)?.shipto_party))
+      (await isInSiteTrip((cur as { warehouse_id?: string | null } | null)?.warehouse_id, (cur as { shipto_party?: string | null } | null)?.shipto_party))
     // Biển số bắt buộc, TRỪ nội bộ parent↔kho phụ và chuyến đã duyệt bỏ qua CỔNG (giao lẻ NV nhận không xe)
     if (!license_plate?.trim() && !gateWaived && !isInternal)
       return fail(res, 'Biển số xe là bắt buộc', 400)
@@ -7500,19 +7506,22 @@ export async function getManualItemStock(req: Request, res: Response) {
     const { gdoId, itemId } = req.params
     const [{ data: gdo }, { data: item }] = await Promise.all([
       supabase.from('GroupDeliveryOrder').select('warehouse_id, warehouse:Warehouse(inventory_mode)').eq('id', gdoId).single(),
-      itemOfGdo(itemId, gdoId, 'material_code_raw, cartons_ordered, cartons_scanned, material:Material!material_id(material_code)'),
+      itemOfGdo(itemId, gdoId, 'material_code_raw, cartons_ordered, cartons_scanned, material:Material!material_id(material_code, category)'),
     ])
     if (!inScope(req, gdo?.warehouse_id)) return fail(res, 'Chuyến xe không thuộc kho trong phạm vi của bạn', 403)
     if (!gdo || !item) return fail(res, 'Không tìm thấy', 404)
-    const materialCode = (item.material as any)?.material_code ?? item.material_code_raw
+    const itemMat = item.material as unknown as { material_code?: string | null; category?: string | null } | null
+    const materialCode = itemMat?.material_code ?? item.material_code_raw
     // GỘP qua mọi dòng cùng pallet_code (mã pool có thể có nhiều dòng sau khi xuất hết rồi nhập lại) — KHÔNG maybeSingle.
     // 25/11: số hiện = khả dụng THẬT (trừ hàng QA giữ + phần đang giữ cho nhặt lẻ) — cùng luật với lúc ghi (applyPoolAtomic)
     const pool = (await poolAvailable(gdo.warehouse_id as string, [materialCode])).get(materialCode)
     const sumRemaining = pool?.available ?? 0
     const sumImported  = pool?.imported ?? 0
-    // Kho QTY_DATE: liệt kê pool theo NSX (cũ nhất trước) để FE cho chọn dòng date khi cần
-    const invMode = (gdo as any)?.warehouse?.inventory_mode ?? null
-    const date_pools = invMode === 'QTY_DATE'
+    // Tồn gộp THEO NSX (kho QTY_DATE · kho QR bật "Hàng không tem theo NSX" — 26/11, cùng hàm với cửa ghi):
+    // liệt kê pool theo NSX (cũ nhất trước) để FE cho chọn dòng date khi cần
+    const invMode = (gdo as { warehouse?: { inventory_mode?: string | null } | null }).warehouse?.inventory_mode ?? null
+    const poolPolicy = await noQrPoolPolicy(gdo.warehouse_id as string, itemMat?.category ?? null)
+    const date_pools = poolPolicy.byDate
       ? [...(pool?.pools ?? new Map<string, number>()).entries()].filter(([, q]) => q > 0)
           .map(([d, q]) => ({ production_date: d || null, cartons_remaining: q }))
           .sort((a, b) => ((a.production_date ?? '9999-99-99') < (b.production_date ?? '9999-99-99') ? -1 : 1))
@@ -7523,6 +7532,7 @@ export async function getManualItemStock(req: Request, res: Response) {
       cartons_ordered:   item.cartons_ordered,
       cartons_scanned:   item.cartons_scanned ?? 0,
       inventory_mode:    invMode,                                           // NONE → không có trần tồn (FE)
+      pool_by_date:      poolPolicy.byDate,                                 // hộp Lưu số lượng hiện ô chọn NSX + luôn có trần tồn
       ...(date_pools ? { date_pools } : {}),
       has_pool:          (pool?.rows ?? 0) > 0,                                   // có dòng tồn = được theo dõi
     })
@@ -7627,7 +7637,7 @@ export async function manualCompleteItem(req: Request, res: Response) {
 
     const [{ data: gdo }, { data: item }] = await Promise.all([
       supabase.from('GroupDeliveryOrder').select(`status, started_at, warehouse_id, delivery_date, ${INERT_COLS}, warehouse:Warehouse(inventory_mode, work_mode)`).eq('id', gdoId).single(),
-      itemOfGdo(itemId, gdoId, 'id, do_id, material_id, material_type, material_code_raw, cartons_ordered, cartons_scanned, date_rule, date_required, material:Material!material_id(material_code, no_qr_tracking, base_unit, entry_unit, units_per_carton)'),
+      itemOfGdo(itemId, gdoId, 'id, do_id, material_id, material_type, material_code_raw, cartons_ordered, cartons_scanned, date_rule, date_required, material:Material!material_id(material_code, category, no_qr_tracking, base_unit, entry_unit, units_per_carton)'),
     ])
     if (!inScope(req, gdo?.warehouse_id)) return fail(res, 'Chuyến xe không thuộc kho trong phạm vi của bạn', 403)
     if (gdo?.status === 'PAUSED') return fail(res, 'Chuyến xe đang tạm dừng — không thể cập nhật', 400)
@@ -7689,10 +7699,13 @@ export async function manualCompleteItem(req: Request, res: Response) {
     if (isSpecial && item.material_id && gdo?.warehouse_id && specialMatCode) {
       // MỘT RPC nguyên tử: pool + item.cartons_scanned + vết quét cùng transaction (bug #6 10/08 —
       // trước đây 3 request rời, Vercel kill giữa chừng → lượt hoàn sau hoàn ĐÔI tồn khống)
-      const chosenDate = gdoMode === 'QTY_DATE' && production_date ? String(production_date).slice(0, 10) : null
+      // Tồn gộp THEO NSX (kho QTY_DATE · kho QR bật "Hàng không tem theo NSX" — 26/11): chọn được NSX, RPC chạy luật
+      // theo NSX (không có dòng tồn = THIẾU, không còn "mã không theo dõi"). Cùng hàm với hộp Lưu số lượng + cửa nhập tay.
+      const mcPool = await noQrPoolPolicy(gdo.warehouse_id as string, (item.material as { category?: string | null } | null)?.category ?? item.material_type ?? null)
+      const chosenDate = mcPool.byDate && production_date ? String(production_date).slice(0, 10) : null
       const r = await applyPoolAtomic({
         itemId, materialCode: specialMatCode, warehouseId: gdo.warehouse_id as string,
-        mode: gdoMode, newQty: ctn, itemStatus: newItemStatus, chosenDate, enforceRotation: mcAdding,
+        mode: mcPool.poolMode, newQty: ctn, itemStatus: newItemStatus, chosenDate, enforceRotation: mcAdding,
       })
       if (r.outcome === 'ROTATION' && r.rotation) {
         const rt = r.rotation

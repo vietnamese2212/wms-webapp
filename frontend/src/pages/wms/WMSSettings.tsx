@@ -695,6 +695,7 @@ const STRAT_FIELDS = [
   // Chỉ dẫn công việc (Directed Work 1c, 10/09) — 2 tầng như mọi cờ trên. Thiếu ở đây thì cả tính
   // năng "Việc cần làm" không có đường nào bật từ trong app.
   'work_mode', 'lower_from_level',
+  'noqr_date_tracking',   // hàng không tem theo NSX ở kho QR (26/11) — 2 tầng Kho + Loại kho
 ] as const
 
 const stratOf = (r: Partial<Record<typeof STRAT_FIELDS[number], unknown>>): StrategyValue =>
@@ -730,7 +731,7 @@ function CopyTypesField({ copyFrom, setCopyFrom, whList, selfId }: {
 }
 
 
-interface WhRow { id: string; code: string; name: string; address: string | null; is_active: boolean; warehouse_type: string; inventory_mode: string; shipto_codes?: string[] | null; shiptos?: string[]; unlinked_shipto_policy?: string | null; nmsx_code?: string | null; parent_warehouse_id?: string | null; carton_scan_override?: boolean | null; carton_scan_categories?: string[] | null; carton_scan_require_full?: boolean | null; sap_plant?: string | null; sap_storage_locations?: string[] | null; require_weigh_on_start?: boolean | null; require_gate_on_start?: boolean | null; scan_code_types?: string | null; rotation_principle?: string | null; rotation_required?: boolean | null; putaway_priority?: string | null; putaway_date_mix?: string | null; putaway_block_pick_face?: boolean | null; putaway_block_qa_hold?: boolean | null; putaway_block_full?: boolean | null; putaway_single_ncc?: boolean | null; putaway_enforced?: string[] | null; putaway_same_mat_date_pref?: string | null; putaway_fallback?: string | null; loose_mode?: string | null; loose_max_cartons?: number | null; auto_fill?: boolean | null; production_qa_gate?: string | null; work_mode?: string | null; lower_from_level?: number | null; separate_lowering_forklift?: boolean | null; cross_trip_pick_radius?: number | null; date_rule_policy?: string | null; dispatch_allow_mix_channels?: boolean | null; dispatch_allow_mix_categories?: boolean | null; dispatch_underload_pct?: number | string | null; dispatch_max_vehicles_per_trip?: number; geo_lat?: number | null; geo_lng?: number | null; geo_source?: 'MANUAL' | 'GPS' | 'GOONG' | 'OSM' | null; geo_accuracy_m?: number | null; geo_at?: string | null; geo_by?: string | null; created_at?: string; updated_at?: string; created_by?: string | null; updated_by?: string | null }
+interface WhRow { id: string; code: string; name: string; address: string | null; is_active: boolean; warehouse_type: string; inventory_mode: string; shipto_codes?: string[] | null; shiptos?: string[]; unlinked_shipto_policy?: string | null; nmsx_code?: string | null; parent_warehouse_id?: string | null; carton_scan_override?: boolean | null; carton_scan_categories?: string[] | null; carton_scan_require_full?: boolean | null; sap_plant?: string | null; sap_storage_locations?: string[] | null; require_weigh_on_start?: boolean | null; require_gate_on_start?: boolean | null; scan_code_types?: string | null; rotation_principle?: string | null; rotation_required?: boolean | null; putaway_priority?: string | null; putaway_date_mix?: string | null; putaway_block_pick_face?: boolean | null; putaway_block_qa_hold?: boolean | null; putaway_block_full?: boolean | null; putaway_single_ncc?: boolean | null; putaway_enforced?: string[] | null; putaway_same_mat_date_pref?: string | null; putaway_fallback?: string | null; loose_mode?: string | null; loose_max_cartons?: number | null; auto_fill?: boolean | null; noqr_date_tracking?: boolean | null; production_qa_gate?: string | null; work_mode?: string | null; lower_from_level?: number | null; separate_lowering_forklift?: boolean | null; cross_trip_pick_radius?: number | null; date_rule_policy?: string | null; dispatch_allow_mix_channels?: boolean | null; dispatch_allow_mix_categories?: boolean | null; dispatch_underload_pct?: number | string | null; dispatch_max_vehicles_per_trip?: number; geo_lat?: number | null; geo_lng?: number | null; geo_source?: 'MANUAL' | 'GPS' | 'GOONG' | 'OSM' | null; geo_accuracy_m?: number | null; geo_at?: string | null; geo_by?: string | null; created_at?: string; updated_at?: string; created_by?: string | null; updated_by?: string | null }
 
 // Bắt buộc quét đủ tem thùng — chỉ có nghĩa khi bật "Quét tới THÙNG khi xuất" (user chốt 15/07)
 const CARTON_REQUIRE_OPTS = [
@@ -834,6 +835,7 @@ function WarehouseDialog({ wh, open, onClose, onGotoTypes }: {
     loose_mode:                 wh?.loose_mode ?? 'REMAINDER',
     loose_max_cartons:          wh?.loose_max_cartons ?? null,
     auto_fill:                  wh?.auto_fill === true,
+    noqr_date_tracking:         wh?.noqr_date_tracking === true,
     work_mode:                  wh?.work_mode ?? 'MANUAL',
     lower_from_level:           wh?.lower_from_level ?? 2,
   })
@@ -897,6 +899,7 @@ function WarehouseDialog({ wh, open, onClose, onGotoTypes }: {
       rotation_principle: strat.rotation_principle ?? 'FEFO', rotation_required: strat.rotation_required === true,
       loose_mode: strat.loose_mode ?? 'REMAINDER', loose_max_cartons: looseMax,
       auto_fill: strat.auto_fill === true,   // tự ra lệnh fill hàng nhặt lẻ (15/09)
+      noqr_date_tracking: strat.noqr_date_tracking === true,   // hàng không tem theo NSX ở kho QR (26/11)
       // Chỉ dẫn công việc (Directed Work 1c) — BE gác điều kiện bật Hướng dẫn (kho QR + đã vẽ Sơ đồ kho)
       work_mode: strat.work_mode ?? 'MANUAL', lower_from_level: lowerLvl ?? 2,
     }
@@ -1200,7 +1203,7 @@ function WarehouseDialog({ wh, open, onClose, onGotoTypes }: {
           </div>
           {/* KHU VỰC NHẬP — sau khi hết mọi nhóm XUẤT */}
           <div className="grid gap-3 xl:grid-cols-2 items-start [&>*]:min-w-0">
-            <InboundStrategyFields mode="warehouse" idPrefix="wh" value={strat} inherited={strat} onPatch={patchStrat} />
+            <InboundStrategyFields mode="warehouse" idPrefix="wh" value={strat} inherited={strat} onPatch={patchStrat} invMode={invMode} />
           </div>
           {isEdit ? (
             <button type="button" onClick={() => onGotoTypes?.(wh.id)}
@@ -1369,9 +1372,10 @@ const RENAMED_LABELS: Record<string, string> = {
 //   • Cột TRÁI  — dùng chung mọi kho: tên · màu · bắt buộc HSD · bắt buộc Pallet/EA
 //     (2 cờ sau ràng buộc HỒ SƠ MÃ HÀNG, mà mã hàng dùng chung toàn hệ thống nên không tách được)
 //   • Cột PHẢI  — riêng kho đang chọn: 3 cờ vận hành + chiến thuật xuất/nhập, để trống = kế thừa
-function TypeDialog({ type, open, onClose, whName, whStrat, cfgRow, canManageWh, savingCfg, onSaveCfg }: {
+function TypeDialog({ type, open, onClose, whName, whInvMode, whStrat, cfgRow, canManageWh, savingCfg, onSaveCfg }: {
   type: { id: string; value: string; meta?: WhTypeMeta | null } | null; open: boolean; onClose: () => void
   whName: string
+  whInvMode: string | null                  // chế độ quản tồn của kho — ô "Hàng không tem theo NSX" chỉ hiện ở kho QR
   whStrat: StrategyValue                    // mặc định của kho — in "— Theo kho (FEFO) —"
   cfgRow: WhTypeConfig | null               // cấu hình riêng của (kho, loại) đang có
   canManageWh: boolean
@@ -1580,7 +1584,7 @@ function TypeDialog({ type, open, onClose, whName, whStrat, cfgRow, canManageWh,
                     onChange={e => setBatchOv(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ''))} />
                 </div>
               </SettingsGroup>
-                <InboundStrategyFields mode="type" idPrefix="wt-strat" value={strat} inherited={whStrat}
+                <InboundStrategyFields mode="type" idPrefix="wt-strat" value={strat} inherited={whStrat} invMode={whInvMode}
                   onPatch={v => setStrat(s => ({ ...s, ...v }))} />
               </div>
             </>
@@ -2334,6 +2338,7 @@ export default function WMSSettings() {
     loose_mode:                 stratWh?.loose_mode ?? 'REMAINDER',
     loose_max_cartons:          stratWh?.loose_max_cartons ?? null,
     auto_fill:                  stratWh?.auto_fill === true,
+    noqr_date_tracking:         stratWh?.noqr_date_tracking === true,
   }
   // Lưu setting RIÊNG của (kho, loại) — gọi từ dialog sau khi phần danh mục chung đã lưu.
   // renamedFrom: vừa đổi tên loại ⇒ cascade đã đổi type_code, phải dựng payload theo tên MỚI.
@@ -2835,7 +2840,7 @@ export default function WMSSettings() {
       )}
       {showTypeDlg && stratWh && (
         <TypeDialog type={editingType} open={showTypeDlg} onClose={() => setShowTypeDlg(false)}
-          whName={stratWh.name} whStrat={stratWhValue}
+          whName={stratWh.name} whInvMode={stratWh.inventory_mode ?? null} whStrat={stratWhValue}
           cfgRow={editingType ? (cfgRowMap.get(editingType.value) ?? null) : null}
           canManageWh={canManageWarehouse} savingCfg={savingWhTypeCfgs}
           onSaveCfg={saveTypeStrategy} />

@@ -37,6 +37,7 @@ import { useSavedViewsStore } from '@/stores/savedViewsStore'
 import { useActiveVehiclesStore } from '@/stores/activeVehiclesStore'
 import { formatTimestampTime, formatTimestampDate } from '@/utils/formatters'
 import { isQtyLike } from '@/utils/inventoryMode'
+import { isInSiteTrip } from '@/utils/inSiteTrip'
 import { rowText, type RowStatusKey } from '@/lib/rowStatus'
 import { useColumnResize } from '@/components/shared/useColumnResize'
 import { qtyLabel, qtySplit, qtyFromEntryBase, hasEntry, unitLabel, unitCodeOf, QTY_CONVERTED_LABEL, QTY_CONVERTED_TIP, type MatUnits } from '@/utils/qtyUnits'
@@ -107,15 +108,8 @@ function fTime(ts: string | null | undefined): string {
 // useWarehouses() trả any[] (dùng nhiều nơi) → cast cục bộ sang type tối thiểu thay cho `as any`
 type WarehouseLite = { id: string; name: string; code?: string; is_active?: boolean; warehouse_type?: string | null; inventory_mode?: string | null; parent_warehouse_id?: string | null }
 
-// Cặp nội bộ parent↔kho phụ (cùng site): biển số tùy chọn khi Xuất luôn (BE cũng nới tương ứng).
+// Chuyến trong khuôn viên (cặp kho cha↔kho phụ · kho phụ xuất tiêu hao): `utils/inSiteTrip.ts` — cùng luật với BE.
 // 28/09: kho đích của ship-to = KHÁCH TRỎ KHO (tra qua `useCustomerByShipto`) — FE không tự so mã kho / `shipto_codes` nữa.
-function isInternalPairFE(whs: WarehouseLite[], sourceWhId: string, destWhId: string | null | undefined): boolean {
-  if (!sourceWhId || !destWhId) return false
-  const dest = whs.find(w => w.id === destWhId)
-  if (!dest) return false
-  const src = whs.find(w => w.id === sourceWhId)
-  return dest.parent_warehouse_id === sourceWhId || (src?.parent_warehouse_id ?? null) === dest.id
-}
 
 const OUTBOUND_COLS: { id: string; label: string; w: number; align?: 'right' }[] = [
   { id: 'pin',       label: '',              w: 34 },
@@ -1571,9 +1565,9 @@ function GDOFormBody({
     return inWh.size ? [...active].sort((a, b) => Number(inWh.has(b.name)) - Number(inWh.has(a.name))) : active
   }, [allVehicleTypes, vtByWarehouse])
   const isNPP = (warehouses as WarehouseLite[]).find(w => w.id === warehouseId)?.warehouse_type === 'NPP'
-  // Chuyển nội bộ parent↔kho phụ (cùng site): xe nâng/đẩy tay — không cần Loại xe/ĐVVT
+  // Chuyến trong khuôn viên (cặp kho cha↔kho phụ · kho phụ xuất tiêu hao): xe nâng/đẩy tay — không cần Loại xe/ĐVVT
   const { data: shiptoCust } = useCustomerByShipto(shiptoPartyId)
-  const internalPair = isInternalPairFE(warehouses as WarehouseLite[], warehouseId, shiptoCust?.warehouse_id)
+  const internalPair = isInSiteTrip(warehouses as WarehouseLite[], warehouseId, shiptoCust?.warehouse_id, shiptoPartyId)
   const noVehicle = isNPP || internalPair
   // Đa-NPP mới là tiêu chí "đơn gộp" (chuẩn 04/07) — DO chỉ là tham khảo, không có vai trò
   const nppOptions = useMemo(() => [...new Set((gdo?.delivery_orders ?? []).map(d => (d.distributor_name ?? '').trim()).filter(Boolean))], [gdo])
@@ -1811,6 +1805,12 @@ function GDOFormBody({
                   return !isNPP || w.warehouse_type === 'CENTRAL'
                 })}
               />
+            )}
+            {!shiptoPartyId && internalPair && (
+              <div className="flex items-center gap-1.5 rounded bg-violet-50 border border-violet-200 px-2 py-1 text-[10px] text-violet-800" data-testid="insite-consume-note">
+                <AlertTriangle className="h-3 w-3 shrink-0" />
+                <span>Xuất <b>TIÊU HAO</b> tại kho phụ (không ship-to) — không cần ĐVVT / Loại xe / biển số</span>
+              </div>
             )}
             {shiptoPartyId && (internalPair ? (
               <div className="flex items-center gap-1.5 rounded bg-violet-50 border border-violet-200 px-2 py-1 text-[10px] text-violet-800">
@@ -2111,9 +2111,9 @@ function GDOModal({ defaultWarehouseId, onClose }: { defaultWarehouseId: string;
   const isQtyOrNone = isQtyLike(quickWhMode) || quickWhMode === 'NONE'
   const showQuick = canQuick && isQtyOrNone            // kho QTY/NONE → hiện ô Biển số + (khi đủ) nút xuất luôn
   const quickFilled = items.filter(i => i.material_code.trim())
-  // Chuyển nội bộ parent↔kho phụ: biển số tùy chọn (xe nâng/đẩy tay trong site)
+  // Chuyến trong khuôn viên (cặp kho cha↔kho phụ · kho phụ xuất tiêu hao): biển số tùy chọn (xe nâng/đẩy tay trong site)
   const { data: shiptoCustCreate } = useCustomerByShipto(shiptoPartyId)
-  const internalPairCreate = isInternalPairFE(warehousesForCreate as WarehouseLite[], warehouseId, shiptoCustCreate?.warehouse_id)
+  const internalPairCreate = isInSiteTrip(warehousesForCreate as WarehouseLite[], warehouseId, shiptoCustCreate?.warehouse_id, shiptoPartyId)
   // Nút xuất luôn hiện khi: kho QTY/NONE + có mã + đủ ĐVVT + đủ Biển số (thiếu → chỉ nút Lưu; nội bộ không cần cả hai)
   const quickReady = showQuick && quickFilled.length > 0 && (dvvt.trim() !== '' || internalPairCreate) && (quickPlate.trim() !== '' || internalPairCreate)
 
@@ -2251,9 +2251,9 @@ export function EditGDOModal({ gdoId, defaultWarehouseId, onClose }: { gdoId: st
   const editWhMode: string | null = (warehousesForEdit as WarehouseLite[]).find(w => w.id === warehouseId)?.inventory_mode ?? null
   const isQtyOrNoneEdit = isQtyLike(editWhMode) || editWhMode === 'NONE'
   const showQuickEdit = canQuickEdit && isQtyOrNoneEdit && (gdo?.status === 'PENDING' || gdo?.status === 'PAUSED')
-  // Chuyển nội bộ parent↔kho phụ: biển số tùy chọn (như form Tạo)
+  // Chuyến trong khuôn viên: biển số tùy chọn (như form Tạo)
   const { data: shiptoCustEdit } = useCustomerByShipto(shiptoPartyId)
-  const internalPairEdit = isInternalPairFE(warehousesForEdit as WarehouseLite[], warehouseId, shiptoCustEdit?.warehouse_id)
+  const internalPairEdit = isInSiteTrip(warehousesForEdit as WarehouseLite[], warehouseId, shiptoCustEdit?.warehouse_id, shiptoPartyId)
   const quickReadyEdit = showQuickEdit && items.some(i => i.material_code.trim()) && (dvvt.trim() !== '' || internalPairEdit) && (quickPlate.trim() !== '' || internalPairEdit)
 
   // Biển số gợi ý = xe đã đăng ký của ĐVVT đang chọn (giống form Tạo)

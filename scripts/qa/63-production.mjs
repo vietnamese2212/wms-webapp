@@ -1631,12 +1631,14 @@ try {
     const rcp = gB ? await api(`/wms/inbound-receipts/${gB}`) : { s: 0 }
     const srch = await api(`/wms/inbound-orders?page=1&limit=50&warehouse_id=${WC}&search=QA63-CT-01`)
     const srchItems = srch.j?.data?.items ?? []
+    const sum1 = await api(`/wms/inbound-orders/summary?warehouse_id=${WC}&search=QA63-CT-01`)   // dải tổng: phiếu chung đếm là MỘT phiếu (C2)
     const codeRe = /^QA63CB_PN_\d{6}_\d{3}$/
-    check('24a. Phiếu chung: mỗi nhóm có ĐẦU PHIẾU (số <KHO>_PN_<ddmmyy>_<seq>, cả nhóm tạo tay lẫn upload) · Số chứng từ lưu ở đầu phiếu · trang phiếu chung trả đầu phiếu + 2 dòng mã + bảng pallet · tìm theo Số chứng từ ra đúng các dòng của phiếu, mỗi dòng mang đầu phiếu',
+    check('24a. Phiếu chung: mỗi nhóm có ĐẦU PHIẾU (số <KHO>_PN_<ddmmyy>_<seq>, cả nhóm tạo tay lẫn upload) · Số chứng từ lưu ở đầu phiếu · trang phiếu chung trả đầu phiếu + 2 dòng mã + bảng pallet · tìm theo Số chứng từ ra đúng các dòng của phiếu, mỗi dòng mang đầu phiếu · dải tổng đếm phiếu chung là 1 phiếu',
       codeRe.test(hA?.receipt_code ?? '') && codeRe.test(hU?.receipt_code ?? '') && g24.s === 200 && codeRe.test(g24.j?.data?.receipt_code ?? '')
         && rcp.s === 200 && rcp.j?.data?.receipt?.doc_no === 'QA63-CT-01' && (rcp.j?.data?.lines ?? []).length === 2 && Array.isArray(rcp.j?.data?.entries)
-        && srch.s === 200 && srchItems.length === 2 && srchItems.every(o => o.receipt_group === gB && o.receipt?.doc_no === 'QA63-CT-01'),
-      `số=${hA?.receipt_code}/${hU?.receipt_code}/${g24.j?.data?.receipt_code} tạo=${g24.s} ${g24.j?.error?.message ?? ''} trang=${rcp.s} dòng=${(rcp.j?.data?.lines ?? []).length} tìm=${srch.s}/${srchItems.length}`)
+        && srch.s === 200 && srchItems.length === 2 && srchItems.every(o => o.receipt_group === gB && o.receipt?.doc_no === 'QA63-CT-01')
+        && sum1.s === 200 && num(sum1.j?.data?.total_orders) === 1,
+      `số=${hA?.receipt_code}/${hU?.receipt_code}/${g24.j?.data?.receipt_code} tạo=${g24.s} ${g24.j?.error?.message ?? ''} trang=${rcp.s} dòng=${(rcp.j?.data?.lines ?? []).length} tìm=${srch.s}/${srchItems.length} dải tổng phiếu=${sum1.s}/${sum1.j?.data?.total_orders}`)
 
     // 24b nhóm NCC là phiếu chung: thiếu NCC ⇒ 422 · có NCC, không vị trí (chọn lúc quét) ⇒ 200, dòng nguồn NCC · lượt xe không có ⇒ 404
     const nccNo = await api('/wms/inbound-orders/group', 'POST', { ...base, source_type: 'NCC', lines: [{ material_id: M_G1, planned_cartons: 5 }] })

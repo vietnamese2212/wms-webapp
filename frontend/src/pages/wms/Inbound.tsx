@@ -2020,7 +2020,7 @@ export default function Inbound() {
 
       {!isLoading && (
         <ListFooter
-          page={page} pageSize={pageSize} total={total} unit="phiếu"
+          page={page} pageSize={pageSize} total={total} unit="dòng"   // phân trang theo DÒNG mã — phiếu chung nhiều dòng (26/11); ô Phiếu nhập ở dải tổng đếm phiếu
           onPageSize={n => setInbound({ pageSize: n, page: 1 })}
           right={`${totalPallets} pallet · ${totalCartons.toLocaleString('vi-VN', { maximumFractionDigits: 1 })} thùng`}
         />

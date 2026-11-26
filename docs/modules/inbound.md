@@ -39,6 +39,7 @@ User: "nhập nhiều mã … cải tiến thành 1 Phiếu nhập chung, trong 
 - Thao tác cả phiếu (FE) một bản: `components/wms/ReceiptGroupActions.tsx` (trang phiếu chung + trang dòng mã).
 - Nhóm NCC cũ (trước 26/11, chỉ nối theo lượt xe) giữ cách cũ. Khoá nhóm danh sách: phiếu chung trước lệnh TMS / lượt xe (RPC `inbound_orders_page`, migration 20261126e; FE `inboundGroupKey`).
 - Giới hạn biết trước: luật Chặn kiểm trước khi ghi — hai người quét cùng một mã cùng lúc có thể vượt thêm một pallet (một dòng mã thường một người quét).
+- Dải tổng danh sách: ô Phiếu nhập / SX / NCC / Hoàn thành đếm phiếu chung là MỘT phiếu (`COALESCE(receipt_group, id)`, migration 20261126f; Hoàn thành = mọi mã xong); chân bảng phân trang theo DÒNG mã nên ghi "dòng".
 - Gói 63 [24a–d] · test `backend/tests/unit/inboundOverPlan.test.ts`.
 
 ## 26/11 — NHẬP NHIỀU MÃ (tab thứ 3 của Tạo phiếu nhập — mọi kho)

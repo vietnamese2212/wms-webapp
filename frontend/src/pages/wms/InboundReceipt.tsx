@@ -35,7 +35,7 @@ const LINE_COLS: RtColDef[] = [
   { id: 'code', label: 'Mã hàng', w: 80 }, { id: 'name', label: 'Tên hàng', w: 130 }, { id: 'diff', label: 'Chênh', w: 130, align: 'right' },
   { id: 'got', label: 'Đã nhận', w: 110, align: 'right' }, { id: 'plan', label: 'Kế hoạch', w: 110, align: 'right' },
   { id: 'pl', label: 'Pallet', w: 60, align: 'right' }, { id: 'type', label: 'Loại kho', w: 70 },
-  { id: 'loc', label: 'Vị trí', w: 110 }, { id: 'st', label: 'Trạng thái', w: 90 }, { id: 'act', label: '', w: 84, stickyRight: true },
+  { id: 'loc', label: 'Vị trí', w: 110 }, { id: 'st', label: 'Trạng thái', w: 90 }, { id: 'act', label: '', w: 84 },   // KHÔNG ghim phải: cột trống phần lớn dòng mà nền trắng che cột Chênh trên điện thoại
 ]
 const PALLET_COLS: RtColDef[] = [
   { id: 'tem', label: 'Tem pallet', w: 240 }, { id: 'code', label: 'Mã hàng', w: 110 }, { id: 'qty', label: 'Số lượng', w: 120, align: 'right' },
@@ -226,7 +226,7 @@ export default function InboundReceipt() {
                     <TableCell className="px-2 py-1.5 text-[10px] whitespace-nowrap">{l.warehouse_type ?? '—'}</TableCell>
                     <TableCell className="px-2 py-1.5 text-[10px] font-mono whitespace-nowrap">{l.no_qr ? <span className="text-slate-300">—</span> : (l.location?.location_code ?? <span className="text-amber-600 font-sans">chọn khi quét</span>)}</TableCell>
                     <TableCell className="px-2 py-1.5 whitespace-nowrap"><Badge variant={st.variant} className="px-1.5 py-0 text-[9px] font-medium">{st.label}</Badge></TableCell>
-                    <TableCell className="px-2 py-1.5 whitespace-nowrap text-right sticky right-0 bg-white">
+                    <TableCell className="px-2 py-1.5 whitespace-nowrap text-right">
                       {needManual && (
                         <button type="button" onClick={e => { e.stopPropagation(); navigate(`/wms/inbound/${l.id}?scan=1`) }}
                           className="inline-flex items-center gap-1 rounded-md bg-blue-600 px-2 h-6 text-[10px] font-semibold text-white hover:bg-blue-700"

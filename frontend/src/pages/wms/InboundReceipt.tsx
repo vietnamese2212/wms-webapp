@@ -31,7 +31,7 @@ import { useWedgeScanner } from '@/hooks/useWedgeScanner'
 // Cột hai bảng (kéo giãn được, lưu theo khoá) — bảng nghiệp vụ dùng ResizableTable như mọi trang (luật C40)
 const LINE_COLS: RtColDef[] = [
   // Chênh (thiếu / thừa) ngay sau Tên hàng: điện thoại 390 px thấy luôn mà không cần kéo ngang
-  { id: 'code', label: 'Mã hàng', w: 90 }, { id: 'name', label: 'Tên hàng', w: 170 }, { id: 'diff', label: 'Chênh', w: 120, align: 'right' },
+  { id: 'code', label: 'Mã hàng', w: 80 }, { id: 'name', label: 'Tên hàng', w: 130 }, { id: 'diff', label: 'Chênh', w: 130, align: 'right' },
   { id: 'got', label: 'Đã nhận', w: 110, align: 'right' }, { id: 'plan', label: 'Kế hoạch', w: 110, align: 'right' },
   { id: 'pl', label: 'Pallet', w: 60, align: 'right' }, { id: 'type', label: 'Loại kho', w: 70 },
   { id: 'loc', label: 'Vị trí', w: 110 }, { id: 'st', label: 'Trạng thái', w: 90 }, { id: 'act', label: '', w: 84, stickyRight: true },
@@ -206,7 +206,7 @@ export default function InboundReceipt() {
           </h2>
         </div>
         <div className="overflow-x-auto bg-white" data-testid="receipt-lines">
-          <ResizableTable storageKey="inbound_receipt_lines_v2" cols={LINE_COLS}>
+          <ResizableTable storageKey="inbound_receipt_lines_v3" cols={LINE_COLS}>
             <TableBody>
               {lines.map(l => {
                 const st = lineState(l)

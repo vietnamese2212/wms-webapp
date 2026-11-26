@@ -57,7 +57,7 @@ const M_RM = 'QA63_RM1', M_BTP = 'QA63_BTP1', M_BTP2 = 'QA63_BTP2', M_EA = 'QA63
 const M_NT = 'QA63_NT1', M_NT2 = 'QA63_NT2'   // [21] hàng KHÔNG TEM: RM01 (theo NSX) · PK01 (loại kho tắt riêng)
 const qaX = (await restAll('QAStatus', 'select=id&code=eq.X'))[0]?.id
 const ts = () => new Date().toISOString()
-const JT_OPEN = 'QA63_JT_OPEN', JT_VIEW = 'QA63_JT_VIEW'
+const JT_OPEN = 'QA63_JT_OPEN', JT_VIEW = 'QA63_JT_VIEW', JT_OUT = 'QA63_JT_OUT'   // JT_OUT: [22c] chỉ xem Xuất kho, không quyền Khách hàng
 let bcrypt = null
 try { bcrypt = await import('../../backend/node_modules/bcrypt/bcrypt.js').then(m => m.default ?? m) } catch { /* chưa npm i backend */ }
 const num = (v) => Number(v ?? 0)
@@ -76,7 +76,7 @@ async function cleanup() {
   const whs = [WP, WC, WC2]
   const roleEmps = await restAll('Employee', 'select=id&email=like.qa63role*')
   for (const e of roleEmps) { await restWrite('UserWarehouseAccess', 'DELETE', `employee_id=eq.${e.id}`); await restWrite('Employee', 'DELETE', `id=eq.${e.id}`) }
-  await restWrite('JobTitle', 'DELETE', `id=in.(${JT_OPEN},${JT_VIEW})`)
+  await restWrite('JobTitle', 'DELETE', `id=in.(${JT_OPEN},${JT_VIEW},${JT_OUT})`)
   // [21] / [22] chuyến xuất ở kho thử: vết quét → dòng hàng → DO → chuyến (theo khoá ngoại), TRƯỚC tồn và mã hàng
   const gdos = await restAll('GroupDeliveryOrder', `select=id&warehouse_id=in.(${whs.join(',')})`)
   if (gdos.length) {
@@ -118,6 +118,7 @@ async function cleanup() {
   await restWrite('ProductionImport', 'DELETE', `warehouse_id=in.(${whs.join(',')})`)   // phiếu nhập trực tiếp ở kho phụ ([0a])
   await restWrite('warehouse_type_configs', 'DELETE', `warehouse_id=in.(${whs.join(',')})`)
   await restWrite('Material', 'DELETE', `id=in.(${[M_RM, M_BTP, M_BTP2, M_EA, M_RM2, M_NT, M_NT2].join(',')})`)
+  await restWrite('Customer', 'DELETE', 'id=eq.QA63_CUST')   // [22c] ship-to trỏ kho cha — trước khi xoá kho
   await restWrite('Warehouse', 'DELETE', `id=in.(${WC},${WC2})`)
   await restWrite('Warehouse', 'DELETE', `id=eq.${WP}`)
 }
@@ -1474,6 +1475,27 @@ try {
       g.s < 300 && st.s === 200 && !!gRow?.started_at && !gRow?.license_plate, `create=${g.s} ${g.j?.error?.message ?? ''} start=${st.s} ${st.j?.error?.message ?? ''}`)
     check('22b. Kho thường (không phải kho phụ), không ship-to: Bắt đầu không biển số vẫn ⇒ 400 (luật cũ giữ nguyên)',
       gp.s < 300 && stp.s === 400, `create=${gp.s} start=${stp.s} ${stp.j?.error?.message ?? ''}`)
+    // 22c (C137): form Tạo đơn tra "ship-to trỏ kho nào" để miễn ĐVVT / Loại xe / biển số cho chuyến trả về kho cha. Từng tra qua
+    // danh mục Khách hàng ⇒ vai không có quyền Khách hàng (Phó phòng QA ở kho chế biến) bị đòi ĐVVT. Nay cửa riêng của Xuất kho.
+    await restWrite('Customer', 'POST', '', [{ id: 'QA63_CUST', ship_to_code: 'QA63SHIP', name: 'QA63 kho cha (ship-to)', warehouse_id: WP, updated_at: ts() }])
+    if (!bcrypt) console.log('  ⏭  22c không load được bcrypt của backend — bỏ qua')
+    else {
+      const pw3 = 'Qa' + randomUUID().slice(0, 10) + '!'
+      await restWrite('JobTitle', 'POST', '', [{ id: JT_OUT, name: 'QA63 chỉ xem xuất kho', updated_at: ts(), module_permissions: { outbound: ['view', 'create'] } }])
+      const eid = randomUUID()
+      await restWrite('Employee', 'POST', '', [{ id: eid, employee_code: 'QA63R3', name: 'QA63 vai 3', email: 'qa63role3@test.local',
+        password: await bcrypt.hash(pw3, 10), is_active: true, job_title_id: JT_OUT, warehouse_id: WC, warehouse_scope: 'ASSIGNED', updated_at: ts() }])
+      await restWrite('UserWarehouseAccess', 'POST', '', [{ id: randomUUID(), employee_id: eid, warehouse_id: WC }])
+      const lg = await fetch(`${BASE}/api/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'qa63role3@test.local', password: pw3 }) })
+      const tk3 = (await lg.json().catch(() => null))?.data?.token ?? null
+      const get3 = async (p) => { const r = await fetch(`${BASE}/api${p}`, { headers: { Authorization: `Bearer ${tk3}` } }); let j = null; try { j = await r.json() } catch {} return { s: r.status, j } }
+      const sd = tk3 ? await get3('/wms/outbound/shipto-dest?shipto=qa63ship') : { s: 0 }
+      const sdNone = tk3 ? await get3('/wms/outbound/shipto-dest?shipto=QA63KHONGCO') : { s: 0 }
+      const cust = tk3 ? await get3('/masterdata/customers?search=QA63SHIP&page=1&page_size=5') : { s: 0 }
+      check('22c. Chức danh chỉ có quyền Xuất kho (không quyền Khách hàng): tra ship-to ⇒ đúng kho cha (không phân biệt hoa thường), mã lạ ⇒ rỗng — danh mục Khách hàng với vai này 403 (đường cũ của form)',
+        !!tk3 && sd.s === 200 && sd.j?.data?.dest?.id === WP && sdNone.s === 200 && sdNone.j?.data?.dest === null && cust.s === 403,
+        `login=${!!tk3} dest=${sd.s}/${sd.j?.data?.dest?.id} lạ=${sdNone.s}/${JSON.stringify(sdNone.j?.data?.dest)} customers=${cust.s}`)
+    }
 
     // 21e — cửa XUẤT của tồn gộp theo NSX: hộp Lưu số lượng + ghi nhận (cùng hàm `noQrPoolPolicy` với cửa nhập)
     const gd = GID ? await api(`/wms/outbound/${GID}`) : null

@@ -25,7 +25,7 @@ import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { Input }  from '@/components/ui/input'
 import { SingleSelect } from '@/components/shared/SingleSelect'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { fetchMaterialsByCodes, useGDOsPaged, useOutboundSummary, useOutboundFacets, useUploadGDOExcel, useWarehouses, useCreateGDO, useQuickExportGDO, useQuickExportExistingGDO, useUpdateGDO, usePatchGDO, useMaterials, useGDO, useAssignGDO, useVehicleTypes, useVehicleTypesByWarehouse, useTransportCompanies, useTmsVehicles, useOutboundShortages, useBookingSequence, useCustomerByShipto, UPLOAD_TOO_LARGE_MSG, type UploadPreflight, type BookingSeqRow } from '@/api/hooks'
+import { fetchMaterialsByCodes, useGDOsPaged, useOutboundSummary, useOutboundFacets, useUploadGDOExcel, useWarehouses, useCreateGDO, useQuickExportGDO, useQuickExportExistingGDO, useUpdateGDO, usePatchGDO, useMaterials, useGDO, useAssignGDO, useVehicleTypes, useVehicleTypesByWarehouse, useTransportCompanies, useTmsVehicles, useOutboundShortages, useBookingSequence, useShiptoDest, UPLOAD_TOO_LARGE_MSG, type UploadPreflight, type BookingSeqRow } from '@/api/hooks'
 import { bookingSeqOf, seqTimeLabel } from '@/utils/bookingSeq'
 import { usePrefetchGdos } from '@/offline/prefetchScanTargets'
 import { useScopedWhTypes } from '@/hooks/useUserScope'
@@ -109,7 +109,7 @@ function fTime(ts: string | null | undefined): string {
 type WarehouseLite = { id: string; name: string; code?: string; is_active?: boolean; warehouse_type?: string | null; inventory_mode?: string | null; parent_warehouse_id?: string | null }
 
 // Chuyến trong khuôn viên (cặp kho cha↔kho phụ · kho phụ xuất tiêu hao): `utils/inSiteTrip.ts` — cùng luật với BE.
-// 28/09: kho đích của ship-to = KHÁCH TRỎ KHO (tra qua `useCustomerByShipto`) — FE không tự so mã kho / `shipto_codes` nữa.
+// 28/09: kho đích của ship-to = KHÁCH TRỎ KHO (tra qua `useShiptoDest` — cửa riêng của Xuất kho, không cần quyền Khách hàng (C137)) — FE không tự so mã kho / `shipto_codes` nữa.
 
 const OUTBOUND_COLS: { id: string; label: string; w: number; align?: 'right' }[] = [
   { id: 'pin',       label: '',              w: 34 },
@@ -1566,8 +1566,8 @@ function GDOFormBody({
   }, [allVehicleTypes, vtByWarehouse])
   const isNPP = (warehouses as WarehouseLite[]).find(w => w.id === warehouseId)?.warehouse_type === 'NPP'
   // Chuyến trong khuôn viên (cặp kho cha↔kho phụ · kho phụ xuất tiêu hao): xe nâng/đẩy tay — không cần Loại xe/ĐVVT
-  const { data: shiptoCust } = useCustomerByShipto(shiptoPartyId)
-  const internalPair = isInSiteTrip(warehouses as WarehouseLite[], warehouseId, shiptoCust?.warehouse_id, shiptoPartyId)
+  const { data: shiptoDest } = useShiptoDest(shiptoPartyId)
+  const internalPair = isInSiteTrip(warehouses as WarehouseLite[], warehouseId, shiptoDest?.id, shiptoPartyId)
   const noVehicle = isNPP || internalPair
   // Đa-NPP mới là tiêu chí "đơn gộp" (chuẩn 04/07) — DO chỉ là tham khảo, không có vai trò
   const nppOptions = useMemo(() => [...new Set((gdo?.delivery_orders ?? []).map(d => (d.distributor_name ?? '').trim()).filter(Boolean))], [gdo])
@@ -2112,8 +2112,8 @@ function GDOModal({ defaultWarehouseId, onClose }: { defaultWarehouseId: string;
   const showQuick = canQuick && isQtyOrNone            // kho QTY/NONE → hiện ô Biển số + (khi đủ) nút xuất luôn
   const quickFilled = items.filter(i => i.material_code.trim())
   // Chuyến trong khuôn viên (cặp kho cha↔kho phụ · kho phụ xuất tiêu hao): biển số tùy chọn (xe nâng/đẩy tay trong site)
-  const { data: shiptoCustCreate } = useCustomerByShipto(shiptoPartyId)
-  const internalPairCreate = isInSiteTrip(warehousesForCreate as WarehouseLite[], warehouseId, shiptoCustCreate?.warehouse_id, shiptoPartyId)
+  const { data: shiptoDestCreate } = useShiptoDest(shiptoPartyId)
+  const internalPairCreate = isInSiteTrip(warehousesForCreate as WarehouseLite[], warehouseId, shiptoDestCreate?.id, shiptoPartyId)
   // Nút xuất luôn hiện khi: kho QTY/NONE + có mã + đủ ĐVVT + đủ Biển số (thiếu → chỉ nút Lưu; nội bộ không cần cả hai)
   const quickReady = showQuick && quickFilled.length > 0 && (dvvt.trim() !== '' || internalPairCreate) && (quickPlate.trim() !== '' || internalPairCreate)
 
@@ -2252,8 +2252,8 @@ export function EditGDOModal({ gdoId, defaultWarehouseId, onClose }: { gdoId: st
   const isQtyOrNoneEdit = isQtyLike(editWhMode) || editWhMode === 'NONE'
   const showQuickEdit = canQuickEdit && isQtyOrNoneEdit && (gdo?.status === 'PENDING' || gdo?.status === 'PAUSED')
   // Chuyến trong khuôn viên: biển số tùy chọn (như form Tạo)
-  const { data: shiptoCustEdit } = useCustomerByShipto(shiptoPartyId)
-  const internalPairEdit = isInSiteTrip(warehousesForEdit as WarehouseLite[], warehouseId, shiptoCustEdit?.warehouse_id, shiptoPartyId)
+  const { data: shiptoDestEdit } = useShiptoDest(shiptoPartyId)
+  const internalPairEdit = isInSiteTrip(warehousesForEdit as WarehouseLite[], warehouseId, shiptoDestEdit?.id, shiptoPartyId)
   const quickReadyEdit = showQuickEdit && items.some(i => i.material_code.trim()) && (dvvt.trim() !== '' || internalPairEdit) && (quickPlate.trim() !== '' || internalPairEdit)
 
   // Biển số gợi ý = xe đã đăng ký của ĐVVT đang chọn (giống form Tạo)

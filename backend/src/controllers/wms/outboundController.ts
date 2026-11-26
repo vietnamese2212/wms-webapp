@@ -2,7 +2,7 @@ import { Request, Response } from 'express'
 import { randomUUID } from 'crypto'
 import * as XLSX from 'xlsx'
 import { supabase, db } from '../../lib/supabase'
-import { ok, fail, recordBackgroundFailure } from '../../utils/response'
+import { ok, fail, failAny, recordBackgroundFailure } from '../../utils/response'
 import { effectiveNoQr, markItemsNoQrIfQty, isQtyLike } from '../../lib/inventoryMode'
 import { noQrPoolPolicy } from '../../services/noQrPool'
 import { effCartonsPerPallet } from '../../utils/palletCalc'
@@ -3575,6 +3575,18 @@ export async function uncompleteGDO(req: Request, res: Response) {
     if (error) return fail(res, error)
     return ok(res, await fetchGDOFull(req.params.id))
   } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return fail(res, String(e)) }
+}
+
+// ─── Kho đích của một ship-to (form Tạo / Sửa đơn xuất) ──
+// 26/11 (C137): form từng tra qua danh mục Khách hàng (`customers.view`) để biết ship-to trỏ kho nào ⇒ vai không có quyền
+// đó (Phó phòng QA ở kho chế biến) tra ra rỗng, form không nhận ra chuyển nội bộ về kho cha và đòi ĐVVT / Loại xe / biển số,
+// trong khi máy chủ (`isInSiteTrip`) vẫn miễn. Cửa này chỉ cần quyền xem Xuất kho và trả CÙNG nguồn với máy chủ
+// (`destInfoOfShipto` = khách trỏ kho). Chỉ lộ mã / tên kho — vốn đọc mở ở /masterdata/warehouses.
+export async function getShiptoDest(req: Request, res: Response) {
+  try {
+    const d = (await destInfoOfShipto(String(req.query.shipto ?? ''))).dest
+    return ok(res, { dest: d ? { id: d.id, code: d.code, name: d.name } : null })
+  } catch (e) { if (isQueryTimeout(e)) return fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return failAny(res, e) }
 }
 
 // ─── Get warehouse employees (for forklift driver dropdown) ──

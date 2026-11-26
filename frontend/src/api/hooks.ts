@@ -5179,17 +5179,18 @@ export function usePushTransfer() {
     },
   })
 }
-/** Khách theo ĐÚNG mã ship-to (form Tạo/Sửa chuyến cần biết ship-to đang gõ có trỏ kho nào không — BE là nơi giữ mối nối). */
-export function useCustomerByShipto(code: string | null | undefined) {
+/** Kho đích của ĐÚNG mã ship-to (form Tạo/Sửa chuyến cần biết ship-to đang gõ có trỏ kho nào — BE là nơi giữ mối nối).
+ *  26/11 (C137): KHÔNG tra qua danh mục Khách hàng nữa — cửa đó cần quyền Khách hàng, vai kho (Phó phòng QA ở kho chế biến)
+ *  không có nên form đòi ĐVVT cho chuyến trả về kho cha. Cửa `/wms/outbound/shipto-dest` chỉ cần quyền xem Xuất kho. */
+export function useShiptoDest(code: string | null | undefined) {
   const c = String(code ?? '').trim().toUpperCase()
   return useQuery({
-    queryKey: ['customer-by-shipto', c],
+    queryKey: ['shipto-dest', c],
     queryFn: async () => {
-      const { data } = await apiClient.get('/masterdata/customers', { params: { search: c, page: 1, page_size: 5 } })
-      const rows = (data.data?.rows ?? []) as Customer[]
-      return rows.find(r => r.ship_to_code === c) ?? null
+      const { data } = await apiClient.get('/wms/outbound/shipto-dest', { params: { shipto: c } })
+      return (data.data?.dest ?? null) as { id: string; code: string; name: string } | null
     },
-    enabled: c.length >= 2,
+    enabled: c.length >= 1 && c.length <= 40,
     staleTime: 30_000,
   })
 }

@@ -290,6 +290,8 @@ router.post('/outbound/upload-khvc',                          requireAnyPerm(['o
 router.post('/outbound/quick-export',                         requirePerm('outbound', 'quick_export'), outbound.quickExportGDO)   // Tạo & Xuất luôn (hàng không tem)
 router.post('/outbound/:gdoId/quick-export',                  requirePerm('outbound', 'quick_export'), outbound.quickExportExistingGDO)   // Xuất luôn trên GDO đã lưu (QTY/NONE)
 router.get('/outbound/employees',                             requirePerm('outbound', 'view'), outbound.getWarehouseEmployees)
+// form Tạo / Sửa đơn: ship-to trỏ kho nào (chuyến nội bộ miễn ĐVVT / Loại xe / biển số) — không cần quyền Khách hàng (C137)
+router.get('/outbound/shipto-dest',                           requirePerm('outbound', 'view'), validate({ query: z.object({ shipto: zText(1, 40) }) }), outbound.getShiptoDest)
 // Control Tower — giám sát vận hành trong ngày (đọc-only, RPC aggregate)
 router.get('/control-tower',                                  requirePerm('control_tower', 'view'), controlTower.getControlTower)
 // Slotting (Tối ưu vị trí) — phân tích ABC + kế hoạch sắp xếp lại kho

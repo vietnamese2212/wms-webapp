@@ -1545,12 +1545,13 @@ try {
       bDup.s === 422 && bCat.s === 422 && bLoc.s === 422 && bLoc.j?.error?.code === 'LOCATION_REQUIRED' && bFlag.status === 400 && (await cnt()) === before,
       `dup=${bDup.s} cat=${bCat.s} ${bCat.j?.error?.message ?? ''} loc=${bLoc.s}/${bLoc.j?.error?.code} cờ=${bFlag.status} trước=${before} sau=${await cnt()}`)
     const aAgain = grp ? await api('/wms/inbound-orders/group', 'POST', { ...base, location_id: 'QA63_LOC1', receipt_group: grp, lines: [{ material_id: M_G1, planned_cartons: 1 }] }) : { s: 0 }
-    const aNew = grp ? await api('/wms/inbound-orders/group', 'POST', { ...base, location_id: 'QA63_LOC1', receipt_group: grp, lines: [{ material_id: M_G3, planned_cartons: 7 }] }) : { s: 0 }
+    const aNew = grp ? await api('/wms/inbound-orders/group', 'POST', { ...base, location_id: 'QA63_LOC1', receipt_group: grp, lines: [{ material_id: M_G3, planned_cartons: 7.5 }] }) : { s: 0 }   // C140: mã KG ⇒ kế hoạch số lẻ
     const aOther = grp ? await api('/wms/inbound-orders/group', 'POST', { ...base, warehouse_id: WC2, location_id: null, receipt_group: grp, lines: [{ material_id: M_NT, planned_cartons: 1 }] }) : { s: 0 }
     const after = grp ? (await restAll('ProductionImport', `select=id&receipt_group=eq.${grp}`)).length : 0
-    check('23d. Sửa nhóm — thêm mã vào nhóm có sẵn: mã đã có ⇒ 422 · mã mới ⇒ 200 vào CÙNG nhóm (4 phiếu) · nhóm của kho khác ⇒ 422',
-      aAgain.s === 422 && aNew.s === 200 && aNew.j?.data?.receipt_group === grp && after === 4 && aOther.s === 422,
-      `có sẵn=${aAgain.s} mới=${aNew.s} kho khác=${aOther.s} ${aOther.j?.error?.code ?? ''} nhóm=${after}`)
+    const g3Plan = num((await restAll('ProductionImport', `select=planned_cartons&material_id=eq.${M_G3}&receipt_group=eq.${grp}`))[0]?.planned_cartons)
+    check('23d. Sửa nhóm — thêm mã vào nhóm có sẵn: mã đã có ⇒ 422 · mã mới ⇒ 200 vào CÙNG nhóm (4 phiếu), kế hoạch KG số lẻ 7,5 lưu nguyên (C140 — cột từng là integer ⇒ 500) · nhóm của kho khác ⇒ 422',
+      aAgain.s === 422 && aNew.s === 200 && aNew.j?.data?.receipt_group === grp && after === 4 && g3Plan === 7.5 && aOther.s === 422,
+      `có sẵn=${aAgain.s} mới=${aNew.s} ${aNew.j?.error?.message ?? ''} kế hoạch=${g3Plan} kho khác=${aOther.s} ${aOther.j?.error?.code ?? ''} nhóm=${after}`)
     // 23e (C138): mã CHƯA khai quy cách pallet + quét không gõ số ⇒ từng tạo PALLET 0 KG (bắt ở nghiệm thu Nhập nhiều mã)
     const dmy = `${todayVN.slice(8, 10)}${todayVN.slice(5, 7)}${todayVN.slice(2, 4)}`
     const oG1 = byMat.get(M_G1)

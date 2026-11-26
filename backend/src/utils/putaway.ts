@@ -180,6 +180,13 @@ export function applyPutawayBody(
   if (body.auto_fill !== undefined) target.auto_fill = Boolean(body.auto_fill)
   // Hàng không tem theo NSX ở kho QR (26/11) — cùng validator cho cả 2 tầng; null ở tầng LOẠI = theo kho
   if (body.noqr_date_tracking !== undefined) target.noqr_date_tracking = Boolean(body.noqr_date_tracking)
+  // Nhập vượt số kế hoạch (26/11) — cùng validator 2 tầng; null = như cũ (tầng Kho) / theo kho (tầng Loại)
+  if (body.inbound_over_plan !== undefined) {
+    const v = body.inbound_over_plan
+    if (v !== null && v !== '' && !(INBOUND_OVER_PLANS as readonly unknown[]).includes(v))
+      return 'Luật nhập vượt kế hoạch không hợp lệ (ALLOW / BLOCK)'
+    target.inbound_over_plan = v === '' ? null : v
+  }
   // `production_qa_gate` KHÔNG nhận ở đây nữa (14/11 tối, user: "setting MES chuyển sang Cài đặt MES") —
   // cửa ghi DUY NHẤT là PUT /wms/production/settings (quyền production.configure).
   return null
@@ -618,6 +625,7 @@ export const WH_TYPE_CFG_COLS = [
   'auto_fill',                         // tự ra lệnh fill hàng nhặt lẻ (15/09) — xem resolveAutoFill
   'production_qa_gate',                // MES 14/11: rút BTP chưa QA thả — xem resolveProductionQaGate
   'noqr_date_tracking',                // 26/11: hàng không tem ở kho QR theo NSX — xem resolveNoQrDateTracking
+  'inbound_over_plan',                 // 26/11: nhập vượt số kế hoạch (ALLOW / BLOCK, null = như cũ) — xem resolveInboundOverPlan
 ] as const
 export type WhTypeCfgCol = typeof WH_TYPE_CFG_COLS[number]
 
@@ -735,6 +743,24 @@ export function resolveNoQrDateTracking(
   const row = typeRowOf(typeRows, category)
   const m = mergedConfig(wh, row)
   return { enabled: m.noqr_date_tracking === true, source: !!row && row.noqr_date_tracking != null ? 'TYPE' : 'WAREHOUSE' }
+}
+
+// ─── NHẬP VƯỢT SỐ KẾ HOẠCH 2 tầng (26/11 — user chốt: công tắc, kho chế biến cho vượt chỉ báo Thừa) ─────────────
+// null = như cũ: máy chủ không chặn, màn hình phiếu NCC dừng nút quét khi đủ kế hoạch. ALLOW = cho vượt (báo Thừa).
+// BLOCK = máy chủ chặn pallet / lần lưu làm tổng nhận vượt kế hoạch. Mọi cửa nhập hỏi qua services/inboundOverPlan.ts.
+export const INBOUND_OVER_PLANS = ['ALLOW', 'BLOCK'] as const
+export type InboundOverPlan = typeof INBOUND_OVER_PLANS[number]
+export function resolveInboundOverPlan(
+  wh: Record<string, unknown> | null | undefined,
+  typeRows: WhTypeConfigRow[] | null | undefined,
+  category: string | null | undefined,
+): { mode: InboundOverPlan | null; source: 'WAREHOUSE' | 'TYPE' } {
+  const row = typeRowOf(typeRows, category)
+  const v = mergedConfig(wh, row).inbound_over_plan
+  return {
+    mode: (INBOUND_OVER_PLANS as readonly unknown[]).includes(v) ? v as InboundOverPlan : null,
+    source: !!row && row.inbound_over_plan != null ? 'TYPE' : 'WAREHOUSE',
+  }
 }
 
 export function resolvePutawayRules(

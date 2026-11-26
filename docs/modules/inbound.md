@@ -20,6 +20,27 @@
 
 Nhập kho
 
+## 26/11 (tối) — PHIẾU NHẬP CHUNG + CÔNG TẮC NHẬP VƯỢT KẾ HOẠCH (user chốt)
+User: "nhập nhiều mã … cải tiến thành 1 Phiếu nhập chung, trong đó chứa các mã hàng riêng (tương tự phần xuất) … nhập thì có thể cho phép vượt số lượng kê khai — config có chưa". Chốt: (1) **Nhập nhiều mã + nhóm NCC** đều là một phiếu chung; (2) tem của mã **không có trong phiếu ⇒ CHẶN**; (3) nhập vượt = **cờ 2 tầng Kho + Loại kho**, kho chế biến **cho vượt, báo Thừa**; (4) **số phiếu app sinh + ô Số chứng từ** tuỳ chọn.
+
+| Tình huống | Kết quả |
+|---|---|
+| Tạo Nhập nhiều mã / Nhập NCC / upload Excel | Một đầu phiếu `inbound_receipts` (số `<KHO>_PN_<ddmmyy>_<seq>`, Số chứng từ) + mỗi mã một dòng `ProductionImport` chung `receipt_group`; mở trang phiếu chung `/wms/inbound/phieu/:group` |
+| Danh sách Nhập kho | Một dòng cha / phiếu chung (số mã · đã nhận x/n · thiếu / thừa · pallet); ▸ mở từng mã; tìm theo số phiếu / Số chứng từ |
+| Quét ở trang phiếu chung (nút Quét / bóp cò) | Màn quét tự vào đúng mã theo tem; tem mã không có trong phiếu ⇒ chặn, báo "Sửa phiếu thêm mã trước" |
+| Kho / loại kho đặt **Chặn** (BLOCK) | Máy chủ 422 `OVER_PLAN` khi pallet / lần lưu làm tổng vượt kế hoạch; đúng bằng kế hoạch vẫn nhận |
+| Đặt **Cho vượt** (ALLOW) | Nhận; dòng mã + hộp Hoàn thành báo Thừa; nút quét không dừng khi đủ |
+| Chưa đặt (null) | Như cũ: máy chủ không chặn; phiếu NCC dừng nút quét khi đủ kế hoạch |
+| Hoàn thành / Huỷ cả phiếu | Như cả nhóm trước đó; dòng NCC mang lệnh TMS của lượt xe nay làm được cả phiếu (Hoàn thành chạy bước nối TMS `syncTmsAfterComplete` — dùng chung với Hoàn thành từng phiếu) · huỷ hết mã ⇒ xoá đầu phiếu |
+| Sửa phiếu | Như Sửa nhóm + đổi Số chứng từ (`PATCH /group/:group` `doc_no`) |
+
+- Bên trong vẫn **mỗi mã một phiếu dòng** — tồn, truy xuất lô, lịch sử quét, báo cáo, file SAP không đổi. Trang dòng mã có lối "Phiếu chung …" về trang phiếu.
+- Luật nhập vượt: `services/inboundOverPlan.ts` (`overPlanError` ở quét tem + lưu thủ công; `getOrder.over_plan`, `getReceipt.lines[].over_plan`) · ghép tầng `resolveInboundOverPlan` (utils/putaway). Phiếu trả về có luật hàng THỪA riêng — không áp.
+- Thao tác cả phiếu (FE) một bản: `components/wms/ReceiptGroupActions.tsx` (trang phiếu chung + trang dòng mã).
+- Nhóm NCC cũ (trước 26/11, chỉ nối theo lượt xe) giữ cách cũ. Khoá nhóm danh sách: phiếu chung trước lệnh TMS / lượt xe (RPC `inbound_orders_page`, migration 20261126e; FE `inboundGroupKey`).
+- Giới hạn biết trước: luật Chặn kiểm trước khi ghi — hai người quét cùng một mã cùng lúc có thể vượt thêm một pallet (một dòng mã thường một người quét).
+- Gói 63 [24a–d] · test `backend/tests/unit/inboundOverPlan.test.ts`.
+
 ## 26/11 — NHẬP NHIỀU MÃ (tab thứ 3 của Tạo phiếu nhập — mọi kho)
 User 26/11: nhập nội bộ ở kho chế biến = một chứng từ vài chục mã của nhiều NCC; Nhập SX từng mã một lâu, Nhập NCC bắt chọn từng NCC + xe cổng. Chốt: **khai trước mã + số lượng** (dán Excel được), quét **ở từng phiếu hoặc quét cả nhóm**, **vị trí mặc định cho cả phiếu — đổi được từng tem lúc quét**, dùng ở **mọi kho**, giữ khuôn hiện tại.
 - Form: tab **Nhập nhiều mã** dùng CHUNG bảng dòng hàng của tab NCC (`isTableMode`); ô "Xe đang vào cổng" thay bằng **Vị trí mặc định** (bắt buộc trừ kho QTY/QTY_DATE); **NCC tuỳ chọn** cho cả nhóm — để trống thì quét tem đọc mã NCC trên tem như Nhập SX.

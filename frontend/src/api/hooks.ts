@@ -867,6 +867,7 @@ export interface WhTypeConfig {
   work_mode?:                  string | null
   lower_from_level?:           number | null
   noqr_date_tracking?:         boolean | null   // hàng không tem theo NSX ở kho QR (26/11) — null = theo kho
+  inbound_over_plan?:          string | null   // nhập vượt kế hoạch (26/11): ALLOW / BLOCK — null = theo kho
 }
 
 export function useWhTypeConfigs(warehouseId: string | null | undefined) {
@@ -1221,9 +1222,10 @@ export function useCreateInboundGroup() {
       warehouse_id: string; warehouse_type: string; import_date: string; shift_id: string
       location_id?: string | null; notes?: string | null; ncc_id?: string | null; receipt_group?: string | null
       putaway_override_reason?: string | null
+      doc_no?: string | null; source_type?: 'FACTORY' | 'NCC'; gate_registration_id?: string | null   // phiếu chung (26/11)
       lines: { material_id: string; planned_cartons: number }[]
-    }) => apiClient.post('/wms/inbound-orders/group', body).then((r) => r.data.data as { receipt_group: string; orders: InboundOrder[]; putaway_warning?: string }),
-    onSuccess: (data) => { warnPutaway(data); qc.invalidateQueries({ queryKey: ['inbound-orders'] }) },
+    }) => apiClient.post('/wms/inbound-orders/group', body).then((r) => r.data.data as { receipt_group: string; receipt_code: string | null; orders: InboundOrder[]; putaway_warning?: string }),
+    onSuccess: (data) => { warnPutaway(data); qc.invalidateQueries({ queryKey: ['inbound-orders'] }); qc.invalidateQueries({ queryKey: ['inbound-receipt'] }) },
   })
 }
 
@@ -1235,7 +1237,7 @@ export function useUploadInboundGroup() {
     mutationFn: async ({ file, preflight, head }: { file: File; preflight: boolean; head: Record<string, string | undefined> }) => {
       const { body, headers } = await excelUploadBody(file, head)
       return (await apiClient.post(`/wms/inbound-orders/group/upload${preflight ? '?preflight=1' : ''}`, body, { headers, timeout: 120000 })).data.data as
-        UploadResult & Partial<UploadPreflight> & { first_order_id?: string | null; receipt_group?: string | null }
+        UploadResult & Partial<UploadPreflight> & { first_order_id?: string | null; receipt_group?: string | null; receipt_code?: string | null }
     },
     onSuccess: (_d, v) => { if (!v.preflight) qc.invalidateQueries({ queryKey: ['inbound-orders'] }) },
   })
@@ -1250,7 +1252,7 @@ export interface InboundGroupBrief {
  *  preview = máy chủ trả danh sách sẽ làm / giữ lại, không ghi (hộp xác nhận liệt kê). */
 export function useInboundGroupActs() {
   const qc = useQueryClient()
-  const inv = () => { qc.invalidateQueries({ queryKey: ['inbound-orders'] }); qc.invalidateQueries({ queryKey: ['inbound-order'] }) }
+  const inv = () => { qc.invalidateQueries({ queryKey: ['inbound-orders'] }); qc.invalidateQueries({ queryKey: ['inbound-order'] }); qc.invalidateQueries({ queryKey: ['inbound-receipt'] }) }
   const cancel = useMutation({
     mutationFn: async ({ group, preview }: { group: string; preview: boolean }) =>
       (await apiClient.post(`/wms/inbound-orders/group/${group}/cancel${preview ? '?preview=1' : ''}`, {})).data.data as
@@ -1264,11 +1266,45 @@ export function useInboundGroupActs() {
     onSuccess: (_d, v) => { if (!v.preview) inv() },
   })
   const patch = useMutation({
-    mutationFn: async ({ group, ...body }: { group: string; location_id?: string; ncc_id?: string | null }) =>
+    mutationFn: async ({ group, ...body }: { group: string; location_id?: string; ncc_id?: string | null; doc_no?: string | null }) =>
       (await apiClient.patch(`/wms/inbound-orders/group/${group}`, body)).data.data as { location_updated: number; ncc_updated: number; kept: InboundGroupBrief[] },
     onSuccess: inv,
   })
   return { cancel, complete, patch }
+}
+
+// ── PHIẾU NHẬP CHUNG (26/11 — user chốt: Nhập nhiều mã + nhóm NCC là MỘT phiếu nhiều mã như chuyến Xuất kho) ──
+export type InboundOverPlan = 'ALLOW' | 'BLOCK' | null
+export interface InboundReceiptMat {
+  id: string; material_code: string; short_name: string | null; material_description: string | null; no_qr_tracking: boolean | null
+  category: string | null; base_unit: string | null; entry_unit: string | null; units_per_carton: number | null; cartons_per_pallet?: number | null
+}
+export interface InboundReceiptLine {
+  id: string; import_code: string; status: string; source_type: string; warehouse_type: string | null
+  material: InboundReceiptMat | null; location: { id: string; location_code: string } | null; ncc: { id: string; name: string } | null; notes: string | null
+  planned_cartons: number | null; received: number; pallets: number; posm_entry_id: string | null
+  no_qr: boolean; diff: number | null; over_plan: InboundOverPlan; tied: boolean
+}
+export interface InboundReceiptEntry {
+  id: string; import_order_id: string; pallet_code: string; cartons_imported: number; cartons_remaining: number
+  production_date: string | null; created_at: string; stack_layer: number | null; location: { location_code: string } | null; material_code: string | null
+}
+export interface InboundReceiptData {
+  receipt: { id: string; receipt_code: string | null; doc_no: string | null; source_type: string; warehouse_id: string; created_at: string | null }
+  head: {
+    warehouse: { id: string; name: string; code: string | null; inventory_mode: string | null } | null
+    import_date: string | null; shift: { id: string; name: string } | null; ncc: { id: string; name: string } | null
+    location: { id: string; location_code: string } | null; license_plate: string | null; gate_registration_id: string | null
+    notes: string | null; imported_by: string | null; inventory_mode: string | null
+  }
+  lines: InboundReceiptLine[]
+  entries: InboundReceiptEntry[]
+}
+export function useInboundReceipt(group: string | undefined) {
+  return useQuery({
+    queryKey: ['inbound-receipt', group], enabled: !!group, staleTime: 5_000,
+    queryFn: async () => (await apiClient.get(`/wms/inbound-receipts/${group}`)).data.data as InboundReceiptData,
+  })
 }
 
 // ── NHẬP HÀNG TRẢ VỀ (26/10) — số lượng luôn BASE ──

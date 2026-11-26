@@ -300,6 +300,8 @@ export interface InboundOrder {
   gate_registration?:   { id: string; registration_number: number; date: string; license_plate: string | null; company_name_raw: string | null; driver_name: string | null; status: string; direction: string } | null
   // 26/11 — nhóm "Nhập nhiều mã": các phiếu (mỗi mã một phiếu) của cùng một chứng từ
   receipt_group?:       string | null
+  receipt?:             { id: string; receipt_code: string; doc_no: string | null; source_type: string } | null   // đầu phiếu nhập chung (26/11)
+  over_plan?:           'ALLOW' | 'BLOCK' | null   // luật nhập vượt kế hoạch đang hiệu lực (26/11, chỉ trang phiếu)
   planned_cartons?:     number | null
   posm_entry_id?:       string | null
   transfer_production_date?: string | null

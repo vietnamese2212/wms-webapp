@@ -1,5 +1,5 @@
 // FILE SINH TỰ ĐỘNG — `node scripts/gen-db-types.mjs` (từ information_schema STAGING). KHÔNG sửa tay.
-// Sinh lúc 2026-11-26T07:54:29.321Z · 129 bảng/view · 290 hàm · 0 enum
+// Sinh lúc 2026-11-26T08:28:03.789Z · 130 bảng/view · 290 hàm · 0 enum
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[]
 
 export type Database = {
@@ -2525,6 +2525,7 @@ export type Database = {
           mes_pass_target_pct: number | null
           mes_block_reverse_closed: boolean
           noqr_date_tracking: boolean
+          inbound_over_plan: string | null
         }
         Insert: {
           id: string
@@ -2588,6 +2589,7 @@ export type Database = {
           mes_pass_target_pct?: number | null
           mes_block_reverse_closed?: boolean
           noqr_date_tracking?: boolean
+          inbound_over_plan?: string | null
         }
         Update: {
           id?: string
@@ -2651,6 +2653,7 @@ export type Database = {
           mes_pass_target_pct?: number | null
           mes_block_reverse_closed?: boolean
           noqr_date_tracking?: boolean
+          inbound_over_plan?: string | null
         }
         Relationships: []
       }
@@ -4943,6 +4946,39 @@ export type Database = {
         }
         Relationships: []
       }
+      inbound_receipts: {
+        Row: {
+          id: string
+          receipt_code: string
+          doc_no: string | null
+          warehouse_id: string
+          source_type: string
+          created_by: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id: string
+          receipt_code: string
+          doc_no?: string | null
+          warehouse_id: string
+          source_type?: string
+          created_by?: string | null
+          created_at?: string
+          updated_at: string
+        }
+        Update: {
+          id?: string
+          receipt_code?: string
+          doc_no?: string | null
+          warehouse_id?: string
+          source_type?: string
+          created_by?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       inbound_return: {
         Row: {
           id: string
@@ -6831,6 +6867,7 @@ export type Database = {
           auto_fill: boolean | null
           production_qa_gate: string | null
           noqr_date_tracking: boolean | null
+          inbound_over_plan: string | null
         }
         Insert: {
           id: string
@@ -6862,6 +6899,7 @@ export type Database = {
           auto_fill?: boolean | null
           production_qa_gate?: string | null
           noqr_date_tracking?: boolean | null
+          inbound_over_plan?: string | null
         }
         Update: {
           id?: string
@@ -6893,6 +6931,7 @@ export type Database = {
           auto_fill?: boolean | null
           production_qa_gate?: string | null
           noqr_date_tracking?: boolean | null
+          inbound_over_plan?: string | null
         }
         Relationships: []
       }

@@ -10,7 +10,7 @@ import { Pages } from '@/routes/lazyPages'
 import Login from '@/pages/Login'
 
 const {
-  Dashboard, Inventory, Inbound, InboundDetail, InboundReturns, ProductionBatches, ProductionBatchDetail, ProductionTanks, ProductionSettings, ProductionRecipes, ProductionUsageReport, HelpCenter, HelpGuide,
+  Dashboard, Inventory, Inbound, InboundDetail, InboundReceipt, InboundReturns, ProductionBatches, ProductionBatchDetail, ProductionTanks, ProductionSettings, ProductionRecipes, ProductionUsageReport, HelpCenter, HelpGuide,
   Outbound, OutboundDetail, OutboundItemDetail, OutboundScanLog, OutboundPrepare, WeighTickets, ControlTower, Alerts,
   Slotting, SlottingPlanDetail, DirectedWork, DateRules, WarehouseCosts, WarehouseCostVoucher, LotTrace, Forklift, Packing, FillPicking, FillOrderDetail,
   LoosePicking, LoosePickingDetail, LoosePickingItemDetail,
@@ -110,6 +110,7 @@ export default function App() {
 
         {/* WMS — inbound */}
         <Route path="/wms/inbound"         element={<PermissionRoute module="inbound"><Inbound /></PermissionRoute>} />
+        <Route path="/wms/inbound/phieu/:group" element={<PermissionRoute module="inbound"><InboundReceipt /></PermissionRoute>} />
         <Route path="/wms/inbound/:id"     element={<PermissionRoute module="inbound"><InboundDetail /></PermissionRoute>} />
         <Route path="/wms/inbound-returns" element={<PermissionRoute module="inbound"><InboundReturns /></PermissionRoute>} />
 

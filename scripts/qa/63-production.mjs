@@ -117,6 +117,7 @@ async function cleanup() {
   if (tanks.length) await restWrite('production_tank', 'DELETE', `id=in.(${tanks.map(t => t.id).join(',')})`)
   await restWrite('InventoryEntry', 'DELETE', `warehouse_id=in.(${whs.join(',')})`)
   await restWrite('ProductionImport', 'DELETE', `warehouse_id=in.(${whs.join(',')})`)   // phiếu nhập trực tiếp ở kho phụ ([0a])
+  await restWrite('inbound_receipts', 'DELETE', `warehouse_id=in.(${whs.join(',')})`)   // [24] đầu phiếu chung — SAU dòng (FK dòng → đầu phiếu)
   await restWrite('warehouse_type_configs', 'DELETE', `warehouse_id=in.(${whs.join(',')})`)
   await restWrite('Material', 'DELETE', `id=in.(${[M_RM, M_BTP, M_BTP2, M_EA, M_RM2, M_NT, M_NT2, M_G1, M_G2, M_G3].join(',')})`)
   await restWrite('Location', 'DELETE', `warehouse_id=in.(${whs.join(',')})`)   // [23] vị trí thử của kho phụ
@@ -1619,6 +1620,72 @@ try {
       pt.s === 200 && afterPt.find(r => r.material_id === M_G1)?.location_id === 'QA63_LOC2' && afterPt.find(r => r.material_id === M_NT2)?.location_id == null
         && (!nccP || afterPt.every(r => r.ncc_id === nccP.id)) && ptBad.s === 422,
       `patch=${pt.s} ${pt.j?.error?.message ?? ''} kho khác=${ptBad.s} rows=${JSON.stringify(afterPt.map(r => [r.location_id, r.ncc_id ? 'ncc' : null]))}`)
+
+    // ── [24] PHIẾU NHẬP CHUNG + CÔNG TẮC NHẬP VƯỢT KẾ HOẠCH (26/11 — user chốt) ──
+    // 24a đầu phiếu: số phiếu app sinh theo kho + ngày; Số chứng từ; trang phiếu chung; tìm theo số phiếu / số chứng từ
+    const hd = async (g) => (await restAll('inbound_receipts', `select=id,receipt_code,doc_no,source_type,warehouse_id&id=eq.${g}`))[0]
+    const hA = grp ? await hd(grp) : null, hU = upGrp ? await hd(upGrp) : null
+    const g24 = await api('/wms/inbound-orders/group', 'POST', { ...base, location_id: 'QA63_LOC1', doc_no: 'QA63-CT-01',
+      lines: [{ material_id: M_G2, planned_cartons: 10 }, { material_id: M_G3, planned_cartons: 4 }] })
+    const gB = g24.j?.data?.receipt_group
+    const rcp = gB ? await api(`/wms/inbound-receipts/${gB}`) : { s: 0 }
+    const srch = await api(`/wms/inbound-orders?page=1&limit=50&warehouse_id=${WC}&search=QA63-CT-01`)
+    const srchItems = srch.j?.data?.items ?? []
+    const codeRe = /^QA63CB_PN_\d{6}_\d{3}$/
+    check('24a. Phiếu chung: mỗi nhóm có ĐẦU PHIẾU (số <KHO>_PN_<ddmmyy>_<seq>, cả nhóm tạo tay lẫn upload) · Số chứng từ lưu ở đầu phiếu · trang phiếu chung trả đầu phiếu + 2 dòng mã + bảng pallet · tìm theo Số chứng từ ra đúng các dòng của phiếu, mỗi dòng mang đầu phiếu',
+      codeRe.test(hA?.receipt_code ?? '') && codeRe.test(hU?.receipt_code ?? '') && g24.s === 200 && codeRe.test(g24.j?.data?.receipt_code ?? '')
+        && rcp.s === 200 && rcp.j?.data?.receipt?.doc_no === 'QA63-CT-01' && (rcp.j?.data?.lines ?? []).length === 2 && Array.isArray(rcp.j?.data?.entries)
+        && srch.s === 200 && srchItems.length === 2 && srchItems.every(o => o.receipt_group === gB && o.receipt?.doc_no === 'QA63-CT-01'),
+      `số=${hA?.receipt_code}/${hU?.receipt_code}/${g24.j?.data?.receipt_code} tạo=${g24.s} ${g24.j?.error?.message ?? ''} trang=${rcp.s} dòng=${(rcp.j?.data?.lines ?? []).length} tìm=${srch.s}/${srchItems.length}`)
+
+    // 24b nhóm NCC là phiếu chung: thiếu NCC ⇒ 422 · có NCC, không vị trí (chọn lúc quét) ⇒ 200, dòng nguồn NCC · lượt xe không có ⇒ 404
+    const nccNo = await api('/wms/inbound-orders/group', 'POST', { ...base, source_type: 'NCC', lines: [{ material_id: M_G1, planned_cartons: 5 }] })
+    const nccOk = nccP ? await api('/wms/inbound-orders/group', 'POST', { ...base, source_type: 'NCC', ncc_id: nccP.id, doc_no: 'QA63-NCC-1', lines: [{ material_id: M_G1, planned_cartons: 5 }] }) : { s: 0 }
+    const nccGate = nccP ? await api('/wms/inbound-orders/group', 'POST', { ...base, source_type: 'NCC', ncc_id: nccP.id, gate_registration_id: 'QA63_KHONG_CO_LUOT', lines: [{ material_id: M_G1, planned_cartons: 5 }] }) : { s: 0 }
+    const gN = nccOk.j?.data?.receipt_group
+    const nRows = gN ? await restAll('ProductionImport', `select=source_type,location_id,ncc_id&receipt_group=eq.${gN}`) : []
+    const hN = gN ? await hd(gN) : null
+    check('24b. Nhóm NCC cũng là phiếu chung: thiếu NCC ⇒ 422 · có NCC, chưa chọn vị trí ⇒ 200, dòng nguồn NCC không vị trí, đầu phiếu nguồn NCC + số chứng từ · lượt xe không có ⇒ 404 (không tạo gì)',
+      nccNo.s === 422 && (!nccP || (nccOk.s === 200 && nRows.length === 1 && nRows[0].source_type === 'NCC' && nRows[0].location_id == null && nRows[0].ncc_id === nccP.id
+        && hN?.source_type === 'NCC' && hN?.doc_no === 'QA63-NCC-1' && nccGate.s === 404)),
+      `thiếu NCC=${nccNo.s} có=${nccOk.s} ${nccOk.j?.error?.message ?? ''} lượt lạ=${nccGate.s} rows=${JSON.stringify(nRows)} đầu=${hN?.source_type}/${hN?.doc_no}`)
+
+    // 24c NHẬP VƯỢT KẾ HOẠCH — cờ 2 tầng Kho + Loại kho; dòng G2 kế hoạch 10 KG (mã có tem, quét tem gõ số)
+    const lG2 = (rcp.j?.data?.lines ?? []).find(l => l.material?.id === M_G2)
+    let seq = 10009500
+    const scanG2 = (qty) => lG2 ? api(`/wms/inbound-orders/${lG2.id}/scan`, 'POST', { qr_code: `${dmy}_QA63G2_QA63_${++seq}_1_B`, location_id: 'QA63_LOC1', cartons_override: qty }) : Promise.resolve({ s: 0 })
+    const setWh = (v) => restWrite('Warehouse', 'PATCH', `id=eq.${WC}`, { inbound_over_plan: v, updated_at: ts() })
+    await setWh('BLOCK')
+    const ov1 = await scanG2(6)                 // 6 / 10 ⇒ qua
+    const ov2 = await scanG2(6)                 // 12 / 10 ⇒ BLOCK chặn
+    const ovEq = await scanG2(4)                // 10 / 10 ⇒ bằng kế hoạch vẫn qua
+    await setWh('ALLOW')
+    const ov3 = await scanG2(2)                 // 12 / 10 ⇒ ALLOW cho vượt
+    const ordG2 = lG2 ? await api(`/wms/inbound-orders/${lG2.id}`) : { s: 0 }
+    const rcp2 = gB ? await api(`/wms/inbound-receipts/${gB}`) : { s: 0 }
+    const l2 = (rcp2.j?.data?.lines ?? []).find(l => l.material?.id === M_G2)
+    // tầng Loại kho đè tầng Kho: kho ALLOW + RM01 BLOCK ⇒ chặn; bỏ cả hai (như cũ) ⇒ máy chủ không chặn
+    await restWrite('warehouse_type_configs', 'POST', '', [{ id: 'QA63_TC_OVER', warehouse_id: WC, type_code: 'RM01', inbound_over_plan: 'BLOCK', updated_at: ts() }])
+    const ov4 = await scanG2(1)
+    await restWrite('warehouse_type_configs', 'DELETE', 'id=eq.QA63_TC_OVER')
+    await setWh(null)
+    const ov5 = await scanG2(1)
+    const recvG2 = lG2 ? (await restAll('InventoryEntry', `select=cartons_imported&import_order_id=eq.${lG2.id}`)).reduce((a, e) => a + num(e.cartons_imported), 0) : 0
+    check('24c. Nhập vượt kế hoạch (cờ 2 tầng): Kho = Chặn ⇒ pallet làm tổng 12 / KH 10 bị 422 OVER_PLAN, đúng bằng KH vẫn nhận · Kho = Cho vượt ⇒ nhận, trang phiếu báo Thừa 2, trang dòng trả over_plan=ALLOW + đầu phiếu · Loại kho = Chặn đè Kho = Cho vượt ⇒ 422 · bỏ cả hai (như cũ) ⇒ máy chủ không chặn',
+      ov1.s === 200 && ov2.s === 422 && ov2.j?.error?.code === 'OVER_PLAN' && ovEq.s === 200 && ov3.s === 200
+        && ordG2.s === 200 && ordG2.j?.data?.over_plan === 'ALLOW' && ordG2.j?.data?.receipt?.doc_no === 'QA63-CT-01'
+        && Math.abs(num(l2?.diff) - 2) < 1e-9 && l2?.over_plan === 'ALLOW'
+        && ov4.s === 422 && ov4.j?.error?.code === 'OVER_PLAN' && ov5.s === 200 && Math.abs(recvG2 - 13) < 1e-9,
+      `quét=${[ov1, ov2, ovEq, ov3, ov4, ov5].map(r => r.s).join('/')} ${ov2.j?.error?.message ?? ''} ${ov1.s !== 200 ? ov1.j?.error?.message ?? '' : ''} luật=${ordG2.j?.data?.over_plan} chênh=${l2?.diff} nhận=${recvG2}`)
+
+    // 24d Sửa phiếu đổi Số chứng từ ⇒ đầu phiếu đổi; 24e huỷ hết mã của phiếu ⇒ xoá luôn đầu phiếu
+    const pDoc = gB ? await api(`/wms/inbound-orders/group/${gB}`, 'PATCH', { doc_no: 'QA63-CT-02' }) : { s: 0 }
+    const hB2 = gB ? await hd(gB) : null
+    const xN = gN ? await api(`/wms/inbound-orders/group/${gN}/cancel`, 'POST', {}) : { s: 0 }
+    const hNgone = gN ? await hd(gN) : null
+    check('24d. Sửa phiếu đổi Số chứng từ ⇒ đầu phiếu đổi · Huỷ cả phiếu khi mọi mã chưa nhận ⇒ xoá luôn đầu phiếu',
+      pDoc.s === 200 && hB2?.doc_no === 'QA63-CT-02' && (!gN || (xN.s === 200 && !hNgone)),
+      `sửa=${pDoc.s} ${pDoc.j?.error?.message ?? ''} số CT=${hB2?.doc_no} huỷ=${xN.s} đầu còn=${!!hNgone}`)
   }
 } finally {
   await cleanup()

@@ -206,6 +206,8 @@ router.post('/inbound-orders/group/upload',             requirePerm('inbound', '
 router.post('/inbound-orders/group/:group/cancel',      requirePerm('inbound', 'cancel'),   validate({ params: inbound.zGroupParams, query: inbound.zGroupActQuery }), inbound.cancelOrderGroup)
 router.post('/inbound-orders/group/:group/complete',    requirePerm('inbound', 'complete'), validate({ params: inbound.zGroupParams, query: inbound.zGroupActQuery }), inbound.completeOrderGroup)
 router.patch('/inbound-orders/group/:group',            requirePerm('inbound', 'edit'),     validate({ params: inbound.zGroupParams, body: inbound.zGroupPatch }), inbound.patchOrderGroup)
+// Phiếu nhập chung (26/11): đầu phiếu + dòng mã + mọi pallet — cùng gác phạm vi kho + loại hàng như thao tác cả nhóm
+router.get('/inbound-receipts/:group',                  requirePerm('inbound', 'view'),     validate({ params: inbound.zGroupParams }), inbound.getReceipt)
 router.get('/inbound-orders/:id',                       inbound.getOrder)
 router.patch('/inbound-orders/:id',                     requirePerm('inbound', 'edit'), inbound.updateOrder)
 router.patch('/inbound-orders/:id/location',            requireAnyPerm(['inbound', 'edit_pallet'], ['inbound', 'force_edit_pallet']), inbound.setOrderLocation)

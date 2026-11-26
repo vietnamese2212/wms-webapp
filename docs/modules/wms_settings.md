@@ -55,6 +55,9 @@ dòng đọc keyset (`archive_fetch`) → CSV.gz `ledger-archive/<bảng>/<YYYY-
 Đo: sổ vết 544 B/dòng trong DB → 54 B trong tệp (nhỏ hơn 10 lần). Gói 23 khối **[archive]** (gieo 05/2014 ở 4 sổ + dòng OD 60 / 5 ngày; ổ khoá
 busy; recent) · gói 61 **[4d3]**.
 
+## 26/11 — Cờ "Nhập vượt kế hoạch" (2 tầng)
+`inbound_over_plan` ở `Warehouse` + `warehouse_type_configs` (text, CHECK ALLOW / BLOCK; null = như cũ ở tầng Kho, = theo kho ở tầng Loại), trong `WH_TYPE_CFG_COLS`, ghép tầng ở `resolveInboundOverPlan`, validate chung ở `applyPutawayBody`. Ô ở nhóm NHẬP "Nhập vượt kế hoạch" của `InboundStrategyFields` (mọi kho). Quyền: manage_warehouse / manage_type. Luật áp: inbound.md 26/11 (tối). Chế biến Ba Vì đặt ALLOW (user chốt).
+
 ## 26/11 — Cờ "Hàng không tem theo NSX" (2 tầng)
 `noqr_date_tracking` ở `Warehouse` (NOT NULL default false) + `warehouse_type_configs` (null = theo kho), nằm trong `WH_TYPE_CFG_COLS`, ghép tầng ở `resolveNoQrDateTracking`. Ô ở nhóm NHẬP "Hàng không tem" của `InboundStrategyFields` — chỉ hiện khi kho QR (prop `invMode`). Quyền: như mọi cờ chiến thuật (manage_warehouse / manage_type). Luật áp: inbound.md 26/11.
 

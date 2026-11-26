@@ -47,6 +47,8 @@ export interface StrategyValue {
   // HÀNG KHÔNG TEM THEO NSX (26/11): kho QR bật ⇒ lưu thủ công bắt NSX, tồn gộp tách theo NSX, xuất / cấp theo luân
   // chuyển. Chỉ có nghĩa ở kho quản lý theo tem — form chỉ hiện ô khi kho là QR (prop invMode).
   noqr_date_tracking:         boolean | null
+  // NHẬP VƯỢT KẾ HOẠCH (26/11): null = như cũ (phiếu NCC dừng nút quét khi đủ; máy chủ không chặn) · ALLOW · BLOCK
+  inbound_over_plan:          string | null
 }
 
 export const STRATEGY_EMPTY: StrategyValue = {
@@ -56,7 +58,7 @@ export const STRATEGY_EMPTY: StrategyValue = {
   putaway_enforced: null, putaway_enforced_off: null,
   putaway_same_mat_date_pref: null, putaway_fallback: null,
   loose_mode: null, loose_max_cartons: null, auto_fill: null,
-  work_mode: null, lower_from_level: null, noqr_date_tracking: null,
+  work_mode: null, lower_from_level: null, noqr_date_tracking: null, inbound_over_plan: null,
 }
 
 export const STRATEGY_WAREHOUSE_DEFAULT: StrategyValue = {
@@ -66,7 +68,7 @@ export const STRATEGY_WAREHOUSE_DEFAULT: StrategyValue = {
   putaway_enforced: [], putaway_enforced_off: null,
   putaway_same_mat_date_pref: 'NONE', putaway_fallback: 'BY_CODE',
   loose_mode: 'REMAINDER', loose_max_cartons: null, auto_fill: false,
-  work_mode: 'MANUAL', lower_from_level: 2, noqr_date_tracking: false,
+  work_mode: 'MANUAL', lower_from_level: 2, noqr_date_tracking: false, inbound_over_plan: null,
 }
 
 export const LOOSE_MODE_OPTS = [
@@ -332,6 +334,25 @@ export function InboundStrategyFields(props: StrategyProps) {
             control={boolCtl('noqr_date_tracking', `${idPrefix}-noqrdate`)} />
         </SettingsGroup>
       )}
+      {/* ───────── NHẬP — nhập vượt số kế hoạch (26/11) ───────── */}
+      <SettingsGroup area="NHẬP" title={<>Nhập vượt kế hoạch{own(value.inbound_over_plan)}</>}
+        tip={<>
+          Áp cho mọi phiếu nhập có <b>số kế hoạch</b> (Nhập NCC · Nhập nhiều mã · Nhập SX · chuyển kho): quét tem, lưu thủ công.
+          Phiếu hàng trả về có luật hàng THỪA riêng, không theo ô này.
+        </>}>
+        <SettingRow label="Khi thực nhận nhiều hơn kế hoạch"
+          desc={<>Cho vượt = nhận bình thường, dòng mã báo <b>Thừa</b>, Hoàn thành liệt kê mã thừa. Chặn = pallet làm tổng vượt kế hoạch bị từ chối — sửa số kế hoạch trước nếu thực nhận nhiều hơn chứng từ.</>}>
+          <SingleSelect
+            value={sel(value.inbound_over_plan)} onChange={put('inbound_over_plan')}
+            triggerClassName="h-8" data-testid={`${idPrefix}-overplan`}
+            options={withInherit([
+              ...(isType ? [] : [{ value: '', label: 'Như cũ', sub: 'phiếu NCC dừng nút quét khi đủ kế hoạch; phiếu khác không giới hạn' }]),
+              { value: 'ALLOW', label: 'Cho vượt, báo Thừa', sub: 'nhận cả phần dư (hàng cân thực tế lệch kê khai)' },
+              { value: 'BLOCK', label: 'Chặn khi vượt', sub: 'không nhận quá số kế hoạch — như Xuất kho' },
+            ], inherited.inbound_over_plan ?? '').map(o => o.value === INHERIT && !inherited.inbound_over_plan ? { ...o, label: '— Theo kho (Như cũ) —' } : o)}
+          />
+        </SettingRow>
+      </SettingsGroup>
       {/* ───────── NHẬP — thang 3 bước ───────── */}
       <SettingsGroup area="NHẬP" title="Cất hàng (gợi ý vị trí)"
         tip={<>

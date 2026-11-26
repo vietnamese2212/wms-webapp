@@ -1,7 +1,7 @@
 ﻿import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
-import { Plus, PackagePlus, X, ChevronDown, User, MapPin, Pencil, Bookmark, Rows3, AlignJustify, ArrowRight, AlertTriangle, Undo2, Upload } from 'lucide-react'
+import { Plus, PackagePlus, X, ChevronDown, ChevronRight, User, MapPin, Pencil, Bookmark, Rows3, AlignJustify, ArrowRight, AlertTriangle, Undo2, Upload, Layers } from 'lucide-react'
 import { UploadExcelDialog } from '@/components/shared/UploadExcelDialog'
 import { downloadTemplate } from '@/utils/excelTemplate'
 import { InboundReturnSheet } from '@/components/wms/InboundReturnSheet'
@@ -207,7 +207,7 @@ const NccRowItem = React.memo(function NccRowItem({
   )
 })
 
-function CreateOrderDialog({ open, onClose, editGroup, onPickReturn }: { open: boolean; onClose: () => void; editGroup?: InboundOrder[] | null; onPickReturn?: () => void }) {
+export function CreateOrderDialog({ open, onClose, editGroup, onPickReturn }: { open: boolean; onClose: () => void; editGroup?: InboundOrder[] | null; onPickReturn?: () => void }) {
   const navigate  = useNavigate()
   const user      = useAuthStore((s) => s.user)
   const canPickWarehouse = user?.warehouse_scope === 'NATIONAL' || !user?.warehouse_id
@@ -224,6 +224,9 @@ function CreateOrderDialog({ open, onClose, editGroup, onPickReturn }: { open: b
   // Sửa nhóm "Nhập nhiều mã": NCC / vị trí lúc mở — đổi thì áp cho MỌI phiếu chưa quét của nhóm (user chốt 26/11)
   const origGroupLoc = useRef('')
   const origGroupNcc = useRef('')
+  // Số chứng từ của phiếu chung (26/11, tuỳ chọn — số trên giấy / phiếu nội bộ); Sửa phiếu đổi được
+  const [docNo, setDocNo] = useState('')
+  const origDocNo = useRef('')
   const isTableMode = sourceType === 'NCC' || sourceType === 'MULTI'
   const [nccId,        setNccId]        = useState('')       // NCC chọn (bắt buộc khi Nhập NCC)
   const [showFactoryNcc, setShowFactoryNcc] = useState(false) // Nhập SX: bật chọn NCC (tùy chọn)
@@ -248,7 +251,9 @@ function CreateOrderDialog({ open, onClose, editGroup, onPickReturn }: { open: b
     if (open) {
       if (editGroup?.length) {
         const first = editGroup[0]
-        setSourceType(first.receipt_group ? 'MULTI' : 'NCC')
+        // nhóm NCC nay cũng là phiếu chung (26/11) ⇒ phân tab theo NGUỒN, không theo việc có receipt_group
+        setSourceType(first.receipt_group && first.source_type !== 'NCC' ? 'MULTI' : 'NCC')
+        setDocNo(first.receipt?.doc_no ?? ''); origDocNo.current = first.receipt?.doc_no ?? ''
         setWarehouseId((first as any).warehouse_id ?? user?.warehouse_id ?? user?.warehouse_ids?.[0] ?? '')
         setSubType(first.warehouse_type ?? '')
         setGateRegId((first as any).gate_registration_id ?? '')
@@ -284,6 +289,7 @@ function CreateOrderDialog({ open, onClose, editGroup, onPickReturn }: { open: b
         setNccRows([emptyNccRow()]); setNccSaving(false); setNccErr(''); setNccDropdownIdx(null)
         setGateSpecial(false)
         setEditRows([])
+        setDocNo(''); origDocNo.current = ''
       }
     }
     // CHỈ chạy khi mở form (C139): bản cũ phụ thuộc cả user.warehouse_ids — /me làm mới 5' một lần + mỗi lần quay lại cửa sổ
@@ -646,25 +652,28 @@ function CreateOrderDialog({ open, onClose, editGroup, onPickReturn }: { open: b
       if (editing && group) {
         const locChanged = !!locationId && locationId !== origGroupLoc.current
         const nccChanged = (nccId || '') !== origGroupNcc.current
-        if (locChanged || nccChanged)
-          await patchGroup.mutateAsync({ group, ...(locChanged ? { location_id: locationId } : {}), ...(nccChanged ? { ncc_id: nccId || null } : {}) })
+        const docChanged = docNo.trim() !== origDocNo.current
+        if (locChanged || nccChanged || docChanged)
+          await patchGroup.mutateAsync({ group, ...(locChanged ? { location_id: locationId } : {}), ...(nccChanged ? { ncc_id: nccId || null } : {}),
+            ...(docChanged ? { doc_no: docNo.trim() || null } : {}) })
       }
       if (editing) {
         await Promise.all(editRows.filter(r => !r.toCancel).map(r =>
           updateOrderAsync({ id: r.id, import_date: importDate, shift_id: shiftId, notes: r.notes, planned_cartons: r.planned_cartons ?? undefined })))
         await Promise.all(editRows.filter(r => r.toCancel && r.palletCount === 0).map(r => cancelOrderAsync(r.id)))
       }
-      let firstId: string | null = null
+      let newGroup: string | null = null
       if (validRows.length) {
         const res = await createGroupAsync({
           warehouse_id: warehouseId, warehouse_type: subType, import_date: importDate, shift_id: shiftId,
           location_id: locationId || null, notes: notes || null, ncc_id: nccId || null, receipt_group: group,
+          doc_no: group ? undefined : (docNo.trim() || null),
           lines: validRows.map(r => ({ material_id: r.material_id, planned_cartons: Number(r.planned_qty) })),
         })
-        firstId = res.orders[0]?.id ?? null
+        newGroup = res.receipt_group ?? null
       }
       onClose()
-      if (!editing && firstId) navigate(`/wms/inbound/${firstId}`)   // mở phiếu đầu — có nút "Quét cả nhóm"
+      if (!editing && newGroup) navigate(`/wms/inbound/phieu/${newGroup}`)   // mở phiếu chung — một nút Quét cho mọi mã
     } catch (e) {
       const msg = (e as AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message
       setNccErr(msg ?? 'Lỗi tạo nhóm phiếu')
@@ -699,7 +708,15 @@ function CreateOrderDialog({ open, onClose, editGroup, onPickReturn }: { open: b
           editRows.filter(r => r.toCancel && r.palletCount === 0).map(r => cancelOrderAsync(r.id))
         )
         const validNew = nccRows.filter(r => r.material_id)
-        if (validNew.length) {
+        const rg = editGroup[0].receipt_group ?? null
+        if (rg && docNo.trim() !== origDocNo.current) await patchGroup.mutateAsync({ group: rg, doc_no: docNo.trim() || null })
+        if (rg && validNew.length) {
+          await createGroupAsync({
+            warehouse_id: warehouseId, warehouse_type: subType || editGroup[0].warehouse_type || '', import_date: importDate, shift_id: shiftId,
+            notes: notes || null, ncc_id: nccId || null, receipt_group: rg, source_type: 'NCC', gate_registration_id: gateRegId || null,
+            lines: validNew.map(r => ({ material_id: r.material_id, planned_cartons: Number(r.planned_qty) })),
+          })
+        } else if (validNew.length) {
           await Promise.all(validNew.map(r => createOrderAsync({
             warehouse_id: warehouseId, material_id: r.material_id,
             shift_id: shiftId || undefined, import_date: importDate,
@@ -748,16 +765,14 @@ function CreateOrderDialog({ open, onClose, editGroup, onPickReturn }: { open: b
     if (dupCodes.size > 0) { setNccErr(`Mã hàng bị trùng: ${[...dupCodes].join(', ')}`); return }
     setNccSaving(true); setNccErr('')
     try {
-      await Promise.all(validRows.map(r => createOrderAsync({
-        warehouse_id: warehouseId, material_id: r.material_id,
-        shift_id: shiftId || undefined, import_date: importDate,
-        notes: notes || undefined, imported_by: importedByEmpId || undefined,
-        source_type: 'NCC', warehouse_type: subType || undefined,
-        gate_registration_id: gateRegId || undefined,
-        planned_cartons: r.planned_qty ? Number(r.planned_qty) : undefined,
-        ncc_id: nccId || undefined,
-      })))
+      // PHIẾU CHUNG (26/11 — user chốt: nhóm NCC cũng là một phiếu nhiều mã): một request, kiểm hết rồi ghi một lô
+      const res = await createGroupAsync({
+        warehouse_id: warehouseId, warehouse_type: subType, import_date: importDate, shift_id: shiftId,
+        notes: notes || null, ncc_id: nccId, source_type: 'NCC', gate_registration_id: gateRegId, doc_no: docNo.trim() || null,
+        lines: validRows.map(r => ({ material_id: r.material_id, planned_cartons: Number(r.planned_qty) })),
+      })
       onClose()
+      if (res.receipt_group) navigate(`/wms/inbound/phieu/${res.receipt_group}`)
     } catch (e) {
       const msg = (e as AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message
       setNccErr(msg ?? 'Lỗi tạo phiếu')
@@ -1235,9 +1250,17 @@ function CreateOrderDialog({ open, onClose, editGroup, onPickReturn }: { open: b
                   </div>
                 </div>
               </div>
-              <div>
-                <Label className="text-xs">Ghi chú</Label>
-                <Input placeholder="Tuỳ chọn" value={notes} onChange={e => setNotes(e.target.value)} className="h-8 text-xs mt-0.5" />
+              <div className={!editGroup?.length || editGroup[0].receipt_group ? 'grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)] gap-2' : ''}>
+                {(!editGroup?.length || !!editGroup[0].receipt_group) && (
+                  <div>
+                    <Label className="text-xs">Số chứng từ <span className="font-normal text-slate-400">(tuỳ chọn — số trên giấy / phiếu nội bộ)</span></Label>
+                    <Input placeholder="VD: PNK-0123" value={docNo} maxLength={60} onChange={e => setDocNo(e.target.value)} className="h-8 text-xs mt-0.5" data-testid="receipt-doc-no" />
+                  </div>
+                )}
+                <div>
+                  <Label className="text-xs">Ghi chú</Label>
+                  <Input placeholder="Tuỳ chọn" value={notes} onChange={e => setNotes(e.target.value)} className="h-8 text-xs mt-0.5" />
+                </div>
               </div>
             </div>
 
@@ -1389,7 +1412,7 @@ function CreateOrderDialog({ open, onClose, editGroup, onPickReturn }: { open: b
             {showGroupUpload && (
               <UploadExcelDialog
                 title="Nạp danh sách Nhập nhiều mã từ Excel"
-                hint={`Đầu phiếu lấy từ form: kho ${(warehouses as { id: string; name: string }[]).find(w => w.id === warehouseId)?.name ?? ''} · ngày ${importDate} · ca ${(shifts as { id: string; name: string }[]).find(s => s.id === shiftId)?.name ?? ''}${locationId ? ' · vị trí mặc định đã chọn' : ''}${nccId ? ' · NCC đã chọn' : ' · NCC đọc trên tem'}. File chỉ có Mã hàng + số lượng; loại kho theo từng mã. Mỗi mã thành một phiếu trong cùng nhóm — một dòng lỗi là không tạo gì.`}
+                hint={`Đầu phiếu (cả Số chứng từ) lấy từ form: kho ${(warehouses as { id: string; name: string }[]).find(w => w.id === warehouseId)?.name ?? ''} · ngày ${importDate} · ca ${(shifts as { id: string; name: string }[]).find(s => s.id === shiftId)?.name ?? ''}${locationId ? ' · vị trí mặc định đã chọn' : ''}${nccId ? ' · NCC đã chọn' : ' · NCC đọc trên tem'}. File chỉ có Mã hàng + số lượng; loại kho theo từng mã. Tạo MỘT phiếu nhập chung nhiều mã — một dòng lỗi là không tạo gì.`}
                 onClose={() => setShowGroupUpload(false)}
                 onDownloadTemplate={async () => { await downloadTemplate({
                   file: 'mau_nhap_nhieu_ma.xlsx', sheet: 'Nhập nhiều mã', title: 'NẠP DANH SÁCH NHẬP NHIỀU MÃ TỪ EXCEL',
@@ -1407,9 +1430,10 @@ function CreateOrderDialog({ open, onClose, editGroup, onPickReturn }: { open: b
                   const r = await uploadGroupAsync({ file, preflight, head: {
                     warehouse_id: warehouseId, import_date: importDate, shift_id: shiftId,
                     location_id: locationId || undefined, ncc_id: nccId || undefined, notes: notes || undefined,
+                    doc_no: docNo.trim() || undefined,
                   } })
-                  if (!preflight && r.inserted > 0 && r.first_order_id) {
-                    setShowGroupUpload(false); onClose(); navigate(`/wms/inbound/${r.first_order_id}`)
+                  if (!preflight && r.inserted > 0 && r.receipt_group) {
+                    setShowGroupUpload(false); onClose(); navigate(`/wms/inbound/phieu/${r.receipt_group}`)
                   }
                   return r
                 }}
@@ -1425,11 +1449,12 @@ type BracketPos = 'first' | 'middle' | 'last' | 'only' | 'none'
 
 // Khóa nhóm "cùng chuyến" để vẽ bracket nối phiếu: theo lệnh TMS (chuyển kho) HOẶC biển số xe (gate) cho NCC nhiều mã cùng chuyến.
 export function inboundGroupKey(o: InboundOrder): string | null {
+  // 26/11 PHIẾU CHUNG đứng trước (nhóm NCC phiếu chung cũng mang lượt xe / lệnh TMS) — mirror RPC inbound_orders_page (migration 20261126e)
+  if (o.receipt_group) return `grp:${o.receipt_group}`
   const tms = (o as { tms_order?: { order_code?: string } }).tms_order?.order_code
   if (tms) return `tms:${tms}`
   const gate = (o as { gate_registration_id?: string | null }).gate_registration_id
   if (o.source_type === 'NCC' && gate) return `gate:${gate}`
-  if (o.receipt_group) return `grp:${o.receipt_group}`   // 26/11 nhóm "Nhập nhiều mã" — mirror RPC inbound_orders_page
   return null
 }
 
@@ -1610,6 +1635,15 @@ export default function Inbound() {
   // Thứ tự dòng do RPC quyết định (ngày desc → nhóm theo chuyến → ca → giờ tạo) —
   // KHÔNG sort lại client (sort trong 1 trang sẽ phá thứ tự xuyên trang).
   const sortedOrders = filteredOrders
+
+  // PHIẾU CHUNG (26/11): các dòng mã cùng receipt_group gộp thành MỘT dòng cha; ▸ mở xem từng mã (RPC đã xếp liền khối)
+  const [openReceipts, setOpenReceipts] = useState<Set<string>>(() => new Set())
+  const receiptBlocks = useMemo(() => {
+    const m = new Map<string, InboundOrder[]>()
+    for (const o of sortedOrders) if (o.receipt_group) { const a = m.get(o.receipt_group) ?? []; a.push(o); m.set(o.receipt_group, a) }
+    return m
+  }, [sortedOrders])
+  const toggleReceipt = (rg: string) => setOpenReceipts(prev => { const s = new Set(prev); s.has(rg) ? s.delete(rg) : s.add(rg); return s })
 
   // Tính vị trí bracket cho mỗi row trong nhóm "cùng chuyến" (lệnh TMS hoặc xe NCC)
   const bracketPositions = useMemo(() => {
@@ -1916,6 +1950,28 @@ export default function Inbound() {
                 </TableHeader>
                 <TableBody>
                   {sortedOrders.flatMap((order, i) => {
+                    if (order.receipt_group) {
+                      const rg = order.receipt_group
+                      const block = receiptBlocks.get(rg) ?? [order]
+                      const k = block.findIndex(o => o.id === order.id)
+                      const open = openReceipts.has(rg)
+                      const out: React.ReactNode[] = []
+                      if (k === 0) out.push(
+                        <ReceiptRow key={`rc-${rg}`} lines={block} open={open} dense={dense}
+                          onToggle={e => { e.stopPropagation(); toggleReceipt(rg) }}
+                          onOpen={() => navigate(`/wms/inbound/phieu/${rg}`)}
+                          onScan={block.some(o => o.status === 'OPEN' && o.material?.no_qr_tracking !== true) && can(perms, 'inbound', 'scan')
+                            ? e => { e.stopPropagation(); unlockAudio(); navigate(`/wms/inbound/phieu/${rg}?scan=1`) } : undefined}
+                          onEdit={block.some(o => o.status === 'OPEN') && can(perms, 'inbound', 'edit')
+                            ? e => { e.stopPropagation(); openEditNccGroup(order) } : undefined} />)
+                      if (open) out.push(
+                        <InboundRow key={order.id} order={order} dense={dense} selected={order.id === selectedId}
+                          onClick={() => navigate(`/wms/inbound/${order.id}`)}
+                          onScan={order.status === 'OPEN' && !!order.location_id && can(perms, 'inbound', 'scan')
+                            ? (e) => { e.stopPropagation(); unlockAudio(); setScanOrderId(order.id) } : undefined}
+                          bracketPos={k === block.length - 1 ? 'last' : 'middle'} />)
+                      return out
+                    }
                     const bpos     = bracketPositions.get(order.id) ?? 'none'
                     const prevBpos = i > 0 ? (bracketPositions.get(sortedOrders[i - 1].id) ?? 'none') : 'none'
                     // Hàng trống ~10px ngăn cách giữa các nhóm (không border, không nền) — như margin giữa 2 card
@@ -2244,6 +2300,100 @@ function InboundRow({ order, onClick, onDoubleClick, onScan, onEditGroup, onPin,
         <Badge variant={st.variant} className="px-1.5 py-0 text-[9px] font-medium">{st.label}</Badge>
       </TableCell>
 
+    </TableRow>
+  )
+}
+
+// ─── Dòng PHIẾU CHUNG (26/11) — một dòng cho cả chứng từ nhiều mã; cột khớp INBOUND_COLS ───
+function ReceiptRow({ lines, open, dense = true, onToggle, onOpen, onScan, onEdit }: {
+  lines: InboundOrder[]; open: boolean; dense?: boolean
+  onToggle: (e: React.MouseEvent) => void; onOpen: () => void
+  onScan?: (e: React.MouseEvent) => void; onEdit?: (e: React.MouseEvent) => void
+}) {
+  const f = lines[0]
+  const rc = f.receipt
+  const dateFull = f.import_date ? format(parseISO(f.import_date), 'dd-MM-yy', { locale: vi }) : '—'
+  const isRowToday = f.import_date?.slice(0, 10) === TODAY()
+  const n = lines.length
+  const got = lines.filter(o => (o.total_cartons ?? 0) > 0).length
+  const withPlan = lines.filter(o => (o.planned_cartons ?? 0) > 0)
+  const full = withPlan.filter(o => (o.total_cartons ?? 0) >= (o.planned_cartons ?? 0) - 1e-9).length
+  const short = withPlan.filter(o => (o.total_cartons ?? 0) > 0 && (o.total_cartons ?? 0) < (o.planned_cartons ?? 0) - 1e-9).length
+  const over = withPlan.filter(o => (o.total_cartons ?? 0) > (o.planned_cartons ?? 0) + 1e-9).length
+  const pallets = lines.reduce((a, o) => a + (o._count?.inventory_entries ?? 0), 0)
+  const pct = withPlan.length ? Math.round(full / withPlan.length * 100) : null
+  const key: RowStatusKey = lines.every(o => o.status === 'COMPLETED') ? 'completed' : got > 0 ? 'inProgress' : 'pending'
+  const st = INBOUND_BADGE[key]
+  const loc = lines.find(o => o.location?.location_code)?.location?.location_code ?? '—'
+  const plate = (f as { gate_registration?: { license_plate?: string | null } | null }).gate_registration?.license_plate ?? null
+  const tmsCode = (f as { tms_order?: { order_code?: string } | null }).tms_order?.order_code ?? null
+  const importer = f.imported_by_emp?.name ?? f.created_by_emp?.name ?? '—'
+  const ncc = (f as { ncc?: { name?: string } | null }).ncc?.name ?? null
+  const isNcc = f.source_type === 'NCC'
+  return (
+    <TableRow data-testid="receipt-row" className={`cursor-pointer ${rowText(key)} ${dense ? '' : '[&_td]:py-2.5'} bg-sky-50/60 hover:bg-sky-50 ${open ? '[&_td]:border-t [&_td]:!border-t-slate-300' : ''}`} onClick={onOpen}>
+      <TableCell className="w-8 px-0 py-0 relative">
+        {open && <div className="absolute pointer-events-none" style={{ right: 0, width: '10px', top: '50%', bottom: 0, borderLeft: '2px solid #0f172a', borderTop: '2px solid #0f172a', borderTopLeftRadius: '3px' }} />}
+        <div className="flex items-center justify-center py-1 pl-1 pr-3 h-full">
+          <button onClick={onToggle} title={open ? 'Thu gọn các mã' : `Xem ${n} mã của phiếu`} data-testid="receipt-toggle"
+            className="p-0.5 rounded hover:bg-white text-slate-500">
+            {open ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+          </button>
+        </div>
+      </TableCell>
+      <TableCell className="px-2 py-1 whitespace-nowrap sticky left-0 z-10 bg-sky-50">
+        <div className="flex items-center gap-0.5">
+          <span className="text-[10px] font-medium tabular-nums">{dateFull}</span>
+          {isRowToday && <span className="text-[9px] text-blue-600 font-medium ml-0.5">HN</span>}
+          <span className={`text-[8px] px-1 py-0.5 rounded font-medium ml-0.5 ${isNcc ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-600'}`}>{isNcc ? 'NCC' : 'SX'}</span>
+          {onEdit && (
+            <button onClick={onEdit} title="Sửa phiếu" className="text-slate-300 hover:text-blue-500 transition-colors ml-1"><Pencil className="h-3 w-3" /></button>
+          )}
+        </div>
+      </TableCell>
+      <TableCell className="px-2 py-1 whitespace-nowrap">
+        <div className="flex items-center justify-between gap-1 w-full">
+          <span className="text-[10px] font-mono font-semibold truncate">{loc}</span>
+          {onScan && (
+            <button onClick={onScan} title="Quét tem — app tự vào đúng mã" data-testid="receipt-row-scan"
+              className="flex items-center gap-0.5 text-[9px] font-medium text-blue-600 hover:text-blue-700 bg-blue-50 hover:bg-blue-100 rounded px-1.5 py-1 transition-colors">
+              <ScanIcon className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </div>
+      </TableCell>
+      <TableCell className="px-2 py-1 whitespace-nowrap"><span className="text-[10px] font-semibold text-sky-700 inline-flex items-center gap-0.5"><Layers className="h-3 w-3" />{n} mã</span></TableCell>
+      <TableCell className="px-2 py-1 whitespace-nowrap">
+        <span className="text-[10px] font-semibold truncate block" title={rc?.doc_no ? `Số chứng từ ${rc.doc_no}` : undefined}>
+          Phiếu chung{rc?.doc_no ? <span className="font-normal text-slate-500"> · CT {rc.doc_no}</span> : null}
+        </span>
+      </TableCell>
+      <TableCell className="px-2 py-1 whitespace-nowrap">
+        {ncc ? <span className="text-[10px] truncate block" title={ncc}>{ncc}</span> : <span className="text-[10px] text-slate-300">—</span>}
+      </TableCell>
+      <TableCell className="px-2 py-1 text-right whitespace-nowrap" title="Số mã đã nhận hàng / số mã của phiếu">
+        <span className="text-[10px] font-semibold tabular-nums">{got}/{n}</span><span className="text-[9px] text-slate-400 ml-0.5">mã</span>
+      </TableCell>
+      <TableCell className="px-2 py-1 text-right whitespace-nowrap" title="Mã nhận thiếu / thừa so kế hoạch">
+        {short || over
+          ? <span className="text-[10px] font-semibold">{short ? <span className="text-red-600">thiếu {short}</span> : null}{short && over ? ' · ' : ''}{over ? <span className="text-blue-600">thừa {over}</span> : null}</span>
+          : <span className="text-[10px] text-slate-300">—</span>}
+      </TableCell>
+      <TableCell className="px-2 py-1 whitespace-nowrap text-right" title="Số mã đã đủ kế hoạch / số mã có kế hoạch">
+        {pct != null ? <span className={`text-[10px] font-semibold tabular-nums ${pct >= 100 ? 'text-green-600' : 'text-amber-600'}`}>{full}/{withPlan.length}</span> : <span className="text-[10px] text-slate-300">—</span>}
+      </TableCell>
+      <TableCell className="px-2 py-1 whitespace-nowrap">{plate ? <span className="text-[10px] font-mono text-slate-600 truncate block">{plate}</span> : <span className="text-[10px] text-slate-300">—</span>}</TableCell>
+      <TableCell className="px-2 py-1 whitespace-nowrap"><span className="text-[10px] text-slate-300">—</span></TableCell>
+      <TableCell className="px-2 py-1 whitespace-nowrap">
+        <span className="text-[10px] font-mono font-semibold truncate block text-sky-700" title={rc?.receipt_code ?? undefined}>{rc?.receipt_code ?? '—'}</span>
+      </TableCell>
+      <TableCell className="px-2 py-1 whitespace-nowrap">{tmsCode ? <span className="text-[9px] font-mono truncate block opacity-80">{tmsCode}</span> : <span className="text-[10px] text-slate-300">—</span>}</TableCell>
+      <TableCell className="px-2 py-1 text-right whitespace-nowrap"><span className="text-[10px] font-semibold tabular-nums">{pallets}</span><span className="text-[9px] text-slate-400 ml-0.5">pl</span></TableCell>
+      <TableCell className="px-2 py-1"><div className="text-[10px] max-w-[90px] truncate" title={importer}>{importer}</div></TableCell>
+      <TableCell className="px-2 py-1 whitespace-nowrap">{f.shift ? <span className="text-[10px] font-medium">{f.shift.name}</span> : <span className="text-[10px] text-slate-300">—</span>}</TableCell>
+      <TableCell className="px-2 py-1"><div className="text-[10px] truncate" title={f.notes ?? undefined}>{f.notes ?? '—'}</div></TableCell>
+      <TableCell className="px-2 py-1 whitespace-nowrap">{f.warehouse?.name ? <span className="text-[10px] truncate block">{f.warehouse.name}</span> : <span className="text-[10px] text-slate-300">—</span>}</TableCell>
+      <TableCell className="px-2 py-1 whitespace-nowrap"><Badge variant={st.variant} className="px-1.5 py-0 text-[9px] font-medium">{st.label}</Badge></TableCell>
     </TableRow>
   )
 }

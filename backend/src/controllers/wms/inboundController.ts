@@ -8,6 +8,7 @@ import { getLabelFormat } from './systemSettingController'
 import { emitInboundChanged } from '../../lib/events'
 import { effectiveNoQr } from '../../lib/inventoryMode'
 import { noQrPoolPolicy, nsxRequiredMessage } from '../../services/noQrPool'
+import { inboundOverPlanMode, inboundOverPlanModes, overPlanError, receivedOfOrder } from '../../services/inboundOverPlan'
 import { effCartonsPerPallet } from '../../utils/palletCalc'
 import { fetchAllRowsParallel, fetchAllByIdChunks, fetchUpTo, LIST_TOO_LARGE_MSG, rowCapForBytes, isQueryTimeout, QUERY_TIMEOUT_MSG } from '../../utils/pagination'
 import { categoryAllowed, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
@@ -345,18 +346,25 @@ async function getListCtx(req: Request): Promise<InboundListCtx> {
   let searchOrderIds: string[] = []
   let tooBroad: string | null = null
   if (search) {
-    const [matRes, palletRes] = await Promise.all([
+    const [matRes, palletRes, rcptRes] = await Promise.all([
       supabase.from('Material').select('id')
         .or(`material_code.ilike.%${safeSearch(search)}%,short_name.ilike.%${safeSearch(search)}%`).limit(500),
       // Tem pallet: quét/gõ mã tem (hoặc 1 đoạn) → ra phiếu nhập chứa pallet đó
       supabase.from('InventoryEntry').select('import_order_id')
         .ilike('pallet_code', `%${search}%`).not('import_order_id', 'is', null).limit(500),
+      // Phiếu chung (26/11): số phiếu app sinh hoặc Số chứng từ (số trên giấy) → mọi dòng mã của phiếu
+      supabase.from('inbound_receipts').select('id')
+        .or(`receipt_code.ilike.%${safeSearch(search)}%,doc_no.ilike.%${safeSearch(search)}%`).limit(20),
     ])
     let matIds = (matRes.data ?? []).map((m: { id: string }) => m.id)
-    const orderIds = [...new Set(
-      ((palletRes.data ?? []) as { import_order_id: string | null }[])
-        .map(p => p.import_order_id).filter((v): v is string => !!v)
-    )]
+    const rcptIds = ((rcptRes.data ?? []) as { id: string }[]).map(r => r.id)
+    const rcptLines = rcptIds.length
+      ? ((await supabase.from('ProductionImport').select('id').in('receipt_group', rcptIds).limit(500)).data ?? []) as { id: string }[]
+      : []
+    const orderIds = [...new Set([
+      ...((palletRes.data ?? []) as { import_order_id: string | null }[]).map(p => p.import_order_id).filter((v): v is string => !!v),
+      ...rcptLines.map(r => r.id),
+    ])]
     // Term ngắn/phổ biến ("51", "-", "_") khớp hàng trăm mã → `material_id.in.(…)` phình >13KB
     // → PostgREST từ chối → 500 trắng trang (đo 26/07). Thu hẹp về mã CÓ phiếu nhập (RPC DISTINCT,
     // migration 20260726_omni_search_narrow.sql); vẫn quá nhiều → báo 400 rõ, KHÔNG cắt âm thầm.
@@ -573,11 +581,23 @@ async function enrichOrders(orders: any[]): Promise<any[]> {
         codesByGdo.set(d.gdo_id, arr)
       }
     }
+    // Đầu phiếu chung (26/11): số phiếu + số chứng từ của các nhóm trên trang — một lượt đọc
+    const receiptById = await receiptHeadsOf(withCount.map((o: { receipt_group?: string | null }) => o.receipt_group))
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     return withCount.map((o: any) => ({
       ...o,
       from_gdo_delivery_codes: o.from_gdo_id ? (codesByGdo.get(o.from_gdo_id) ?? []) : [],
+      receipt: o.receipt_group ? (receiptById.get(o.receipt_group) ?? null) : null,
     }))
+}
+
+type ReceiptHead = { id: string; receipt_code: string; doc_no: string | null; source_type: string; warehouse_id: string; created_at: string }
+/** Đầu phiếu chung theo danh sách receipt_group (bỏ trùng / rỗng) — chia lô 300 */
+async function receiptHeadsOf(groups: (string | null | undefined)[]): Promise<Map<string, ReceiptHead>> {
+  const ids = [...new Set(groups.filter((g): g is string => !!g))]
+  if (!ids.length) return new Map()
+  const rows = await fetchAllByIdChunks(ids, chunk => supabase.from('inbound_receipts').select('id, receipt_code, doc_no, source_type, warehouse_id, created_at').in('id', chunk))
+  return new Map((rows as ReceiptHead[]).map(r => [r.id, r]))
 }
 
 // ─── Create inbound order ────────────────────────────────────
@@ -781,6 +801,9 @@ export const zCreateGroup = z.object({
   ncc_id:         zText(1, 64).nullable().optional(),
   receipt_group:  z.string().uuid().nullable().optional(),
   putaway_override_reason: zText(0, 300).nullable().optional(),
+  doc_no:         zText(0, 60).nullable().optional(),              // Số chứng từ (số trên giấy / phiếu nội bộ) — tuỳ chọn
+  source_type:    z.enum(['FACTORY', 'NCC']).optional(),           // NCC = tab Nhập NCC (phiếu chung theo lượt xe + NCC)
+  gate_registration_id: zText(1, 64).nullable().optional(),
   qty_semantics:  z.literal('base'),
   lines: z.array(z.object({
     material_id:     zText(1, 64),
@@ -794,6 +817,9 @@ type GroupHead = {
   warehouse_id: string; warehouse_type: string | null   // null = loại kho theo TỪNG MÃ (upload)
   import_date: string; shift_id: string; location_id?: string | null; notes?: string | null; ncc_id?: string | null
   putaway_override_reason?: string | null
+  doc_no?: string | null
+  source_type?: 'FACTORY' | 'NCC'                        // mặc định FACTORY (Nhập nhiều mã)
+  gate_registration_id?: string | null; tms_order_id?: string | null
 }
 type GroupLine = { material_id: string; planned_cartons: number; notes?: string | null }
 type GroupMat = { id: string; material_code: string; category: string | null; no_qr_tracking: boolean | null; is_non_stock: boolean | null } & MatUnits
@@ -837,6 +863,7 @@ async function prepareGroup(req: Request, h: GroupHead, lines: GroupLine[], rece
   const matById = new Map((mats as GroupMat[]).map(m => [m.id, m]))
   const codeOf = (id: string) => matById.get(id)?.material_code ?? id
   const errs: string[] = []
+  if (h.source_type === 'NCC' && !h.ncc_id) errs.push('Nhập NCC phải chọn Nhà cung cấp')
   const seen = new Set<string>(), dup = new Set<string>()
   for (const l of lines) { if (seen.has(l.material_id)) dup.add(codeOf(l.material_id)); seen.add(l.material_id) }
   if (dup.size) errs.push(`Mã hàng bị trùng: ${[...dup].join(', ')}`)
@@ -873,7 +900,7 @@ async function prepareGroup(req: Request, h: GroupHead, lines: GroupLine[], rece
   const isQrLine = (id: string) => !effectiveNoQr(matById.get(id)?.no_qr_tracking, w.inventory_mode)
   const qrIds = matIds.filter(id => matById.has(id) && isQrLine(id))
   let putWarn: string | null = null
-  if (qrIds.length && !h.location_id) {
+  if (qrIds.length && !h.location_id && h.source_type !== 'NCC') {
     errs.push(`Chọn vị trí mặc định — ${qrIds.length} mã quản lý theo tem cần chỗ cất`)
   } else if (qrIds.length && h.location_id) {
     const locErr = await groupLocationError(h.location_id, h.warehouse_id, qrIds.map(id => h.warehouse_type ?? matById.get(id)?.category ?? null))
@@ -892,14 +919,44 @@ async function prepareGroup(req: Request, h: GroupHead, lines: GroupLine[], rece
   return { errors: errs, wh: w, matById, isQrLine, putWarn }
 }
 
-/** Ghi CẢ LÔ (một insert) — cấp số phiếu liền nhau; đua với người khác cùng kho cùng ngày ⇒ 23505 ⇒ đếm lại, thử lại (không ghi dở). */
-async function insertGroup(req: Request, h: GroupHead, lines: GroupLine[], prep: GroupPrep, group: string): Promise<{ orders: unknown[] } | { fatal: { status: number; code: string; message: string } }> {
+/** ĐẦU PHIẾU CHUNG (26/11): số <KHO>_PN_<ddmmyy>_<seq> cấp theo kho + ngày; đua cấp số ⇒ 23505 ⇒ đếm lại. null = hết lượt thử. */
+async function createReceiptHeader(req: Request, id: string, whId: string, whCode: string, docNo: string | null, source: 'FACTORY' | 'NCC'): Promise<string | null> {
+  const [y, mo, d] = vnDate().split('-')
+  const prefix = `${whCode}_PN_${d}${mo}${y.slice(2)}_`
+  for (let attempt = 0; attempt < GROUP_SEQ_RETRIES; attempt++) {
+    const { data: ex, error: exErr } = await supabase.from('inbound_receipts').select('receipt_code').ilike('receipt_code', `${prefix}%`)
+    if (exErr) throw exErr
+    const max = ((ex ?? []) as { receipt_code: string }[]).reduce((m, r) => {
+      const n = parseInt(r.receipt_code.slice(prefix.length), 10)
+      return isNaN(n) ? m : Math.max(m, n)
+    }, 0)
+    const code = `${prefix}${String(max + 1).padStart(3, '0')}`
+    const now = new Date().toISOString()
+    const { error } = await supabase.from('inbound_receipts').insert({
+      id, receipt_code: code, doc_no: docNo, warehouse_id: whId, source_type: source, created_by: actorUuid(req), created_at: now, updated_at: now,
+    })
+    if (!error) return code
+    if (error.code === '23505') { await new Promise(r => setTimeout(r, 20 + Math.floor(Math.random() * (60 + attempt * 40)))); continue }
+    throw error
+  }
+  return null
+}
+
+/** Ghi CẢ LÔ (một insert) — cấp số phiếu liền nhau; đua với người khác cùng kho cùng ngày ⇒ 23505 ⇒ đếm lại, thử lại (không ghi dở).
+ *  `isNew` ⇒ tạo đầu phiếu chung trước (dòng trỏ FK về đầu phiếu); dòng không ghi được thì xoá lại đầu phiếu vừa tạo. */
+async function insertGroup(req: Request, h: GroupHead, lines: GroupLine[], prep: GroupPrep, group: string, isNew: boolean): Promise<{ orders: unknown[]; receipt_code: string | null } | { fatal: { status: number; code: string; message: string } }> {
   const importedBy = actorUuid(req)   // người nhập = người đang đăng nhập (token phát từ Employee)
   const todayStr = vnDate()
   const [y, mo, d] = todayStr.split('-')
   const ddmmyy = `${d}${mo}${y.slice(2)}`
   const whCode = prep.wh?.code ? String(prep.wh.code) : 'XX'
   const importPrefix = `${whCode}_N_${ddmmyy}_`
+  let receiptCode: string | null = null
+  if (isNew) {
+    receiptCode = await createReceiptHeader(req, group, h.warehouse_id, whCode, h.doc_no?.trim() || null, h.source_type ?? 'FACTORY')
+    if (!receiptCode) return { fatal: { status: 409, code: 'DUPLICATE', message: 'Không cấp được số phiếu (nhiều người tạo cùng lúc) — bấm lại' } }
+  }
+  const dropHead = async () => { if (isNew) await supabase.from('inbound_receipts').delete().eq('id', group) }
   for (let attempt = 0; attempt < GROUP_SEQ_RETRIES; attempt++) {
     const { data: existingCodes } = await supabase.from('ProductionImport')
       .select('import_code').ilike('import_code', `${importPrefix}%`)
@@ -920,10 +977,12 @@ async function insertGroup(req: Request, h: GroupHead, lines: GroupLine[], prep:
       imported_by:     importedBy,
       created_by:      importedBy,
       status:          'OPEN',
-      source_type:     'FACTORY',
+      source_type:     h.source_type ?? 'FACTORY',
       warehouse_type:  h.warehouse_type ?? prep.matById.get(l.material_id)?.category ?? null,
       planned_cartons: l.planned_cartons,
       ncc_id:          h.ncc_id ?? null,
+      gate_registration_id: h.gate_registration_id ?? null,
+      tms_order_id:    h.tms_order_id ?? null,
       receipt_group:   group,
       created_at:      now,
       updated_at:      now,
@@ -931,12 +990,14 @@ async function insertGroup(req: Request, h: GroupHead, lines: GroupLine[], prep:
     const { data, error } = await supabase.from('ProductionImport').insert(rows).select(ORDER_SELECT)
     if (!error) {
       for (const o of data ?? []) applyInboundMode(o as Parameters<typeof applyInboundMode>[0])
-      return { orders: data ?? [] }
+      return { orders: data ?? [], receipt_code: receiptCode }
     }
     if (error.code === '23505') { await new Promise(r => setTimeout(r, 20 + Math.floor(Math.random() * (60 + attempt * 40)))); continue }
-    if (error.code === '23503') return { fatal: { status: 404, code: 'NOT_FOUND', message: 'Không tìm thấy kho, ca, vị trí hoặc NCC — tải lại trang rồi thử lại' } }
+    await dropHead()
+    if (error.code === '23503') return { fatal: { status: 404, code: 'NOT_FOUND', message: 'Không tìm thấy kho, ca, vị trí, NCC hoặc lượt xe — tải lại trang rồi thử lại' } }
     throw error
   }
+  await dropHead()
   return { fatal: { status: 409, code: 'DUPLICATE', message: 'Không cấp được số phiếu (nhiều người tạo cùng lúc) — bấm lại' } }
 }
 
@@ -944,8 +1005,17 @@ export async function createOrderGroup(req: Request, res: Response) {
   try {
     const b = req.body as z.infer<typeof zCreateGroup>
     if (!guardWhCreate(req, res, b.warehouse_id)) return
+    // Nhóm NCC (tab Nhập NCC) cũng là phiếu chung (26/11): lượt xe vào cổng ⇒ lệnh TMS của lượt (báo cáo KH vs thực nhận theo lệnh)
+    let tmsId: string | null = null
+    if (b.gate_registration_id) {
+      const { data: gr, error: grErr } = await supabase.from('gate_registrations').select('id, tms_order_id').eq('id', b.gate_registration_id).maybeSingle()
+      if (grErr) throw grErr
+      if (!gr) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy lượt xe vào cổng')
+      tmsId = (gr as { tms_order_id: string | null }).tms_order_id ?? null
+    }
     const h: GroupHead = { warehouse_id: b.warehouse_id, warehouse_type: b.warehouse_type, import_date: b.import_date, shift_id: b.shift_id,
-      location_id: b.location_id ?? null, notes: b.notes ?? null, ncc_id: b.ncc_id ?? null, putaway_override_reason: b.putaway_override_reason ?? null }
+      location_id: b.location_id ?? null, notes: b.notes ?? null, ncc_id: b.ncc_id ?? null, putaway_override_reason: b.putaway_override_reason ?? null,
+      doc_no: b.doc_no ?? null, source_type: b.source_type ?? 'FACTORY', gate_registration_id: b.gate_registration_id ?? null, tms_order_id: tmsId }
     const lines: GroupLine[] = b.lines.map(l => ({ material_id: l.material_id, planned_cartons: l.planned_cartons }))
     const prep = await prepareGroup(req, h, lines, b.receipt_group ?? null)
     if (prep.fatal) return fail(res, prep.fatal.status, prep.fatal.code, prep.fatal.message)
@@ -953,10 +1023,10 @@ export async function createOrderGroup(req: Request, res: Response) {
       const locMissing = prep.errors.some(e => e.startsWith('Chọn vị trí mặc định'))
       return fail(res, 422, locMissing && prep.errors.length === 1 ? 'LOCATION_REQUIRED' : 'VALIDATION_ERROR', prep.errors.join(' · '))
     }
-    const r = await insertGroup(req, h, lines, prep, b.receipt_group ?? randomUUID())
+    const r = await insertGroup(req, h, lines, prep, b.receipt_group ?? randomUUID(), !b.receipt_group)
     if ('fatal' in r) return fail(res, r.fatal.status, r.fatal.code, r.fatal.message)
     emitInboundChanged()
-    ok(res, { receipt_group: (r.orders[0] as { receipt_group?: string } | undefined)?.receipt_group ?? null, orders: r.orders, ...(prep.putWarn ? { putaway_warning: prep.putWarn } : {}) })
+    ok(res, { receipt_group: (r.orders[0] as { receipt_group?: string } | undefined)?.receipt_group ?? null, receipt_code: r.receipt_code, orders: r.orders, ...(prep.putWarn ? { putaway_warning: prep.putWarn } : {}) })
   } catch (e) { console.error(e); if (isQueryTimeout(e)) { fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return }; fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 
@@ -968,7 +1038,7 @@ export const zGroupUploadQuery = z.object({ preflight: z.enum(['1']).optional() 
 const zGroupUploadHead = z.object({
   warehouse_id: zText(1, 64), import_date: zDay, shift_id: zText(1, 64),
   location_id: zText(1, 64).optional(), notes: zText(0, 500).optional(), ncc_id: zText(1, 64).optional(),
-  putaway_override_reason: zText(0, 300).optional(),
+  putaway_override_reason: zText(0, 300).optional(), doc_no: zText(0, 60).optional(),
 })
 const GROUP_UPLOAD_FIELDS: FieldDef[] = [
   { key: 'material_code', label: 'Mã hàng',          aliases: ['ma hang', 'ma', 'ma nvl', 'material', 'material code'], required: true },
@@ -1023,7 +1093,8 @@ export async function uploadOrderGroup(req: Request, res: Response) {
       warnings.push(`Mã ${[...matByCode.values()].find(m => m.id === id)?.material_code} có ${v.rows.length} dòng (dòng ${v.rows.join(', ')}) — đã cộng gộp thành một phiếu`)
     const lines: GroupLine[] = [...byMat].map(([material_id, v]) => ({ material_id, planned_cartons: Math.round(v.qty * 1000) / 1000, notes: v.notes.length ? v.notes.join(' · ').slice(0, 500) : null }))
     const h: GroupHead = { warehouse_id: hb.warehouse_id, warehouse_type: null, import_date: hb.import_date, shift_id: hb.shift_id,
-      location_id: hb.location_id ?? null, notes: hb.notes ?? null, ncc_id: hb.ncc_id ?? null, putaway_override_reason: hb.putaway_override_reason ?? null }
+      location_id: hb.location_id ?? null, notes: hb.notes ?? null, ncc_id: hb.ncc_id ?? null, putaway_override_reason: hb.putaway_override_reason ?? null,
+      doc_no: hb.doc_no ?? null, source_type: 'FACTORY' }
     const prep = lines.length ? await prepareGroup(req, h, lines, null) : null
     if (prep?.fatal) return fail(res, prep.fatal.status, prep.fatal.code, prep.fatal.message)
     if (prep) errors.push(...prep.errors)
@@ -1040,11 +1111,11 @@ export async function uploadOrderGroup(req: Request, res: Response) {
     }))
     if (errors.length) return ok(res, { inserted: 0, errors })
     if (!prep || !lines.length) return fail(res, 400, 'VALIDATION_ERROR', 'File không có mã nào dùng được')
-    const r = await insertGroup(req, h, lines, prep, randomUUID())
+    const r = await insertGroup(req, h, lines, prep, randomUUID(), true)
     if ('fatal' in r) return fail(res, r.fatal.status, r.fatal.code, r.fatal.message)
     emitInboundChanged()
     const first = r.orders[0] as { id?: string; receipt_group?: string } | undefined
-    ok(res, { inserted: r.orders.length, errors: [], warnings, receipt_group: first?.receipt_group ?? null, first_order_id: first?.id ?? null,
+    ok(res, { inserted: r.orders.length, errors: [], warnings, receipt_group: first?.receipt_group ?? null, receipt_code: r.receipt_code, first_order_id: first?.id ?? null,
       ...(prep.putWarn ? { putaway_warning: prep.putWarn } : {}) })
   } catch (e) { console.error(e); if (isQueryTimeout(e)) { fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return }; fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
@@ -1057,12 +1128,13 @@ export const zGroupParams = z.object({ group: z.string().uuid() })
 export const zGroupActQuery = z.object({ preview: z.enum(['1']).optional() })
 export const zGroupPatch = z.object({
   location_id: zText(1, 64).optional(), ncc_id: zText(1, 64).nullable().optional(),
+  doc_no: zText(0, 60).nullable().optional(),
   putaway_override_reason: zText(0, 300).nullable().optional(),
   qty_semantics: z.literal('base').optional(),
-}).refine(b => b.location_id !== undefined || b.ncc_id !== undefined, 'Cần location_id hoặc ncc_id')
+}).refine(b => b.location_id !== undefined || b.ncc_id !== undefined || b.doc_no !== undefined, 'Cần location_id, ncc_id hoặc doc_no')
 
 type GroupOrderRow = {
-  id: string; import_code: string; status: string; warehouse_id: string; warehouse_type: string | null; material_id: string | null
+  id: string; import_code: string; status: string; source_type: string; warehouse_id: string; warehouse_type: string | null; material_id: string | null
   location_id: string | null; ncc_id: string | null; planned_cartons: number | null; posm_entry_id: string | null; posm_cartons: number | null
   tms_order_id: string | null; from_gdo_id: string | null; return_id: string | null
   material: { material_code: string; no_qr_tracking: boolean | null; category: string | null; base_unit: string | null; entry_unit: string | null; units_per_carton: number | null } | null
@@ -1071,7 +1143,7 @@ type GroupState = GroupOrderRow & { received: number; pallets: number }
 /** Nạp trọn nhóm + số đã nhận của từng phiếu; gác phạm vi kho + loại hàng (thiếu quyền một loại trong nhóm ⇒ 403). null = đã trả lỗi. */
 async function loadGroupState(req: Request, res: Response, group: string): Promise<{ whId: string; inventoryMode: string | null; orders: GroupState[] } | null> {
   const { data, error } = await supabase.from('ProductionImport')
-    .select('id, import_code, status, warehouse_id, warehouse_type, material_id, location_id, ncc_id, planned_cartons, posm_entry_id, posm_cartons, tms_order_id, from_gdo_id, return_id, material:Material(material_code, no_qr_tracking, category, base_unit, entry_unit, units_per_carton)')
+    .select('id, import_code, status, source_type, warehouse_id, warehouse_type, material_id, location_id, ncc_id, planned_cartons, posm_entry_id, posm_cartons, tms_order_id, from_gdo_id, return_id, material:Material(material_code, no_qr_tracking, category, base_unit, entry_unit, units_per_carton)')
     .eq('receipt_group', group).neq('status', 'CANCELLED').order('import_code')
   if (error) throw error
   const rows = (data ?? []) as unknown as GroupOrderRow[]
@@ -1104,6 +1176,8 @@ async function forGroupIdChunks(ids: string[], fn: (chunk: string[]) => Promise<
   for (let i = 0; i < ids.length; i += 300) n += await fn(ids.slice(i, i + 300))
   return n
 }
+/** Dòng mang gắn chuyển kho / trả về ⇒ làm ở trang dòng. Dòng NCC chỉ mang lệnh TMS của lượt xe (đặt lịch NCC) vẫn làm cả phiếu được. */
+const groupTied = (o: GroupState) => !!o.from_gdo_id || !!o.return_id || (!!o.tms_order_id && o.source_type !== 'NCC')
 const brief = (o: GroupState) => ({ id: o.id, import_code: o.import_code, material_code: o.material?.material_code ?? null, planned: o.planned_cartons, received: o.received, pallets: o.pallets,
   base_unit: o.material?.base_unit ?? null, entry_unit: o.material?.entry_unit ?? null, units_per_carton: o.material?.units_per_carton ?? null })
 
@@ -1112,7 +1186,7 @@ const brief = (o: GroupState) => ({ id: o.id, import_code: o.import_code, materi
 export async function cancelOrderGroup(req: Request, res: Response) {
   try {
     const st = await loadGroupState(req, res, String(req.params.group)); if (!st) return
-    const will = st.orders.filter(o => o.status === 'OPEN' && o.pallets === 0 && !o.tms_order_id && !o.from_gdo_id && !o.return_id)
+    const will = st.orders.filter(o => o.status === 'OPEN' && o.pallets === 0 && !groupTied(o))
     const keep = st.orders.filter(o => !will.includes(o)).map(o => ({ ...brief(o),
       reason: o.status === 'COMPLETED' ? 'đã hoàn thành' : o.pallets > 0 ? 'đã có hàng — xoá pallet ở phiếu trước' : 'phiếu gắn chuyển kho / trả về — huỷ ở trang phiếu' }))
     if (req.query.preview === '1') return ok(res, { will: will.map(brief), keep })
@@ -1122,6 +1196,10 @@ export async function cancelOrderGroup(req: Request, res: Response) {
         if (error) throw error
         return chunk.length
       })
+      // phiếu chung hết dòng ⇒ xoá luôn đầu phiếu (số phiếu không tái dùng)
+      const { count, error: cErr } = await supabase.from('ProductionImport').select('id', { count: 'exact', head: true }).eq('receipt_group', String(req.params.group))
+      if (cErr) throw cErr
+      if (!count) await supabase.from('inbound_receipts').delete().eq('id', String(req.params.group))
       emitInboundChanged()
     }
     ok(res, { cancelled: will.length, kept: keep })
@@ -1134,7 +1212,7 @@ export async function completeOrderGroup(req: Request, res: Response) {
   try {
     const st = await loadGroupState(req, res, String(req.params.group)); if (!st) return
     const open = st.orders.filter(o => o.status === 'OPEN')
-    const will = open.filter(o => o.pallets > 0 && !o.tms_order_id && !o.from_gdo_id && !o.return_id)
+    const will = open.filter(o => o.pallets > 0 && !groupTied(o))
     const short = will.filter(o => o.planned_cartons != null && o.received + 1e-9 < Number(o.planned_cartons)).map(brief)
     const keep = open.filter(o => !will.includes(o)).map(o => ({ ...brief(o), reason: o.pallets === 0 ? 'chưa nhận hàng' : 'phiếu gắn chuyển kho / trả về — hoàn thành ở trang phiếu' }))
     if (req.query.preview === '1') return ok(res, { will: will.map(brief), short, keep, done: st.orders.filter(o => o.status === 'COMPLETED').length })
@@ -1146,6 +1224,8 @@ export async function completeOrderGroup(req: Request, res: Response) {
         if (error) throw error
         return (data ?? []).length
       })
+      // dòng NCC mang lệnh TMS của lượt xe: cùng bước nối như Hoàn thành từng phiếu (mọi phiếu của lệnh xong ⇒ lệnh DONE)
+      for (const t of new Set(will.map(o => o.tms_order_id).filter((x): x is string => !!x))) await syncTmsAfterComplete(t, 'NCC', done.updated_at)
       emitInboundChanged()
     }
     ok(res, { completed, kept: keep })
@@ -1158,6 +1238,11 @@ export async function patchOrderGroup(req: Request, res: Response) {
   try {
     const b = req.body as z.infer<typeof zGroupPatch>
     const st = await loadGroupState(req, res, String(req.params.group)); if (!st) return
+    if (b.doc_no !== undefined) {
+      const { error: dErr } = await supabase.from('inbound_receipts').update({ doc_no: b.doc_no?.trim() || null, updated_at: new Date().toISOString() }).eq('id', String(req.params.group))
+      if (dErr) throw dErr
+      if (b.location_id === undefined && b.ncc_id === undefined) { emitInboundChanged(); return ok(res, { location_updated: 0, ncc_updated: 0, kept: [], doc_no_updated: true }) }
+    }
     const targets = st.orders.filter(o => o.status === 'OPEN' && o.pallets === 0)
     const qrTargets = targets.filter(o => !effectiveNoQr(o.material?.no_qr_tracking, st.inventoryMode))
     if (b.location_id !== undefined && qrTargets.length) {
@@ -1222,9 +1307,13 @@ export async function getOrder(req: Request, res: Response) {
     applyInboundMode(order as unknown as Parameters<typeof applyInboundMode>[0])
     // Hộp Lưu thủ công cần biết có bắt NSX không — BE trả KẾT LUẬN (cùng hàm với cửa ghi), FE không tự suy từ chế độ kho
     const om = order as { warehouse_id?: string | null; material?: { no_qr_tracking?: boolean | null; category?: string | null } | null }
-    const noqrPoolByDate = om.material?.no_qr_tracking === true
-      ? (await noQrPoolPolicy(om.warehouse_id, om.material?.category ?? null)).byDate
-      : false
+    const rg = (order as { receipt_group?: string | null }).receipt_group ?? null
+    const [noqrPoolByDate, overPlan, rcpt] = await Promise.all([
+      om.material?.no_qr_tracking === true ? noQrPoolPolicy(om.warehouse_id, om.material?.category ?? null).then(p => p.byDate) : Promise.resolve(false),
+      // luật nhập vượt kế hoạch (26/11) — màn hình dừng / không dừng nút quét theo KẾT LUẬN này, không tự suy
+      inboundOverPlanMode(om.warehouse_id, (order as { warehouse_type?: string | null }).warehouse_type ?? om.material?.category ?? null),
+      rg ? receiptHeadsOf([rg]) : Promise.resolve(new Map<string, ReceiptHead>()),
+    ])
 
     let allEntries = entries ?? []
 
@@ -1282,6 +1371,8 @@ export async function getOrder(req: Request, res: Response) {
       _count: { inventory_entries: allEntries.length },
       from_gdo_delivery_codes: fromGdoDeliveryCodes,
       noqr_pool_by_date: noqrPoolByDate,
+      over_plan: overPlan,
+      receipt: rg ? (rcpt.get(rg) ?? null) : null,
     })
   } catch (e) { console.error(e); if (isQueryTimeout(e)) { fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return }; fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
@@ -1454,48 +1545,104 @@ export async function completeOrder(req: Request, res: Response) {
     if (error) throw error
     if (!updated) return fail(res, 400, 'ALREADY_COMPLETED', 'Phiếu nhập đã hoàn thành')
 
-    if (existing.tms_order_id) {
-      const { data: allSiblings } = await supabase
-        .from('ProductionImport').select('id, status').eq('tms_order_id', existing.tms_order_id)
-      const allDone = (allSiblings ?? []).length > 0 && (allSiblings ?? []).every((s: { status: string }) => s.status === 'COMPLETED')
-      if (allDone) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { data: tmsOrder } = await supabase.from('TmsOrder')
-          .select('transfer_gdo_id').eq('id', existing.tms_order_id).maybeSingle()
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        await supabase.from('TmsOrder')
-          .update({ status: 'DONE', completed_at: nowTs, updated_at: nowTs })
-          .eq('id', existing.tms_order_id)
-        if (existing.source_type === 'TRANSFER' && tmsOrder?.transfer_gdo_id) {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          await supabase.from('GroupDeliveryOrder')
-            .update({ transfer_status: 'DELIVERED', updated_at: nowTs })
-            .eq('id', tmsOrder.transfer_gdo_id)
-        }
-        // RE-CHECK sau khi ghi DONE: check-siblings→ghi ở trên không nguyên tử — nếu 1 phiếu anh em
-        // vừa bị bỏ-hoàn-thành ĐÚNG giữa lúc đọc và ghi (uncomplete đọc TmsOrder trước khi DONE được
-        // ghi nên không tự hoàn) → hoàn về PENDING/RECEIVING tại đây. Hai chiều đều hội tụ.
-        const { data: recheck } = await supabase
-          .from('ProductionImport').select('id, status').eq('tms_order_id', existing.tms_order_id)
-        const stillDone = (recheck ?? []).length > 0 && (recheck ?? []).every((s: { status: string }) => s.status === 'COMPLETED')
-        if (!stillDone) {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          await supabase.from('TmsOrder')
-            .update({ status: 'PENDING', completed_at: null, updated_at: nowTs })
-            .eq('id', existing.tms_order_id).eq('status', 'DONE')
-          if (existing.source_type === 'TRANSFER' && tmsOrder?.transfer_gdo_id) {
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            await supabase.from('GroupDeliveryOrder')
-              .update({ transfer_status: 'RECEIVING', updated_at: nowTs })
-              .eq('id', tmsOrder.transfer_gdo_id).eq('transfer_status', 'DELIVERED')
-          }
-        }
-      }
-    }
+    if (existing.tms_order_id) await syncTmsAfterComplete(existing.tms_order_id, existing.source_type, nowTs)
 
     const withCount = await attachCount(updated)
     emitInboundChanged()
     ok(res, withCount)
+  } catch (e) { console.error(e); if (isQueryTimeout(e)) { fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return }; fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+}
+
+/** Bước nối sau khi một / nhiều phiếu của lệnh TMS hoàn thành: mọi phiếu của lệnh xong ⇒ lệnh DONE (+ chuyến nguồn DELIVERED nếu
+ *  chuyển kho). Dùng chung cho Hoàn thành từng phiếu và Hoàn thành cả phiếu chung (26/11 — trước đó nằm trong completeOrder). */
+async function syncTmsAfterComplete(tmsOrderId: string, sourceType: string, nowTs: string): Promise<void> {
+  const { data: allSiblings } = await supabase
+    .from('ProductionImport').select('id, status').eq('tms_order_id', tmsOrderId)
+  const allDone = (allSiblings ?? []).length > 0 && (allSiblings ?? []).every((s: { status: string }) => s.status === 'COMPLETED')
+  if (!allDone) return
+  const { data: tmsOrder } = await supabase.from('TmsOrder')
+    .select('transfer_gdo_id').eq('id', tmsOrderId).maybeSingle()
+  await supabase.from('TmsOrder')
+    .update({ status: 'DONE', completed_at: nowTs, updated_at: nowTs })
+    .eq('id', tmsOrderId)
+  if (sourceType === 'TRANSFER' && tmsOrder?.transfer_gdo_id) {
+    await supabase.from('GroupDeliveryOrder')
+      .update({ transfer_status: 'DELIVERED', updated_at: nowTs })
+      .eq('id', tmsOrder.transfer_gdo_id)
+  }
+  // RE-CHECK sau khi ghi DONE: check-siblings→ghi ở trên không nguyên tử — nếu 1 phiếu anh em
+  // vừa bị bỏ-hoàn-thành ĐÚNG giữa lúc đọc và ghi (uncomplete đọc TmsOrder trước khi DONE được
+  // ghi nên không tự hoàn) → hoàn về PENDING/RECEIVING tại đây. Hai chiều đều hội tụ.
+  const { data: recheck } = await supabase
+    .from('ProductionImport').select('id, status').eq('tms_order_id', tmsOrderId)
+  const stillDone = (recheck ?? []).length > 0 && (recheck ?? []).every((s: { status: string }) => s.status === 'COMPLETED')
+  if (!stillDone) {
+    await supabase.from('TmsOrder')
+      .update({ status: 'PENDING', completed_at: null, updated_at: nowTs })
+      .eq('id', tmsOrderId).eq('status', 'DONE')
+    if (sourceType === 'TRANSFER' && tmsOrder?.transfer_gdo_id) {
+      await supabase.from('GroupDeliveryOrder')
+        .update({ transfer_status: 'RECEIVING', updated_at: nowTs })
+        .eq('id', tmsOrder.transfer_gdo_id).eq('transfer_status', 'DELIVERED')
+    }
+  }
+}
+
+// ─── PHIẾU NHẬP CHUNG (26/11 — user chốt: Nhập nhiều mã + nhóm NCC là MỘT phiếu nhiều mã, như chuyến Xuất kho) ───
+// GET /wms/inbound-receipts/:group — đầu phiếu + từng dòng mã (kế hoạch · đã nhận · chênh · pallet · luật nhập vượt) + mọi pallet
+// của phiếu. Cùng gác phạm vi kho + loại hàng như thao tác cả nhóm. Bên trong mỗi mã vẫn là một phiếu dòng (ProductionImport).
+export async function getReceipt(req: Request, res: Response) {
+  try {
+    const group = String(req.params.group)
+    const st = await loadGroupState(req, res, group); if (!st) return
+    const ids = st.orders.map(o => o.id)
+    const [{ data: head, error: hErr }, { data: lineRows, error: lErr }, ents] = await Promise.all([
+      supabase.from('inbound_receipts').select('id, receipt_code, doc_no, source_type, warehouse_id, created_at').eq('id', group).maybeSingle(),
+      supabase.from('ProductionImport')
+        .select('id, import_date, shift_id, notes, created_at, location_id, gate_registration_id, material:Material(id, material_code, short_name, material_description, no_qr_tracking, category, base_unit, entry_unit, units_per_carton, cartons_per_pallet), location:Location(id, location_code), ncc:TransportCompany!ncc_id(id, name), shift:ImportShift(id, name), warehouse:Warehouse(id, name, code, inventory_mode), gate_registration:gate_registrations(license_plate), imported_by_emp:Employee!imported_by(name)')
+        .eq('receipt_group', group).neq('status', 'CANCELLED'),
+      fetchAllByIdChunks(ids, chunk => supabase.from('InventoryEntry')
+        .select('id, import_order_id, pallet_code, cartons_imported, cartons_remaining, production_date, created_at, stack_layer, location:Location(location_code)')
+        .in('import_order_id', chunk)),
+    ])
+    if (hErr) throw hErr
+    if (lErr) throw lErr
+    type LineX = { id: string; import_date: string | null; shift_id: string | null; notes: string | null; created_at: string; gate_registration_id: string | null
+      material: Record<string, unknown> | null; location: { id: string; location_code: string } | null; ncc: { id: string; name: string } | null
+      shift: { id: string; name: string } | null; warehouse: { id: string; name: string; code: string | null; inventory_mode: string | null } | null
+      gate_registration: { license_plate: string | null } | null; imported_by_emp: { name: string | null } | null }
+    const xById = new Map(((lineRows ?? []) as unknown as LineX[]).map(r => [r.id, r]))
+    const modes = await inboundOverPlanModes(st.whId, st.orders.map(o => o.warehouse_type ?? o.material?.category ?? null))
+    const lines = st.orders.map(o => {
+      const x = xById.get(o.id)
+      const planned = o.planned_cartons != null ? Number(o.planned_cartons) : null
+      const mode = modes.get(o.warehouse_type ?? o.material?.category ?? '') ?? null
+      return {
+        id: o.id, import_code: o.import_code, status: o.status, source_type: o.source_type, warehouse_type: o.warehouse_type,
+        material: x?.material ?? o.material, location: x?.location ?? null, ncc: x?.ncc ?? null, notes: x?.notes ?? null,
+        planned_cartons: planned, received: o.received, pallets: o.pallets, posm_entry_id: o.posm_entry_id,
+        no_qr: effectiveNoQr(o.material?.no_qr_tracking, st.inventoryMode),
+        diff: planned != null ? o.received - planned : null,
+        over_plan: mode,
+        tied: groupTied(o),
+      }
+    })
+    const first = xById.get(st.orders[0].id)
+    const lineOf = new Map(st.orders.map(o => [o.id, o]))
+    const entries = (ents as { id: string; import_order_id: string; pallet_code: string; cartons_imported: number; cartons_remaining: number; production_date: string | null; created_at: string; stack_layer: number | null; location: { location_code: string } | null }[])
+      .map(e => ({ ...e, material_code: lineOf.get(e.import_order_id)?.material?.material_code ?? null }))
+      .sort((a, b) => (b.created_at ?? '').localeCompare(a.created_at ?? ''))
+    ok(res, {
+      receipt: head ?? { id: group, receipt_code: null, doc_no: null, source_type: st.orders[0].source_type, warehouse_id: st.whId, created_at: first?.created_at ?? null },
+      head: {
+        warehouse: first?.warehouse ?? null, import_date: first?.import_date ?? null, shift: first?.shift ?? null, ncc: first?.ncc ?? null,
+        // vị trí mặc định = vị trí của dòng có tem đầu tiên (Sửa phiếu đổi cho mọi dòng chưa quét)
+        location: st.orders.map(o => xById.get(o.id)?.location).find(Boolean) ?? null,
+        license_plate: first?.gate_registration?.license_plate ?? null, gate_registration_id: first?.gate_registration_id ?? null,
+        notes: first?.notes ?? null, imported_by: first?.imported_by_emp?.name ?? null, inventory_mode: st.inventoryMode,
+      },
+      lines, entries,
+    })
   } catch (e) { console.error(e); if (isQueryTimeout(e)) { fail(res, 503, 'QUERY_TIMEOUT', QUERY_TIMEOUT_MSG); return }; fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
 }
 
@@ -1787,7 +1934,7 @@ export async function scanQR(req: Request, res: Response) {
     // Load order with material + source_type
     const { data: order } = await supabase
       .from('ProductionImport')
-      .select('id, import_code, status, source_type, return_id, material_id, warehouse_id, warehouse_type, location_id, location_history, ncc_id, material:Material(material_code, cartons_per_pallet, warehouse_pallet_overrides, category), warehouse:Warehouse(id, nmsx_code)')
+      .select('id, import_code, status, source_type, return_id, material_id, warehouse_id, warehouse_type, location_id, location_history, ncc_id, planned_cartons, material:Material(material_code, cartons_per_pallet, warehouse_pallet_overrides, category), warehouse:Warehouse(id, nmsx_code)')
       .eq('id', order_id).maybeSingle()
     if (!order)                     return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy phiếu nhập')
     if (order.status !== 'OPEN')    return fail(res, 400, 'ORDER_CLOSED', 'Phiếu nhập không còn ở trạng thái mở')
@@ -1850,6 +1997,15 @@ export async function scanQR(req: Request, res: Response) {
     // ⇒ qtyIn = 0 ⇒ từng tạo PALLET 0 KG (staging 26/11: 219/398 mã RM01, 535/1005 mã PK01 chưa khai quy cách). Chặn — phải gõ số.
     if (!(qtyIn > 0))
       return fail(res, 422, 'QTY_REQUIRED', `Mã ${(material as { material_code?: string }).material_code ?? ''} chưa khai quy cách pallet — gõ số lượng của pallet này rồi mới Lưu`)
+    // Nhập vượt kế hoạch (26/11, cờ 2 tầng — services/inboundOverPlan): chỉ kho đặt "Chặn"; phiếu trả về có luật hàng THỪA riêng
+    if (!isReturn) {
+      const opErr = await overPlanError({
+        warehouseId: orderWarehouseId, category: (order as { warehouse_type?: string | null }).warehouse_type ?? (material as { category?: string | null }).category,
+        planned: (order as { planned_cartons?: number | null }).planned_cartons, received: () => receivedOfOrder(order_id), qtyIn,
+        materialCode: (material as { material_code?: string }).material_code, mat: material as MatUnits,
+      })
+      if (opErr) return fail(res, 422, 'OVER_PLAN', opErr)
+    }
     // Phiếu trả THEO CHUYẾN (user 26/10): chỉ nhận tem đã đi trên chuyến đó (lập tay thì không ràng); mỗi tem chỉ "trả về"
     // tới số tem đó đã xuất − đã nhận về, phần VƯỢT là HÀNG THỪA ⇒ tự tách TEM CON mang NSX / lô tem gốc (sổ nhận trả ghi
     // `surplus`, truy xuất lô không trừ phần thừa khỏi "đã giao khách").
@@ -2197,7 +2353,7 @@ export async function scanManual(req: Request, res: Response) {
 
     const { data: order } = await supabase
       .from('ProductionImport')
-      .select('id, status, source_type, return_id, material_id, warehouse_id, posm_entry_id, ncc_id, transfer_production_date, material:Material!material_id(material_code, category, base_unit, entry_unit, units_per_carton)')
+      .select('id, status, source_type, return_id, material_id, warehouse_id, warehouse_type, planned_cartons, posm_entry_id, ncc_id, transfer_production_date, material:Material!material_id(material_code, category, base_unit, entry_unit, units_per_carton)')
       .eq('id', order_id).maybeSingle()
     if (!order)                  return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy phiếu nhập')
     if (order.status !== 'OPEN') return fail(res, 400, 'ORDER_CLOSED', 'Phiếu nhập không còn ở trạng thái mở')
@@ -2230,6 +2386,15 @@ export async function scanManual(req: Request, res: Response) {
     const now = new Date().toISOString()
     const cartonsNum = Math.max(0, Number(cartons) || 0)
     const warehouseId = (order as { warehouse_id?: string | null }).warehouse_id ?? null
+    // Nhập vượt kế hoạch (26/11, cờ 2 tầng) — cùng luật cửa quét tem; phiếu trả về có luật hàng THỪA riêng
+    if (!isReturn) {
+      const opErr = await overPlanError({
+        warehouseId, category: (order as { warehouse_type?: string | null }).warehouse_type ?? manualCategory,
+        planned: (order as { planned_cartons?: number | null }).planned_cartons, received: () => receivedOfOrder(order_id), qtyIn: cartonsNum,
+        materialCode: ((order as { material?: { material_code?: string } | null }).material)?.material_code, mat: (order as { material?: MatUnits | null }).material ?? null,
+      })
+      if (opErr) return fail(res, 422, 'OVER_PLAN', opErr)
+    }
     // Phiếu trả theo chuyến: phần vượt "đã xuất − đã nhận về" của mã trên chuyến = HÀNG THỪA (đếm TRƯỚC khi ghi)
     const retHeadM = isReturn ? await returnHead((order as { return_id?: string | null }).return_id) : null
     const roomM = retHeadM?.gdo_id ? await tripMaterialRoom(retHeadM.gdo_id, order.material_id) : null

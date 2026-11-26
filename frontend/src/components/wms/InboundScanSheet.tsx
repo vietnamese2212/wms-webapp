@@ -687,12 +687,18 @@ export function InboundScanSheet({ order, onClose, employeeId, allLocations, onL
 // Lớp bọc giữ danh sách phiếu của nhóm; quét tem mã nào thì MỞ LẠI màn quét của đúng phiếu mã đó (key mới ⇒ mọi trạng thái
 // theo phiếu — NCC, quy cách, số mặc định — khởi tạo đúng như mở phiếu đó), mang theo tem vừa quét và vị trí đang chọn.
 // Ghi vẫn đi đúng cửa quét của từng phiếu (máy chủ kiểm mã tem = mã phiếu) — lớp bọc chỉ chọn phiếu.
-export function InboundGroupScanSheet({ orders, onClose, employeeId }: { orders: InboundOrder[]; onClose: () => void; employeeId?: string }) {
+export function InboundGroupScanSheet({ orders, onClose, employeeId, initialScan, label }: {
+  orders: InboundOrder[]; onClose: () => void; employeeId?: string
+  initialScan?: string   // tem bắn bằng súng ở trang phiếu chung (26/11) — mở thẳng đúng mã theo tem
+  label?: string
+}) {
   // Chỉ phiếu đang mở của mã quản lý theo tem — mã không tem lưu thủ công ở trang phiếu
   const scanable = useMemo(() => orders.filter(o => o.status === 'OPEN' && o.material?.no_qr_tracking !== true), [orders])
   const byCode = useMemo(() => new Map(scanable.map(o => [(o.material?.material_code ?? '').trim().toUpperCase(), o])), [scanable])
-  const [cur, setCur] = useState<{ order: InboundOrder | undefined; raw?: string; loc?: string; src?: 'camera' | 'wedge'; n: number }>(
-    () => ({ order: scanable[0], n: 0 }))
+  const [cur, setCur] = useState<{ order: InboundOrder | undefined; raw?: string; loc?: string; src?: 'camera' | 'wedge'; n: number }>(() => {
+    const code = initialScan ? qrMaterialCodeOf(initialScan) : null
+    return { order: (code ? byCode.get(code) : undefined) ?? scanable[0], raw: initialScan, src: initialScan ? 'wedge' : undefined, n: 0 }
+  })
   const first = scanable[0]
   const [locTerm, setLocTerm] = useState('')
   const locTermDeb = useDebouncedValue(locTerm, 250)
@@ -705,7 +711,7 @@ export function InboundGroupScanSheet({ orders, onClose, employeeId }: { orders:
       <div className="fixed inset-0 z-[60] flex items-center justify-center pointer-events-auto">
         <div className="absolute inset-0 bg-black/60" onClick={onClose} />
         <div className="relative bg-white rounded-xl px-6 py-4 text-sm text-slate-600 max-w-xs text-center">
-          Nhóm không còn phiếu nào cần quét tem (đã hoàn thành, hoặc toàn hàng không tem — lưu thủ công ở từng phiếu).
+          Phiếu không còn mã nào cần quét tem (đã hoàn thành, hoặc toàn hàng không tem — lưu số lượng ở dòng mã).
         </div>
       </div>,
       document.body
@@ -714,7 +720,7 @@ export function InboundGroupScanSheet({ orders, onClose, employeeId }: { orders:
   const onOther = (raw: string, loc: string, src: 'camera' | 'wedge'): boolean | string => {
     const code = qrMaterialCodeOf(raw)
     const target = code ? byCode.get(code) : undefined
-    if (!target) return `Mã ${code ?? '?'} không có trong nhóm phiếu này (hoặc phiếu mã đó đã hoàn thành) — dùng "Sửa nhóm" để thêm mã`
+    if (!target) return `Mã ${code ?? '?'} không có trong phiếu này (hoặc mã đó đã hoàn thành) — muốn nhận thì "Sửa phiếu" thêm mã trước`
     if (target.id === cur.order?.id) return false   // đúng mã mà vẫn không hợp lệ ⇒ để màn quét báo lỗi thật (sai ngày, tem trùng…)
     setCur(c => ({ order: target, raw, loc, src, n: c.n + 1 }))
     return true
@@ -732,7 +738,7 @@ export function InboundGroupScanSheet({ orders, onClose, employeeId }: { orders:
       initialLocationId={cur.loc || cur.order.location_id || undefined}
       pdaMode={cur.src === 'wedge'}
       onOtherMaterial={onOther}
-      groupLabel={`Quét cả nhóm · ${scanable.length} mã`}
+      groupLabel={label ?? `Quét cả phiếu · ${scanable.length} mã`}
     />
   )
 }

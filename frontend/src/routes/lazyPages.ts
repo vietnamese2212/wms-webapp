@@ -30,6 +30,7 @@ const dashboard          = () => import('@/pages/Dashboard')
 const inventory          = () => import('@/pages/wms/Inventory')
 const inbound            = () => import('@/pages/wms/Inbound')
 const inboundDetail      = () => import('@/pages/wms/InboundDetail')
+const inboundReceipt     = () => import('@/pages/wms/InboundReceipt')   // phiếu nhập chung nhiều mã (26/11)
 const outbound           = () => import('@/pages/wms/Outbound')
 const outboundDetail     = () => import('@/pages/wms/OutboundDetail')
 const outboundItemDetail = () => import('@/pages/wms/OutboundItemDetail')
@@ -93,6 +94,7 @@ export const Pages = {
   Inventory: lazyRetry(inventory),
   Inbound: lazyRetry(inbound),
   InboundDetail: lazyRetry(inboundDetail),
+  InboundReceipt: lazyRetry(inboundReceipt),
   Outbound: lazyRetry(outbound),
   OutboundDetail: lazyRetry(outboundDetail),
   OutboundItemDetail: lazyRetry(outboundItemDetail),

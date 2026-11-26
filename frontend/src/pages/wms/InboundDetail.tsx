@@ -9,7 +9,7 @@ import { format, parseISO }    from 'date-fns'
 import { vi }                  from 'date-fns/locale'
 import { TableSkeleton }       from '@/components/shared/TableSkeleton'
 import { InboundScanSheet, InboundGroupScanSheet } from '@/components/wms/InboundScanSheet'
-import { useConfirmDialog } from '@/components/shared/ConfirmDialog'
+import { useReceiptGroupActions } from '@/components/wms/ReceiptGroupActions'
 import { InboundReturnPanel, NppReturnTag } from '@/components/wms/InboundReturnPanel'
 import { Button }              from '@/components/ui/button'
 import { Input }               from '@/components/ui/input'
@@ -21,7 +21,7 @@ import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { FormSheet } from '@/components/shared/FormSheet'
 import { usePopoverAnchor } from '@/components/shared/usePopoverAnchor'
 import {
-  useInboundOrder, useInboundOrders, useCancelInboundOrder, useInboundGroupActs, type InboundGroupBrief,
+  useInboundOrder, useInboundOrders, useCancelInboundOrder,
   useCompleteInboundOrder, useUncompleteInboundOrder,
   useScanManualPallet, useDeletePalletEntry, useDeletePalletEntries,
   useLocationsReal, useLocationsByIds, useUpdateInboundOrder, useUpdatePalletEntry, useSetInboundOrderLocation,
@@ -158,6 +158,12 @@ function PinnedInboundBtn({ o, isCurrent, onUnpin, onNavigate }: {
 
 // ─── Main page ────────────────────────────────────────────────
 
+/** Đủ kế hoạch thì dừng nút quét? Luật nhập vượt (26/11, máy chủ trả `over_plan`): Chặn ⇒ dừng · Cho vượt ⇒ không dừng ·
+ *  chưa đặt ⇒ như cũ (chỉ phiếu NCC dừng). Máy chủ vẫn là nơi chặn thật (422 OVER_PLAN) — đây chỉ để nút khớp luật. */
+function stopsWhenFull(o: Pick<InboundOrder, 'over_plan' | 'source_type'>): boolean {
+  return o.over_plan === 'BLOCK' || (o.over_plan == null && o.source_type === 'NCC')
+}
+
 export default function InboundDetail() {
   const { id }   = useParams<{ id: string }>()
   const navigate = useNavigate()
@@ -254,9 +260,11 @@ export default function InboundDetail() {
   const { data: groupOrders = [] } = useInboundOrders(order?.receipt_group ? { receipt_group: order.receipt_group } : undefined)
   const groupScanable = (groupOrders as InboundOrder[]).filter(o => o.status === 'OPEN' && o.material?.no_qr_tracking !== true)
   // Thao tác CẢ NHÓM (26/11, user chốt): Hoàn thành cả nhóm · Huỷ cả nhóm — xem trước trên máy chủ, hộp xác nhận liệt kê từng phiếu
-  const groupActs = useInboundGroupActs()
-  const [askGroup, groupConfirmNode] = useConfirmDialog()
-  const [groupBusy, setGroupBusy] = useState<'cancel' | 'complete' | null>(null)
+  // Hoàn thành / Huỷ cả phiếu chung — một bản dùng chung với trang phiếu chung (components/wms/ReceiptGroupActions)
+  const grpActs = useReceiptGroupActions({
+    onError: msg => setActError(msg),
+    onCancelled: ids => { if (order && ids.includes(order.id)) navigate('/wms/inbound') },
+  })
   const [pdaScan,           setPdaScan]           = useState<string | null>(null)   // tem bắn bằng cò súng cấp trang
   const [showLocHistory,    setShowLocHistory]    = useState(false)
   const [showManualDialog,  setShowManualDialog]  = useState(false)
@@ -280,7 +288,7 @@ export default function InboundDetail() {
   useEffect(() => {
     if (autoScan && order && order.status === 'OPEN' && (order.location_id || isManualEntry)) {
       const total = (order.inventory_entries ?? []).reduce((s, e) => s + e.cartons_imported, 0)
-      if (order.source_type === 'NCC' && (order.planned_cartons ?? 0) > 0 && total >= (order.planned_cartons ?? 0)) return
+      if (stopsWhenFull(order) && (order.planned_cartons ?? 0) > 0 && total >= (order.planned_cartons ?? 0)) return
       if (isManualEntry) { setShowManualDialog(true); return }
       unlockAudio()
       setShowScan(true)
@@ -326,7 +334,8 @@ export default function InboundDetail() {
   const headerLocMismatch = offLocCodes.length > 0
   const headerLocTitle = headerLocMismatch ? `⚠ Pallet đang ở vị trí khác: ${offLocCodes.join(', ')}` : undefined
   const locHistory = ((order as any)?.location_history ?? []) as { location_code: string; by_name: string | null; at: string; source: string }[]
-  const isNccFull   = order?.source_type === 'NCC' && (order?.planned_cartons ?? 0) > 0 && totalScanned >= (order?.planned_cartons ?? 0)
+  // Đủ kế hoạch ⇒ dừng nút quét: theo luật nhập vượt máy chủ trả (26/11 — cờ 2 tầng); chưa đặt = như cũ (chỉ phiếu NCC dừng)
+  const isNccFull   = !!order && stopsWhenFull(order) && (order.planned_cartons ?? 0) > 0 && totalScanned >= (order.planned_cartons ?? 0)
 
   // Súng "sẵn sàng" ở trang phiếu = đúng điều kiện nút "Thêm pallet": phiếu OPEN + có vị trí + quyền scan
   // + chưa đủ kế hoạch NCC + hàng CÓ tem (không phải no-QR). Dùng cho cả cò súng + chỉ báo icon PdaGunHint.
@@ -400,62 +409,7 @@ export default function InboundDetail() {
     return <div className="p-6"><TableSkeleton rows={8} cols={7} /></div>
   }
 
-  // ── THAO TÁC CẢ NHÓM "Nhập nhiều mã" (26/11) ──
-  const grpErr = (e: unknown, fb: string) => setActError((e as AxiosError<{ error?: { message?: string } }>)?.response?.data?.error?.message ?? fb)
-  const grpLine = (b: InboundGroupBrief) => (
-    <li key={b.id}>• <span className="font-mono font-semibold">{b.material_code ?? '—'}</span> <span className="text-slate-400">{b.import_code}</span>
-      {' · '}nhận {qtyLabel(b.received, b)}{b.planned != null ? ` / KH ${qtyLabel(Number(b.planned), b)}` : ''}
-      {b.reason ? <span className="text-slate-500"> — {b.reason}</span> : null}</li>
-  )
-  const grpList = (arr: InboundGroupBrief[] = [], max = 8) => (
-    <ul className="my-1 space-y-0.5 text-[12px]">{arr.slice(0, max).map(grpLine)}{arr.length > max && <li className="text-slate-400">… và {arr.length - max} phiếu khác</li>}</ul>
-  )
-  async function runGroupComplete() {
-    const g = order!.receipt_group
-    if (!g) return
-    setActError(null); setGroupBusy('complete')
-    try {
-      const pv = await groupActs.complete.mutateAsync({ group: g, preview: true })
-      const will = pv.will ?? [], short = pv.short ?? [], keep = pv.keep ?? []
-      if (!will.length) { setActError(keep.length ? `Chưa phiếu nào trong nhóm nhận hàng — ${keep.length} phiếu giữ mở` : 'Nhóm không còn phiếu nào đang mở'); return }
-      const yes = await askGroup({
-        title: `Hoàn thành ${will.length} phiếu của nhóm?`, confirmLabel: 'Hoàn thành', cancelLabel: 'Quay lại',
-        body: (
-          <div className="whitespace-normal" data-testid="group-complete-confirm">
-            <p>Hoàn thành <b>{will.length}</b> phiếu đã nhận hàng:</p>{grpList(will)}
-            {short.length > 0 && (<><p className="mt-2 font-semibold text-amber-700">Trong đó {short.length} phiếu nhận THIẾU so kế hoạch:</p>{grpList(short)}</>)}
-            {keep.length > 0 && (<><p className="mt-2 text-slate-600">Giữ mở {keep.length} phiếu:</p>{grpList(keep)}</>)}
-            <p className="mt-2 text-slate-500">Phiếu đã hoàn thành không quét thêm được — cần quét tiếp thì Gỡ hoàn thành ở từng phiếu.</p>
-          </div>
-        ),
-      })
-      if (yes === null) return
-      await groupActs.complete.mutateAsync({ group: g, preview: false })
-    } catch (e) { grpErr(e, 'Không hoàn thành được nhóm phiếu') } finally { setGroupBusy(null) }
-  }
-  async function runGroupCancel() {
-    const g = order!.receipt_group
-    if (!g) return
-    setActError(null); setGroupBusy('cancel')
-    try {
-      const pv = await groupActs.cancel.mutateAsync({ group: g, preview: true })
-      const will = pv.will ?? [], keep = pv.keep ?? []
-      if (!will.length) { setActError(`Không có phiếu nào huỷ được — ${keep.length} phiếu đã có hàng hoặc đã hoàn thành (xoá pallet ở từng phiếu trước)`); return }
-      const yes = await askGroup({
-        title: `Huỷ ${will.length} phiếu chưa nhận hàng của nhóm?`, confirmLabel: 'Huỷ phiếu', cancelLabel: 'Quay lại',
-        body: (
-          <div className="whitespace-normal" data-testid="group-cancel-confirm">
-            <p>Huỷ (xoá) <b>{will.length}</b> phiếu chưa có pallet / chưa lưu hàng:</p>{grpList(will)}
-            {keep.length > 0 && (<><p className="mt-2 text-slate-600">Giữ lại {keep.length} phiếu:</p>{grpList(keep)}</>)}
-            <p className="mt-2 text-red-600">Không hoàn tác được.</p>
-          </div>
-        ),
-      })
-      if (yes === null) return
-      await groupActs.cancel.mutateAsync({ group: g, preview: false })
-      if (will.some(o => o.id === order!.id)) navigate('/wms/inbound')
-    } catch (e) { grpErr(e, 'Không huỷ được nhóm phiếu') } finally { setGroupBusy(null) }
-  }
+  // ── THAO TÁC CẢ PHIẾU CHUNG (26/11) — hook dùng chung với trang phiếu chung ──
   const groupOpen = (groupOrders as InboundOrder[]).filter(o => o.status === 'OPEN').length
 
   // ── Cụm action header (ActionCluster) — desktop inline, mobile nút chính + menu ⋮ ──
@@ -480,17 +434,17 @@ export default function InboundDetail() {
     })
   if (order.receipt_group && groupOpen > 0 && can(perms, 'inbound', 'complete'))
     headerActionItems.push({
-      key: 'group-complete', icon: CheckCircle2, label: `Hoàn thành cả nhóm`,
-      tip: 'Hoàn thành mọi phiếu ĐÃ nhận hàng của nhóm — xem trước danh sách (phiếu nhận thiếu, phiếu giữ mở) trước khi xác nhận',
-      className: 'border-green-200 text-green-700 hover:bg-green-50', busy: groupBusy === 'complete',
-      onClick: () => { void runGroupComplete() },
+      key: 'group-complete', icon: CheckCircle2, label: `Hoàn thành cả phiếu`,
+      tip: 'Hoàn thành mọi mã ĐÃ nhận hàng của phiếu chung — xem trước danh sách (mã nhận thiếu / thừa, mã giữ mở) trước khi xác nhận',
+      className: 'border-green-200 text-green-700 hover:bg-green-50', busy: grpActs.busy === 'complete',
+      onClick: () => { void grpActs.runComplete(order.receipt_group!) },
     })
   if (order.receipt_group && groupOpen > 0 && can(perms, 'inbound', 'cancel'))
     headerActionItems.push({
-      key: 'group-cancel', icon: XCircle, label: 'Huỷ cả nhóm', admin: true,
-      tip: 'Huỷ mọi phiếu CHƯA nhận hàng của nhóm — phiếu đã có pallet giữ lại (không hoàn tác được)',
-      danger: true, className: 'border-red-200 text-red-600 hover:bg-red-50', busy: groupBusy === 'cancel',
-      onClick: () => { void runGroupCancel() },
+      key: 'group-cancel', icon: XCircle, label: 'Huỷ cả phiếu', admin: true,
+      tip: 'Huỷ mọi mã CHƯA nhận hàng của phiếu chung — mã đã có pallet giữ lại (không hoàn tác được)',
+      danger: true, className: 'border-red-200 text-red-600 hover:bg-red-50', busy: grpActs.busy === 'cancel',
+      onClick: () => { void grpActs.runCancel(order.receipt_group!) },
     })
   if (isCompleted && can(perms, 'inbound', 'uncomplete'))
     headerActionItems.push({
@@ -502,7 +456,7 @@ export default function InboundDetail() {
 
   return (
     <>
-      {groupConfirmNode}
+      {grpActs.node}
       {showGroupScan && (
         <InboundGroupScanSheet
           orders={groupOrders as InboundOrder[]}
@@ -823,6 +777,13 @@ export default function InboundDetail() {
 
           {/* Row 2: info chips */}
           <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 sm:gap-x-4 sm:gap-y-1 text-xs text-slate-600">
+            {order.receipt_group && (
+              <button type="button" onClick={() => navigate(`/wms/inbound/phieu/${order.receipt_group}`)} data-testid="open-receipt"
+                title="Mở phiếu nhập chung — mọi mã của chứng từ, một nút quét"
+                className="inline-flex items-center gap-1 rounded-md border border-sky-200 bg-sky-50 px-2 h-6 text-[11px] font-semibold text-sky-700 hover:bg-sky-100">
+                <Layers className="h-3 w-3" /> Phiếu chung {order.receipt?.receipt_code ?? ''}{order.receipt?.doc_no ? ` · CT ${order.receipt.doc_no}` : ''}
+              </button>
+            )}
             {((order as any).from_gdo_delivery_codes?.length ?? 0) > 0 && (
               <span className="flex items-center gap-1">
                 <span className="text-slate-400 text-[10px]">Số DO:</span>
@@ -1056,8 +1017,8 @@ export default function InboundDetail() {
               <ActionCluster items={[
               ...(isOpen && order.receipt_group && groupScanable.length > 1 && can(perms, 'inbound', 'scan') ? [{
                 key: 'group-scan', icon: Layers, ops: true,   // VẬN HÀNH: luôn ngoài ⋮ cả trên điện thoại (người xưởng quét bằng máy cầm tay)
-                label: `Quét cả nhóm (${groupScanable.length} mã)`,
-                tip: 'Quét tem của mọi mã trong nhóm phiếu ở một màn — app tự vào đúng phiếu theo mã trên tem, giữ vị trí đang chọn',
+                label: `Quét cả phiếu (${groupScanable.length} mã)`,
+                tip: 'Quét tem của mọi mã trong phiếu chung ở một màn — app tự vào đúng mã theo tem, giữ vị trí đang chọn',
                 onClick: () => { unlockAudio(); setShowGroupScan(true) },
               } satisfies ActionItem] : []),
               ...(isOpen && can(perms, 'inbound', 'scan') ? [isManualEntry ? {

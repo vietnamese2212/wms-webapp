@@ -331,9 +331,11 @@ export default function InboundDetail() {
   // Form/dialog đang mở → TẮT HẲN máy đọc (enabled=false), không chỉ bỏ qua mã: máy đọc bắt chuỗi
   // phím nhanh/IME ở mọi ô nhập rồi trả lại giá trị cũ — gõ trên điện thoại trong form bị xoá trắng
   // (bug xe vãng lai 25/08). Sheet quét tự có listener súng riêng khi đã mở.
-  const wedgeFormOpen = showManualDialog || showLocHistory || !!editState || !!confirm || !!completeDlg
+  // Màn "Quét cả nhóm" (26/11) có máy đọc RIÊNG — để cò súng cấp trang nghe cùng lúc thì một phát bắn mở thêm màn quét
+  // của phiếu đang xem (bắt lỗi "Sai mã hàng" trong nghiệm thu bằng vai Phó phòng QA) ⇒ tắt hẳn khi màn nhóm đang mở.
+  const wedgeFormOpen = showManualDialog || showLocHistory || !!editState || !!confirm || !!completeDlg || showGroupScan
   useWedgeScanner(code => {
-    if (!gunArmed || showScan) return
+    if (!gunArmed || showScan || showGroupScan) return
     unlockAudio()
     setPdaScan(code)
     setShowScan(true)
@@ -975,7 +977,7 @@ export default function InboundDetail() {
               {gunArmed && <PdaGunHint />}
               <ActionCluster items={[
               ...(isOpen && order.receipt_group && groupScanable.length > 1 && can(perms, 'inbound', 'scan') ? [{
-                key: 'group-scan', icon: Layers,
+                key: 'group-scan', icon: Layers, ops: true,   // VẬN HÀNH: luôn ngoài ⋮ cả trên điện thoại (người xưởng quét bằng máy cầm tay)
                 label: `Quét cả nhóm (${groupScanable.length} mã)`,
                 tip: 'Quét tem của mọi mã trong nhóm phiếu ở một màn — app tự vào đúng phiếu theo mã trên tem, giữ vị trí đang chọn',
                 onClick: () => { unlockAudio(); setShowGroupScan(true) },

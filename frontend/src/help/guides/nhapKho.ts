@@ -122,6 +122,16 @@ export const NHAP_KHO_GUIDE: Guide = {
           ],
         },
         {
+          title: 'Một chứng từ nhiều mã: tab Nhập nhiều mã',
+          text: [
+            'Hàng về theo một chứng từ gồm nhiều mã, nhiều NCC (vd nhận nội bộ từ kho tổng): **Tạo phiếu** → tab **Nhập nhiều mã**.',
+            '- Chọn Kho, Loại kho, **Vị trí mặc định** (cả phiếu cất vào đây), Ngày, Ca. NCC để trống — khi quét app đọc mã NCC trên tem.',
+            '- Khai từng dòng **mã + số lượng**, hoặc dán cột mã rồi cột số lượng từ Excel. Bấm **Tạo N phiếu nhập**: mỗi mã thành một phiếu, các phiếu nối nhau bằng ngoặc ở danh sách.',
+            'Quét: mở phiếu bất kỳ của nhóm → **Quét cả nhóm** — quét tem mã nào app tự vào đúng phiếu mã đó. Cần cất tem nào chỗ khác thì bấm **Đổi vị trí** trên màn quét. Vẫn quét riêng từng phiếu như cũ được.',
+            'Thiếu / thừa mã: bút **Sửa nhóm** ở dòng phiếu — thêm mã, sửa số lượng, huỷ dòng chưa quét.',
+          ],
+        },
+        {
           title: 'Hàng không tem: Lưu thủ công + NSX',
           text: [
             'Mã hàng không theo dõi tem thì phiếu không có bước quét: mở phiếu → nút **Lưu thủ công** → gõ **Số lượng thực nhập**.',

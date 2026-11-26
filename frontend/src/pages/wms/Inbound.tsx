@@ -22,7 +22,7 @@ import { FormSheet } from '@/components/shared/FormSheet'
 import { ActionCluster, type ActionItem } from '@/components/shared/ActionBtn'
 import { Label }               from '@/components/ui/label'
 import {
-  useInboundOrders, useCreateInboundOrder,
+  useInboundOrders, useCreateInboundOrder, useCreateInboundGroup,
   useInboundOrdersPaged, useInboundSummary, useInboundFacets, inboundListParamsOf,
   useWarehouses, useMaterials, useMaterialsByCodes, useLocationsReal, useLocationsByIds, useImportShifts,
   useWarehouseZones,
@@ -214,7 +214,10 @@ function CreateOrderDialog({ open, onClose, editGroup, onPickReturn }: { open: b
   const gWt = useGlobalScopeStore(s => s.whType)
   const gWhOk = gWh && (!dialogAllowedWhIds || dialogAllowedWhIds.has(gWh)) ? gWh : ''
 
-  const [sourceType,   setSourceType]   = useState<'FACTORY' | 'NCC'>('FACTORY')
+  // MULTI = "Nhập nhiều mã" (26/11): một chứng từ nhiều mã nhiều NCC — dùng CHUNG bảng dòng hàng của tab NCC,
+  // thay ô "Xe đang vào cổng" bằng "Vị trí mặc định", NCC tuỳ chọn (để trống = đọc trên tem). Mỗi mã một phiếu SX, chung nhóm.
+  const [sourceType,   setSourceType]   = useState<'FACTORY' | 'NCC' | 'MULTI'>('FACTORY')
+  const isTableMode = sourceType === 'NCC' || sourceType === 'MULTI'
   const [nccId,        setNccId]        = useState('')       // NCC chọn (bắt buộc khi Nhập NCC)
   const [showFactoryNcc, setShowFactoryNcc] = useState(false) // Nhập SX: bật chọn NCC (tùy chọn)
   const [warehouseId,  setWarehouseId]  = useState('')
@@ -238,13 +241,13 @@ function CreateOrderDialog({ open, onClose, editGroup, onPickReturn }: { open: b
     if (open) {
       if (editGroup?.length) {
         const first = editGroup[0]
-        setSourceType('NCC')
+        setSourceType(first.receipt_group ? 'MULTI' : 'NCC')
         setWarehouseId((first as any).warehouse_id ?? user?.warehouse_id ?? user?.warehouse_ids?.[0] ?? '')
         setSubType(first.warehouse_type ?? '')
         setGateRegId((first as any).gate_registration_id ?? '')
         setImportDate(((first as any).import_date ?? '').slice(0, 10) || format(new Date(), 'yyyy-MM-dd'))
         setShiftId((first as any).shift_id ?? '')
-        setMaterialId(''); setLocationId('')
+        setMaterialId(''); setLocationId(first.receipt_group ? (first.location_id ?? '') : '')
         setNotes('')
         setNccId((first as any).ncc_id ?? ''); setShowFactoryNcc(false)
         setNccRows([emptyNccRow()]); setNccSaving(false); setNccErr(''); setNccDropdownIdx(null)
@@ -415,6 +418,9 @@ function CreateOrderDialog({ open, onClose, editGroup, onPickReturn }: { open: b
   const { mutate: createOrder, mutateAsync: createOrderAsync, isPending, error } = useCreateInboundOrder()
   const { mutateAsync: updateOrderAsync } = useUpdateInboundOrder()
   const { mutateAsync: cancelOrderAsync }  = useCancelInboundOrder()
+  const { mutateAsync: createGroupAsync }  = useCreateInboundGroup()
+  // Kho theo dõi tồn bằng số lượng (QTY / QTY_DATE): mọi mã nhập tay, không cần vị trí — còn lại phải có vị trí mặc định
+  const multiNeedsLoc = !isQtyLike((warehouses as { id: string; inventory_mode?: string | null }[]).find(w => w.id === warehouseId)?.inventory_mode)
 
   const [editRows, setEditRows] = useState<EditRow[]>([])
 
@@ -425,13 +431,13 @@ function CreateOrderDialog({ open, onClose, editGroup, onPickReturn }: { open: b
     ...nccRows.map(r => r.material_code),
     ...editRows.map(r => r.materialCode),
   ].map(c => (c ?? '').trim().toUpperCase()).filter(Boolean), [nccRows, editRows])
-  const { data: nccCodeMats = [] } = useMaterialsByCodes(nccCodesOnForm, sourceType === 'NCC')
+  const { data: nccCodeMats = [] } = useMaterialsByCodes(nccCodesOnForm, isTableMode)
 
   const nccDropTerm = useDebouncedValue(
     nccDropdownIdx !== null ? (nccRows[nccDropdownIdx]?.material_code ?? '') : '', 250)
   const { data: nccDropMats = [] } = useMaterials(
     { category: subType || undefined, search: nccDropTerm || undefined, limit: 50 },
-    sourceType === 'NCC' && nccDropdownIdx !== null,
+    isTableMode && nccDropdownIdx !== null,
   )
 
   const nccMatByCode = useMemo(() =>
@@ -508,7 +514,7 @@ function CreateOrderDialog({ open, onClose, editGroup, onPickReturn }: { open: b
   // Mã vừa dán/gõ được tra BẤT ĐỒNG BỘ → có kết quả thì điền tên + ĐVT + hệ số vào dòng.
   // (Trước đây map có sẵn vì cả danh mục nằm trong trình duyệt.)
   useEffect(() => {
-    if (sourceType !== 'NCC' || nccMatByCode.size === 0) return
+    if (!isTableMode || nccMatByCode.size === 0) return
     setNccRows(prev => {
       let changed = false
       const next = prev.map(r => {
@@ -581,7 +587,51 @@ function CreateOrderDialog({ open, onClose, editGroup, onPickReturn }: { open: b
     }))
   }
 
+  // ── NHẬP NHIỀU MÃ (26/11): MỘT request tạo cả nhóm (kiểm hết rồi ghi một lô — một dòng lỗi là không tạo gì);
+  // Sửa nhóm = cập nhật / huỷ dòng sẵn có như nhóm NCC + thêm mã mới vào CÙNG nhóm qua cửa nhóm.
+  async function handleMultiSubmit() {
+    const editing = !!editGroup?.length
+    const group = editing ? (editGroup![0].receipt_group ?? null) : null
+    if (!warehouseId) { setNccErr('Vui lòng chọn Kho'); return }
+    if (!subType)     { setNccErr('Vui lòng chọn Loại kho'); return }
+    if (!shiftId)     { setNccErr('Vui lòng chọn Ca nhập'); return }
+    if (!importDate)  { setNccErr('Vui lòng chọn Ngày nhập'); return }
+    if (nccDuplicateCodes.size > 0) { setNccErr(`Mã hàng bị trùng: ${[...nccDuplicateCodes].join(', ')}`); return }
+    const invalidRows = nccRows.filter(r => r.material_code.trim() && !r.material_id)
+    if (invalidRows.length) { setNccErr(`Mã hàng không hợp lệ (chưa khớp danh mục): ${invalidRows.map(r => r.material_code).join(', ')}`); return }
+    const validRows = nccRows.filter(r => r.material_id)
+    if (!editing && !validRows.length) { setNccErr('Vui lòng nhập ít nhất 1 mã hàng hợp lệ'); return }
+    const noQtyRows = validRows.filter(r => !r.planned_qty || Number(r.planned_qty) <= 0)
+    if (noQtyRows.length) { setNccErr(`Thiếu số lượng ở mã: ${noQtyRows.map(r => r.material_code).join(', ')}`); return }
+    if (validRows.length && multiNeedsLoc && !locationId) { setNccErr('Vui lòng chọn Vị trí mặc định cho phiếu'); return }
+    setNccSaving(true); setNccErr('')
+    try {
+      if (editing) {
+        await Promise.all(editRows.filter(r => !r.toCancel).map(r =>
+          updateOrderAsync({ id: r.id, import_date: importDate, shift_id: shiftId, notes: r.notes, planned_cartons: r.planned_cartons ?? undefined })))
+        await Promise.all(editRows.filter(r => r.toCancel && r.palletCount === 0).map(r => cancelOrderAsync(r.id)))
+      }
+      let firstId: string | null = null
+      if (validRows.length) {
+        const res = await createGroupAsync({
+          warehouse_id: warehouseId, warehouse_type: subType, import_date: importDate, shift_id: shiftId,
+          location_id: locationId || null, notes: notes || null, ncc_id: nccId || null, receipt_group: group,
+          lines: validRows.map(r => ({ material_id: r.material_id, planned_cartons: Number(r.planned_qty) })),
+        })
+        firstId = res.orders[0]?.id ?? null
+      }
+      onClose()
+      if (!editing && firstId) navigate(`/wms/inbound/${firstId}`)   // mở phiếu đầu — có nút "Quét cả nhóm"
+    } catch (e) {
+      const msg = (e as AxiosError<{ error: { message: string } }>)?.response?.data?.error?.message
+      setNccErr(msg ?? 'Lỗi tạo nhóm phiếu')
+    } finally {
+      setNccSaving(false)
+    }
+  }
+
   async function handleNccSubmit() {
+    if (sourceType === 'MULTI') return handleMultiSubmit()
     if (editGroup?.length) {
       if (!warehouseId) { setNccErr('Vui lòng chọn Kho'); return }
       if (!shiftId)     { setNccErr('Vui lòng chọn Ca nhập'); return }
@@ -697,7 +747,7 @@ function CreateOrderDialog({ open, onClose, editGroup, onPickReturn }: { open: b
   return (
     <FormSheet
       open={open} onClose={onClose}
-      title={editGroup?.length ? 'Sửa nhóm phiếu NCC' : 'Tạo phiếu nhập kho'}
+      title={editGroup?.length ? (sourceType === 'MULTI' ? 'Sửa nhóm phiếu' : 'Sửa nhóm phiếu NCC') : 'Tạo phiếu nhập kho'}
       widthClass={sourceType === 'FACTORY' ? 'sm:max-w-lg' : 'sm:max-w-4xl'}
       footer={<>
         <Button variant="outline" onClick={onClose}>Huỷ</Button>
@@ -722,12 +772,12 @@ function CreateOrderDialog({ open, onClose, editGroup, onPickReturn }: { open: b
           {/* Tab toggle */}
           {!editGroup?.length && (
             <div className="flex rounded-lg border overflow-hidden">
-              {(['FACTORY', 'NCC'] as const).map(t => (
+              {(['FACTORY', 'NCC', 'MULTI'] as const).map(t => (
                 <button key={t} type="button"
-                  onClick={() => { setSourceType(t); setGateRegId(''); setMaterialId(''); setNccRows([emptyNccRow()]); setNccErr('') }}
+                  onClick={() => { setSourceType(t); setGateRegId(''); setMaterialId(''); setLocationId(''); setNccId(''); setNccRows([emptyNccRow()]); setNccErr('') }}
                   className={['flex-1 py-1.5 text-xs font-medium transition-colors',
                     sourceType === t ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'].join(' ')}>
-                  {t === 'FACTORY' ? 'Nhập SX' : 'Nhập NCC'}
+                  {t === 'FACTORY' ? 'Nhập SX' : t === 'NCC' ? 'Nhập NCC' : 'Nhập nhiều mã'}
                 </button>
               ))}
               {/* 27/10: lối vào Nhập hàng trả về đặt cạnh 2 loại phiếu — user tìm ở đây, không thấy nút icon trên toolbar */}
@@ -917,10 +967,13 @@ function CreateOrderDialog({ open, onClose, editGroup, onPickReturn }: { open: b
           </>)}
 
           {/* ─── NCC ─── */}
-          {sourceType === 'NCC' && (<>
-            {/* Section 1: Thông tin chuyến xe */}
+          {isTableMode && (<>
+            {/* Section 1: Thông tin chuyến xe (NCC) / thông tin phiếu (Nhập nhiều mã) */}
             <div className="border rounded-lg bg-slate-50 px-3 py-2.5 space-y-2">
-              <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wider">Thông tin chuyến xe</p>
+              <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wider">{sourceType === 'MULTI' ? 'Thông tin phiếu' : 'Thông tin chuyến xe'}</p>
+              {sourceType === 'MULTI' && !editGroup?.length && (
+                <p className="text-[10px] text-slate-500">Một chứng từ nhiều mã, nhiều NCC: khai mã + số lượng (dán từ Excel được). Mỗi mã thành một phiếu trong cùng nhóm — quét ở từng phiếu hoặc bấm <b>Quét cả nhóm</b> ở trang phiếu.</p>
+              )}
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                 <div>
                   <Label className="text-xs">Kho *</Label>
@@ -950,6 +1003,38 @@ function CreateOrderDialog({ open, onClose, editGroup, onPickReturn }: { open: b
                     triggerClassName="h-8 mt-0.5"
                   />
                 </div>
+                {sourceType === 'MULTI' ? (
+                  <div className="col-span-2 sm:col-span-1">
+                    <Label className="text-xs">Vị trí mặc định {multiNeedsLoc && <span className="text-red-500">*</span>}</Label>
+                    <div className="mt-0.5 flex items-center gap-1.5">
+                      <div className="flex-1 min-w-0">
+                        <SingleSelect
+                          value={locationId}
+                          onChange={setLocationId}
+                          disabled={!subType}
+                          searchPlaceholder="Tìm vị trí…"
+                          triggerClassName="h-8"
+                          serverSearch
+                          onSearchChange={setLocTerm}
+                          selectedLabel={locationId
+                            ? ([...filteredLocs, ...locPicked] as { id: string; location_code: string }[]).find(l => l.id === locationId)?.location_code
+                            : undefined}
+                          placeholder={!subType ? 'Chọn loại kho trước' : 'Chọn vị trí'}
+                          options={filteredLocs.map(l => ({ value: l.id, label: l.location_code, node: <PutawayOption loc={l} /> }))}
+                        />
+                      </div>
+                      <LocationScanButton
+                        warehouseId={warehouseId || null}
+                        materialId={null}
+                        nccId={nccId || null}
+                        disabled={!subType}
+                        onPicked={loc => setLocationId(loc.id)}
+                        className="h-8 w-8 sm:h-8 sm:w-8"
+                      />
+                    </div>
+                    <p className="mt-0.5 text-[9px] text-slate-400">Áp cho cả phiếu — lúc quét đổi được vị trí từng tem</p>
+                  </div>
+                ) : (
                 <div>
                   <Label className="text-xs">Xe đang vào cổng *</Label>
                   <button
@@ -1058,9 +1143,16 @@ function CreateOrderDialog({ open, onClose, editGroup, onPickReturn }: { open: b
                     </DialogContent>
                   </Dialog>
                 </div>
+                )}
               </div>
               <div>
-                <Label className="text-xs">Nhà cung cấp (NCC) <span className="text-red-500">*</span></Label>
+                <Label className="text-xs">Nhà cung cấp (NCC) {sourceType === 'NCC'
+                  ? <span className="text-red-500">*</span>
+                  : <span className="font-normal text-slate-400">(tuỳ chọn — để trống thì app đọc mã NCC trên tem)</span>}
+                  {sourceType === 'MULTI' && nccId && (
+                    <button type="button" onClick={() => setNccId('')} className="ml-2 text-[10px] font-normal text-red-400 hover:text-red-600">Bỏ NCC</button>
+                  )}
+                </Label>
                 <SingleSelect
                   options={nccList.map(c => ({ value: c.id, label: c.name }))}
                   value={nccId}
@@ -1250,6 +1342,7 @@ export function inboundGroupKey(o: InboundOrder): string | null {
   if (tms) return `tms:${tms}`
   const gate = (o as { gate_registration_id?: string | null }).gate_registration_id
   if (o.source_type === 'NCC' && gate) return `gate:${gate}`
+  if (o.receipt_group) return `grp:${o.receipt_group}`   // 26/11 nhóm "Nhập nhiều mã" — mirror RPC inbound_orders_page
   return null
 }
 
@@ -1450,6 +1543,16 @@ export default function Inbound() {
   }, [sortedOrders])
 
   async function openEditNccGroup(order: InboundOrder) {
+    if (order.receipt_group) {   // nhóm "Nhập nhiều mã" (26/11) — lấy trọn nhóm từ server (nhóm có thể vắt qua trang)
+      try {
+        const { data } = await apiClient.get('/wms/inbound-orders', { params: { receipt_group: order.receipt_group } })
+        const group = ((data?.data ?? []) as InboundOrder[]).filter(o => o.receipt_group === order.receipt_group)
+        if (group.length > 0) { setEditNccGroup(group); return }
+      } catch { /* fallback dưới */ }
+      const group = sortedOrders.filter(o => o.receipt_group === order.receipt_group)
+      setEditNccGroup(group.length > 0 ? group : [order])
+      return
+    }
     // Nhóm sửa PHẢI khớp đúng nhóm bracket hiển thị (cùng inboundGroupKey = cùng chuyến/cổng).
     // Phiếu NCC chưa gắn xe → key null → chỉ chính nó, KHÔNG gom theo ngày+kho (tránh kéo nhầm phiếu khác chuyến vào).
     // Phân trang server: nhóm có thể nằm VẮT qua ranh giới trang → lấy đủ nhóm từ server theo
@@ -1744,7 +1847,7 @@ export default function Inbound() {
                         onScan={order.status === 'OPEN' && !!order.location_id && can(perms, 'inbound', 'scan')
                           ? (e) => { e.stopPropagation(); unlockAudio(); setScanOrderId(order.id) }
                           : undefined}
-                        onEditGroup={order.source_type === 'NCC' && order.status === 'OPEN' && can(perms, 'inbound', 'edit')
+                        onEditGroup={(order.source_type === 'NCC' || !!order.receipt_group) && order.status === 'OPEN' && can(perms, 'inbound', 'edit')
                           ? (e) => { e.stopPropagation(); openEditNccGroup(order) }
                           : undefined}
                         pinned={isPinned(order.id)}

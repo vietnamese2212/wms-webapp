@@ -2,13 +2,13 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import type { AxiosError }              from 'axios'
-import { ArrowLeft, Plus, CheckCircle2, XCircle, Trash2, Pencil, MapPin, Package, AlertTriangle, Clock, Calendar, User, Bookmark, RotateCcw, History } from 'lucide-react'
+import { ArrowLeft, Plus, CheckCircle2, XCircle, Trash2, Pencil, MapPin, Package, AlertTriangle, Clock, Calendar, User, Bookmark, RotateCcw, History, Layers } from 'lucide-react'
 import { FloatingActionBar, FLOATING_BTN_DANGER } from '@/components/shared/FloatingActionBar'
 import { ScanIcon } from '@/components/shared/ScanIcon'
 import { format, parseISO }    from 'date-fns'
 import { vi }                  from 'date-fns/locale'
 import { TableSkeleton }       from '@/components/shared/TableSkeleton'
-import { InboundScanSheet }    from '@/components/wms/InboundScanSheet'
+import { InboundScanSheet, InboundGroupScanSheet } from '@/components/wms/InboundScanSheet'
 import { InboundReturnPanel, NppReturnTag } from '@/components/wms/InboundReturnPanel'
 import { Button }              from '@/components/ui/button'
 import { Input }               from '@/components/ui/input'
@@ -248,6 +248,10 @@ export default function InboundDetail() {
   const isManualEntry = (order?.material as any)?.no_qr_tracking === true
 
   const [showScan,          setShowScan]          = useState(false)
+  // 26/11 — phiếu thuộc nhóm "Nhập nhiều mã": quét tem của mọi mã trong nhóm ở một màn (app tự vào đúng phiếu theo mã trên tem)
+  const [showGroupScan,     setShowGroupScan]     = useState(false)
+  const { data: groupOrders = [] } = useInboundOrders(order?.receipt_group ? { receipt_group: order.receipt_group } : undefined)
+  const groupScanable = (groupOrders as InboundOrder[]).filter(o => o.status === 'OPEN' && o.material?.no_qr_tracking !== true)
   const [pdaScan,           setPdaScan]           = useState<string | null>(null)   // tem bắn bằng cò súng cấp trang
   const [showLocHistory,    setShowLocHistory]    = useState(false)
   const [showManualDialog,  setShowManualDialog]  = useState(false)
@@ -419,6 +423,13 @@ export default function InboundDetail() {
 
   return (
     <>
+      {showGroupScan && (
+        <InboundGroupScanSheet
+          orders={groupOrders as InboundOrder[]}
+          onClose={() => setShowGroupScan(false)}
+          employeeId={user?.id}
+        />
+      )}
       {showScan && (
         <InboundScanSheet
           order={order}
@@ -963,6 +974,12 @@ export default function InboundDetail() {
             <div className="flex items-center gap-1.5">
               {gunArmed && <PdaGunHint />}
               <ActionCluster items={[
+              ...(isOpen && order.receipt_group && groupScanable.length > 1 && can(perms, 'inbound', 'scan') ? [{
+                key: 'group-scan', icon: Layers,
+                label: `Quét cả nhóm (${groupScanable.length} mã)`,
+                tip: 'Quét tem của mọi mã trong nhóm phiếu ở một màn — app tự vào đúng phiếu theo mã trên tem, giữ vị trí đang chọn',
+                onClick: () => { unlockAudio(); setShowGroupScan(true) },
+              } satisfies ActionItem] : []),
               ...(isOpen && can(perms, 'inbound', 'scan') ? [isManualEntry ? {
                 key: 'manual', icon: Plus,
                 label: order.posm_entry_id ? 'Đã lưu thủ công' : isNccFull ? 'Đủ kế hoạch' : 'Lưu thủ công',

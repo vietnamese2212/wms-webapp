@@ -54,6 +54,7 @@ await login()
 const todayVN = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
 const WP = 'QA63_PARENT', WC = 'QA63_CB', WC2 = 'QA63_CB2'
 const M_RM = 'QA63_RM1', M_BTP = 'QA63_BTP1', M_BTP2 = 'QA63_BTP2', M_EA = 'QA63_EA1', M_RM2 = 'QA63_RM2'
+const M_G1 = 'QA63_G1', M_G2 = 'QA63_G2', M_G3 = 'QA63_G3'   // [23] Nhập nhiều mã: 3 mã RM01 có tem
 const M_NT = 'QA63_NT1', M_NT2 = 'QA63_NT2'   // [21] hàng KHÔNG TEM: RM01 (theo NSX) · PK01 (loại kho tắt riêng)
 const qaX = (await restAll('QAStatus', 'select=id&code=eq.X'))[0]?.id
 const ts = () => new Date().toISOString()
@@ -117,7 +118,8 @@ async function cleanup() {
   await restWrite('InventoryEntry', 'DELETE', `warehouse_id=in.(${whs.join(',')})`)
   await restWrite('ProductionImport', 'DELETE', `warehouse_id=in.(${whs.join(',')})`)   // phiếu nhập trực tiếp ở kho phụ ([0a])
   await restWrite('warehouse_type_configs', 'DELETE', `warehouse_id=in.(${whs.join(',')})`)
-  await restWrite('Material', 'DELETE', `id=in.(${[M_RM, M_BTP, M_BTP2, M_EA, M_RM2, M_NT, M_NT2].join(',')})`)
+  await restWrite('Material', 'DELETE', `id=in.(${[M_RM, M_BTP, M_BTP2, M_EA, M_RM2, M_NT, M_NT2, M_G1, M_G2, M_G3].join(',')})`)
+  await restWrite('Location', 'DELETE', `warehouse_id=in.(${whs.join(',')})`)   // [23] vị trí thử của kho phụ
   await restWrite('Customer', 'DELETE', 'id=eq.QA63_CUST')   // [22c] ship-to trỏ kho cha — trước khi xoá kho
   await restWrite('Warehouse', 'DELETE', `id=in.(${WC},${WC2})`)
   await restWrite('Warehouse', 'DELETE', `id=eq.${WP}`)
@@ -1510,6 +1512,45 @@ try {
       stock.s === 200 && stock.j?.data?.pool_by_date === true && pools.length === 2 && String(pools[0]?.production_date ?? '').slice(0, 10) === D1
         && mc1.s === 200 && qOf(rA, D1) === 10 && qOf(rA, D2) === 10 && mc2.s === 200 && qOf(rB, D1) === 10 && qOf(rB, D2) === 7,
       `stock=${stock.s} byDate=${stock.j?.data?.pool_by_date} pools=${JSON.stringify(pools)} mc=${mc1.s}/${mc2.s} ${mc1.j?.error?.message ?? ''} ${mc2.j?.error?.message ?? ''} A=${show(rA)} B=${show(rB)}`)
+
+    // ── [23] NHẬP NHIỀU MÃ (26/11): một chứng từ nhiều mã ⇒ mỗi mã một phiếu SX, chung receipt_group; kiểm hết rồi ghi một lô ──
+    const shift = (await restAll('ImportShift', 'select=id&is_active=is.true&limit=1'))[0]
+    await restWrite('Location', 'POST', '', [{ id: 'QA63_LOC1', location_code: 'QA63_L1', row: 'A', shelf: '1', max_pallets: 99, warehouse_id: WC, sub_code: 'QA63', updated_at: ts() }])
+    const GM = (id, code) => ({ id, material_code: code, material_description: `QA63 NVL nhóm ${code}`, short_name: `QA63 ${code}`, base_unit: 'KG', category: 'RM01', no_qr_tracking: false, updated_at: ts() })
+    await restWrite('Material', 'POST', '', [GM(M_G1, 'QA63G1'), GM(M_G2, 'QA63G2'), GM(M_G3, 'QA63G3')])
+    const base = { warehouse_id: WC, warehouse_type: 'RM01', import_date: todayVN, shift_id: shift?.id, notes: 'QA63 chứng từ nội bộ' }
+    const cnt = async () => (await restAll('ProductionImport', `select=id&warehouse_id=eq.${WC}&material_id=in.(${M_G1},${M_G2},${M_G3})`)).length
+    const g1 = await api('/wms/inbound-orders/group', 'POST', { ...base, location_id: 'QA63_LOC1',
+      lines: [{ material_id: M_G1, planned_cartons: 50 }, { material_id: M_G2, planned_cartons: 30 }, { material_id: M_NT, planned_cartons: 20 }] })
+    const grp = g1.j?.data?.receipt_group
+    const rows = grp ? await restAll('ProductionImport', `select=id,import_code,material_id,location_id,source_type,planned_cartons,receipt_group,status&receipt_group=eq.${grp}&order=import_code`) : []
+    const byMat = new Map(rows.map(r => [r.material_id, r]))
+    const seqs = rows.map(r => Number(String(r.import_code).split('_').pop()))
+    check('23a. Nhập nhiều mã: 3 dòng (2 mã có tem + 1 mã không tem) ⇒ MỘT request tạo 3 phiếu SX chung nhóm; mã có tem nhận vị trí mặc định, mã không tem không vị trí; số phiếu liền nhau',
+      g1.s === 200 && rows.length === 3 && rows.every(r => r.source_type === 'FACTORY' && r.status === 'OPEN')
+        && byMat.get(M_G1)?.location_id === 'QA63_LOC1' && byMat.get(M_G2)?.location_id === 'QA63_LOC1' && byMat.get(M_NT)?.location_id == null
+        && num(byMat.get(M_G1)?.planned_cartons) === 50 && num(byMat.get(M_NT)?.planned_cartons) === 20
+        && seqs.length === 3 && seqs[1] === seqs[0] + 1 && seqs[2] === seqs[1] + 1,
+      `http=${g1.s} ${g1.j?.error?.message ?? ''} rows=${JSON.stringify(rows.map(r => [r.import_code, r.location_id, r.planned_cartons]))}`)
+    const lst = grp ? await api(`/wms/inbound-orders?receipt_group=${grp}`) : { s: 0 }
+    check('23b. Danh sách lọc theo nhóm (Sửa nhóm · Quét cả nhóm) trả đủ 3 phiếu, mỗi phiếu mang receipt_group',
+      lst.s === 200 && (lst.j?.data ?? []).length === 3 && (lst.j?.data ?? []).every(o => o.receipt_group === grp), `http=${lst.s} n=${(lst.j?.data ?? []).length}`)
+    const before = await cnt()
+    const bDup = await api('/wms/inbound-orders/group', 'POST', { ...base, location_id: 'QA63_LOC1', lines: [{ material_id: M_G3, planned_cartons: 5 }, { material_id: M_G3, planned_cartons: 6 }] })
+    const bCat = await api('/wms/inbound-orders/group', 'POST', { ...base, location_id: 'QA63_LOC1', lines: [{ material_id: M_G3, planned_cartons: 5 }, { material_id: M_NT2, planned_cartons: 6 }] })
+    const bLoc = await api('/wms/inbound-orders/group', 'POST', { ...base, lines: [{ material_id: M_G3, planned_cartons: 5 }] })
+    const bFlag = await fetch(`${BASE}/api/wms/inbound-orders/group`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${authToken()}` },
+      body: JSON.stringify({ ...base, location_id: 'QA63_LOC1', lines: [{ material_id: M_G3, planned_cartons: 5 }] }) })
+    check('23c. Kiểm hết rồi mới ghi: trùng mã · mã khác loại kho · thiếu vị trí mặc định (có mã theo tem) ⇒ 422 · thiếu cờ đơn vị gốc ⇒ 400; KHÔNG tạo phiếu nào',
+      bDup.s === 422 && bCat.s === 422 && bLoc.s === 422 && bLoc.j?.error?.code === 'LOCATION_REQUIRED' && bFlag.status === 400 && (await cnt()) === before,
+      `dup=${bDup.s} cat=${bCat.s} ${bCat.j?.error?.message ?? ''} loc=${bLoc.s}/${bLoc.j?.error?.code} cờ=${bFlag.status} trước=${before} sau=${await cnt()}`)
+    const aAgain = grp ? await api('/wms/inbound-orders/group', 'POST', { ...base, location_id: 'QA63_LOC1', receipt_group: grp, lines: [{ material_id: M_G1, planned_cartons: 1 }] }) : { s: 0 }
+    const aNew = grp ? await api('/wms/inbound-orders/group', 'POST', { ...base, location_id: 'QA63_LOC1', receipt_group: grp, lines: [{ material_id: M_G3, planned_cartons: 7 }] }) : { s: 0 }
+    const aOther = grp ? await api('/wms/inbound-orders/group', 'POST', { ...base, warehouse_id: WC2, location_id: null, receipt_group: grp, lines: [{ material_id: M_NT, planned_cartons: 1 }] }) : { s: 0 }
+    const after = grp ? (await restAll('ProductionImport', `select=id&receipt_group=eq.${grp}`)).length : 0
+    check('23d. Sửa nhóm — thêm mã vào nhóm có sẵn: mã đã có ⇒ 422 · mã mới ⇒ 200 vào CÙNG nhóm (4 phiếu) · nhóm của kho khác ⇒ 422',
+      aAgain.s === 422 && aNew.s === 200 && aNew.j?.data?.receipt_group === grp && after === 4 && aOther.s === 422,
+      `có sẵn=${aAgain.s} mới=${aNew.s} kho khác=${aOther.s} ${aOther.j?.error?.code ?? ''} nhóm=${after}`)
   }
 } finally {
   await cleanup()

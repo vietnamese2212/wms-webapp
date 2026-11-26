@@ -20,6 +20,14 @@
 
 Nhập kho
 
+## 26/11 — NHẬP NHIỀU MÃ (tab thứ 3 của Tạo phiếu nhập — mọi kho)
+User 26/11: nhập nội bộ ở kho chế biến = một chứng từ vài chục mã của nhiều NCC; Nhập SX từng mã một lâu, Nhập NCC bắt chọn từng NCC + xe cổng. Chốt: **khai trước mã + số lượng** (dán Excel được), quét **ở từng phiếu hoặc quét cả nhóm**, **vị trí mặc định cho cả phiếu — đổi được từng tem lúc quét**, dùng ở **mọi kho**, giữ khuôn hiện tại.
+- Form: tab **Nhập nhiều mã** dùng CHUNG bảng dòng hàng của tab NCC (`isTableMode`); ô "Xe đang vào cổng" thay bằng **Vị trí mặc định** (bắt buộc trừ kho QTY/QTY_DATE); **NCC tuỳ chọn** cho cả nhóm — để trống thì quét tem đọc mã NCC trên tem như Nhập SX.
+- `POST /wms/inbound-orders/group` (`inbound.create`, `zCreateGroup`): kiểm HẾT rồi mới ghi (trùng mã · mã khác loại kho · mã phi hàng hoá · số nguyên theo quy cách · thiếu vị trí khi có mã theo tem ⇒ 422, không ghi gì); quy tắc cất hàng chấm CẢ LÔ vào vị trí mặc định một lần (`guardPutawayBatch`); cấp số phiếu cả lô + ghi MỘT lô, đua ⇒ 23505 ⇒ đếm lại. Mỗi mã một `ProductionImport` **FACTORY** (nhãn SX — quét / lưu thủ công / hoàn thành dùng nguyên màn chi tiết), chung cột `receipt_group` (uuid). Mã không tem: không vị trí, lưu thủ công ở trang phiếu.
+- Danh sách: nhóm nối ngoặc như nhóm NCC theo lượt cổng (`inboundGroupKey` `grp:` = nhánh mới trong RPC `inbound_orders_page`). **Sửa nhóm** (bút trên dòng): sửa SL / huỷ dòng chưa quét như nhóm NCC + thêm mã mới vào CÙNG nhóm (cửa nhóm với `receipt_group`; mã đã có ⇒ 422; nhóm kho khác ⇒ 422).
+- Trang phiếu: **Quét cả nhóm (N mã)** — `InboundGroupScanSheet` giữ danh sách phiếu mở của mã có tem; quét tem mã nào thì mở lại màn quét của đúng phiếu mã đó (khởi tạo NCC / quy cách / số mặc định như mở phiếu đó), mang theo tem vừa quét + vị trí đang chọn + kiểu quét (camera / súng). Tem mã không có trong nhóm ⇒ báo "dùng Sửa nhóm để thêm mã". Ghi vẫn đi cửa quét của từng phiếu (máy chủ kiểm mã tem = mã phiếu).
+- Gói 63 [23a–d].
+
 ## 26/11 — Hàng không tem theo NSX ở kho QR (user: "bắt nhập nếu có config như vậy ở kho cb")
 - Cờ 2 tầng `Warehouse.noqr_date_tracking` + `warehouse_type_configs.noqr_date_tracking` (null = theo kho) — Cài đặt WMS → Kho → nhóm NHẬP "Hàng không tem" (chỉ hiện khi kho quản lý theo tem). Mặc định TẮT = hành vi cũ.
 - Bật ⇒ hàng KHÔNG TEM của kho QR chạy luật tồn gộp của kho QTY_DATE: Lưu thủ công bắt NSX (thiếu ⇒ 422 `NSX_REQUIRED`, NSX tương lai ⇒ 422 `NSX_FUTURE`), mỗi NSX một dòng tồn (unique `uq_inventory_active_wh_pallet` đã có NSX trong khoá), cùng NSX cộng dồn.

@@ -1034,7 +1034,7 @@ function lsGet<T>(key: string): T | undefined {
 function lsSet(key: string, val: unknown): void {
   try { localStorage.setItem(key, JSON.stringify(val)) } catch {}
 }
-export function useInboundOrders(params?: { warehouse_id?: string; status?: string; search?: string; date?: string; date_from?: string; date_to?: string; shift_id?: string; material_category?: string; gate_registration_id?: string }) {
+export function useInboundOrders(params?: { warehouse_id?: string; status?: string; search?: string; date?: string; date_from?: string; date_to?: string; shift_id?: string; material_category?: string; gate_registration_id?: string; receipt_group?: string }) {
   return useQuery({
     queryKey: ['inbound-orders', params],
     // undefined = caller CHƯA sẵn điều kiện (quy ước cả 2 consumer) — không được fetch,
@@ -1208,6 +1208,21 @@ export function useCreateInboundOrder() {
       planned_cartons?: number
       ncc_id?: string
     }) => apiClient.post('/wms/inbound-orders', body).then((r) => r.data.data),
+    onSuccess: (data) => { warnPutaway(data); qc.invalidateQueries({ queryKey: ['inbound-orders'] }) },
+  })
+}
+
+/** NHẬP NHIỀU MÃ (26/11): một chứng từ nhiều mã nhiều NCC ⇒ mỗi mã một phiếu, chung `receipt_group`. Một request, kiểm hết rồi ghi một lô.
+ *  Có `receipt_group` = thêm mã vào nhóm đang có (Sửa nhóm). Số lượng = BASE. */
+export function useCreateInboundGroup() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: {
+      warehouse_id: string; warehouse_type: string; import_date: string; shift_id: string
+      location_id?: string | null; notes?: string | null; ncc_id?: string | null; receipt_group?: string | null
+      putaway_override_reason?: string | null
+      lines: { material_id: string; planned_cartons: number }[]
+    }) => apiClient.post('/wms/inbound-orders/group', body).then((r) => r.data.data as { receipt_group: string; orders: InboundOrder[]; putaway_warning?: string }),
     onSuccess: (data) => { warnPutaway(data); qc.invalidateQueries({ queryKey: ['inbound-orders'] }) },
   })
 }

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { AxiosError } from 'axios'
 import { MapPin, AlertTriangle, CheckCircle2 } from 'lucide-react'
@@ -85,6 +85,13 @@ function validateQRv2(raw: string, order: InboundOrder): ValidationResult {
   return { ok: true, msg: `Hợp lệ · ${order.material?.material_code} · QA ${qaStr === '1' ? 'OK' : 'X'} · HSD ${hsd}` }
 }
 
+/** Mã hàng ghi trên tem (hai định dạng `_` và `;` — cùng cách tách với validateQR). Dùng cho "Quét cả nhóm" chọn đúng phiếu. */
+export function qrMaterialCodeOf(raw: string): string | null {
+  const s = raw.trim()
+  const code = s.includes(';') ? s.split(';')[0] : s.split('_')[1]
+  return code ? code.trim().toUpperCase() : null
+}
+
 function validateQR(raw: string, order: InboundOrder): ValidationResult {
   if (raw.includes(';')) return validateQRv2(raw, order)
   const parts = raw.split('_')
@@ -128,9 +135,15 @@ interface InboundScanSheetProps {
   onLocSearch?: (term: string) => void   // gõ trong picker → cha đổi từ khoá query (tìm trên server)
   pdaMode?: boolean          // mở bằng cò súng cấp trang → mở thẳng chế độ súng (không bật camera)
   initialScan?: string       // tem đã bắn ở trang phiếu → xử lý ngay khi mở
+  // ── Quét cả nhóm "Nhập nhiều mã" (26/11) — do InboundGroupScanSheet truyền ──
+  initialScanSrc?: 'camera' | 'wedge'   // tem chuyển sang từ phiếu khác quét bằng gì (camera thì giữ camera)
+  initialLocationId?: string            // vị trí đang chọn ở phiếu trước — giữ nguyên khi chuyển phiếu
+  /** Tem KHÔNG khớp phiếu đang mở: true = lớp bọc đã chuyển sang phiếu đúng mã · chuỗi = báo lỗi đó · false = báo lỗi thường */
+  onOtherMaterial?: (raw: string, locationId: string, src: 'camera' | 'wedge') => boolean | string
+  groupLabel?: string
 }
 
-export function InboundScanSheet({ order, onClose, employeeId, allLocations, onLocSearch, pdaMode = false, initialScan }: InboundScanSheetProps) {
+export function InboundScanSheet({ order, onClose, employeeId, allLocations, onLocSearch, pdaMode = false, initialScan, initialScanSrc, initialLocationId, onOtherMaterial, groupLabel }: InboundScanSheetProps) {
   const scannerRef = useRef<QRScannerHandle>(null)
   const codeTypes = useScanCodeTypes(order.warehouse_id)   // loại mã camera giải = theo KHO CỦA PHIẾU
   const { mutate: scanPallet,  isPending: saving        } = useScanPallet()
@@ -185,8 +198,8 @@ export function InboundScanSheet({ order, onClose, employeeId, allLocations, onL
   const canPutawayOverride = can(perms, 'inbound', 'putaway_override')
 
   // Đổi vị trí: activeLocationId có thể khác order.location_id khi overflow
-  const [activeLocationId, setActiveLocationId] = useState<string>(order.location_id ?? '')
-  const [showLocPicker,    setShowLocPicker]    = useState(!order.location_id) // NCC: mở picker ngay
+  const [activeLocationId, setActiveLocationId] = useState<string>(initialLocationId ?? order.location_id ?? '')
+  const [showLocPicker,    setShowLocPicker]    = useState(!(initialLocationId ?? order.location_id)) // NCC: mở picker ngay
   // Súng PDA: 1 phát bắn 'wedge' → khóa chế độ súng (tắt camera cả phiên, đỡ pin/nóng máy).
   // pdaMode = mở bằng cò súng cấp trang → vào thẳng chế độ súng ngay.
   const [gunMode,          setGunMode]          = useState(pdaMode)
@@ -208,6 +221,16 @@ export function InboundScanSheet({ order, onClose, employeeId, allLocations, onL
       const savable = serverCheckOk && !serverChecking && !nccMissing
       if (src === 'wedge' && savable && normalizeQR(raw) === normalizeQR(pendingQR)) { playBeep(); handleSave() }
       return
+    }
+    // Quét cả nhóm (26/11): tem của MÃ KHÁC trong nhóm ⇒ lớp bọc mở đúng phiếu, mang theo tem + vị trí đang chọn
+    if (onOtherMaterial && !validateQR(raw, order).ok) {
+      const r = onOtherMaterial(raw, activeLocationId, src)
+      if (r === true) return
+      if (typeof r === 'string') {
+        playBeep(); setPendingQR(raw); setFeedback(null); setServerCheckOk(false)
+        setValidation({ ok: false, msg: r })
+        return
+      }
     }
     playBeep()
     setPendingQR(raw)
@@ -357,7 +380,7 @@ export function InboundScanSheet({ order, onClose, employeeId, allLocations, onL
   // Cò súng cấp trang: mở sheet kèm tem đầu → xử lý NGAY 1 lần (activeLocationId đã có vì trang gate theo vị trí).
   const initialDone = useRef(false)
   useEffect(() => {
-    if (initialScan && !initialDone.current) { initialDone.current = true; handleScan(initialScan, 'wedge') }
+    if (initialScan && !initialDone.current) { initialDone.current = true; handleScan(initialScan, initialScanSrc ?? 'wedge') }
   }, [initialScan]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Tem V1 hàng NCC: đoạn 4 QR = mã NCC, BE tự resolve → không chặn ở FE (BE 422 nếu resolve thất bại)
@@ -380,6 +403,9 @@ export function InboundScanSheet({ order, onClose, employeeId, allLocations, onL
           {/* Subtitle: material + active location + "Đổi vị trí" button */}
           <div className="flex items-center justify-between gap-2">
             <p className="text-xs text-slate-500 min-w-0">
+              {groupLabel && (
+                <span className="mr-1 rounded bg-violet-100 border border-violet-200 px-1.5 py-0.5 text-[10px] font-semibold text-violet-700 whitespace-nowrap" data-testid="group-scan-label">{groupLabel}</span>
+              )}
               <span className="font-medium text-slate-700">{order.material?.material_code}</span>
               {order.material?.short_name && <span className="text-slate-500"> · {order.material.short_name}</span>}
               {activeLoc && <span className="font-mono"> · {activeLoc.location_code}</span>}
@@ -648,6 +674,61 @@ export function InboundScanSheet({ order, onClose, employeeId, allLocations, onL
       </div>
     </div>,
     document.body
+  )
+}
+
+// ─── QUÉT CẢ NHÓM "Nhập nhiều mã" (26/11) ──
+// User chốt: khai trước mã + số lượng, quét ở từng phiếu HOẶC quét ở ngoài; vị trí mặc định cho cả phiếu, đổi được từng tem.
+// Lớp bọc giữ danh sách phiếu của nhóm; quét tem mã nào thì MỞ LẠI màn quét của đúng phiếu mã đó (key mới ⇒ mọi trạng thái
+// theo phiếu — NCC, quy cách, số mặc định — khởi tạo đúng như mở phiếu đó), mang theo tem vừa quét và vị trí đang chọn.
+// Ghi vẫn đi đúng cửa quét của từng phiếu (máy chủ kiểm mã tem = mã phiếu) — lớp bọc chỉ chọn phiếu.
+export function InboundGroupScanSheet({ orders, onClose, employeeId }: { orders: InboundOrder[]; onClose: () => void; employeeId?: string }) {
+  // Chỉ phiếu đang mở của mã quản lý theo tem — mã không tem lưu thủ công ở trang phiếu
+  const scanable = useMemo(() => orders.filter(o => o.status === 'OPEN' && o.material?.no_qr_tracking !== true), [orders])
+  const byCode = useMemo(() => new Map(scanable.map(o => [(o.material?.material_code ?? '').trim().toUpperCase(), o])), [scanable])
+  const [cur, setCur] = useState<{ order: InboundOrder | undefined; raw?: string; loc?: string; src?: 'camera' | 'wedge'; n: number }>(
+    () => ({ order: scanable[0], n: 0 }))
+  const first = scanable[0]
+  const [locTerm, setLocTerm] = useState('')
+  const locTermDeb = useDebouncedValue(locTerm, 250)
+  const { data: allLocations = [] } = useLocationsReal(first?.warehouse_id
+    ? { warehouse_id: first.warehouse_id, ...(first.warehouse_type ? { category: first.warehouse_type } : {}), search: locTermDeb || undefined, limit: 300 }
+    : undefined)
+
+  if (!cur.order) {
+    return createPortal(
+      <div className="fixed inset-0 z-[60] flex items-center justify-center pointer-events-auto">
+        <div className="absolute inset-0 bg-black/60" onClick={onClose} />
+        <div className="relative bg-white rounded-xl px-6 py-4 text-sm text-slate-600 max-w-xs text-center">
+          Nhóm không còn phiếu nào cần quét tem (đã hoàn thành, hoặc toàn hàng không tem — lưu thủ công ở từng phiếu).
+        </div>
+      </div>,
+      document.body
+    )
+  }
+  const onOther = (raw: string, loc: string, src: 'camera' | 'wedge'): boolean | string => {
+    const code = qrMaterialCodeOf(raw)
+    const target = code ? byCode.get(code) : undefined
+    if (!target) return `Mã ${code ?? '?'} không có trong nhóm phiếu này (hoặc phiếu mã đó đã hoàn thành) — dùng "Sửa nhóm" để thêm mã`
+    if (target.id === cur.order?.id) return false   // đúng mã mà vẫn không hợp lệ ⇒ để màn quét báo lỗi thật (sai ngày, tem trùng…)
+    setCur(c => ({ order: target, raw, loc, src, n: c.n + 1 }))
+    return true
+  }
+  return (
+    <InboundScanSheet
+      key={`${cur.order.id}:${cur.n}`}
+      order={cur.order}
+      onClose={onClose}
+      employeeId={employeeId}
+      allLocations={allLocations as InboundScanSheetProps['allLocations']}
+      onLocSearch={setLocTerm}
+      initialScan={cur.raw}
+      initialScanSrc={cur.src}
+      initialLocationId={cur.loc || cur.order.location_id || undefined}
+      pdaMode={cur.src === 'wedge'}
+      onOtherMaterial={onOther}
+      groupLabel={`Quét cả nhóm · ${scanable.length} mã`}
+    />
   )
 }
 

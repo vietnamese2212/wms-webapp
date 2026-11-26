@@ -198,6 +198,8 @@ router.get('/inbound-orders',                           inbound.listOrders)
 router.get('/inbound-orders/summary',                   inbound.listOrdersSummary)
 router.get('/inbound-orders/facets',                    inbound.listOrdersFacets)
 router.post('/inbound-orders',                          requirePerm('inbound', 'create'), inbound.createOrder)
+// Nhập nhiều mã (26/11): một chứng từ nhiều mã nhiều NCC ⇒ mỗi mã một phiếu, chung receipt_group — kiểm hết rồi ghi một lô
+router.post('/inbound-orders/group',                    requirePerm('inbound', 'create'), validate({ body: inbound.zCreateGroup }), inbound.createOrderGroup)
 router.get('/inbound-orders/:id',                       inbound.getOrder)
 router.patch('/inbound-orders/:id',                     requirePerm('inbound', 'edit'), inbound.updateOrder)
 router.patch('/inbound-orders/:id/location',            requireAnyPerm(['inbound', 'edit_pallet'], ['inbound', 'force_edit_pallet']), inbound.setOrderLocation)

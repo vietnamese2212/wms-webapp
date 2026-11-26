@@ -272,7 +272,7 @@ export interface InboundOrder {
   location_id:     string | null
   location:        { id: string; location_code: string; sub_code: string; max_pallets: number } | null
   material_id:     string | null
-  material:        { id: string; material_code: string; short_name: string | null; material_description: string; cartons_per_pallet: number | null; cartons_per_pallet_mn: number | null; warehouse_pallet_overrides?: WarehousePalletOverride[] | null; supplier_shelf_life_overrides?: SupplierShelfLifeOverride[] | null; base_unit?: string | null; entry_unit?: string | null; units_per_carton?: number | null } | null
+  material:        { id: string; material_code: string; short_name: string | null; material_description: string; cartons_per_pallet: number | null; cartons_per_pallet_mn: number | null; warehouse_pallet_overrides?: WarehousePalletOverride[] | null; supplier_shelf_life_overrides?: SupplierShelfLifeOverride[] | null; base_unit?: string | null; entry_unit?: string | null; units_per_carton?: number | null; no_qr_tracking?: boolean | null; category?: string | null } | null
   planned_pallets: number | null
   shift_id:        string | null
   shift:           { id: string; code: string; name: string } | null
@@ -298,6 +298,8 @@ export interface InboundOrder {
   warehouse_type?:      string | null
   gate_registration_id?: string | null
   gate_registration?:   { id: string; registration_number: number; date: string; license_plate: string | null; company_name_raw: string | null; driver_name: string | null; status: string; direction: string } | null
+  // 26/11 — nhóm "Nhập nhiều mã": các phiếu (mỗi mã một phiếu) của cùng một chứng từ
+  receipt_group?:       string | null
   planned_cartons?:     number | null
   posm_entry_id?:       string | null
   transfer_production_date?: string | null

@@ -213,7 +213,7 @@ const TankNode = memo(function TankNode({ t, n, lod, selected, dim, flash, filte
           <FitText size={sz.code} className="font-mono font-bold text-slate-800" style={{ lineHeight: 1.15 }} title={t.name ?? undefined}>{t.code}</FitText>
           <FitText size={sz.small} className={`font-semibold ${t.is_active ? tone.text : 'text-slate-400'}`} style={{ lineHeight: 1.35 }}>{label}</FitText>
           <FitText size={sz.qty} className="tabular-nums font-semibold text-slate-900" style={{ lineHeight: 1.35 }}>
-            {nf(Number(t.content))}<span className="font-normal text-slate-400">/{nf(cap)} {t.unit}</span>
+            {nf(Number(t.content))}<wbr /><span className="font-normal text-slate-400">/{nf(cap)} {t.unit}</span>
           </FitText>
           <FitText size={sz.small} className="font-mono text-slate-500" style={{ lineHeight: 1.35 }} title={mat?.short_name ?? inMat?.material_name ?? undefined}>
             {mat ? mat.material_code : inMat ? `đặt ${inMat.material_code ?? ''}` : '—'}
@@ -239,12 +239,15 @@ const TankNode = memo(function TankNode({ t, n, lod, selected, dim, flash, filte
 
       {/* ỐNG RA → MÁY ĐÓNG GÓI đang rút (Sổ đóng gói đang mở) */}
       {runs.length > 0 && (
-        <div className="absolute left-1/2 -translate-x-1/2 inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border-2 border-green-300 bg-green-50 px-3 font-semibold text-green-800"
-          style={{ top: OUT_Y, minHeight: lod === 1 ? 40 : 34, maxWidth: NODE_W - 16 }}
-          title={runs.map(r => `Máy ${r.machine_code} · ${r.material_code} · từ ${formatDateTime(r.start_at)}`).join('\n')} data-testid={`run-${t.code}`}>
-          <Play className={lod === 1 ? 'h-6 w-6 shrink-0 fill-green-600' : 'h-3.5 w-3.5 shrink-0 fill-green-600'} />
-          <FitText size={lod === 1 ? 24 : lod === 2 ? 14 : 12} min={lod === 1 ? 16 : 10} className="leading-tight">{lod === 1 ? runs[0].machine_code : `Máy ${runs[0].machine_code}${lod === 3 ? ` · ${runs[0].material_code} · từ ${formatTimestampTime(runs[0].start_at).slice(0, 5)}` : ''}`}</FitText>
-          {runs.length > 1 && <span className="shrink-0" style={{ fontSize: lod === 1 ? 24 : lod === 2 ? 14 : 12 }}>+{runs.length - 1}</span>}
+        // khung ngoài trải hết bề ngang ô để viên thuốc có đủ chỗ (absolute + left 50% chỉ cho nửa ô ⇒ chữ bị bóp nhiều dòng)
+        <div className="absolute flex justify-center" style={{ top: OUT_Y, left: 8, right: 8 }}>
+          <div className="inline-flex max-w-full items-center gap-1.5 rounded-full border-2 border-green-300 bg-green-50 px-3 font-semibold text-green-800"
+            style={{ minHeight: lod === 1 ? 40 : 34 }}
+            title={runs.map(r => `Máy ${r.machine_code} · ${r.material_code} · từ ${formatDateTime(r.start_at)}`).join('\n')} data-testid={`run-${t.code}`}>
+            <Play className={lod === 1 ? 'h-6 w-6 shrink-0 fill-green-600' : 'h-3.5 w-3.5 shrink-0 fill-green-600'} />
+            <FitText size={lod === 1 ? 24 : lod === 2 ? 14 : 12} min={lod === 1 ? 16 : 10} className="leading-tight">{lod === 1 ? runs[0].machine_code : `Máy ${runs[0].machine_code}${lod === 3 ? ` · ${runs[0].material_code} · từ ${formatTimestampTime(runs[0].start_at).slice(0, 5)}` : ''}`}</FitText>
+            {runs.length > 1 && <span className="shrink-0" style={{ fontSize: lod === 1 ? 24 : lod === 2 ? 14 : 12 }}>+{runs.length - 1}</span>}
+          </div>
         </div>
       )}
       {/* chế độ Sắp xếp: cả ô là tay nắm kéo */}

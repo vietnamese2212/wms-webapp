@@ -41,7 +41,19 @@ export function FitText({ size, min, className = '', style, title, children, tes
       r = fitFontSize(r.size, floor, el.clientWidth, el.scrollWidth)
     }
     el.style.fontSize = `${r.size}px`
-    if (r.wrap) { el.style.whiteSpace = 'normal'; el.style.overflowWrap = 'anywhere' }
+    if (r.wrap) {
+      // xuống dòng: lấy số dòng khi ở cỡ sàn làm chuẩn, rồi chọn cỡ LỚN NHẤT vẫn gói trong chừng ấy dòng
+      // (đừng để chữ bé hết cỡ khi to hơn mà vẫn cùng số dòng)
+      el.style.whiteSpace = 'normal'; el.style.overflowWrap = 'anywhere'
+      const lines = () => { const lh = parseFloat(getComputedStyle(el).lineHeight) || parseFloat(el.style.fontSize) * 1.2; return Math.round(el.offsetHeight / lh) }
+      const want = lines()
+      for (let k = 0; k <= 6; k++) {
+        const f = Math.round((size - (size - floor) * k / 6) * 10) / 10
+        el.style.fontSize = `${f}px`
+        if (lines() <= want && el.scrollWidth <= el.clientWidth) { r = { size: f, wrap: true }; break }
+      }
+      el.style.fontSize = `${r.size}px`
+    }
     el.dataset.fit = r.wrap ? 'wrap' : r.size < size ? 'shrink' : ''
   }
   useLayoutEffect(() => { fitRef.current() })

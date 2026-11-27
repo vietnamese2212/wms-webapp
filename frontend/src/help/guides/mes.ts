@@ -164,8 +164,8 @@ export const MES_GUIDE: Guide = {
           title: 'B3. Trang của mẻ',
           text: [
             'Đầu trang: mã lô, tình trạng, thông tin mẻ và **dải 8 bước** — bước xanh đã xong, bước đậm là bước đang tới. Bước chờ người khác hiện "Chờ …".',
-            '**Nút chính ở góc phải là việc tiếp theo** của mẻ (Duyệt phiếu → QA duyệt → Quét cấp NVL → …). Việc quản trị (Sửa / đổi bồn, Sửa định mức, Bỏ duyệt, Mở mẻ giống, Huỷ mẻ) nằm trong nút **⋮**.',
-            'Bảng **Nguyên liệu của mẻ**: Cần · Đã cấp · Thiếu · Tồn kho của từng nguyên liệu (tính từ định mức × kế hoạch).',
+            '**Nút chính ở góc phải là việc tiếp theo** của mẻ (Duyệt phiếu → QA duyệt → Quét cấp NVL → …). Việc quản trị (Sửa / đổi bồn, Sửa định mức, Bỏ duyệt, Mở mẻ giống, Huỷ mẻ) nằm trong nút **⋮**. Trên **điện thoại** chỉ nút của bước đang tới nằm ngoài, các nút khác (Bắt đầu phiếu, In tem…) nằm trong **⋮** để bảng có nhiều chỗ hơn.',
+            'Bảng **Nguyên liệu của mẻ**: Cần · Đã cấp · Thiếu · Tồn kho của từng nguyên liệu (tính từ định mức × kế hoạch). Nguyên liệu tính theo kg có quy cách bao (vd đường 1 bao = 20 kg) thì dưới mỗi số có dòng nhỏ **số bao** ("2 bao + 5 kg") để đối chiếu với định mức.',
           ],
           images: [d('22-trang-me', 'Trang mẻ vừa mở: chờ trưởng ca duyệt')],
         },
@@ -219,7 +219,8 @@ export const MES_GUIDE: Guide = {
           title: 'B8. Kiểm tra nguyên liệu đã cấp',
           text: [
             'Đủ mọi nguyên liệu thì ô **NVL đã đủ** = 10/10, cột Tình trạng ghi **Đủ**.',
-            'Bấm **Xem tem đã cấp** để mở mọi dòng: mỗi tem đã cấp một dòng (lượng, %Date, NSX, HSD). Bấm **Thu gọn** để đóng.',
+            'Bấm **Xem tem đã cấp** (điện thoại: **Tem**) để mở mọi dòng: mỗi tem đã cấp một dòng (lượng, %Date, NSX, HSD). Bấm **Thu gọn** để đóng.',
+            'Bấm **Mở rộng** (cạnh nút xem tem) để xem **toàn cảnh mẻ**: thông số cơ bản của mẻ, rồi mỗi mã một dòng với số đã cấp (kèm số bao) và tổng — dùng để so với phiếu chế biến cầm trên tay.',
             'Cấp nhầm: dòng cấp có nút huỷ (cần quyền huỷ dòng cấp, bắt buộc ghi lý do) — hàng trả về đúng tem. Mẻ đã nạp bồn thì sổ nguyên liệu khoá.',
             'Phần đã đổ vào mẻ / hỏng, **không dùng lại được**: nhập ở ô **Chặn** khi huỷ. Phần chặn vẫn nằm trong tồn sổ nhưng không cấp / xuất được, chờ người có quyền Điều chỉnh tồn xoá.',
             '**Mẻ hỏng trước khi nạp bồn**: ⋮ → **Huỷ mẻ** → mỗi dòng NVL đã cấp một ô Chặn (mặc định hoàn hết; có nút Chặn hết), ghi lý do → Huỷ mẻ.',

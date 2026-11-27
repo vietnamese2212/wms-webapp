@@ -431,21 +431,22 @@ function ProductionBatchDetail() {
         <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
           <div className={`px-3 sm:px-4 bg-slate-100 border-b border-slate-200 flex items-center gap-1.5 ${consByMat.size ? 'py-1' : 'py-1.5 sm:py-2'}`}>
             <span className="h-3.5 w-1 rounded-full bg-sky-500" />
-            <h2 className="text-xs font-semibold uppercase tracking-wide text-slate-600">Nguyên liệu của mẻ</h2>
+            {/* điện thoại: tiêu đề + hai nút trên MỘT hàng (27/11 — "xem được càng nhiều thông tin table càng tốt") ⇒ chữ ngắn, không xuống dòng */}
+            <h2 className="text-xs font-semibold uppercase tracking-wide text-slate-600 whitespace-nowrap"><span className="sm:hidden">Nguyên liệu</span><span className="hidden sm:inline">Nguyên liệu của mẻ</span></h2>
             {/* như "Xem pallet" của Xuất kho: mở / thu MỌI dòng đã cấp — nút ở ngay thanh của khối, không nằm trong ⋮ (user 18/11) */}
-            <div className="ml-auto flex items-center gap-1.5">
+            <div className="ml-auto flex items-center gap-1.5 shrink-0">
             {consByMat.size > 0 && (
               <button type="button" onClick={() => setOpenMats(anyOpen ? new Set() : new Set(consByMat.keys()))} aria-expanded={anyOpen} data-testid="expand-all"
                 title={anyOpen ? 'Thu gọn danh sách tem / lô đã cấp' : 'Mở danh sách tem / lô đã cấp của mọi nguyên liệu'}
-                className="inline-flex h-7 items-center gap-1 rounded-md border border-slate-200 bg-white px-2 text-[11px] font-medium text-slate-700 hover:border-sky-300 hover:bg-sky-50 hover:text-sky-800">
-                <ChevronDown className={`h-3.5 w-3.5 transition-transform ${anyOpen ? 'rotate-180' : ''}`} />{anyOpen ? 'Thu gọn' : `Xem tem đã cấp · ${temTotal}`}
+                className="inline-flex h-7 items-center gap-1 whitespace-nowrap rounded-md border border-slate-200 bg-white px-2 text-[11px] font-medium text-slate-700 hover:border-sky-300 hover:bg-sky-50 hover:text-sky-800">
+                <ChevronDown className={`h-3.5 w-3.5 transition-transform ${anyOpen ? 'rotate-180' : ''}`} />{anyOpen ? 'Thu gọn' : <><span className="hidden sm:inline">Xem tem đã cấp · </span><span className="sm:hidden">Tem · </span>{temTotal}</>}
               </button>
             )}
             {/* TOÀN CẢNH MẺ (27/11, user): chỉ thông số cơ bản + mã · đã cấp — đối chiếu phiếu chế biến cầm trên tay */}
             {board.length > 0 && (
               <button type="button" onClick={() => setOverviewOpen(true)} data-testid="batch-overview-open"
                 title="Mở rộng — xem toàn cảnh mẻ: thông số cơ bản, mã và số đã cấp (đối chiếu phiếu chế biến giấy)"
-                className="inline-flex h-7 items-center gap-1 rounded-md border border-slate-200 bg-white px-2 text-[11px] font-medium text-slate-700 hover:border-sky-300 hover:bg-sky-50 hover:text-sky-800">
+                className="inline-flex h-7 items-center gap-1 whitespace-nowrap rounded-md border border-slate-200 bg-white px-2 text-[11px] font-medium text-slate-700 hover:border-sky-300 hover:bg-sky-50 hover:text-sky-800">
                 <Maximize2 className="h-3.5 w-3.5" />Mở rộng
               </button>
             )}

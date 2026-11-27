@@ -13,7 +13,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { useConfirmDialog } from '@/components/shared/ConfirmDialog'
 import { MatLinesEditor, toMatLine, matLineError, matLinesPayload, codeLinesPayload, type MatLine } from './MatLinesEditor'
-import { useSetRequirements, useApplyRecipe, useRecipes, type BatchDetail } from '@/api/productionHooks'
+import { useSetRequirements, useApplyRecipe, useRecipes, recipeListOnly, type BatchDetail } from '@/api/productionHooks'
 import { unitCode } from '@/utils/unitCode'
 
 const apiMsg = (e: unknown) => (e as AxiosError<{ error?: { message?: string } }>)?.response?.data?.error?.message ?? 'Lỗi không xác định'
@@ -107,7 +107,7 @@ export function RequirementSheet({ open, onClose, batch }: { open: boolean; onCl
             <div className="flex items-center gap-2">
               <div className="flex-1 min-w-0">
                 <SingleSelect value={recipeId} onChange={setRecipeId} searchable={recipes.length > 6} triggerClassName="h-9 sm:h-8 text-xs"
-                  options={recipes.map(r => ({ value: r.id, label: r.name, sub: `${r.base_qty == null ? 'chỉ danh sách mã' : `cỡ ${nf(r.base_qty)} ${unitCode(r.material?.base_unit)}`}${r.is_default ? ' · mặc định' : ''}${r.id === batch.recipe_id ? ' · đang dùng' : ''}` }))} />
+                  options={recipes.map(r => ({ value: r.id, label: r.name, sub: [recipeListOnly(r) ? 'chỉ danh sách mã' : r.base_qty == null ? '' : `cỡ ${nf(r.base_qty)} ${unitCode(r.material?.base_unit)}`, r.is_default ? 'mặc định' : '', r.id === batch.recipe_id ? 'đang dùng' : ''].filter(Boolean).join(' · ') }))} />
               </div>
               <button type="button" disabled={busy || !recipeId} onClick={() => void doApply()}
                 className="touch-target shrink-0 inline-flex items-center gap-1 rounded border border-blue-200 bg-white px-2.5 py-1.5 text-[11px] text-blue-700 hover:bg-blue-50 disabled:opacity-50">

@@ -12,8 +12,9 @@ import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import {
   useProductionWarehouses, useProductionBatches, useProductionTanks, useTankMovements, useCreateTank, useUpdateTank,
-  useTankFill, useTankTransfer, useTankAdjust, useTankDiscard, TANK_MOVE_VI, type TankRow,
+  useTankFill, useTankTransfer, useTankAdjust, useTankDiscard, useSemiFinishedSearch, TANK_MOVE_VI, type TankRow,
 } from '@/api/productionHooks'
+import { unitCode } from '@/utils/unitCode'
 import { formatDateTime } from '@/utils/formatters'
 import { parseVnNumber, vnNumberInput } from '@/utils/vnNumber'
 
@@ -29,9 +30,20 @@ export function TankFormSheet({ open, onClose, tank, defaultWarehouseId }: { ope
   const [cap, setCap] = useState(''); const [unit, setUnit] = useState<'L' | 'KG'>('L'); const [note, setNote] = useState('')
   const [active, setActive] = useState(true); const [err, setErr] = useState('')
   const create = useCreateTank(); const update = useUpdateTank()
+  // 27/11: mặc định cũ "Lít" ⇒ bồn BD63 khai thành lít trong khi mọi mã BTP của nhà máy tính KG ⇒ không mẻ nào chọn được bồn đó.
+  // Nay mặc định = đơn vị nhiều nhất của bồn đang có trong kho; kho chưa có bồn ⇒ đơn vị nhiều nhất của mã BTP; không có gì ⇒ Lít như cũ.
+  const [unitTouched, setUnitTouched] = useState(false)
+  const { data: whTanks = [] } = useProductionTanks(wh || undefined, true, open && !tank && !!wh)
+  const { found: btps } = useSemiFinishedSearch('', open && !tank)
+  const btpUnits = useMemo(() => new Set(btps.map(m => unitCode(m.base_unit)).filter(u => u === 'L' || u === 'KG')), [btps])
+  const suggestUnit = useMemo((): 'L' | 'KG' | null => {
+    const major = (us: string[]) => { const kg = us.filter(u => u === 'KG').length, l = us.filter(u => u === 'L').length; return kg === l ? null : kg > l ? 'KG' : 'L' }
+    return major(whTanks.filter(t => t.warehouse_id === wh).map(t => t.unit)) ?? major(btps.map(m => unitCode(m.base_unit)))
+  }, [whTanks, wh, btps])
+  useEffect(() => { if (open && !tank && !unitTouched && suggestUnit) setUnit(suggestUnit) }, [open, tank, unitTouched, suggestUnit])
   useEffect(() => {
     if (!open) return
-    setErr('')
+    setErr(''); setUnitTouched(false)
     if (tank) { setWh(tank.warehouse_id); setCode(tank.code); setName(tank.name ?? ''); setCap(vnNumberInput(tank.capacity)); setUnit(tank.unit); setNote(tank.note ?? ''); setActive(tank.is_active) }
     else {
       const k = kitchens.find(x => x.id === defaultWarehouseId) ?? kitchens.filter(x => x.parent_warehouse_id === defaultWarehouseId)[0] ?? (kitchens.length === 1 ? kitchens[0] : undefined)
@@ -73,11 +85,14 @@ export function TankFormSheet({ open, onClose, tank, defaultWarehouseId }: { ope
           <div><Label className="text-xs">Đơn vị <span className="text-red-500">*</span></Label>
             <div className="flex rounded-lg border overflow-hidden mt-0.5">
               {(['L', 'KG'] as const).map(u => (
-                <button key={u} type="button" onClick={() => setUnit(u)}
+                <button key={u} type="button" onClick={() => { setUnit(u); setUnitTouched(true) }}
                   className={['flex-1 h-8 text-xs font-medium transition-colors', unit === u ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'].join(' ')}>{u === 'L' ? 'Lít' : 'Kg'}</button>
               ))}
             </div></div>
         </div>
+        {btps.length > 0 && !btpUnits.has(unit) && (
+          <p className="text-[11px] text-amber-700 -mt-1.5" data-testid="tank-unit-warn">Chưa mã bán thành phẩm nào tính {unit === 'L' ? 'lít' : 'kg'} (mã BTP đang tính {[...btpUnits].join(' / ')}) — bồn {unit} sẽ không mẻ nào chọn được.</p>
+        )}
         <div><Label className="text-xs">Ghi chú</Label>
           <Input value={note} onChange={e => setNote(e.target.value)} maxLength={500} placeholder="Tuỳ chọn" className="h-8 text-xs mt-0.5" /></div>
         {tank && (

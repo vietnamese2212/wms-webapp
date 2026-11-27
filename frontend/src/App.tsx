@@ -29,11 +29,13 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 function PermissionRoute({
   module,
   action,
+  anyActions,
   adminOnly,
   children,
 }: {
   module?: ModuleKey | ModuleKey[]
   action?: string   // nếu có: gate theo đúng action (vd outbound.prepare), không chỉ "có quyền nào trong module"
+  anyActions?: string[]   // HOẶC một trong các action của CÙNG module (vd Định mức: view_recipe / manage_recipe)
   adminOnly?: boolean   // chỉ superadmin (không mở theo module) — vd API key tích hợp
   children: React.ReactNode
 }) {
@@ -46,7 +48,7 @@ function PermissionRoute({
       Array.isArray(module)
         ? canAccessAny(perms, ...module)
         : module
-          ? (action ? can(perms, module, action) : canAccess(perms, module))
+          ? (anyActions ? anyActions.some(a => can(perms, module, a)) : action ? can(perms, module, action) : canAccess(perms, module))
           : false
     )
   if (!allowed) return <Navigate to="/" replace />
@@ -173,7 +175,7 @@ export default function App() {
         <Route path="/wms/production" element={<PermissionRoute module="production"><ProductionBatches /></PermissionRoute>} />
         <Route path="/wms/production/tanks" element={<PermissionRoute module="production"><ProductionTanks /></PermissionRoute>} />
         <Route path="/wms/production/settings" element={<PermissionRoute module="production"><ProductionSettings /></PermissionRoute>} />
-        <Route path="/wms/production/recipes" element={<PermissionRoute module="production"><ProductionRecipes /></PermissionRoute>} />
+        <Route path="/wms/production/recipes" element={<PermissionRoute module="production" anyActions={['view_recipe', 'manage_recipe']}><ProductionRecipes /></PermissionRoute>} />
         <Route path="/wms/production/usage-report" element={<PermissionRoute module="production"><ProductionUsageReport /></PermissionRoute>} />
         <Route path="/wms/production/:id" element={<PermissionRoute module="production"><ProductionBatchDetail /></PermissionRoute>} />
 

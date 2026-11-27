@@ -18,9 +18,10 @@ import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { MatLinesEditor, toMatLine, type MatLine } from './MatLinesEditor'
 import { defaultExtraForms } from '@/config/processForms'
-import { useProductionTanks, useProductionWarehouses, useNextBatchCode, useCreateBatch, useUpdateBatch, useProcessForms, useShiftNames, defaultKitchen, useSemiFinishedSearch, useRecipes, useRecipe, SEMI_FINISHED_PLACEHOLDER, type BatchDetail } from '@/api/productionHooks'
+import { useProductionTanks, useProductionWarehouses, useNextBatchCode, useCreateBatch, useUpdateBatch, useProcessForms, useShiftNames, defaultKitchen, useSemiFinishedSearch, useRecipes, useRecipe, recipeListOnly, SEMI_FINISHED_PLACEHOLDER, type BatchDetail } from '@/api/productionHooks'
 import { NoSemiFinishedHint } from './NoSemiFinishedHint'
 import { unitCode } from '@/utils/unitCode'
+import { tankOptions } from '@/utils/tankOptions'
 import { parseVnNumber, vnNumberInput } from '@/utils/vnNumber'
 
 const apiMsg = (e: unknown) => (e as AxiosError<{ error?: { message?: string } }>)?.response?.data?.error?.message ?? 'Lỗi không xác định'
@@ -103,7 +104,7 @@ export function BatchFormSheet({ open, onClose, batch, template, onSaved }: {
   const selRecipe = recipes.find(r => r.id === recipeId)
   const noNorm = editing ? !!batch?.no_norm : !!allKitchens.find(k => k.id === wh)?.mes_no_norm
   // kho CÓ định mức + công thức chỉ danh sách mã ⇒ không lập được (user chốt 27/11: chặn — điền số lượng ở Định mức trước)
-  const recipeNoQty = !editing && !noNorm && !!selRecipe && selRecipe.base_qty == null
+  const recipeNoQty = !editing && !noNorm && !!selRecipe && recipeListOnly(selRecipe)
   // kho không định mức: chép danh sách mã của công thức đang chọn vào ô đối chiếu (đổi công thức ⇒ chép lại)
   const rd = useRecipe(open && !editing && noNorm && recipeId ? recipeId : undefined)
   useEffect(() => {
@@ -127,15 +128,15 @@ export function BatchFormSheet({ open, onClose, batch, template, onSaved }: {
   const toggleExtra = (code: string) => { setExtrasTouched(true); setExtras(x => x.includes(code) ? x.filter(c => c !== code) : [...x, code]) }
   const { data: machines = [] } = useMachines(wh || undefined)
   const activeMachines = machines.filter(m => m.is_active !== false)
-  // BỒN của kho chế biến: chỉ bồn cùng đơn vị với mã BTP; chỗ trống = sức chứa − đang chứa − phần mẻ KHÁC đã đặt
+  // BỒN của kho chế biến; chỗ trống = sức chứa − đang chứa − phần mẻ KHÁC đã đặt.
+  // 27/11 (user: "lúc ẩn lúc hiện thông tin bồn khi tạo mẻ" · "tạo bồn mới có vẻ chưa realtime"): trước đây bồn KHÁC đơn vị với mã BTP bị
+  // LỌC BỎ âm thầm, và đơn vị của mã đọc từ kết quả ô tìm (đang tải lại ⇒ trống ⇒ hiện mọi bồn) ⇒ bồn lít BD63 lúc hiện lúc mất, bồn mới
+  // tạo sai đơn vị thì "không thấy". Nay: đơn vị của mã NHỚ theo mã đã chọn; bồn khác đơn vị vẫn hiện nhưng KHOÁ kèm lý do.
   const { data: tanks = [] } = useProductionTanks(wh || undefined, false, open && !!wh)
-  const matUnit = unitCode(selMat?.base_unit)
-  const tankOpts = useMemo(() => tanks.filter(t => t.warehouse_id === wh && (!matUnit || t.unit === matUnit)).map(t => {
-    const otherRes = t.incoming.filter(x => x.batch_id !== batch?.id).reduce((a, x) => a + x.qty, 0)
-    const free = Math.max(t.capacity - t.content - otherRes, 0)
-    const holds = t.lots[0]?.batch?.material?.material_code ?? t.incoming.find(x => x.batch_id !== batch?.id)?.material_code
-    return { value: t.id, label: t.code, free, sub: `còn chỗ ${free.toLocaleString('vi-VN', { maximumFractionDigits: 3 })} ${t.unit}${holds ? ` · ${t.content > 0 ? 'đang chứa' : 'đã đặt cho'} ${holds}` : ' · trống'}` }
-  }), [tanks, wh, matUnit, batch?.id])
+  const [matUnitOf, setMatUnitOf] = useState<{ id: string; unit: string } | null>(null)
+  useEffect(() => { if (selMat && selMat.id === mat && selMat.base_unit) setMatUnitOf({ id: mat, unit: unitCode(selMat.base_unit) }) }, [selMat?.id, selMat?.base_unit, mat]) // eslint-disable-line react-hooks/exhaustive-deps
+  const matUnit = matUnitOf?.id === mat ? matUnitOf.unit : (batch && batch.material_id === mat ? unitCode(batch.material?.base_unit) : '')
+  const tankOpts = useMemo(() => tankOptions(tanks, wh, matUnit, batch?.id, tank), [tanks, wh, matUnit, batch?.id, tank])
   const selTank = tankOpts.find(t => t.value === tank)
   const cycleNorm = cycle.toUpperCase().replace(/[^A-Z0-9]/g, '')
   const noNum = /^\d{1,4}$/.test(batchNo.trim()) ? Number(batchNo) : null
@@ -152,9 +153,10 @@ export function BatchFormSheet({ open, onClose, batch, template, onSaved }: {
   const saving = create.isPending || update.isPending
   const plannedNum = planned.trim() ? parseVnNumber(planned) : null
   const plannedBad = !planned.trim() || plannedNum == null || plannedNum <= 0
-  const overRoom = !!selTank && plannedNum != null && plannedNum > selTank.free + 0.0005 && !filled
+  const overRoom = !!selTank && plannedNum != null && plannedNum > selTank.free + 0.0005 && !filled && !selTank.wrongUnit
+  const tankUnitBad = !!selTank?.wrongUnit && !filled
   const codesOk = editing || !noNorm || codes.length > 0
-  const canSave = !!wh && !!mat && !!date && !!shift && !plannedBad && !!cycleNorm && cycleNorm.length <= 6 && !!noNum && noNum >= 1 && !!tank && !saving && codesOk && !recipeNoQty
+  const canSave = !!wh && !!mat && !!date && !!shift && !plannedBad && !!cycleNorm && cycleNorm.length <= 6 && !!noNum && noNum >= 1 && !!tank && !saving && codesOk && !recipeNoQty && !tankUnitBad
 
   async function save() {
     setErr('')
@@ -206,7 +208,7 @@ export function BatchFormSheet({ open, onClose, batch, template, onSaved }: {
             <Label className="text-xs">Công thức</Label>
             {recipes.length ? (
               <SingleSelect value={recipeId} onChange={setRecipeId} searchable={recipes.length > 6} triggerClassName="h-8 text-xs mt-0.5"
-                options={recipes.map(r => ({ value: r.id, label: r.name, sub: `${r.base_qty == null ? 'chỉ danh sách mã' : `cỡ chuẩn ${Number(r.base_qty).toLocaleString('vi-VN', { maximumFractionDigits: 3 })} ${unitCode(r.material?.base_unit)}`}${r.is_default ? ' · mặc định' : ''}` }))} />
+                options={recipes.map(r => ({ value: r.id, label: r.name, sub: [recipeListOnly(r) ? 'chỉ danh sách mã' : r.base_qty == null ? '' : `cỡ chuẩn ${Number(r.base_qty).toLocaleString('vi-VN', { maximumFractionDigits: 3 })} ${unitCode(r.material?.base_unit)}`, r.is_default ? 'mặc định' : ''].filter(Boolean).join(' · ') }))} />
             ) : (
               <p className="text-[11px] text-amber-700 mt-0.5">{recipesLoading ? 'Đang tải công thức…' : noNorm ? 'Mã này chưa có công thức đang dùng — thêm các mã của phiếu chế biến vào danh sách bên dưới.' : 'Mã này chưa có công thức đang dùng — phiếu của mẻ sẽ trống (khai ở Sản xuất (MES) → Định mức, hoặc thêm tay trên mẻ).'}</p>
             )}
@@ -239,6 +241,8 @@ export function BatchFormSheet({ open, onClose, batch, template, onSaved }: {
           </div>
         </div>
         {filled && <p className="text-[11px] text-slate-500 -mt-1.5">Mẻ đã nạp bồn — chu kỳ, số mẻ, bồn không đổi được nữa. Đưa sang bồn khác: trang Bồn → Chuyển.</p>}
+        {tankUnitBad && <p className="text-[11px] text-red-600 -mt-1.5" data-testid="tank-unit-bad">Bồn {selTank?.label} tính {tanks.find(t => t.id === tank)?.unit} — mã bán thành phẩm tính {matUnit}: chọn bồn cùng đơn vị (hoặc sửa đơn vị của bồn ở trang Bồn khi bồn trống).</p>}
+        {!!matUnit && !!wh && tankOpts.length > 0 && tankOpts.every(t => t.wrongUnit) && <p className="text-[11px] text-amber-700 -mt-1.5">Kho này chưa có bồn tính {matUnit} — khai bồn ở trang Bồn.</p>}
         <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 flex items-center justify-between gap-2">
           <span className="text-[11px] text-slate-500">Mã lô</span>
           <span className={`font-mono text-sm font-semibold tracking-wide ${codePreview ? 'text-slate-900' : 'text-slate-300'}`} data-testid="batch-code-preview">{codePreview ?? '—'}</span>

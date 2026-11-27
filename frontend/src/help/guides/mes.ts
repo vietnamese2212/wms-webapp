@@ -85,7 +85,8 @@ export const MES_GUIDE: Guide = {
           title: 'A3. Khai bồn',
           who: ['Quản lý xưởng'],
           text: [
-            'Vào **Bồn** → **Khai bồn**: chọn kho chế biến, nhập **Mã bồn** (vd BD70), tên, **Sức chứa**, **Đơn vị** (Lít hoặc Kg — phải trùng đơn vị gốc của mã BTP sẽ nạp vào) → **Lưu**.',
+            'Vào **Bồn** → **Khai bồn**: chọn kho chế biến, nhập **Mã bồn** (vd BD70), tên, **Sức chứa**, **Đơn vị** (Lít hoặc Kg — phải trùng đơn vị gốc của mã BTP sẽ nạp vào; app chọn sẵn đơn vị của các bồn đang có) → **Lưu**.',
+            'Bồn khác đơn vị với mã BTP vẫn hiện ở ô **Bồn** khi mở mẻ nhưng bị khoá, ghi rõ "bồn tính L — mã BTP tính KG". Khai nhầm đơn vị thì sửa bồn (khi bồn trống).',
             'Trang Bồn hiện **sơ đồ 2D**: lăn chuột / chụm hai ngón để phóng to thu nhỏ, kéo để di chuyển, nút ⤢ để xem vừa màn. Nút ✥ (Sắp xếp) cho kéo thả bồn đúng vị trí thực tế trong xưởng.',
             'Màu thân bồn: xanh dương = chờ QA bồn · xanh lá = QA đạt · đỏ = QA loại / quá hạn lưu · gạch chéo = mẻ đã đặt bồn mà chưa nạp.',
           ],
@@ -95,6 +96,7 @@ export const MES_GUIDE: Guide = {
           title: 'A4. Định mức (công thức) của mã BTP',
           who: ['QA', 'Quản lý xưởng'],
           text: [
+            'Chỉ người có quyền **Xem công thức** (QA, người khai định mức) thấy trang Định mức và số lượng trong công thức; người khác khi mở mẻ chỉ thấy tên công thức và danh sách mã.',
             'Vào **Định mức** → **Thêm công thức**. Một mã BTP có thể có nhiều công thức (vd "Chuẩn", "Mùa hè"), đúng một công thức **Mặc định** — form Mở mẻ chọn sẵn công thức này.',
             '- **Cỡ mẻ chuẩn**: số lượng BTP của một mẻ chuẩn (vd 6.000 KG). Mẻ có kế hoạch khác thì app tự nhân theo tỷ lệ.',
             '- Bảng nguyên liệu: mã, **Số lượng** cho một mẻ cỡ chuẩn (theo đơn vị gốc của mã), cột **± %** = mức lệch cho phép (cấp ngoài mức này dòng tô đỏ, vẫn cho cấp; để trống = không kiểm).',

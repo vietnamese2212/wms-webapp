@@ -27,7 +27,7 @@ import { MatLinesEditor, toMatLine, matLineError, recipeLinesPayload, codeLinesP
 import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { useMaterialsByIds } from '@/api/hooks'
-import { useRecipes, useRecipe, useSaveRecipe, useImportRecipes, fetchRecipeImportCatalog, useSemiFinishedSearch, useProductionWarehouses, SEMI_FINISHED_PLACEHOLDER, type RecipeRow } from '@/api/productionHooks'
+import { useRecipes, useRecipe, useSaveRecipe, useImportRecipes, fetchRecipeImportCatalog, useSemiFinishedSearch, useProductionWarehouses, recipeListOnly, SEMI_FINISHED_PLACEHOLDER, type RecipeRow } from '@/api/productionHooks'
 import { buildRecipeTemplate } from '@/components/wms/production/recipeTemplate'
 import { NoSemiFinishedHint } from '@/components/wms/production/NoSemiFinishedHint'
 import { unitCode } from '@/utils/unitCode'
@@ -85,7 +85,7 @@ export default function ProductionRecipes() {
           { label: 'Mã bán thành phẩm', value: new Set(all.map(r => r.material_id)).size.toLocaleString('vi-VN'), tip: 'Số mã bán thành phẩm đã có ít nhất một công thức' },
           { label: 'Công thức đang dùng', value: all.filter(r => r.is_active).length.toLocaleString('vi-VN') },
           { label: 'Ngừng dùng', value: all.filter(r => !r.is_active).length.toLocaleString('vi-VN') },
-          ...(all.some(r => r.base_qty == null) ? [{ label: 'Chỉ danh sách mã', value: all.filter(r => r.is_active && r.base_qty == null).length.toLocaleString('vi-VN'),
+          ...(all.some(recipeListOnly) ? [{ label: 'Chỉ danh sách mã', value: all.filter(r => r.is_active && recipeListOnly(r)).length.toLocaleString('vi-VN'),
             tip: 'Công thức đang dùng không có số lượng (kho chạy không định mức). Kho có định mức không lập mẻ được bằng các công thức này' }] : []),
         ]} />
         <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
@@ -99,9 +99,9 @@ export default function ProductionRecipes() {
                   <TableCell className={`${TD} sticky left-0 z-10 bg-white font-mono font-semibold`}>{r.material?.material_code ?? '—'}</TableCell>
                   <TableCell className={`${TD} truncate`} title={r.material?.short_name ?? ''}>{r.material?.short_name ?? ''}</TableCell>
                   <TableCell className={`${TD} truncate font-semibold`} title={r.name}>{r.name}</TableCell>
-                  <TableCell className={`${TD} text-right font-semibold tabular-nums`}>{r.base_qty == null
+                  <TableCell className={`${TD} text-right font-semibold tabular-nums`}>{recipeListOnly(r)
                     ? <StatusBadge tone="slate" title="Công thức chỉ danh sách mã — không có số lượng (kho chạy không định mức)">Chỉ mã</StatusBadge>
-                    : <>{nf(r.base_qty)} <span className="text-slate-400 font-normal">{unitCode(r.material?.base_unit)}</span></>}</TableCell>
+                    : r.base_qty == null ? <span className="text-slate-300 font-normal">—</span> : <>{nf(r.base_qty)} <span className="text-slate-400 font-normal">{unitCode(r.material?.base_unit)}</span></>}</TableCell>
                   <TableCell className={`${TD} text-right tabular-nums`}>{r.line_count ?? '—'}</TableCell>
                   <TableCell className={TD}>{!r.is_active ? <StatusBadge tone="slate">Ngừng</StatusBadge> : r.is_default ? <StatusBadge tone="sky">Mặc định</StatusBadge> : <StatusBadge tone="green">Đang dùng</StatusBadge>}</TableCell>
                   <TableCell className={`${TD} truncate`} title={r.note ?? ''}>{r.note ?? <span className="text-slate-300">—</span>}</TableCell>
@@ -153,7 +153,7 @@ function RecipeSheet({ open, onClose, recipeId, canManage, all }: { open: boolea
     if (!open || !loaded || loadedFor === `${loaded.id}:${loaded.updated_at}`) return
     setMat(loaded.material_id); setName(loaded.name); setBase(vnNumberInput(loaded.base_qty)); setNote(loaded.note ?? '')
     setActive(loaded.is_active); setIsDefault(loaded.is_default); setLoadedFor(`${loaded.id}:${loaded.updated_at}`)
-    setWithQty(loaded.base_qty != null)
+    setWithQty(!recipeListOnly(loaded))
     setLines(loaded.lines.map(l => toMatLine({ material_id: l.material_id, material_code: l.material?.material_code ?? '', material_name: l.material?.short_name ?? null, base_unit: l.material?.base_unit ?? null },
       l.qty, { tol: l.tol_pct != null ? vnNumberInput(l.tol_pct) : '' })))
   }, [open, loaded?.id, loaded?.updated_at]) // eslint-disable-line react-hooks/exhaustive-deps

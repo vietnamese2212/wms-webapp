@@ -440,8 +440,13 @@ type RecipeMat = ({ id: string; material_code: string; short_name: string | null
 export interface RecipeRow {
   /** base_qty null = công thức CHỈ DANH SÁCH MÃ (27/11 — kho không định mức) */
   id: string; material_id: string; name: string; base_qty: number | null; note: string | null; is_active: boolean; is_default: boolean
+  /** 27/11: list_only = công thức chỉ danh sách mã (đúng theo dữ liệu, kể cả khi số bị ẩn) · qty_hidden = người xem không có quyền
+   *  "Xem công thức" ⇒ server bỏ cỡ mẻ + số (base_qty null KHÔNG có nghĩa là chỉ mã — đọc list_only) */
+  list_only?: boolean; qty_hidden?: boolean
   updated_at: string; updated_by: string | null; material: RecipeMat; line_count?: number
 }
+/** công thức CHỈ DANH SÁCH MÃ (27/11) — đọc cờ của server; API cũ chưa có cờ thì suy từ cỡ mẻ trống */
+export const recipeListOnly = (r: { base_qty: number | null; list_only?: boolean }) => r.list_only ?? r.base_qty == null
 export interface RecipeLine { id: string; material_id: string; qty: number | null; tol_pct: number | null; sort_order: number; note: string | null; material: RecipeMat }
 export interface RecipeDetail extends RecipeRow { lines: RecipeLine[] }
 /** materialId = chỉ công thức của mã đó (form Mở mẻ, Đổi công thức) · activeOnly = bỏ công thức đã ngừng */

@@ -18,7 +18,7 @@ import { useAuthStore } from '@/stores/authStore'
 import { useGlobalScopeStore } from '@/stores/globalScopeStore'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { can, type ModulePermissions } from '@/config/permissions'
-import { useProductionWarehouses, useProductionSettings, useSaveProductionSettings, defaultKitchen, useSemiFinishedSearch, useRecipes, SEMI_FINISHED_PLACEHOLDER, type ProductionSettings as Settings } from '@/api/productionHooks'
+import { useProductionWarehouses, useProductionSettings, useSaveProductionSettings, defaultKitchen, useSemiFinishedSearch, useRecipes, recipeListOnly, SEMI_FINISHED_PLACEHOLDER, type ProductionSettings as Settings } from '@/api/productionHooks'
 import { NoSemiFinishedHint } from '@/components/wms/production/NoSemiFinishedHint'
 import { useMobileTabs } from '@/hooks/useMobileSurface'
 import { ProcessFormSettings } from '@/components/wms/production/ProcessFormSettings'
@@ -117,7 +117,7 @@ export default function ProductionSettings() {
 
   // chuyển sang CÓ định mức: báo trước số công thức đang dùng chưa có số lượng (lập mẻ bằng công thức đó sẽ bị chặn — user chốt 27/11)
   const { data: recipes = [] } = useRecipes(undefined, true, !!server)
-  const listOnly = recipes.filter(r => r.base_qty == null)
+  const listOnly = recipes.filter(recipeListOnly)
 
   // thêm mã bán thành phẩm vào bảng hạn lưu — tìm trên server
   const [matTerm, setMatTerm] = useState('')

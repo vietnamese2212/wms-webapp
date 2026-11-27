@@ -68,7 +68,8 @@ export const NAV_GROUPS: NavGroup[] = [
       { to: '/wms/production',       icon: Factory,   label: 'Mẻ chế biến', module: 'production' },
       { to: '/wms/production/tanks', icon: Container, label: 'Bồn',         module: 'production' },
       { to: '/wms/production/usage-report', icon: ClipboardList, label: 'Báo cáo NVL', module: 'production' },
-      { to: '/wms/production/recipes', icon: ListChecks, label: 'Định mức',    module: 'production' },
+      // 27/11 bảo mật công thức: chỉ người có quyền Xem công thức / Khai định mức (server cũng bỏ số lượng với người khác)
+      { to: '/wms/production/recipes', icon: ListChecks, label: 'Định mức',    anyActions: [['production', 'view_recipe'], ['production', 'manage_recipe']] },
       { to: '/wms/production/settings', icon: Settings2, label: 'Cài đặt MES', module: 'production' },
     ],
   },

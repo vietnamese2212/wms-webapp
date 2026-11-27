@@ -32,6 +32,7 @@ import { vnDayOf, utcMs } from '../../utils/dates'
 import { parseSheetByHeader, expandMergedCells, readWorkbookSafe, BAD_EXCEL_MSG } from '../../utils/excelHeader'
 import { isPreflight, buildPreflight } from '../../utils/uploadPreflight'
 import { MES_BATCH_STAGES } from '../../utils/mesStage'
+import { recipeView, recipeLinesView } from '../../utils/recipeView'
 import {
   RECIPE_IMPORT_FIELDS, RECIPE_IMPORT_MAX_ROWS, RECIPE_IMPORT_MAX_RECIPES, codeKey, planRecipeImport, btpImportError, type ImpMaterial, type ImpExisting,
 } from '../../utils/recipeImport'
@@ -62,6 +63,8 @@ async function scopeWithChildren(req: Request): Promise<string[] | null> {
   return [...new Set([...s, ...(data ?? []).map(k => k.id)])]
 }
 const SCOPE_MSG = 'Ngoài phạm vi kho được giao'
+/** 27/11 bảo mật công thức: SỐ LƯỢNG trong công thức chỉ cho "Xem công thức" (view_recipe) hoặc "Khai định mức" (manage_recipe) — utils/recipeView */
+const canSeeRecipeQty = (req: Request) => hasPerm(req, 'production', 'view_recipe') || hasPerm(req, 'production', 'manage_recipe')
 const jitter = (n: number) => new Promise(r => setTimeout(r, 20 + Math.floor(Math.random() * (60 + n * 40))))
 /** Lượng trong bồn giữ tối đa 3 số lẻ (hàm chia theo tỷ lệ làm tròn 3 số lẻ — số lẻ hơn sẽ không chia khớp). */
 export const round3 = (n: number) => Math.round(n * 1000) / 1000
@@ -264,7 +267,8 @@ export async function getBatch(req: Request, res: Response) {
         entry: entry ? { cartons_remaining: entry.cartons_remaining, expiry_date: entry.expiry_date, location: entry.location } : null,
         pct_date: pct, expiry_date: dayOf(entry?.expiry_calc), block: blockOf.get(c.id) ?? null }
     })
-    return ok(res, { ...b, consumption, movements: moves ?? [], lots: lots ?? [], board: board ?? [], process_logs: plogs ?? [],
+    const recipe = b.recipe ? recipeView(b.recipe as unknown as { id: string; name: string; base_qty: number | null; is_active: boolean }, canSeeRecipeQty(req)) : null
+    return ok(res, { ...b, recipe, consumption, movements: moves ?? [], lots: lots ?? [], board: board ?? [], process_logs: plogs ?? [],
       gate: gate ?? null, pour_scans: scans ?? [], labels, expiry_approvals: expiry ?? [] })
   } catch (e) { return failAny(res, e) }
 }
@@ -665,9 +669,10 @@ export async function listRecipes(req: Request, res: Response) {
     if (q.active === '1') query = query.eq('is_active', true)
     const { data, error } = await query.order('updated_at', { ascending: false }).limit(1000)
     if (error) return fail(res, error)
+    const see = canSeeRecipeQty(req)
     const rows = (data ?? [])
       .filter(r => categoryAllowed(req, (r.material as unknown as { category: string | null } | null)?.category))
-      .map(({ lines, ...r }) => ({ ...r, line_count: (lines as unknown as { count: number }[] | null)?.[0]?.count ?? 0 }))
+      .map(({ lines, ...r }) => ({ ...recipeView(r, see), line_count: (lines as unknown as { count: number }[] | null)?.[0]?.count ?? 0 }))
     return ok(res, rows)
   } catch (e) { return failAny(res, e) }
 }
@@ -682,7 +687,8 @@ export async function getRecipe(req: Request, res: Response) {
       .select(`id, material_id, qty, tol_pct, sort_order, note, material:Material!production_recipe_line_material_id_fkey(${MAT_COLS})`)
       .eq('recipe_id', r.id).order('sort_order').limit(500)
     if (lErr) return fail(res, lErr)
-    return ok(res, { ...r, lines: lines ?? [] })
+    const see = canSeeRecipeQty(req)
+    return ok(res, { ...recipeView(r, see), lines: recipeLinesView(lines ?? [], see) })
   } catch (e) { return failAny(res, e) }
 }
 const zRecipeLines = z.array(z.object({

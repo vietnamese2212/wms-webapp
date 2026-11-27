@@ -1834,7 +1834,7 @@ try {
     if (bcrypt) {
       const pw = 'Qa' + randomUUID().slice(0, 10) + '!'   // dùng một lần, không in
       await restWrite('JobTitle', 'POST', '', [
-        { id: JT_QA3, name: 'QA63 QA chế biến (không định mức)', updated_at: ts(), module_permissions: { production: ['view', 'approve_qa', 'consume'] } },
+        { id: JT_QA3, name: 'QA63 QA chế biến (không định mức)', updated_at: ts(), module_permissions: { production: ['view', 'approve_qa', 'consume', 'view_recipe'] } },
         { id: JT_TC3, name: 'QA63 trưởng ca (không định mức)', updated_at: ts(), module_permissions: { production: ['view', 'open_batch', 'edit_requirement'] } },
       ])
       const mk3 = async (jid, n) => {
@@ -1856,6 +1856,22 @@ try {
       const qaFind = tkQA ? (await fetch(`${BASE}/api/masterdata/materials?search=QA63BTP&limit=5&view=lite&semi_finished=1`, { headers: { Authorization: `Bearer ${tkQA}` } })).status : 0
       roleOk = !!tkQA && !!tkTC && qaNorm.s === 403 && tcNN.s === 403 && qaNN.s === 201 && qaFind === 200
       roleNote = `QA ở kho có định mức=${qaNorm.s} · trưởng ca ở kho không định mức=${tcNN.s} · QA ở kho không định mức=${qaNN.s} ${qaNN.j?.error?.message ?? ''} · QA tìm mã BTP=${qaFind}`
+      // ── [16x] QUYỀN "XEM CÔNG THỨC" (27/11 — bảo mật công thức): không có quyền ⇒ API công thức bỏ cỡ mẻ + số + mức lệch, vẫn có tên + mã;
+      //    list_only đúng theo dữ liệu (công thức CÓ số ⇒ false, dù số bị ẩn); có quyền ⇒ đủ số
+      const getAs = async (tk, p) => { const r = await fetch(`${BASE}/api${p}`, { headers: { Authorization: `Bearer ${tk}` } }); return { s: r.status, j: await r.json().catch(() => null) } }
+      const allR = [...((await api(`/wms/production/recipes?material_id=${M_BTP}`)).j?.data ?? []), ...((await api(`/wms/production/recipes?material_id=${M_BTP2}`)).j?.data ?? [])]
+      const withQ = allR.find(r => r.base_qty != null)
+      const tcList = tkTC && withQ ? await getAs(tkTC, `/wms/production/recipes?material_id=${withQ.material_id}`) : { s: 0 }
+      const tcRow = (tcList.j?.data ?? []).find(r => r.id === withQ?.id)
+      const tcOne = tkTC && withQ ? await getAs(tkTC, `/wms/production/recipes/${withQ.id}`) : { s: 0 }
+      const qaOne = tkQA && withQ ? await getAs(tkQA, `/wms/production/recipes/${withQ.id}`) : { s: 0 }
+      const tcB = tkTC ? await getAs(tkTC, `/wms/production/batches/${NB?.id}`) : { s: 0 }
+      check('16x. Quyền "Xem công thức": trưởng ca (không có) ⇒ danh sách + một công thức + công thức gắn trên mẻ KHÔNG có cỡ mẻ / số / mức lệch, vẫn có tên + mã, qty_hidden, list_only đúng (false); QA (có quyền) ⇒ đủ số',
+        !!withQ && tcList.s === 200 && tcRow?.base_qty == null && tcRow?.qty_hidden === true && tcRow?.list_only === false && !!tcRow?.name
+          && tcOne.s === 200 && (tcOne.j?.data?.lines ?? []).length > 0 && (tcOne.j?.data?.lines ?? []).every(l => l.qty == null && l.tol_pct == null && !!l.material_id)
+          && qaOne.s === 200 && num(qaOne.j?.data?.base_qty) === num(withQ.base_qty) && (qaOne.j?.data?.lines ?? []).some(l => l.qty != null) && qaOne.j?.data?.qty_hidden === false
+          && tcB.s === 200 && (tcB.j?.data?.recipe == null || tcB.j?.data?.recipe?.base_qty == null),
+        `công thức=${withQ?.name ?? 'không có'} tc=${tcList.s}/${tcRow?.base_qty}/${tcRow?.qty_hidden}/${tcRow?.list_only} một=${tcOne.s}/${JSON.stringify((tcOne.j?.data?.lines ?? []).map(l => l.qty))} qa=${qaOne.s}/${qaOne.j?.data?.base_qty} mẻ=${tcB.s}/${tcB.j?.data?.recipe?.base_qty}`)
     }
     check('16w. Đổi về có định mức: mẻ đã lập giữ no_norm; lập mẻ bằng công thức chỉ mã ⇒ 409 MES_RECIPE_NO_QTY. Vai thật: QA (approve_qa) không mở mẻ ở kho có định mức 403 · trưởng ca (open_batch) không lập ở kho không định mức 403 · QA lập được 201 · QA tìm được mã BTP (C115) 200',
       s2.s === 200 && nbAfter?.no_norm === true && nbAfter?.gate?.no_norm === true && q3.s === 409 && q3.j?.error?.code === 'MES_RECIPE_NO_QTY' && roleOk,

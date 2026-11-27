@@ -369,6 +369,7 @@ export const MODULES = {
       export:      'Xuất Excel danh sách mẻ',
       configure:   'Cài đặt MES (rút bồn còn lô chờ QA · hạn lưu bồn theo mã · mẫu phiếu theo dõi)',
       manage_recipe: 'Khai ĐỊNH MỨC nguyên liệu của mã bán thành phẩm (trang Định mức)',
+      view_recipe:   'Xem CÔNG THỨC (số lượng trong định mức — trang Định mức). Không có: chỉ thấy tên công thức + danh sách mã khi mở / lập mẻ',
       shift_report: 'Mở / chốt BÁO CÁO SỬ DỤNG NVL theo ca (nhập tồn cuối thực tế)',
       edit_requirement: 'Sửa ĐỊNH MỨC trên phiếu của mẻ (thêm / bỏ / sửa / đổi nguyên liệu, đổi công thức — bắt buộc lý do; giữ định mức gốc) — vd trưởng ca',
       approve_lead: 'TRƯỞNG CA duyệt / bỏ duyệt phiếu của mẻ (bước 1)',

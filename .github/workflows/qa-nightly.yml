@@ -18,7 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 150
     env:
-      PREVIEW_URL: https://wms-webapp-git-dev-vietnamese2212s-projects.vercel.app
+      PREVIEW_URL: https://wms-webapp-git-dev-mal-0a42.vercel.app
     steps:
       - uses: actions/checkout@v5
         with: { ref: dev }

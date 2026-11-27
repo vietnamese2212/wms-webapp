@@ -68,7 +68,7 @@ jobs:
     # trong vài phút thì còn một lượt "cancelled". Gom commit trước khi push vẫn là cách rẻ nhất.
     concurrency: { group: qa-smoke-dev, cancel-in-progress: false }
     env:
-      PREVIEW_URL: https://wms-webapp-git-dev-vietnamese2212s-projects.vercel.app
+      PREVIEW_URL: https://wms-webapp-git-dev-mal-0a42.vercel.app
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5

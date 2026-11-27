@@ -10,7 +10,7 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 // `||` chứ không `??`: trong CI, secret chưa khai đi vào env là CHUỖI RỖNG (không phải undefined)
 // — `??` sẽ giữ chuỗi rỗng và login bằng tài khoản rỗng.
 export const BASE = process.env.QA_BASE_URL
-  || 'https://wms-webapp-git-dev-vietnamese2212s-projects.vercel.app'
+  || 'https://wms-webapp-git-dev-mal-0a42.vercel.app'
 const ADMIN_EMAIL = process.env.QA_ADMIN_EMAIL || 'admin'
 // 25/11: KHÔNG ghi mật khẩu dự phòng (repo public) — chạy qua scripts/qa/ci-account.mjs (run-all / CI tự cấp) hoặc đặt QA_ADMIN_PASSWORD
 const ADMIN_PASSWORD = process.env.QA_ADMIN_PASSWORD || ''

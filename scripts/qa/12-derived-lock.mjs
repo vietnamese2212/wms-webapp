@@ -271,7 +271,7 @@ check('thêm dòng KH với DO chưa có raw → NHẬN (chuyến sẽ chờ d�
   })
   await restWrite('UserWarehouseAccess', 'POST', null, { id: randomUUID(), employee_id: empId, warehouse_id: whOther })
   // login vai giới hạn (scope = QADRV2, KHÔNG có QADRV1)
-  const BASE2 = process.env.QA_BASE_URL || 'https://wms-webapp-git-dev-vietnamese2212s-projects.vercel.app'
+  const BASE2 = process.env.QA_BASE_URL || 'https://wms-webapp-git-dev-mal-0a42.vercel.app'
   const lr = await fetch(`${BASE2}/api/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'qadrvu1@qa.local', password: PWD }) })
   const tok = (await lr.json().catch(() => null))?.data?.token
   const rOut = await fetch(`${BASE2}/api/external/khvc`, {

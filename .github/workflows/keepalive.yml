@@ -72,5 +72,5 @@ jobs:
           code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 \
             -X POST -H 'Content-Type: application/json' \
             -d '{"email":"keepalive-ping@wms.local","password":"ping"}' \
-            'https://wms-webapp-git-dev-vietnamese2212s-projects.vercel.app/api/auth/login')
+            'https://wms-webapp-git-dev-mal-0a42.vercel.app/api/auth/login')
           echo "login staging (Preview): $code"

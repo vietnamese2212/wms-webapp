@@ -20,7 +20,7 @@ import { join } from 'path'
 import { createRequire } from 'module'
 
 const ROOT = new URL('../../', import.meta.url)
-const BASE = process.env.QA_BASE_URL || 'https://wms-webapp-git-dev-vietnamese2212s-projects.vercel.app'
+const BASE = process.env.QA_BASE_URL || 'https://wms-webapp-git-dev-mal-0a42.vercel.app'
 const OUT = join(tmpdir(), 'wms-ui-layout-sync'); mkdirSync(OUT, { recursive: true })
 const req = createRequire(process.env.PLAYWRIGHT_DIR ? join(process.env.PLAYWRIGHT_DIR, 'x.js') : import.meta.url)
 let chromium

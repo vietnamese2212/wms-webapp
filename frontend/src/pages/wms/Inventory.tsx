@@ -44,7 +44,7 @@ import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 import { resolveShelfLife, computePctDate } from '@/utils/shelfLife'
 import { pctDateCls } from '@/utils/pctDateBands'
-import { qtyLabel, qtySplit, qtyUnitLabel, qtyBaseLabel, hasEntry, unitLabel, QTY_CONVERTED_LABEL, QTY_CONVERTED_TIP } from '@/utils/qtyUnits'
+import { qtyLabel, qtySplit, qtyUnitLabel, qtyBaseLabel, hasEntry, baseAllowsDecimal, qtyIntegerError, unitLabel, QTY_CONVERTED_LABEL, QTY_CONVERTED_TIP } from '@/utils/qtyUnits'
 import { saveWorkbook } from '@/utils/saveExcel'
 import { downloadTemplate } from '@/utils/excelTemplate'
 import type { InventoryEntry, SupplierShelfLifeOverride } from '@/types'
@@ -1632,13 +1632,16 @@ function DetailPanel({ entry: e, onClose, warehouseMap, onQuickAction, onSplit }
   const pct       = computePctDate(e, e.material)
   const pctBands  = usePctBands()
 
-  // BASE UNIT: delta gửi đi = SỐ BASE (nhập theo thùng → × hệ_số); mã có entry bắt SỐ NGUYÊN
+  // BASE UNIT: delta gửi đi = SỐ BASE (nhập theo thùng → × hệ_số). Theo thùng / bao: số nguyên; theo đơn vị gốc:
+  // nguyên với hộp / chai, được lẻ với đơn vị đo (kg / lít — 27/11, đường 1 bao = 20 kg) — luật chung baseAllowsDecimal / qtyIntegerError
   const adjFactor = hasEntry(e.material) && adjUnit === 'entry' ? Number(e.material!.units_per_carton) : 1
-  const adjDeltaBase = (hasEntry(e.material) ? (parseInt(adjInput) || 0) : parseFloat(adjInput)) * adjFactor
+  const adjWhole = hasEntry(e.material) && (adjUnit === 'entry' || !baseAllowsDecimal(e.material))
+  const adjDeltaBase = (adjWhole ? (parseInt(adjInput) || 0) : parseFloat(adjInput)) * adjFactor
   function handleAdjust() {
     const val = adjDeltaBase
     if (isNaN(val) || val === 0) { setAdjError('Nhập số khác 0'); return }
-    if (hasEntry(e.material) && !Number.isInteger(val)) { setAdjError('Mã có Hộp/thùng — nhập số NGUYÊN'); return }
+    const intErr = qtyIntegerError(val, e.material)
+    if (intErr) { setAdjError(intErr); return }
     setAdjError('')
     adjust(
       { id: e.id, adjustment: val, employee_id: user?.id, note: adjNote.trim() || undefined, actor_name: user?.name ?? undefined },

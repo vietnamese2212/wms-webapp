@@ -77,7 +77,7 @@ Mỗi dòng là một luật đã từng gây lỗi thật. Chi tiết và số 
 **Số lượng — đơn vị gốc (base unit):**
 - Mọi lưu trữ, phép tính và trường số lượng qua API là số theo đơn vị gốc của mã hàng. Thùng chỉ là lớp hiển thị: "N thùng + M hộp".
 - Mọi quy đổi đi qua `utils/qtyUnits.ts` (hai bản BE và FE phải ra cùng kết quả). Không tự chia, nhân hệ số ở chỗ khác.
-- Mã có đơn vị thùng thì số gốc phải nguyên. Tổng nhiều mã phải quy đổi từng mã rồi mới cộng, và dùng nhãn `QTY_CONVERTED_LABEL`.
+- Mã có đơn vị thùng thì số gốc phải nguyên, trừ khi đơn vị gốc là đơn vị đo (kg, lít…): mã đó hiện kg là số chính, quy cách là gợi ý ("110 kg (5 bao + 10 kg)"). Luật này chỉ nằm ở `baseAllowsDecimal` / `qtyIntegerError` (code) và `qty_whole_required` (DB). Thêm hoặc bỏ đơn vị quy cách thì số / pallet đổi theo (`palletQtyOnUnitChange`). Tổng nhiều mã phải quy đổi từng mã rồi mới cộng, và dùng nhãn `QTY_CONVERTED_LABEL`.
 - Sau khi sửa, kiểm số hiển thị trên màn thật.
 
 **Helper tập trung** — sửa luật ở một chỗ, không viết lại rải rác:

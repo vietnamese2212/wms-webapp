@@ -11,6 +11,17 @@
 
 Đổi `base_unit` (form sửa mã hoặc nạp Excel) bị chặn 409 `BASE_UNIT_IN_USE` / lỗi dòng khi mã còn tồn > 0, có mẻ đang mở chưa nạp, nằm trong phiếu của mẻ đang mở, hoặc bồn còn hàng — MỘT hàm DB `material_base_unit_in_use`. Mã đã hết dùng vẫn đổi được.
 
+## Mã cân / đong có đơn vị quy cách — bao đường (27/11, user chốt)
+
+- Đơn vị `BAO` ("Bao", vai trò Entry) là đơn vị RIÊNG của app cho bao đường / bột; `BAG` là đơn vị SAP (túi nhỏ của bao bì), tên tiếng Việt "Túi". Hai mã khác nhau, không dùng chung.
+- Đường trắng 210000262: Base KG, Entry BAO, 1 bao = 20 kg. Mã có đơn vị gốc là ĐƠN VỊ ĐO (KG, G, L, ML, M, M2, M3…) mà có quy cách thì:
+  - số chính vẫn là kg, quy cách chỉ là GỢI Ý: `qtyLabel` ⇒ "110 kg (5 bao + 10 kg)", dưới 1 bao chỉ "12,345 kg";
+  - ô nhập (`QtyInput`) là MỘT ô kg thập phân + dòng "= 5 bao + 10 kg"; bảng 2 cột Thùng | Hộp: cột quy cách chỉ hiện gợi ý;
+  - số lẻ theo kg hợp lệ ở mọi cửa (`baseAllowsDecimal` / `qtyIntegerError`; DB `qty_whole_required` cho huỷ cấp NVL và xử lý hàng chặn). Hộp / chai / cái vẫn bắt số nguyên như cũ;
+  - các ô số hẹp và tổng "SL (quy đổi)" vẫn quy theo quy cách (bao) — cùng cách các hàm tổng trong DB chia theo `units_per_carton`.
+- Số / pallet (`cartons_per_pallet`, số miền Nam, số riêng của kho) tính theo đơn vị quy cách nếu có, không thì theo đơn vị gốc. THÊM / BỎ đơn vị quy cách (form sửa mã hoặc nạp Excel) mà không gõ số mới ⇒ app tự đổi (1.000 kg ⇒ 50 bao); không chia hết ⇒ lỗi, bắt khai lại. Một hàm `palletQtyOnUnitChange` (palletCalc, mirror) + `palletUnitFix` (materialController, dùng cho cả hai cửa). Form báo trước dòng "Khi lưu, app tự đổi …"; bước kiểm Excel báo ở mục cảnh báo.
+- Đổi hệ số (20 ⇒ 25 kg / bao) KHÔNG đổi số / pallet (đơn vị của ô không đổi) — người dùng tự sửa nếu số bao / pallet thật đổi.
+
 ## Giao thoa với
 <!-- giao-thoa:start -->
 - [`production`](production.md) — Sản xuất (tank_hold_hours hạn lưu bồn — từ 14/11 tối SỬA ở Cài đặt MES, form Mã hàng chỉ hiển thị; batch_prefix làm tiền tố mã lô — 14/11)

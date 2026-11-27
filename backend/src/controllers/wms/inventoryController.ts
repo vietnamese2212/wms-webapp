@@ -10,7 +10,7 @@ import { safeSearch, safeFilterValue, searchLooksLikeInjection, SEARCH_INVALID_M
 import { normalizeQR } from '../../utils/qrParser'
 import { getWhTypeMetaMap } from '../../utils/warehouseTypeMeta'
 import { wrongFormatHint } from './systemSettingController'
-import { hasEntry, qtyIntegerError, qtyLabel, qtyEntryDecimal, type MatUnits } from '../../utils/qtyUnits'
+import { hasEntry, baseAllowsDecimal, qtyIntegerError, qtyLabel, qtyEntryDecimal, type MatUnits } from '../../utils/qtyUnits'
 import { requireBaseQty } from '../../utils/qtySemantics'
 import { parseSheetByHeader, expandMergedCells, readWorkbookSafe, BAD_EXCEL_MSG, type FieldDef } from '../../utils/excelHeader'
 import { isPreflight, buildPreflight } from '../../utils/uploadPreflight'
@@ -1895,7 +1895,8 @@ export async function uploadExcel(req: Request, res: Response) {
       const palletLc = pallet!.toLowerCase()
       const matId = matMap.get(mcode!.toLowerCase())
       if (!matId) { errors.push(`${at} — mã hàng không khớp: ${mcode}`); continue }
-      // BASE UNIT: mã có entry → "Số thùng" NGUYÊN + cột Hộp NGUYÊN; lượng lưu = base
+      // BASE UNIT: mã có entry → "Số thùng" NGUYÊN + cột Hộp NGUYÊN (cột Hộp được lẻ khi đơn vị gốc là đơn vị đo — kg / lít,
+      // vd đường 1 bao = 20 kg, 27/11 — cùng luật baseAllowsDecimal với ô nhập và qtyIntegerError); lượng lưu = base
       const mu = matUnitsById.get(matId) ?? null
       const boxesBase = boxesCell ?? 0
       // Mã không có đơn vị thùng: lượng = ô Số thùng; trống thì lấy ô Hộp (cả hai cùng là đơn vị gốc)
@@ -1906,7 +1907,8 @@ export async function uploadExcel(req: Request, res: Response) {
           const goiY = Math.round((cartons! - Math.floor(cartons!)) * f)
           errors.push(`${at} — "Số thùng" phải là SỐ NGUYÊN (mã ${f}/thùng — ${cartons} thùng ≈ ${Math.floor(cartons!)} thùng + ${goiY}: ghi ${goiY} vào cột Hộp)`); continue
         }
-        if (!Number.isInteger(boxesBase) || boxesBase < 0) { errors.push(`${at} — cột "Hộp" phải là SỐ NGUYÊN ≥ 0`); continue }
+        if (boxesBase < 0) { errors.push(`${at} — cột "Hộp" phải ≥ 0`); continue }
+        if (!baseAllowsDecimal(mu) && !Number.isInteger(boxesBase)) { errors.push(`${at} — cột "Hộp" phải là SỐ NGUYÊN ≥ 0`); continue }
         qtyBase = cartons! * f + boxesBase
       }
       const wh = whByCode.get(whRaw!.toLowerCase()) || whByName.get(whRaw!.toLowerCase())

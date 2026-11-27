@@ -29,7 +29,7 @@ import { logOutboundEvents, actorOf, type OutboundEventInput } from '../../servi
 import { syncTmsPlanFromKhvc } from '../../services/tmsPlanSync'
 import { khvcSourceHint } from '../../services/khvcOwner'
 import { logPalletMoves } from '../../services/palletMoveLog'
-import { hasEntry, qtyIntegerError, qtyLabel, qtyEntryDecimal, qtySplit, unitLabel, type MatUnits as MatUnitsQ } from '../../utils/qtyUnits'
+import { hasEntry, baseAllowsDecimal, qtyIntegerError, qtyLabel, qtyEntryDecimal, qtySplit, unitLabel, type MatUnits as MatUnitsQ } from '../../utils/qtyUnits'
 import { mergeKeepIssues, type KeepIssue } from '../../services/outboundMergeKeep'
 import { requireBaseQty } from '../../utils/qtySemantics'
 import { parseListParam } from '../../utils/httpQuery'
@@ -1535,6 +1535,8 @@ function uploadRowQtyError(row: Record<string, any>, mu: MatUnitsQ | null | unde
     const goiY = Math.round((thung - Math.floor(thung)) * f)
     return `cột Thùng "${row['Thùng']}" phải là SỐ NGUYÊN (mã ${f} ${bl}/thùng — ${thung} thùng ≈ ${Math.floor(thung)} thùng + ${goiY} ${bl}: ghi ${goiY} vào cột Hộp)`
   }
+  // Hộp / Nhặt lẻ theo đơn vị gốc: được lẻ khi đơn vị gốc là đơn vị đo (kg / lít — 27/11), cùng luật baseAllowsDecimal
+  if (baseAllowsDecimal(mu)) return null
   if (!Number.isInteger(hop))   return `cột Hộp "${row['Hộp']}" phải là SỐ NGUYÊN (đơn vị ${bl})`
   if (!Number.isInteger(loose)) return `cột Nhặt lẻ "${row['Nhặt lẻ']}" phải là SỐ NGUYÊN (đơn vị ${bl})`
   return null

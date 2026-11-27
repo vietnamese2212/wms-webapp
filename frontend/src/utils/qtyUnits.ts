@@ -19,7 +19,8 @@ const UNIT_LABELS: Record<string, string> = {
   CAR: 'thùng',
   HOP: 'hộp',
   KG: 'kg',
-  BAG: 'bao',
+  BAG: 'túi',   // mã SAP — túi nhỏ (bao bì). Bao đường / bột là ĐVT riêng BAO (27/11)
+  BAO: 'bao',
   EA: 'cái',
   BT: 'chai',
   SET: 'bộ',
@@ -53,6 +54,44 @@ export function unitLabel(code?: string | null): string {
 /** Mã có Entry Unit + hệ số hợp lệ → hiển thị dạng "N thùng + M hộp". */
 export function hasEntry(m?: MatUnits | null): boolean {
   return !!(m?.entry_unit && Number(m?.units_per_carton) > 0)
+}
+
+/**
+ * ĐƠN VỊ ĐO (cân / đong / đo dài–diện tích–thể tích): số theo đơn vị này tự nhiên có phần lẻ.
+ * 27/11: mã kg có đơn vị quy cách (đường trắng: 1 bao = 20 kg) hiện "5 bao + 10,5 kg" — phần kg được lẻ,
+ * khác hộp / chai / cái (không có 0,5 hộp). Danh sách cố định ở đây (hai bản BE ⇄ FE phải khớp — mirror test).
+ */
+export const MEASURE_UNIT_CODES: readonly string[] = ['KG', 'G', 'MG', 'TON', 'L', 'ML', 'M', 'CM', 'MM', 'M2', 'M3']
+// DB có bản thứ ba của danh sách này trong hàm qty_whole_required (migration 20261127c) — test measureUnitsSql đối chiếu
+const MEASURE_UNITS = new Set<string>(MEASURE_UNIT_CODES)
+export function isMeasureUnit(code?: string | null): boolean {
+  return MEASURE_UNITS.has((code ?? '').trim().toUpperCase())
+}
+
+/**
+ * Phần theo ĐƠN VỊ GỐC được phép lẻ không — MỘT luật cho mọi cửa nhập số (ô "Thùng + Hộp", upload Excel, điều chỉnh).
+ * Mã không quy cách: luôn được (luật cũ). Mã có quy cách: chỉ khi đơn vị gốc là đơn vị đo (KG / L…).
+ * Phần quy cách (thùng / bao) luôn là số nguyên.
+ */
+export function baseAllowsDecimal(m?: MatUnits | null): boolean {
+  return !hasEntry(m) || isMeasureUnit(m?.base_unit)
+}
+
+/**
+ * Mã CÂN / ĐONG có đơn vị quy cách (đường trắng: KG + 1 bao = 20 kg — 27/11). User: "110 kg có GỢI Ý là 5 bao + 10 kg" ⇒
+ * số CHÍNH vẫn là kg, quy cách chỉ là GỢI Ý đi kèm (khác thùng + hộp, nơi "N thùng + M hộp" là số chính).
+ */
+export function isPackHintMaterial(m?: MatUnits | null): boolean {
+  return hasEntry(m) && isMeasureUnit(m?.base_unit)
+}
+
+/** Gợi ý quy cách cho mã cân / đong: 110 kg ⇒ "5 bao + 10 kg"; dưới 1 bao hoặc mã khác ⇒ null. */
+export function qtyPackHint(qty: number, m?: MatUnits | null): string | null {
+  const q = Math.abs(Number(qty))
+  if (!isFinite(q) || !isPackHintMaterial(m) || q < Number(m!.units_per_carton)) return null
+  const { entry, base } = qtySplit(q, m)
+  const s = base > 0 ? `${fmt(entry)} ${unitLabel(m!.entry_unit)} + ${fmt(base)} ${unitLabel(m!.base_unit)}` : `${fmt(entry)} ${unitLabel(m!.entry_unit)}`
+  return Number(qty) < 0 ? `-${s}` : s
 }
 
 /** Nhãn ĐVT hiển thị chính của mã (cho header cột / đơn vị kèm số). */
@@ -102,13 +141,14 @@ export function qtyFromEntryBase(entry: number, base: number, m?: MatUnits | nul
 }
 
 /**
- * LUẬT SỐ NGUYÊN: mã có entry → qty base phải là SỐ NGUYÊN (hộp/chai không có 0,5).
+ * LUẬT SỐ NGUYÊN: mã có entry → qty base phải là SỐ NGUYÊN (hộp/chai không có 0,5) —
+ * TRỪ khi đơn vị gốc là đơn vị đo (KG / L…: "5 bao + 10,5 kg" hợp lệ — xem baseAllowsDecimal).
  * Trả message lỗi (vi) nếu vi phạm, null nếu hợp lệ. Dùng ở CẢ BE (422) lẫn FE.
  */
 export function qtyIntegerError(qty: number, m?: MatUnits | null): string | null {
   const q = Number(qty)
   if (!isFinite(q)) return 'Số lượng không hợp lệ'
-  if (hasEntry(m) && !Number.isInteger(q)) {
+  if (!baseAllowsDecimal(m) && !Number.isInteger(q)) {
     return `Mã có đơn vị ${unitLabel(m!.entry_unit)}/${unitLabel(m!.base_unit)} — số lượng phải là SỐ NGUYÊN theo ${unitLabel(m!.base_unit)} (nhập 2 ô ${unitLabel(m!.entry_unit)} + ${unitLabel(m!.base_unit)})`
   }
   return null
@@ -127,6 +167,11 @@ export function qtyLabel(qty: number, m?: MatUnits | null): string {
   const q = Number(qty)
   if (!isFinite(q)) return '—'
   if (!hasEntry(m)) return `${fmt(q)} ${qtyUnitLabel(m)}`
+  // mã cân / đong có quy cách (27/11): "110 kg (5 bao + 10 kg)" — kg là số chính, bao là gợi ý
+  if (isPackHintMaterial(m)) {
+    const hint = qtyPackHint(q, m)
+    return `${fmt(q)} ${unitLabel(m!.base_unit)}${hint ? ` (${hint})` : ''}`
+  }
   const neg = q < 0
   const { entry, base } = qtySplit(Math.abs(q), m)
   const eLbl = unitLabel(m!.entry_unit)

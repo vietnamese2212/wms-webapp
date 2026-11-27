@@ -16,6 +16,8 @@ const MATS: (BE.MatUnits | null | undefined)[] = [
   { base_unit: 'HOP', entry_unit: 'CAR', units_per_carton: null },
   { base_unit: 'set', entry_unit: 'car', units_per_carton: 7.5 },     // hệ số lẻ + mã thường
   { base_unit: 'XYZ', entry_unit: 'ABC', units_per_carton: 12 },      // ĐVT lạ → mã thô
+  { base_unit: 'KG', entry_unit: 'BAO', units_per_carton: 20 },       // 27/11: đường trắng 1 bao = 20 kg — phần kg được lẻ
+  { base_unit: 'l', entry_unit: 'CAN', units_per_carton: 200 },       // đơn vị đo viết thường
 ]
 
 function randQty(r: ReturnType<typeof rng>): number {
@@ -47,13 +49,18 @@ describe(`qtyUnits BE ⇄ FE (seed ${SEED})`, () => {
       expect(FE.qtyUnitLabel(m), ctx).toBe(BE.qtyUnitLabel(m))
       expect(FE.qtyBaseLabel(m), ctx).toBe(BE.qtyBaseLabel(m))
       expect(FE.unitCodeOf(m), ctx).toBe(BE.unitCodeOf(m))
+      expect(FE.isPackHintMaterial(m), ctx).toBe(BE.isPackHintMaterial(m))
+      expect(FE.qtyPackHint(q, m), ctx).toBe(BE.qtyPackHint(q, m))
+      expect(FE.baseAllowsDecimal(m), ctx).toBe(BE.baseAllowsDecimal(m))
       const e = r.int(-5, 500), b = r.int(-5, 200)
       expect(FE.qtyFromEntryBase(e, b, m), `${ctx} e=${e} b=${b}`).toBe(BE.qtyFromEntryBase(e, b, m))
     }
   })
 
   it('bảng nhãn ĐVT tĩnh khớp nhau (FE chưa nạp danh mục = dùng đúng bảng BE)', () => {
-    for (const code of ['CAR', 'HOP', 'KG', 'BAG', 'EA', 'BT', 'SET', 'ROL', 'M2', 'G', 'L', '', null, 'car', ' hop ', 'LẠ'])
+    for (const code of ['CAR', 'HOP', 'KG', 'BAG', 'BAO', 'EA', 'BT', 'SET', 'ROL', 'M2', 'G', 'L', '', null, 'car', ' hop ', 'LẠ']) {
       expect(FE.unitLabel(code), String(code)).toBe(BE.unitLabel(code))
+      expect(FE.isMeasureUnit(code), String(code)).toBe(BE.isMeasureUnit(code))
+    }
   })
 })

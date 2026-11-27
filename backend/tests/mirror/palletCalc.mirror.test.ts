@@ -19,4 +19,15 @@ describe(`palletCalc BE ⇄ FE (seed ${SEED})`, () => {
       expect(FE.effCartonsPerPallet(m, wh), JSON.stringify({ m, wh })).toBe(BE.effCartonsPerPallet(m, wh))
     }
   })
+
+  it('palletQtyOnUnitChange khớp (27/11 — đổi số / pallet khi thêm / bỏ đơn vị quy cách)', () => {
+    const r = rng()
+    const U = [{}, { entry_unit: null, units_per_carton: null }, { entry_unit: 'BAO', units_per_carton: 20 }, { entry_unit: 'BAO', units_per_carton: 25 },
+      { entry_unit: 'CAR', units_per_carton: 48 }, { entry_unit: 'CAR', units_per_carton: 0 }, { entry_unit: null, units_per_carton: 20 }]
+    for (let i = 0; i < N; i++) {
+      const q = r.pick([null, undefined, 0, -5, 1000, 990, 980, 49, 50, 7.5, r.int(1, 5000)])
+      const a = r.pick(U), b = r.pick(U)
+      expect(FE.palletQtyOnUnitChange(q, a, b), JSON.stringify({ q, a, b })).toEqual(BE.palletQtyOnUnitChange(q, a, b))
+    }
+  })
 })

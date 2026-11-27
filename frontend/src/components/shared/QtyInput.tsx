@@ -1,5 +1,6 @@
 // QtyInput — ô nhập SỐ LƯỢNG chuẩn BASE UNIT (đợt 2, luật user 19/07):
 // - Mã CÓ entry unit: 2 ô "Thùng + Hộp" SỐ NGUYÊN (hàng chẵn chỉ điền Thùng) → onChange trả SỐ BASE.
+//   Mã CÂN / ĐONG có quy cách (KG / L — vd đường 1 bao = 20 kg, 27/11): MỘT ô kg thập phân + dòng gợi ý "= 5 bao + 10 kg".
 // - Mã KHÔNG entry: 1 ô, thập phân tự do (KG/EA/BAG…) → trả nguyên số.
 // value luôn là BASE (một nguồn sự thật); component tự DIV/MOD để hiển thị 2 ô.
 //
@@ -9,7 +10,7 @@
 // Cả 2 part đọc cùng `value` + gọi cùng `onChange(base)` → tách cột không đổi tính toán.
 import { useEffect, useState } from 'react'
 import { Input } from '@/components/ui/input'
-import { hasEntry, qtySplit, qtyFromEntryBase, unitLabel, type MatUnits } from '@/utils/qtyUnits'
+import { hasEntry, isPackHintMaterial, qtyPackHint, qtySplit, qtyFromEntryBase, unitLabel, type MatUnits } from '@/utils/qtyUnits'
 import { parseVnNumber, vnNumberInput } from '@/utils/vnNumber'
 
 // 25/11 (F2 rà soát MES, user đồng ý sửa ở ô DÙNG CHUNG): ô số THẬP PHÂN (mã không có đơn vị nhập — KG / L / BAG…) trước dùng
@@ -51,12 +52,18 @@ export function QtyInput({ value, mat, onChange, disabled, autoFocus, className,
   // Ô hẹp (compact): giảm padding ngang để số 3–4 chữ số không bị CẮT (mặc định Input là px-3 = 24px).
   const pad = compact ? 'px-1' : ''
   const noEntry = !hasEntry(mat)
+  // Mã cân / đong có quy cách (đường: KG + 1 bao = 20 kg — 27/11): nhập MỘT ô kg như mã không quy cách,
+  // quy cách chỉ hiện GỢI Ý ("= 5 bao + 10 kg") — user: "110 kg có gợi ý là 5 bao 10 kg"
+  const packHint = isPackHintMaterial(mat)
+  const hintText = packHint ? qtyPackHint(value, mat) : null
 
   // ── Chế độ 1 CỘT (part) — chỉ khác cách bày, quy đổi giữ nguyên ──
   if (part) {
     if (part === 'entry') {
       // Mã không entry → không có "Thùng" → gạch ngang (base nằm ở cột kia)
       if (noEntry) return <div className={`text-center text-slate-300 text-xs ${className ?? ''}`}>—</div>
+      // mã cân / đong: cột quy cách chỉ hiện gợi ý (số nhập ở cột đơn vị gốc)
+      if (packHint) return <div className={`text-center text-[11px] text-slate-500 tabular-nums ${className ?? ''}`} data-testid="qty-pack-hint">{hintText ?? '—'}</div>
       const { entry, base } = qtySplit(value, mat)
       return (
         <div className={className ?? ''}>
@@ -71,7 +78,7 @@ export function QtyInput({ value, mat, onChange, disabled, autoFocus, className,
       )
     }
     // part === 'base'
-    if (noEntry) {
+    if (noEntry || packHint) {
       // Chỉ hiện nhãn khi mã CÓ base_unit thật (KG/EA/BAG…). Chưa chọn mã → không nhãn (unitLabel mặc định 'thùng' gây hiểu lầm).
       const bLbl = mat?.base_unit ? unitLabel(mat.base_unit) : ''
       return (
@@ -99,6 +106,14 @@ export function QtyInput({ value, mat, onChange, disabled, autoFocus, className,
   if (noEntry) {
     return (
       <DecimalQty value={value} onChange={onChange} disabled={disabled} autoFocus={autoFocus} className={`text-center font-semibold ${h} ${pad} ${className ?? ''}`} />
+    )
+  }
+  if (packHint) {
+    return (
+      <div className={className ?? ''}>
+        <DecimalQty value={value} onChange={onChange} disabled={disabled} autoFocus={autoFocus} className={`text-center font-semibold ${h} ${pad}`} />
+        {hintText && <p className="text-[10px] text-slate-500 text-center mt-0.5 tabular-nums" data-testid="qty-pack-hint">= {hintText}</p>}
+      </div>
     )
   }
   const { entry, base } = qtySplit(value, mat)

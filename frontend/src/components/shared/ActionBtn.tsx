@@ -121,12 +121,18 @@ function MoreMenu({ items, desktop }: { items: ActionItem[]; desktop?: boolean }
   )
 }
 
-export function ActionCluster({ items, className, mobileInline }: { items: ActionItem[]; className?: string; mobileInline?: boolean }) {
+/**
+ * `mobilePrimaryOnly` (27/11 — màn mẻ MES, user: "trên điện thoại xem được càng nhiều thông tin table càng tốt. Đưa action TỚI LƯỢT ra
+ * ngoài thôi, còn lại vào ba chấm hết"): điện thoại chỉ để nút `primary` (bước đang tới) ngoài ⋮; nút vận hành khác vào ⋮ — máy tính
+ * không đổi. Cụm còn một nút thì chung hàng với tiêu đề (như mobileInline) thay vì chiếm hàng riêng.
+ */
+export function ActionCluster({ items, className, mobileInline, mobilePrimaryOnly }: { items: ActionItem[]; className?: string; mobileInline?: boolean; mobilePrimaryOnly?: boolean }) {
   const mobileItems = items.filter(i => !i.mobileHidden)
   // ngoài ⋮ ở điện thoại: nút chính + nút vận hành, GIỮ thứ tự mảng (= thứ tự công việc); quản trị luôn vào ⋮
-  const primaries = mobileItems.filter(i => (i.primary || i.ops) && !i.admin)
-  const secondaries = mobileItems.filter(i => !(i.primary || i.ops) || i.admin)
-  const hasOps = primaries.some(i => i.ops)
+  const outside = (i: ActionItem) => !i.admin && (mobilePrimaryOnly ? !!i.primary : (i.primary || i.ops))
+  const primaries = mobileItems.filter(outside)
+  const secondaries = mobileItems.filter(i => !outside(i))
+  const hasOps = !mobilePrimaryOnly && primaries.some(i => i.ops)
   const deskAdmin = items.filter(i => i.admin)
   return (
     <>

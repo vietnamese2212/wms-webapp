@@ -10,7 +10,8 @@ import { AlertTriangle } from 'lucide-react'
 import type { ConsumptionRow } from '@/api/productionHooks'
 import { formatDate } from '@/utils/formatters'
 import { pctDateCls, type PctBands } from '@/utils/pctDateBands'
-import { qtyNum, matUnitCode } from '@/utils/unitCode'
+import { matUnitCode } from '@/utils/unitCode'
+import { MesQty } from './MesQty'
 import { hasEntry, type MatUnits } from '@/utils/qtyUnits'
 import { rotationReasonLabel } from '@/utils/rotation'
 
@@ -63,7 +64,7 @@ export function ConsumedTems({ rows, mat, bands }: { rows: ConsumptionRow[]; mat
         {rows.map(c => (
           <Fragment key={c.id}>
             <span data-consumption={c.id} data-violation={c.rotation_violation ? '1' : undefined} className="py-0.5 border-t border-slate-100 min-w-0 text-[10px]">{code(c)}</span>
-            <span className="py-0.5 border-t border-slate-100 text-right font-semibold tabular-nums">{qtyNum(Number(c.qty), mat)}</span>
+            <span className="py-0.5 border-t border-slate-100 text-right font-semibold tabular-nums"><MesQty qty={Number(c.qty)} mat={mat} /></span>
             <span className={`py-0.5 border-t border-slate-100 font-bold tabular-nums ${pctDateCls(c.pct_date, bands)}`}>{pctText(c.pct_date)}</span>
             <span className="py-0.5 border-t border-slate-100 font-mono text-[10px]">{hsd(c)}</span>
             {c.rotation_violation && <span className="col-span-4 -mt-0.5 pb-0.5 text-[10px] text-orange-600">nên lấy trước {best(c)}</span>}
@@ -84,7 +85,7 @@ export function ConsumedTems({ rows, mat, bands }: { rows: ConsumptionRow[]; mat
           {rows.map(c => (
             <tr key={c.id} data-consumption={c.id} data-violation={c.rotation_violation ? '1' : undefined} className="text-[10px]">
               <td className="pr-4 py-0.5 whitespace-nowrap">{code(c)}</td>
-              <td className="pr-4 py-0.5 text-right tabular-nums text-slate-600 whitespace-nowrap">{qtyNum(Number(c.qty), mat)}</td>
+              <td className="pr-4 py-0.5 text-right tabular-nums text-slate-600 whitespace-nowrap"><MesQty qty={Number(c.qty)} mat={mat} /></td>
               <td className={`pr-4 py-0.5 font-bold tabular-nums whitespace-nowrap ${pctDateCls(c.pct_date, bands)}`}>{pctText(c.pct_date)}</td>
               <td className="pr-4 py-0.5 font-mono text-slate-400 whitespace-nowrap"><Day d={c.production_date} /></td>
               <td className="pr-4 py-0.5 font-mono whitespace-nowrap">{hsd(c)}</td>

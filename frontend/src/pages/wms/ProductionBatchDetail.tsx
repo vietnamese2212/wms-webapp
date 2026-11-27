@@ -7,7 +7,7 @@
 import { Fragment, useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import type { AxiosError } from 'axios'
-import { ArrowLeft, Plus, Pencil, XCircle, ShieldCheck, Container, Undo2, Copy, AlertTriangle, ListChecks, Check, Printer, Play, FileText, FileCheck, ArrowDownToLine, RotateCcw, Search, ChevronDown, ChevronRight, Bookmark } from 'lucide-react'
+import { ArrowLeft, Plus, Pencil, XCircle, ShieldCheck, Container, Undo2, Copy, AlertTriangle, ListChecks, Check, Printer, Play, FileText, FileCheck, ArrowDownToLine, RotateCcw, Search, ChevronDown, ChevronRight, Bookmark, Maximize2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { MesStockDialog } from '@/components/wms/production/MesStockGroups'
@@ -34,6 +34,9 @@ import { FlowStrip, BatchLabelSheet, PourSheet, type FlowStep } from '@/componen
 import { ScanIcon } from '@/components/shared/ScanIcon'
 import { BatchFillSheet, nfQty } from '@/components/wms/production/TankSheets'
 import { MobileNumHead, MobileNumRow, type NumCol } from '@/components/wms/production/MobileNumGrid'
+import { MesQty } from '@/components/wms/production/MesQty'
+import { BatchOverviewSheet } from '@/components/wms/production/BatchOverviewSheet'
+import { QtyPackHintLine } from '@/components/shared/QtyText'
 import { useAuthStore } from '@/stores/authStore'
 import { useCanSeePath } from '@/hooks/useCanSeePath'
 import { can, type ModulePermissions } from '@/config/permissions'
@@ -117,6 +120,8 @@ function ProductionBatchDetail() {
   const [cloneOpen, setCloneOpen] = useState(false)
   // kính lúp cột Tồn kho (như cột Kho của Xuất kho): tồn của một mã trong kho chế biến gom theo %Date
   const [stockMat, setStockMat] = useState<string | null>(null)
+  // TOÀN CẢNH MẺ (27/11): thông số cơ bản + mã · đã cấp — đối chiếu phiếu chế biến giấy
+  const [overviewOpen, setOverviewOpen] = useState(false)
   // dòng của bàn đang MỞ RỘNG (xem từng tem / lô đã cấp — như "pallet đã quét" của Xuất kho, user 18/11)
   const [openMats, setOpenMats] = useState<Set<string>>(new Set())
   const toggleMat = (m: string) => setOpenMats(prev => { const n = new Set(prev); if (n.has(m)) n.delete(m); else n.add(m); return n })
@@ -359,7 +364,7 @@ function ProductionBatchDetail() {
                 <Bookmark className="h-3.5 w-3.5" fill={isBatchPinned(b.id) ? 'currentColor' : 'none'} />
               </button>
             </div>
-            <ActionCluster mobileInline items={actions} />
+            <ActionCluster mobileInline mobilePrimaryOnly items={actions} />
           </div>
           <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 sm:gap-x-4 text-xs text-slate-600">
             <span><span className="text-slate-400 text-[10px]">Bán thành phẩm:</span> <span className="font-mono font-semibold">{b.material?.material_code}</span> {b.material?.short_name ?? ''}</span>
@@ -428,13 +433,23 @@ function ProductionBatchDetail() {
             <span className="h-3.5 w-1 rounded-full bg-sky-500" />
             <h2 className="text-xs font-semibold uppercase tracking-wide text-slate-600">Nguyên liệu của mẻ</h2>
             {/* như "Xem pallet" của Xuất kho: mở / thu MỌI dòng đã cấp — nút ở ngay thanh của khối, không nằm trong ⋮ (user 18/11) */}
+            <div className="ml-auto flex items-center gap-1.5">
             {consByMat.size > 0 && (
               <button type="button" onClick={() => setOpenMats(anyOpen ? new Set() : new Set(consByMat.keys()))} aria-expanded={anyOpen} data-testid="expand-all"
                 title={anyOpen ? 'Thu gọn danh sách tem / lô đã cấp' : 'Mở danh sách tem / lô đã cấp của mọi nguyên liệu'}
-                className="ml-auto inline-flex h-7 items-center gap-1 rounded-md border border-slate-200 bg-white px-2 text-[11px] font-medium text-slate-700 hover:border-sky-300 hover:bg-sky-50 hover:text-sky-800">
+                className="inline-flex h-7 items-center gap-1 rounded-md border border-slate-200 bg-white px-2 text-[11px] font-medium text-slate-700 hover:border-sky-300 hover:bg-sky-50 hover:text-sky-800">
                 <ChevronDown className={`h-3.5 w-3.5 transition-transform ${anyOpen ? 'rotate-180' : ''}`} />{anyOpen ? 'Thu gọn' : `Xem tem đã cấp · ${temTotal}`}
               </button>
             )}
+            {/* TOÀN CẢNH MẺ (27/11, user): chỉ thông số cơ bản + mã · đã cấp — đối chiếu phiếu chế biến cầm trên tay */}
+            {board.length > 0 && (
+              <button type="button" onClick={() => setOverviewOpen(true)} data-testid="batch-overview-open"
+                title="Mở rộng — xem toàn cảnh mẻ: thông số cơ bản, mã và số đã cấp (đối chiếu phiếu chế biến giấy)"
+                className="inline-flex h-7 items-center gap-1 rounded-md border border-slate-200 bg-white px-2 text-[11px] font-medium text-slate-700 hover:border-sky-300 hover:bg-sky-50 hover:text-sky-800">
+                <Maximize2 className="h-3.5 w-3.5" />Mở rộng
+              </button>
+            )}
+            </div>
           </div>
           <ExpiryApprovalsBlock b={b} canDecide={open && !hasFill && can(perms, 'production', 'approve_expired')} />
           {/* ĐIỆN THOẠI: bảng thu nhỏ — nhãn cột in một lần, mỗi dòng mã · tên · ĐVT rồi chỉ CON SỐ (user 17/11 "hạn chế văn viết");
@@ -473,20 +488,22 @@ function ProductionBatchDetail() {
                       <span className="ml-auto shrink-0 font-mono text-[10px] text-slate-400">{matUnitCode(r)}</span>
                     </>}
                     cells={nn ? [
-                      Number(r.consumed) > 0 ? qtyNum(Number(r.consumed), r) : dash,
-                      r.removed ? dash : <button type="button" onClick={() => setStockMat(r.material_id)} aria-label={`Xem tồn ${r.material_code} theo %Date`}
-                        className="underline decoration-dotted underline-offset-2 font-normal text-slate-500" title="Xem tồn theo %Date">{qtyNum(Math.max(Number(r.available), 0), r)}</button>,
+                      Number(r.consumed) > 0 ? <MesQty qty={Number(r.consumed)} mat={r} /> : dash,
+                      r.removed ? dash : <><button type="button" onClick={() => setStockMat(r.material_id)} aria-label={`Xem tồn ${r.material_code} theo %Date`}
+                        className="underline decoration-dotted underline-offset-2 font-normal text-slate-500" title="Xem tồn theo %Date">{qtyNum(Math.max(Number(r.available), 0), r)}</button>
+                        <QtyPackHintLine qty={Math.max(Number(r.available), 0)} mat={r} /></>,
                     ] : [
                       r.removed ? <s className="font-normal text-slate-400">{r.standard != null ? qtyNum(Number(r.standard), r) : '—'}</s>
                         : st.state === 'extra' ? dash
-                        : <>{qtyNum(Number(r.required), r)}{changed && <span className="ml-1 text-[9px] font-normal text-amber-700" title={changeTip(r)}>gốc {qtyNum(Number(r.standard), r)}</span>}</>,
-                      Number(r.consumed) > 0 ? <span className={st.outOfTol ? 'text-red-600' : done ? 'text-green-700' : ''}>{qtyNum(Number(r.consumed), r)}</span> : dash,
+                        : <>{qtyNum(Number(r.required), r)}{changed && <span className="ml-1 text-[9px] font-normal text-amber-700" title={changeTip(r)}>gốc {qtyNum(Number(r.standard), r)}</span>}<QtyPackHintLine qty={Number(r.required)} mat={r} /></>,
+                      Number(r.consumed) > 0 ? <span className={st.outOfTol ? 'text-red-600' : done ? 'text-green-700' : ''}><MesQty qty={Number(r.consumed)} mat={r} /></span> : dash,
                       outside ? dash
                         : st.state === 'ok' ? <Check className="inline h-3.5 w-3.5 text-green-600" aria-label="Đủ" />
                         : st.state === 'over' ? <span className="text-red-600" title={r.tol_pct != null ? `Mức lệch cho phép ±${nfq(r.tol_pct)}%` : 'Vượt yêu cầu'}>{r.tol_pct != null ? devLabel(st.devPct) : `+${qtyNum(Number(r.consumed) - Number(r.required), r)}`}</span>
-                        : <span className={st.outOfTol ? 'text-red-600' : 'text-amber-700'}>{qtyNum(st.need, r)}</span>,
-                      r.removed ? dash : <button type="button" onClick={() => setStockMat(r.material_id)} aria-label={`Xem tồn ${r.material_code} theo %Date`}
-                        className={`underline decoration-dotted underline-offset-2 ${short ? 'text-red-600' : 'font-normal text-slate-500'}`} title={short ? 'Tồn ở kho chế biến không đủ phần còn thiếu — bấm xem tồn theo %Date' : 'Xem tồn theo %Date'}>{qtyNum(Math.max(Number(r.available), 0), r)}</button>,
+                        : <span className={st.outOfTol ? 'text-red-600' : 'text-amber-700'}><MesQty qty={st.need} mat={r} /></span>,
+                      r.removed ? dash : <><button type="button" onClick={() => setStockMat(r.material_id)} aria-label={`Xem tồn ${r.material_code} theo %Date`}
+                        className={`underline decoration-dotted underline-offset-2 ${short ? 'text-red-600' : 'font-normal text-slate-500'}`} title={short ? 'Tồn ở kho chế biến không đủ phần còn thiếu — bấm xem tồn theo %Date' : 'Xem tồn theo %Date'}>{qtyNum(Math.max(Number(r.available), 0), r)}</button>
+                        <QtyPackHintLine qty={Math.max(Number(r.available), 0)} mat={r} /></>,
                     ]}
                     aside={canConsume && !r.removed ? (
                       <button type="button" onClick={() => openConsume(r.material_id, noStock)} aria-label={`Cấp ${r.material_code}`}
@@ -531,14 +548,15 @@ function ProductionBatchDetail() {
                       )}
                     </TableCell>
                     <TableCell className={`${TD} font-mono text-slate-500`}>{matUnitCode(r)}</TableCell>
-                    {!nn && <TableCell className={NUM} title={changeTip(r)}>{r.removed ? reqNote(r) : extra ? <span className="text-slate-300 font-normal">—</span> : <>{qtyNum(Number(r.required), r)}{reqNote(r)}</>}</TableCell>}
-                    <TableCell className={`${NUM} ${st.outOfTol ? 'text-red-600' : ''}`}>{started ? qtyNum(Number(r.consumed), r) : <span className="text-slate-300 font-normal">—</span>}</TableCell>
-                    {!nn && <TableCell className={`${NUM} ${need > 0 ? 'text-amber-700' : ''}`}>{need > 0 ? qtyNum(need, r) : <span className="text-slate-300 font-normal">—</span>}</TableCell>}
+                    {!nn && <TableCell className={NUM} title={changeTip(r)}>{r.removed ? reqNote(r) : extra ? <span className="text-slate-300 font-normal">—</span> : <>{qtyNum(Number(r.required), r)}{reqNote(r)}<QtyPackHintLine qty={Number(r.required)} mat={r} /></>}</TableCell>}
+                    <TableCell className={`${NUM} ${st.outOfTol ? 'text-red-600' : ''}`}>{started ? <MesQty qty={Number(r.consumed)} mat={r} /> : <span className="text-slate-300 font-normal">—</span>}</TableCell>
+                    {!nn && <TableCell className={`${NUM} ${need > 0 ? 'text-amber-700' : ''}`}>{need > 0 ? <MesQty qty={need} mat={r} /> : <span className="text-slate-300 font-normal">—</span>}</TableCell>}
                     <TableCell className={`${NUM} ${!done && need > Number(r.available) ? 'text-red-600' : ''}`} title={!done && need > Number(r.available) ? 'Tồn ở kho chế biến không đủ phần còn thiếu — chuyển thêm hàng sang kho chế biến' : undefined}>
                       <button type="button" onClick={() => setStockMat(r.material_id)} aria-label={`Xem tồn ${r.material_code} theo %Date`} title="Xem tồn theo %Date — vị trí, HSD, từng tem"
                         className="inline-flex items-center gap-1 rounded px-1 -mr-1 hover:bg-blue-50 hover:text-blue-700">
                         <Search className="h-3 w-3 text-slate-400" />{qtyNum(Math.max(Number(r.available), 0), r)}
                       </button>
+                      <QtyPackHintLine qty={Math.max(Number(r.available), 0)} mat={r} />
                     </TableCell>
                     <TableCell className={TD}>{noStock ? <span className="text-slate-300">—</span> : byScan ? <StatusBadge tone="sky">Quét tem</StatusBadge> : <StatusBadge tone="purple">Chọn lô</StatusBadge>}</TableCell>
                     <TableCell className={TD}>{statusBadge(r)}</TableCell>
@@ -642,7 +660,7 @@ function ProductionBatchDetail() {
                 return (
                   <TableRow key={c.id} className={gone ? `${rowText('completed')} opacity-70` : ''} title={gone ? `Huỷ: ${c.reversed_by_name ?? ''} · ${c.reverse_reason ?? ''}` : undefined}>
                     <TableCell className={`${TD} sticky left-0 z-10 bg-white truncate`} title={c.material?.short_name ?? ''}><span className="font-mono font-semibold">{c.material?.material_code}</span> {c.material?.short_name ?? ''}</TableCell>
-                    <TableCell className={NUM}>{qtyNum(Number(c.qty), c.material)}</TableCell>
+                    <TableCell className={NUM}><MesQty qty={Number(c.qty)} mat={c.material} /></TableCell>
                     <TableCell className={`${TD} font-mono text-slate-500`}>{matUnitCode(c.material)}</TableCell>
                     <TableCell className={`${TD} font-mono truncate`} title={c.pallet_code}>{c.pallet_code}</TableCell>
                     <TableCell className={`${TD} tabular-nums`}>{c.production_date ? formatDate(c.production_date) : <span className="text-slate-300">—</span>}</TableCell>
@@ -717,6 +735,7 @@ function ProductionBatchDetail() {
         </div>
       </div>
       {open && <ConsumeSheet open={consumeOpen} onClose={() => setConsumeOpen(false)} batch={b} focusId={focusId} />}
+      <BatchOverviewSheet open={overviewOpen} onClose={() => setOverviewOpen(false)} b={b} rows={board} />
       {stockMat && (() => {
         const r = board.find(x => x.material_id === stockMat)
         return <MesStockDialog batchId={b.id} materialId={stockMat} mat={r ?? null}

@@ -33,6 +33,7 @@ import { useAuthStore } from '@/stores/authStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { hasEntry, qtyIntegerError, type MatUnits } from '@/utils/qtyUnits'
 import { qtyCode, qtyNum, matUnitCode } from '@/utils/unitCode'
+import { MesQty } from './MesQty'
 import { reqLineState } from '@/utils/reqTolerance'
 import { Check, ChevronDown, MapPin } from 'lucide-react'
 import { normalizeQR } from '@/utils/qr'
@@ -253,16 +254,16 @@ export function ConsumeSheet({ open, onClose, batch, focusId }: {
             {batch.no_norm ? (
               // mẻ không định mức (27/11): không có Cần / Thiếu — lượng cấp người cấp tự nhập theo phiếu chế biến giấy
               <div className="grid grid-cols-2 gap-2 text-center">
-                <div><p className="text-[10px] text-slate-500">Đã cấp</p><p className="text-sm font-semibold tabular-nums">{Number(focus.consumed) > 0 ? qtyNum(Number(focus.consumed), focus) : '—'}</p></div>
+                <div><p className="text-[10px] text-slate-500">Đã cấp</p><p className="text-sm font-semibold tabular-nums">{Number(focus.consumed) > 0 ? <MesQty qty={Number(focus.consumed)} mat={focus} /> : '—'}</p></div>
                 <div><p className="text-[10px] text-slate-500">Lần cấp</p><p className="text-sm font-semibold tabular-nums">{Number(focus.lines) || '—'}</p></div>
               </div>
             ) : (
             <div className="grid grid-cols-3 gap-2 text-center">
-              <div><p className="text-[10px] text-slate-500">Cần</p><p className="text-sm font-semibold tabular-nums">{focus.required != null ? qtyNum(Number(focus.required), focus) : '—'}</p></div>
-              <div><p className="text-[10px] text-slate-500">Đã cấp</p><p className="text-sm font-semibold tabular-nums">{Number(focus.consumed) > 0 ? qtyNum(Number(focus.consumed), focus) : '—'}</p></div>
+              <div><p className="text-[10px] text-slate-500">Cần</p><p className="text-sm font-semibold tabular-nums">{focus.required != null ? <MesQty qty={Number(focus.required)} mat={focus} /> : '—'}</p></div>
+              <div><p className="text-[10px] text-slate-500">Đã cấp</p><p className="text-sm font-semibold tabular-nums">{Number(focus.consumed) > 0 ? <MesQty qty={Number(focus.consumed)} mat={focus} /> : '—'}</p></div>
               <div><p className="text-[10px] text-slate-500">Thiếu</p>
                 <p className={`text-sm font-semibold tabular-nums ${focus.required == null ? '' : focusNeed > 0 ? 'text-amber-700' : 'text-green-600'}`}>
-                  {focus.required == null ? '—' : focusNeed > 0 ? qtyNum(focusNeed, focus) : <Check className="inline h-4 w-4" aria-label="Đủ" />}
+                  {focus.required == null ? '—' : focusNeed > 0 ? <MesQty qty={focusNeed} mat={focus} /> : <Check className="inline h-4 w-4" aria-label="Đủ" />}
                 </p>
               </div>
             </div>

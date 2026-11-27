@@ -9,7 +9,8 @@ import { isQaHeld } from '@/utils/qaHold'
 import { backTarget } from '@/lib/returnTo'
 import { isQtyLike } from '@/utils/inventoryMode'
 import { isInSiteTrip, type InSiteWh } from '@/utils/inSiteTrip'
-import { qtyLabel, qtyEntryText, qtyUnitLabel, qtyEntryDecimal, qtySplit, hasEntry, type MatUnits } from '@/utils/qtyUnits'
+import { qtyLabel, qtyEntryText, qtyUnitLabel, qtyEntryDecimal, qtySplit, hasEntry, qtyMainUnits, type MatUnits } from '@/utils/qtyUnits'
+import { QtyPackHintLine } from '@/components/shared/QtyText'
 import { QtyInput } from '@/components/shared/QtyInput'
 import { ArrowLeft, CheckCircle2, AlertTriangle, Truck, Package, ClipboardList, Play, Pause, ChevronRight, ChevronDown, Bookmark, X, RotateCcw, Pencil, Search, PenSquare, Trash2, Printer, Boxes, Info, Scale, DoorOpen, ListChecks, CalendarClock } from 'lucide-react'
 import { ScanIcon } from '@/components/shared/ScanIcon'
@@ -1182,12 +1183,14 @@ function ItemsTable({ doRecords, gdoId, canScan, hasScanPerm, expandedItemIds, t
               .reduce((sum, s) => sum + s.cartons_scanned, 0)
 
             // BASE UNIT (4 số): tách Tổng + Nhặt lẻ thành Thùng/Hộp per-mã (mã KG không entry → dồn vào cột thùng)
-            const hasEnt       = hasEntry(item.material)
-            const ordSplit     = qtySplit(item.cartons_ordered, item.material)
-            const scnSplit     = qtySplit(item.cartons_scanned, item.material)
+            // 27/11: mã cân / đong có quy cách (đường 1 bao = 20 kg) ⇒ số chính theo kg như trước, bao là dòng gợi ý (qtyMainUnits)
+            const mainMat      = qtyMainUnits(item.material)
+            const hasEnt       = hasEntry(mainMat)
+            const ordSplit     = qtySplit(item.cartons_ordered, mainMat)
+            const scnSplit     = qtySplit(item.cartons_scanned, mainMat)
             const looseDoneSum = scans.filter(s => s.is_loose_picking).reduce((a, s) => a + Number(s.cartons_scanned), 0)
-            const looseSplit   = qtySplit(item.loose_picking, item.material)
-            const looseDnSplit  = qtySplit(looseDoneSum, item.material)
+            const looseSplit   = qtySplit(item.loose_picking, mainMat)
+            const looseDnSplit  = qtySplit(looseDoneSum, mainMat)
             // Cell "đã/kế hoạch" cho 1 đơn vị (thùng hoặc hộp)
             const dkThung = `${scnSplit.entry}/${ordSplit.entry}`
             const dkHop   = ordSplit.base > 0 || scnSplit.base > 0 ? `${scnSplit.base}/${ordSplit.base}` : null
@@ -1218,7 +1221,8 @@ function ItemsTable({ doRecords, gdoId, canScan, hasScanPerm, expandedItemIds, t
                 <TableCell className={`px-2 py-1 align-top text-right whitespace-nowrap`}>
                   <div className="flex flex-col items-end gap-0.5">
                     {/* BASE UNIT: Tổng THÙNG (đã/KH) — mã KG không entry giữ số base thập phân */}
-                    <span className={`text-[10px] font-semibold tabular-nums ${textCls}`}>{hasEnt ? dkThung : `${qtyEntryText(item.cartons_scanned, item.material)}/${qtyEntryText(item.cartons_ordered, item.material)}`}</span>
+                    <span className={`text-[10px] font-semibold tabular-nums ${textCls}`}>{hasEnt ? dkThung : `${qtyEntryText(item.cartons_scanned, mainMat)}/${qtyEntryText(item.cartons_ordered, mainMat)}`}</span>
+                    <QtyPackHintLine qty={item.cartons_ordered} mat={item.material} />
                     {(() => {
                       const isManual = item.material?.no_qr_tracking === true
                       // Cả 2 nút đều là "ghi nhận xuất" → cần trạng thái cho phép (canScan) + quyền outbound.scan
@@ -1313,7 +1317,7 @@ function ItemsTable({ doRecords, gdoId, canScan, hasScanPerm, expandedItemIds, t
                       {leThung
                         ? <span className={`text-[10px] tabular-nums ${textCls}`}>{leThung}</span>
                         : (item.loose_picking > 0 && !hasEnt
-                            ? <span className={`text-[10px] tabular-nums ${textCls}`}>{qtyEntryText(item.loose_picking, item.material)}</span>
+                            ? <span className={`text-[10px] tabular-nums ${textCls}`}>{qtyEntryText(item.loose_picking, mainMat)}</span>
                             : <span className="text-[10px] text-slate-300">—</span>)}
                     </TableCell>
                     {/* BASE UNIT: Nhặt lẻ HỘP lẻ (đã/KH) — 0 → "—" */}

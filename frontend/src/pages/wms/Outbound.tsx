@@ -40,7 +40,7 @@ import { isQtyLike } from '@/utils/inventoryMode'
 import { isInSiteTrip } from '@/utils/inSiteTrip'
 import { rowText, type RowStatusKey } from '@/lib/rowStatus'
 import { useColumnResize } from '@/components/shared/useColumnResize'
-import { qtyLabel, qtySplit, qtyFromEntryBase, hasEntry, unitLabel, unitCodeOf, QTY_CONVERTED_LABEL, QTY_CONVERTED_TIP, type MatUnits } from '@/utils/qtyUnits'
+import { qtyLabel, qtySplit, qtyFromEntryBase, hasEntry, unitLabel, unitCodeOf, qtyMainUnits, qtyPackHint, QTY_CONVERTED_LABEL, QTY_CONVERTED_TIP, type MatUnits } from '@/utils/qtyUnits'
 import { effCartonsPerPallet } from '@/utils/palletCalc'
 import { ShortageBadge } from '@/components/shared/ShortageBadge'
 import { QtyInput } from '@/components/shared/QtyInput'
@@ -216,7 +216,9 @@ function OutboundPane({ gdo, onClose }: { gdo: GDO; onClose: () => void }) {
   const npp = gdo.distributor_names?.join(', ') || '—'
   const cartons   = gdo.total_cartons ?? 0
   const noqr      = gdo.total_cartons_noqr ?? 0
-  const unit      = gdo.qty_unit
+  // 27/11: mã cân / đong có quy cách (đường 1 bao = 20 kg) ⇒ ô lớn theo kg như trước, bao là gợi ý ở nhãn (qtyMainUnits)
+  const unit      = qtyMainUnits(gdo.qty_unit)
+  const tileHint  = qtyPackHint(gdo.total_cartons_base ?? 0, gdo.qty_unit)
   // Tile Thùng: đơn CÙNG đơn vị → số lớn = ĐVT chính (thùng nếu có entry, ngược lại base) + dòng nhỏ phần lẻ;
   // nhiều mã khác đơn vị → thùng quy đổi (format vi-VN).
   const tileSplit = unit ? qtySplit(gdo.total_cartons_base ?? 0, unit) : null
@@ -251,6 +253,7 @@ function OutboundPane({ gdo, onClose }: { gdo: GDO; onClose: () => void }) {
           <div className="rounded-lg bg-sky-600 text-white px-1.5 py-2.5 text-center overflow-hidden">
             <div className={`${tileBig.length >= 6 ? 'text-base' : 'text-xl'} font-bold leading-none tabular-nums`}>{tileBig}</div>
             <div className="text-[9px] mt-1 text-sky-100 uppercase tracking-wide truncate">{tileLbl}</div>
+            {tileHint && <div className="text-[9px] mt-0.5 text-sky-100 tabular-nums" data-testid="qty-pack-hint">{tileHint}</div>}
           </div>
           <div className="rounded-lg bg-sky-700 text-white px-1.5 py-2.5 text-center overflow-hidden">
             <div className="text-xl font-bold leading-none tabular-nums">{fmtPallets(gdo.total_pallets).toLocaleString('vi-VN', { maximumFractionDigits: 1 })}</div>

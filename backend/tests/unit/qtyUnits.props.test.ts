@@ -1,7 +1,7 @@
 // BẤT BIẾN luật BASE UNIT (CLAUDE.md "làm sai là vứt đi") — không so với hằng số gõ tay, so hai
 // chiều của cùng một phép: tách rồi gộp phải về đúng số ban đầu; phần lẻ luôn < 1 thùng.
 import { describe, it, expect } from 'vitest'
-import { qtySplit, qtyFromEntryBase, qtyIntegerError, qtyEntryDecimal, qtyLabel, baseAllowsDecimal, qtyPackHint } from '../../src/utils/qtyUnits'
+import { qtySplit, qtyFromEntryBase, qtyIntegerError, qtyEntryDecimal, qtyLabel, baseAllowsDecimal, qtyPackHint, qtyMainUnits } from '../../src/utils/qtyUnits'
 import { rng, N, SEED } from '../helpers/rng'
 
 describe(`qtyUnits — bất biến (seed ${SEED})`, () => {
@@ -41,6 +41,10 @@ describe(`qtyUnits — bất biến (seed ${SEED})`, () => {
     expect(qtyPackHint(110, m)).toBe('5 bao + 10 kg')
     expect(qtyPackHint(19.9, m)).toBeNull()
     expect(qtyPackHint(4296, { base_unit: 'HOP', entry_unit: 'CAR', units_per_carton: 48 })).toBeNull()
+    // số CHÍNH của một mã cân / đong = kg như trước khi khai bao; mã thùng + hộp giữ nguyên
+    expect(qtyLabel(110, qtyMainUnits(m))).toBe('110 kg')
+    const hop = { base_unit: 'HOP', entry_unit: 'CAR', units_per_carton: 48 }
+    expect(qtyMainUnits(hop)).toBe(hop)
     expect(qtyIntegerError(110.5, m)).toBeNull()
     expect(qtyIntegerError(12.345, m)).toBeNull()
     expect(baseAllowsDecimal(m)).toBe(true)

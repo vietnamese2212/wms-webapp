@@ -54,7 +54,8 @@ import type { PutawayHint } from '@/utils/putaway'
 import { InboundScanSheetById } from '@/components/wms/InboundScanSheet'
 import type { InboundOrder } from '@/types'
 import { unlockAudio } from '@/utils/audio'
-import { qtyEntryText, qtyUnitLabel, qtyEntryDecimal, unitCodeOf, qtyFromEntryBase, qtySplit, hasEntry, type MatUnits } from '@/utils/qtyUnits'
+import { qtyEntryText, qtyUnitLabel, qtyEntryDecimal, unitCodeOf, qtyFromEntryBase, qtySplit, hasEntry, qtyMainUnits, type MatUnits } from '@/utils/qtyUnits'
+import { QtyPackHintLine } from '@/components/shared/QtyText'
 import { pasteGrid, pasteNum } from '@/utils/excelPaste'
 import { inboundProgressOf, receiptProgressOf, type InboundProgressInfo } from '@/utils/inboundProgress'
 import { QtyInput } from '@/components/shared/QtyInput'
@@ -1527,8 +1528,9 @@ function InboundPane({ order, onClose, canScan }: { order: InboundOrder; onClose
             <div className="text-[9px] mt-1 text-sky-100 uppercase tracking-wide">Pallet</div>
           </div>
           <div className="rounded-lg bg-sky-700 text-white px-2 py-2.5 text-center">
-            <div className="text-xl font-bold leading-none tabular-nums">{qtyEntryText(cartons, order.material)}</div>
-            <div className="text-[9px] mt-1 text-sky-100 uppercase tracking-wide">Thực nhập ({qtyUnitLabel(order.material)})</div>
+            <div className="text-xl font-bold leading-none tabular-nums">{qtyEntryText(cartons, qtyMainUnits(order.material))}</div>
+            <div className="text-[9px] mt-1 text-sky-100 uppercase tracking-wide">Thực nhập ({qtyUnitLabel(qtyMainUnits(order.material))})</div>
+            <QtyPackHintLine qty={cartons} mat={order.material} className="!text-sky-100 mt-0.5" />
           </div>
         </div>
 
@@ -2218,8 +2220,9 @@ function InboundRow({ order, onClick, onDoubleClick, onScan, onEditGroup, onPin,
 
       {/* Col 7: Thực nhập */}
       <TableCell className="px-2 py-1 text-right whitespace-nowrap">
-        <span className="text-[10px] font-semibold tabular-nums">{qtyEntryText(order.total_cartons ?? 0, order.material)}</span>
-        <span className="text-[9px] text-slate-400 ml-0.5">{qtyUnitLabel(order.material)}</span>
+        <span className="text-[10px] font-semibold tabular-nums">{qtyEntryText(order.total_cartons ?? 0, qtyMainUnits(order.material))}</span>
+        <span className="text-[9px] text-slate-400 ml-0.5">{qtyUnitLabel(qtyMainUnits(order.material))}</span>
+        <QtyPackHintLine qty={order.total_cartons ?? 0} mat={order.material} />
       </TableCell>
 
       {/* Col 8: Thùng KH */}
@@ -2227,9 +2230,10 @@ function InboundRow({ order, onClick, onDoubleClick, onScan, onEditGroup, onPin,
         {order.planned_cartons != null ? (
           <>
             <span className={`text-[10px] font-semibold tabular-nums ${(order.total_cartons ?? 0) < order.planned_cartons ? 'text-red-600' : ''}`}>
-              {qtyEntryText(order.planned_cartons, order.material)}
+              {qtyEntryText(order.planned_cartons, qtyMainUnits(order.material))}
             </span>
-            <span className="text-[9px] text-slate-400 ml-0.5">{qtyUnitLabel(order.material)}</span>
+            <span className="text-[9px] text-slate-400 ml-0.5">{qtyUnitLabel(qtyMainUnits(order.material))}</span>
+            <QtyPackHintLine qty={order.planned_cartons} mat={order.material} />
           </>
         ) : (
           <span className="text-[10px] text-slate-300">—</span>

@@ -39,7 +39,8 @@ import { useWedgeScanner }         from '@/hooks/useWedgeScanner'
 import { LocationScanButton }      from '@/components/wms/LocationScanButton'
 import { useDebouncedValue }        from '@/hooks/useDebouncedValue'
 import { PdaGunHint }               from '@/components/shared/PdaGunHint'
-import { qtyLabel, qtyEntryText } from '@/utils/qtyUnits'
+import { qtyLabel, qtyEntryText, qtyMainUnits } from '@/utils/qtyUnits'
+import { QtyPackHintLine } from '@/components/shared/QtyText'
 import { QtyInput } from '@/components/shared/QtyInput'
 import type { InboundOrder, InboundOrderStatus, PalletEntry } from '@/types'
 import { PutawayOption, type PutawayLocRow } from '@/components/wms/PutawayOption'
@@ -1127,7 +1128,8 @@ export default function InboundDetail() {
                           {entry.pallet_code}
                         </TableCell>
                         <TableCell className="px-2 py-1 text-[10px] text-right tabular-nums font-semibold">
-                          {qtyEntryText(entry.cartons_imported, order.material)}
+                          {qtyEntryText(entry.cartons_imported, qtyMainUnits(order.material))}
+                          <QtyPackHintLine qty={entry.cartons_imported} mat={order.material} />
                         </TableCell>
                         <TableCell className="px-2 py-1 text-[10px] font-mono text-slate-600 whitespace-nowrap">
                           {entry.location?.location_code ?? '—'}

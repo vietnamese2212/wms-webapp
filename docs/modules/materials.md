@@ -18,7 +18,8 @@
   - số chính vẫn là kg, quy cách chỉ là GỢI Ý: `qtyLabel` ⇒ "110 kg (5 bao + 10 kg)", dưới 1 bao chỉ "12,345 kg";
   - ô nhập (`QtyInput`) là MỘT ô kg thập phân + dòng "= 5 bao + 10 kg"; bảng 2 cột Thùng | Hộp: cột quy cách chỉ hiện gợi ý;
   - số lẻ theo kg hợp lệ ở mọi cửa (`baseAllowsDecimal` / `qtyIntegerError`; DB `qty_whole_required` cho huỷ cấp NVL và xử lý hàng chặn). Hộp / chai / cái vẫn bắt số nguyên như cũ;
-  - các ô số hẹp và tổng "SL (quy đổi)" vẫn quy theo quy cách (bao) — cùng cách các hàm tổng trong DB chia theo `units_per_carton`.
+  - ô số của MỘT mã trong bảng (Tồn kho, danh sách / phiếu Nhập, dòng hàng + ô tóm tắt chuyến Xuất): số theo kg (`qtyMainUnits`), dòng dưới nhỏ là gợi ý bao — component chung `QtyText` / `QtyPackHintLine`;
+  - ô TỔNG nhiều mã ("SL (quy đổi)", tổng của chuyến) vẫn quy theo quy cách (bao) — cùng cách các hàm tổng trong DB chia theo `units_per_carton`.
 - Số / pallet (`cartons_per_pallet`, số miền Nam, số riêng của kho) tính theo đơn vị quy cách nếu có, không thì theo đơn vị gốc. THÊM / BỎ đơn vị quy cách (form sửa mã hoặc nạp Excel) mà không gõ số mới ⇒ app tự đổi (1.000 kg ⇒ 50 bao); không chia hết ⇒ lỗi, bắt khai lại. Một hàm `palletQtyOnUnitChange` (palletCalc, mirror) + `palletUnitFix` (materialController, dùng cho cả hai cửa). Form báo trước dòng "Khi lưu, app tự đổi …"; bước kiểm Excel báo ở mục cảnh báo.
 - Đổi hệ số (20 ⇒ 25 kg / bao) KHÔNG đổi số / pallet (đơn vị của ô không đổi) — người dùng tự sửa nếu số bao / pallet thật đổi.
 

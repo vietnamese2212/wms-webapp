@@ -51,6 +51,7 @@ describe(`qtyUnits BE ⇄ FE (seed ${SEED})`, () => {
       expect(FE.unitCodeOf(m), ctx).toBe(BE.unitCodeOf(m))
       expect(FE.isPackHintMaterial(m), ctx).toBe(BE.isPackHintMaterial(m))
       expect(FE.qtyPackHint(q, m), ctx).toBe(BE.qtyPackHint(q, m))
+      expect(FE.qtyMainUnits(m), ctx).toEqual(BE.qtyMainUnits(m))
       expect(FE.baseAllowsDecimal(m), ctx).toBe(BE.baseAllowsDecimal(m))
       const e = r.int(-5, 500), b = r.int(-5, 200)
       expect(FE.qtyFromEntryBase(e, b, m), `${ctx} e=${e} b=${b}`).toBe(BE.qtyFromEntryBase(e, b, m))

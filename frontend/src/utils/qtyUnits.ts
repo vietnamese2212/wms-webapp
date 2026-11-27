@@ -85,6 +85,15 @@ export function isPackHintMaterial(m?: MatUnits | null): boolean {
   return hasEntry(m) && isMeasureUnit(m?.base_unit)
 }
 
+/**
+ * Đơn vị cho SỐ CHÍNH của MỘT mã (ô số của một dòng / một pallet): mã cân / đong có quy cách ⇒ chỉ đơn vị gốc (kg) — như
+ * trước khi khai bao; mã khác ⇒ giữ nguyên. Ô TỔNG nhiều mã ("SL (quy đổi)") KHÔNG dùng hàm này: tổng quy theo quy cách,
+ * cùng cách các hàm tổng trong DB chia theo units_per_carton.
+ */
+export function qtyMainUnits(m?: MatUnits | null): MatUnits | null | undefined {
+  return isPackHintMaterial(m) ? { base_unit: m!.base_unit ?? null } : m
+}
+
 /** Gợi ý quy cách cho mã cân / đong: 110 kg ⇒ "5 bao + 10 kg"; dưới 1 bao hoặc mã khác ⇒ null. */
 export function qtyPackHint(qty: number, m?: MatUnits | null): string | null {
   const q = Math.abs(Number(qty))

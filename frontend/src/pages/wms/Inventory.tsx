@@ -45,6 +45,7 @@ import { formatTimestampDate, formatTimestampTime } from '@/utils/formatters'
 import { resolveShelfLife, computePctDate } from '@/utils/shelfLife'
 import { pctDateCls } from '@/utils/pctDateBands'
 import { qtyLabel, qtySplit, qtyUnitLabel, qtyBaseLabel, hasEntry, baseAllowsDecimal, qtyIntegerError, unitLabel, QTY_CONVERTED_LABEL, QTY_CONVERTED_TIP } from '@/utils/qtyUnits'
+import { QtyText } from '@/components/shared/QtyText'
 import { saveWorkbook } from '@/utils/saveExcel'
 import { downloadTemplate } from '@/utils/excelTemplate'
 import type { InventoryEntry, SupplierShelfLifeOverride } from '@/types'
@@ -1480,25 +1481,23 @@ function EntryRow({ entry: e, isSelected, isChecked, onCheck, onClick, warehouse
       </TableCell>
       <TableCell className="px-2 py-1 text-right whitespace-nowrap">
         {/* BASE UNIT: Nhập/Xuất/Giữ/Khả dụng đồng bộ Thùng + Hộp lẻ như cột Tồn */}
-        <span className="text-[10px] tabular-nums text-slate-500">{qtyLabel(Number(e.cartons_imported), e.material)}</span>
+        <QtyText qty={Number(e.cartons_imported)} mat={e.material} className="text-[10px] tabular-nums text-slate-500" />
       </TableCell>
       <TableCell className="px-2 py-1 text-right whitespace-nowrap">
-        <span className="text-[10px] tabular-nums text-slate-500">{exported > 0 ? qtyLabel(exported, e.material) : '—'}</span>
+        {exported > 0 ? <QtyText qty={exported} mat={e.material} className="text-[10px] tabular-nums text-slate-500" /> : <span className="text-[10px] tabular-nums text-slate-500">—</span>}
       </TableCell>
       <TableCell className="px-2 py-1 text-right whitespace-nowrap">
         {/* BASE UNIT: Tồn thể hiện Thùng + Hộp lẻ (base là lõi) */}
-        <span className="text-[10px] font-semibold tabular-nums">{qtyLabel(Number(remaining), e.material)}</span>
+        <QtyText qty={Number(remaining)} mat={e.material} className="text-[10px] font-semibold tabular-nums" />
       </TableCell>
       {/* Giữ chỗ / Khả dụng: bỏ màu riêng (purple/blue) → kế thừa màu dòng (entryRowText) cho đồng nhất */}
       <TableCell className="px-2 py-1 text-right whitespace-nowrap">
         {(e.cartons_reserved ?? 0) > 0
-          ? <span className="text-[10px] font-semibold tabular-nums">{qtyLabel(Number(e.cartons_reserved), e.material)}</span>
+          ? <QtyText qty={Number(e.cartons_reserved)} mat={e.material} className="text-[10px] font-semibold tabular-nums" />
           : <span className="text-[10px] text-slate-300">—</span>}
       </TableCell>
       <TableCell className="px-2 py-1 text-right whitespace-nowrap">
-        <span className="text-[10px] font-semibold tabular-nums">
-          {qtyLabel(Math.max(0, Number(remaining) - Number(e.cartons_reserved ?? 0)), e.material)}
-        </span>
+        <QtyText qty={Math.max(0, Number(remaining) - Number(e.cartons_reserved ?? 0))} mat={e.material} className="text-[10px] font-semibold tabular-nums" />
       </TableCell>
       <TableCell className="px-2 py-1 whitespace-nowrap">
         <span className="text-[10px] tabular-nums text-slate-600">{prodDateStr}</span>
@@ -1591,14 +1590,14 @@ function SummaryRow({ g, dense, onClick }: { g: InventorySummaryGroup; dense: bo
           : <span className="text-[10px] text-slate-300">—</span>}
       </TableCell>
       <TableCell className="px-2 py-1 text-right whitespace-nowrap">
-        <span className="text-[10px] tabular-nums text-slate-500">{qtyLabel(g.cartons_imported, g)}</span>
+        <QtyText qty={g.cartons_imported} mat={g} className="text-[10px] tabular-nums text-slate-500" />
       </TableCell>
       <TableCell className="px-2 py-1 text-right whitespace-nowrap">
-        <span className="text-[10px] tabular-nums text-slate-500">{g.cartons_exported > 0 ? qtyLabel(g.cartons_exported, g) : '—'}</span>
+        {g.cartons_exported > 0 ? <QtyText qty={g.cartons_exported} mat={g} className="text-[10px] tabular-nums text-slate-500" /> : <span className="text-[10px] tabular-nums text-slate-500">—</span>}
       </TableCell>
       <TableCell className="px-2 py-1 text-right whitespace-nowrap">
         {/* BASE UNIT: Tồn tổng hợp thể hiện Thùng + Hộp lẻ */}
-        <span className="text-[10px] font-semibold tabular-nums">{qtyLabel(g.cartons_remaining, g)}</span>
+        <QtyText qty={g.cartons_remaining} mat={g} className="text-[10px] font-semibold tabular-nums" />
       </TableCell>
       <TableCell className="px-2 py-1 text-right whitespace-nowrap">
         <span className="text-[10px] font-semibold tabular-nums">{g.pallet_count}</span>

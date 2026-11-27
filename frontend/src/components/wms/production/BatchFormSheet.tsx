@@ -243,6 +243,10 @@ export function BatchFormSheet({ open, onClose, batch, template, onSaved }: {
         {filled && <p className="text-[11px] text-slate-500 -mt-1.5">Mẻ đã nạp bồn — chu kỳ, số mẻ, bồn không đổi được nữa. Đưa sang bồn khác: trang Bồn → Chuyển.</p>}
         {tankUnitBad && <p className="text-[11px] text-red-600 -mt-1.5" data-testid="tank-unit-bad">Bồn {selTank?.label} tính {tanks.find(t => t.id === tank)?.unit} — mã bán thành phẩm tính {matUnit}: chọn bồn cùng đơn vị (hoặc sửa đơn vị của bồn ở trang Bồn khi bồn trống).</p>}
         {!!matUnit && !!wh && tankOpts.length > 0 && tankOpts.every(t => t.wrongUnit) && <p className="text-[11px] text-amber-700 -mt-1.5">Kho này chưa có bồn tính {matUnit} — khai bồn ở trang Bồn.</p>}
+        {/* bồn khác đơn vị: ô xổ chỉ ghi ngắn (ô hẹp) — câu đủ ở đây, thấy ngay không cần mở ô (27/11, C143) */}
+        {!!matUnit && !tankUnitBad && tankOpts.some(t => t.wrongUnit) && !tankOpts.every(t => t.wrongUnit) && (
+          <p className="text-[11px] text-slate-500 -mt-1.5" data-testid="tank-unit-note">Bồn {tankOpts.filter(t => t.wrongUnit).map(t => t.label).join(', ')} tính khác đơn vị ({[...new Set(tanks.filter(t => tankOpts.some(o => o.wrongUnit && o.value === t.id)).map(t => t.unit))].join(' / ')}) — không dùng được cho mã tính {matUnit}.</p>
+        )}
         <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 flex items-center justify-between gap-2">
           <span className="text-[11px] text-slate-500">Mã lô</span>
           <span className={`font-mono text-sm font-semibold tracking-wide ${codePreview ? 'text-slate-900' : 'text-slate-300'}`} data-testid="batch-code-preview">{codePreview ?? '—'}</span>

@@ -86,7 +86,7 @@ export const MES_GUIDE: Guide = {
           who: ['Quản lý xưởng'],
           text: [
             'Vào **Bồn** → **Khai bồn**: chọn kho chế biến, nhập **Mã bồn** (vd BD70), tên, **Sức chứa**, **Đơn vị** (Lít hoặc Kg — phải trùng đơn vị gốc của mã BTP sẽ nạp vào; app chọn sẵn đơn vị của các bồn đang có) → **Lưu**.',
-            'Bồn khác đơn vị với mã BTP vẫn hiện ở ô **Bồn** khi mở mẻ nhưng bị khoá, ghi rõ "bồn tính L — mã BTP tính KG". Khai nhầm đơn vị thì sửa bồn (khi bồn trống).',
+            'Bồn khác đơn vị với mã BTP vẫn hiện ở ô **Bồn** khi mở mẻ nhưng bị khoá ("bồn L ≠ mã KG"); dòng dưới ô Bồn ghi rõ bồn nào không dùng được. Khai nhầm đơn vị thì sửa bồn (khi bồn trống).',
             'Trang Bồn hiện **sơ đồ 2D**: lăn chuột / chụm hai ngón để phóng to thu nhỏ, kéo để di chuyển, nút ⤢ để xem vừa màn. Nút ✥ (Sắp xếp) cho kéo thả bồn đúng vị trí thực tế trong xưởng.',
             'Màu thân bồn: xanh dương = chờ QA bồn · xanh lá = QA đạt · đỏ = QA loại / quá hạn lưu · gạch chéo = mẻ đã đặt bồn mà chưa nạp.',
           ],

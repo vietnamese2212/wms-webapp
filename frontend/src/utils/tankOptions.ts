@@ -17,7 +17,7 @@ export function tankOptions(tanks: TankOptInput[], wh: string, matUnit: string, 
     const wrongUnit = !!matUnit && t.unit !== matUnit
     return {
       value: t.id, label: t.code, free, wrongUnit, disabled: wrongUnit && t.id !== selectedTankId,
-      sub: wrongUnit ? `bồn tính ${t.unit} — mã BTP tính ${matUnit}`
+      sub: wrongUnit ? `bồn ${t.unit} ≠ mã ${matUnit}`   // ngắn: ô xổ hẹp cắt chữ dài — câu đầy đủ ở dòng dưới ô Bồn
         : `còn chỗ ${free.toLocaleString('vi-VN', { maximumFractionDigits: 3 })} ${t.unit}${holds ? ` · ${Number(t.content) > 0 ? 'đang chứa' : 'đã đặt cho'} ${holds}` : ' · trống'}`,
     }
   })

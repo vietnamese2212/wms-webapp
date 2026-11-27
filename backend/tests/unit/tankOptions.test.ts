@@ -18,7 +18,7 @@ describe('tankOptions — ô Bồn của form tạo mẻ', () => {
     expect(o.map(x => x.value)).toEqual(['bd62', 'bd63'])
     const l = o.find(x => x.value === 'bd63')!
     expect(l).toMatchObject({ wrongUnit: true, disabled: true })
-    expect(l.sub).toMatch(/bồn tính L — mã BTP tính KG/)
+    expect(l.sub).toMatch(/bồn L ≠ mã KG/)
     expect(o.find(x => x.value === 'bd62')).toMatchObject({ free: 4000, disabled: false })
   })
   it('bồn khác đơn vị ĐANG CHỌN sẵn (vd đổi mã BTP sau khi chọn bồn): vẫn chọn được, cờ wrongUnit để form báo đỏ', () => {

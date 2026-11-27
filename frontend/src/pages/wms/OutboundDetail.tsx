@@ -1289,14 +1289,14 @@ function ItemsTable({ doRecords, gdoId, canScan, hasScanPerm, expandedItemIds, t
                                 <span className={`ml-1 font-bold tabular-nums ${pctDateCls(s.pct_date, pctBands)}`}>{s.pct_date}%</span>
                               )}
                               {/* qtyLabel, không "76,438th": bảng Tối ưu tuyến in "76 thùng + 21 hộp" cho cùng pallet — hai màn phải nói một số (C2, 19/09) */}
-                              <span className="ml-1 text-slate-400 tabular-nums">{qtyLabel(s.available, item.material)}</span>
+                              <span className="ml-1 text-slate-400 tabular-nums">{qtyLabel(s.available, qtyMainUnits(item.material))}</span>
                             </div>
                           ))}
                           {/* 08/10 (đóng vai thủ kho): 2 vị trí đầu 220 thùng đứng cạnh nhu cầu 461 thùng bị đọc thành "thiếu hàng" —
                               nói rõ phần còn lại nằm ở vị trí khác (kính lúp cột Kho liệt kê đủ) */}
                           {(() => {
                             const rest = Math.max(0, Number(item.cartons_ordered) - Number(item.cartons_scanned ?? 0)) - sugs.reduce((t, s) => t + Number(s.available ?? 0), 0)
-                            return rest > 0 ? <div className="text-[9px] text-slate-500">+ vị trí khác cho {qtyLabel(rest, item.material)} — xem kính lúp cột Kho</div> : null
+                            return rest > 0 ? <div className="text-[9px] text-slate-500">+ vị trí khác cho {qtyLabel(rest, qtyMainUnits(item.material))} — xem kính lúp cột Kho</div> : null
                           })()}
                         </div>
                       )

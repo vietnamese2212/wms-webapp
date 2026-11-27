@@ -235,7 +235,7 @@ export function ConsumeSheet({ open, onClose, batch, focusId }: {
   return (
     <FormSheet open={open} onClose={onClose} widthClass="sm:max-w-xl"
       title={focus ? `Cấp ${focus.material_code} cho mẻ ${batch.batch_code}` : `Cấp nguyên liệu cho mẻ ${batch.batch_code}`}
-      description={`Chỉ cấp hàng đang ở kho chế biến ${batch.warehouse?.name ?? ''}, không bị QA giữ; hàng hết hạn cần QA duyệt. Hàng có tem QR phải quét tem.`}
+      description={`Chỉ cấp hàng đang ở kho chế biến ${batch.warehouse?.name ?? ''}, không bị QA giữ; hàng hết hạn cần QA duyệt. Hàng có tem QR phải quét tem.${batch.no_norm ? ' Mẻ không định mức: chỉ mã trong danh sách của mẻ; nhập lượng theo phiếu chế biến.' : ''}`}
       footer={<>
         <Button variant="outline" size="sm" className="h-8" onClick={onClose}>Xong</Button>
         <Button size="sm" className="h-8" disabled={!canSave} onClick={() => void submit()}>{saving ? 'Đang ghi…' : 'Xác nhận cấp'}</Button>
@@ -247,9 +247,16 @@ export function ConsumeSheet({ open, onClose, batch, focusId }: {
             <div className="flex items-center gap-1.5 min-w-0">
               <span className="font-mono font-semibold shrink-0">{focus.material_code}</span>
               <span className="truncate">{focus.material_name ?? ''}</span>
-              {focus.required == null && <span className="shrink-0"><StatusBadge tone="slate">Ngoài phiếu</StatusBadge></span>}
+              {focus.required == null && !batch.no_norm && <span className="shrink-0"><StatusBadge tone="slate">Ngoài phiếu</StatusBadge></span>}
               <span className="ml-auto shrink-0 font-mono text-[10px] text-slate-400">{matUnitCode(focus)}</span>
             </div>
+            {batch.no_norm ? (
+              // mẻ không định mức (27/11): không có Cần / Thiếu — lượng cấp người cấp tự nhập theo phiếu chế biến giấy
+              <div className="grid grid-cols-2 gap-2 text-center">
+                <div><p className="text-[10px] text-slate-500">Đã cấp</p><p className="text-sm font-semibold tabular-nums">{Number(focus.consumed) > 0 ? qtyNum(Number(focus.consumed), focus) : '—'}</p></div>
+                <div><p className="text-[10px] text-slate-500">Lần cấp</p><p className="text-sm font-semibold tabular-nums">{Number(focus.lines) || '—'}</p></div>
+              </div>
+            ) : (
             <div className="grid grid-cols-3 gap-2 text-center">
               <div><p className="text-[10px] text-slate-500">Cần</p><p className="text-sm font-semibold tabular-nums">{focus.required != null ? qtyNum(Number(focus.required), focus) : '—'}</p></div>
               <div><p className="text-[10px] text-slate-500">Đã cấp</p><p className="text-sm font-semibold tabular-nums">{Number(focus.consumed) > 0 ? qtyNum(Number(focus.consumed), focus) : '—'}</p></div>
@@ -259,6 +266,7 @@ export function ConsumeSheet({ open, onClose, batch, focusId }: {
                 </p>
               </div>
             </div>
+            )}
           </div>
         )}
         <div className="flex rounded-lg border overflow-hidden">

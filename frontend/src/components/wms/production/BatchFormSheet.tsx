@@ -1,6 +1,9 @@
 // Form MỞ / SỬA MẺ chế biến. 17/11 (user chốt): CHU KỲ · SỐ MẺ (4 số) · BỒN bắt buộc ngay lúc tạo; mã lô KHÔNG gõ tay — app ghép
 // <chữ nhà máy><chu kỳ><số mẻ><mã bồn> (vd B300001BD62). Đổi bồn trước khi nạp ⇒ mã lô đổi theo, tem đã in phải in lại.
 // Mẻ chỉ mở ở KHO CHẾ BIẾN (kho phụ nội bộ). Mã bán thành phẩm phải tính theo L hoặc KG (vào bồn).
+// 27/11 — kho chạy KHÔNG ĐỊNH MỨC (Cài đặt MES): QA "Lập mẻ" theo phiếu chế biến giấy — lượng mẻ bắt buộc, danh sách mã của công thức
+// hiện sẵn để QA đối chiếu với phiếu (bỏ / thêm cho khớp), không số lượng, không hai bước duyệt. Ai thấy kho nào: kho không định mức =
+// quyền QA duyệt phiếu, kho có định mức = quyền Mở mẻ (server chốt cùng luật).
 import { useEffect, useMemo, useState } from 'react'
 import type { AxiosError } from 'axios'
 import { FormSheet } from '@/components/shared/FormSheet'
@@ -11,8 +14,11 @@ import { Label } from '@/components/ui/label'
 import { useDebouncedValue } from '@/hooks/useDebouncedValue'
 import { useGlobalScopeStore } from '@/stores/globalScopeStore'
 import { useMaterialsByIds, useMachines } from '@/api/hooks'
+import { useAuthStore } from '@/stores/authStore'
+import { can, type ModulePermissions } from '@/config/permissions'
+import { MatLinesEditor, toMatLine, type MatLine } from './MatLinesEditor'
 import { defaultExtraForms } from '@/config/processForms'
-import { useProductionTanks, useProductionWarehouses, useNextBatchCode, useCreateBatch, useUpdateBatch, useProcessForms, useShiftNames, defaultKitchen, useSemiFinishedSearch, useRecipes, SEMI_FINISHED_PLACEHOLDER, type BatchDetail } from '@/api/productionHooks'
+import { useProductionTanks, useProductionWarehouses, useNextBatchCode, useCreateBatch, useUpdateBatch, useProcessForms, useShiftNames, defaultKitchen, useSemiFinishedSearch, useRecipes, useRecipe, SEMI_FINISHED_PLACEHOLDER, type BatchDetail } from '@/api/productionHooks'
 import { NoSemiFinishedHint } from './NoSemiFinishedHint'
 import { unitCode } from '@/utils/unitCode'
 import { parseVnNumber, vnNumberInput } from '@/utils/vnNumber'
@@ -29,7 +35,11 @@ export function BatchFormSheet({ open, onClose, batch, template, onSaved }: {
   onSaved?: (id: string) => void
 }) {
   const editing = !!batch
-  const { data: { kitchens } } = useProductionWarehouses()
+  const perms = useAuthStore(s => s.user)?.module_permissions as ModulePermissions | null ?? null
+  const { data: { kitchens: allKitchens } } = useProductionWarehouses()
+  // lập mẻ MỚI: kho không định mức chỉ cho QA (approve_qa), kho có định mức cho người có quyền Mở mẻ — cùng luật server
+  const kitchens = useMemo(() => (editing ? allKitchens
+    : allKitchens.filter(k => (k.mes_no_norm ? can(perms, 'production', 'approve_qa') : can(perms, 'production', 'open_batch')))), [allKitchens, editing, perms])
   const [wh, setWh] = useState('')
   const [mat, setMat] = useState('')
   const [matTerm, setMatTerm] = useState('')
@@ -48,6 +58,9 @@ export function BatchFormSheet({ open, onClose, batch, template, onSaved }: {
   const { data: processForms = [] } = useProcessForms()
   const [extras, setExtras] = useState<string[]>([])
   const [extrasTouched, setExtrasTouched] = useState(false)
+  // 27/11 KHÔNG ĐỊNH MỨC: danh sách mã QA đối chiếu với phiếu chế biến (chép từ công thức, sửa được) — chỉ khi lập mẻ mới
+  const [codes, setCodes] = useState<MatLine[]>([])
+  const [codesFor, setCodesFor] = useState('')
   const [err, setErr] = useState('')
   const create = useCreateBatch()
   const shiftNames = useShiftNames(shift || null)
@@ -55,7 +68,7 @@ export function BatchFormSheet({ open, onClose, batch, template, onSaved }: {
 
   useEffect(() => {
     if (!open) return
-    setErr(''); setNoTouched(editing); setExtrasTouched(false)
+    setErr(''); setNoTouched(editing); setExtrasTouched(false); setCodes([]); setCodesFor('')
     setExtras(batch?.extra_forms ?? [])
     if (batch) {
       setWh(batch.warehouse_id); setMat(batch.material_id); setDate(batch.prod_date); setMachine(batch.machine_code ?? '')
@@ -88,6 +101,20 @@ export function BatchFormSheet({ open, onClose, batch, template, onSaved }: {
     if (!recipes.some(r => r.id === recipeId)) setRecipeId(recipes.find(r => r.is_default)?.id ?? recipes[0]?.id ?? '')
   }, [mat, recipes, recipesLoading, editing]) // eslint-disable-line react-hooks/exhaustive-deps
   const selRecipe = recipes.find(r => r.id === recipeId)
+  const noNorm = editing ? !!batch?.no_norm : !!allKitchens.find(k => k.id === wh)?.mes_no_norm
+  // kho CÓ định mức + công thức chỉ danh sách mã ⇒ không lập được (user chốt 27/11: chặn — điền số lượng ở Định mức trước)
+  const recipeNoQty = !editing && !noNorm && !!selRecipe && selRecipe.base_qty == null
+  // kho không định mức: chép danh sách mã của công thức đang chọn vào ô đối chiếu (đổi công thức ⇒ chép lại)
+  const rd = useRecipe(open && !editing && noNorm && recipeId ? recipeId : undefined)
+  useEffect(() => {
+    if (!noNorm || editing) return
+    const key = `${mat}|${recipeId}`
+    if (codesFor === key) return
+    if (!recipeId) { if (!recipesLoading && mat) { setCodes([]); setCodesFor(key) } return }
+    if (!rd.data || rd.data.id !== recipeId) return
+    setCodes(rd.data.lines.map(l => toMatLine({ material_id: l.material_id, material_code: l.material?.material_code ?? '', material_name: l.material?.short_name ?? null, base_unit: l.material?.base_unit ?? null }, null)))
+    setCodesFor(key)
+  }, [noNorm, editing, mat, recipeId, rd.data, recipesLoading]) // eslint-disable-line react-hooks/exhaustive-deps
   const logged = useMemo(() => (batch?.process_logs ?? []).map(l => l.form), [batch?.process_logs])
   const optForms = processForms.filter(f => f.optional && (f.is_active || extras.includes(f.code)))
   // đổi mã BTP (chưa tự tick tay) ⇒ phiếu bổ sung theo mã mới; giữ phiếu đã ghi
@@ -126,7 +153,8 @@ export function BatchFormSheet({ open, onClose, batch, template, onSaved }: {
   const plannedNum = planned.trim() ? parseVnNumber(planned) : null
   const plannedBad = !planned.trim() || plannedNum == null || plannedNum <= 0
   const overRoom = !!selTank && plannedNum != null && plannedNum > selTank.free + 0.0005 && !filled
-  const canSave = !!wh && !!mat && !!date && !!shift && !plannedBad && !!cycleNorm && cycleNorm.length <= 6 && !!noNum && noNum >= 1 && !!tank && !saving
+  const codesOk = editing || !noNorm || codes.length > 0
+  const canSave = !!wh && !!mat && !!date && !!shift && !plannedBad && !!cycleNorm && cycleNorm.length <= 6 && !!noNum && noNum >= 1 && !!tank && !saving && codesOk && !recipeNoQty
 
   async function save() {
     setErr('')
@@ -144,25 +172,26 @@ export function BatchFormSheet({ open, onClose, batch, template, onSaved }: {
       } else {
         const r = await create.mutateAsync({ warehouse_id: wh, material_id: mat, prod_date: date, cycle: cycleNorm, batch_no: noNum ?? undefined, tank_id: tank,
           machine_code: machine || undefined, shift, planned_qty: plannedNum, note: note || undefined,
-          recipe_id: recipeId || undefined, extra_forms: extras })
+          recipe_id: recipeId || undefined, extra_forms: extras, ...(noNorm ? { items: codes.map(c => ({ material_id: c.material_id })) } : {}) })
         onSaved?.(r.id); onClose()
       }
     } catch (e) { setErr(apiMsg(e)) }
   }
 
   return (
-    <FormSheet open={open} onClose={onClose} title={editing ? `Sửa mẻ ${batch?.batch_code}` : 'Mở mẻ chế biến'}
-      description="Chu kỳ, số mẻ, bồn và ca bắt buộc. Mã lô tự ghép: chữ nhà máy + chu kỳ + số mẻ + mã bồn."
+    <FormSheet open={open} onClose={onClose} title={editing ? `Sửa mẻ ${batch?.batch_code}` : noNorm ? 'Lập mẻ chế biến (không định mức)' : 'Mở mẻ chế biến'}
+      description={noNorm && !editing ? 'Theo phiếu chế biến giấy của trưởng ca: lượng mẻ + danh sách mã nguyên liệu (không số lượng). QA lập mẻ là đã duyệt — không qua bước duyệt.'
+        : 'Chu kỳ, số mẻ, bồn và ca bắt buộc. Mã lô tự ghép: chữ nhà máy + chu kỳ + số mẻ + mã bồn.'}
       footer={<>
         <Button variant="outline" size="sm" className="h-8" onClick={onClose}>Huỷ</Button>
-        <Button size="sm" className="h-8" disabled={!canSave} onClick={() => void save()}>{saving ? 'Đang lưu…' : editing ? 'Lưu' : 'Mở mẻ'}</Button>
+        <Button size="sm" className="h-8" disabled={!canSave} onClick={() => void save()}>{saving ? 'Đang lưu…' : editing ? 'Lưu' : noNorm ? 'Lập mẻ' : 'Mở mẻ'}</Button>
       </>}>
       <div className="space-y-3">
         <div>
           <Label className="text-xs">Kho chế biến <span className="text-red-500">*</span></Label>
           <SingleSelect value={wh} onChange={v => { setWh(v); setMachine(''); setTank(''); setNoTouched(false) }} disabled={editing}
             placeholder={kitchens.length ? 'Chọn kho chế biến' : 'Chưa có kho chế biến trong phạm vi'}
-            options={kitchens.map(k => ({ value: k.id, label: k.name, sub: k.parent_name ? `thuộc ${k.parent_name}` : k.code }))} />
+            options={kitchens.map(k => ({ value: k.id, label: k.name, sub: `${k.parent_name ? `thuộc ${k.parent_name}` : k.code}${k.mes_no_norm ? ' · không định mức' : ''}` }))} />
           {!kitchens.length && <p className="text-[11px] text-amber-700 mt-1">Khai kho chế biến là kho phụ nội bộ: Cài đặt WMS → Kho → "Trực thuộc kho".</p>}
         </div>
         <div>
@@ -177,11 +206,19 @@ export function BatchFormSheet({ open, onClose, batch, template, onSaved }: {
             <Label className="text-xs">Công thức</Label>
             {recipes.length ? (
               <SingleSelect value={recipeId} onChange={setRecipeId} searchable={recipes.length > 6} triggerClassName="h-8 text-xs mt-0.5"
-                options={recipes.map(r => ({ value: r.id, label: r.name, sub: `cỡ chuẩn ${Number(r.base_qty).toLocaleString('vi-VN', { maximumFractionDigits: 3 })} ${unitCode(r.material?.base_unit)}${r.is_default ? ' · mặc định' : ''}` }))} />
+                options={recipes.map(r => ({ value: r.id, label: r.name, sub: `${r.base_qty == null ? 'chỉ danh sách mã' : `cỡ chuẩn ${Number(r.base_qty).toLocaleString('vi-VN', { maximumFractionDigits: 3 })} ${unitCode(r.material?.base_unit)}`}${r.is_default ? ' · mặc định' : ''}` }))} />
             ) : (
-              <p className="text-[11px] text-amber-700 mt-0.5">{recipesLoading ? 'Đang tải công thức…' : 'Mã này chưa có công thức đang dùng — phiếu của mẻ sẽ trống (khai ở Sản xuất (MES) → Định mức, hoặc thêm tay trên mẻ).'}</p>
+              <p className="text-[11px] text-amber-700 mt-0.5">{recipesLoading ? 'Đang tải công thức…' : noNorm ? 'Mã này chưa có công thức đang dùng — thêm các mã của phiếu chế biến vào danh sách bên dưới.' : 'Mã này chưa có công thức đang dùng — phiếu của mẻ sẽ trống (khai ở Sản xuất (MES) → Định mức, hoặc thêm tay trên mẻ).'}</p>
             )}
-            {selRecipe && <p className="text-[11px] text-slate-500 mt-0.5">{selRecipe.line_count ?? 0} nguyên liệu · nhân theo lượng kế hoạch / cỡ chuẩn{selRecipe.note ? ` · ${selRecipe.note}` : ''}</p>}
+            {selRecipe && !noNorm && !recipeNoQty && <p className="text-[11px] text-slate-500 mt-0.5">{selRecipe.line_count ?? 0} nguyên liệu · nhân theo lượng kế hoạch / cỡ chuẩn{selRecipe.note ? ` · ${selRecipe.note}` : ''}</p>}
+            {recipeNoQty && <p className="text-[11px] text-red-600 mt-0.5" data-testid="recipe-no-qty">Công thức "{selRecipe?.name}" chỉ có danh sách mã, chưa có số lượng — kho này chạy có định mức: điền số lượng ở Sản xuất (MES) → Định mức rồi mở mẻ.</p>}
+          </div>
+        )}
+        {!editing && noNorm && !!mat && (
+          <div data-testid="batch-codes">
+            <Label className="text-xs">Danh sách nguyên liệu theo phiếu chế biến <span className="text-red-500">*</span></Label>
+            <p className="text-[11px] text-slate-500">Đối chiếu từng mã với phiếu giấy, bỏ / thêm cho khớp. Không số lượng — lúc cấp, app chỉ chặn mã ngoài danh sách; đủ / thiếu so tay với phiếu.</p>
+            <div className="mt-1"><MatLinesEditor lines={codes} onChange={setCodes} excludeId={mat} codesOnly emptyText="Chưa có mã nào — thêm các mã có trên phiếu chế biến." /></div>
           </div>
         )}
         <div className="grid grid-cols-3 gap-2">
@@ -210,7 +247,7 @@ export function BatchFormSheet({ open, onClose, batch, template, onSaved }: {
         {codeChanges && <p className="text-[11px] text-amber-700 -mt-1.5">Mã lô sẽ đổi từ {batch?.batch_code}.{batch?.label_at ? ' Tem pallet đã in mất hiệu lực — in lại sau khi lưu.' : ''}</p>}
         <div className="grid grid-cols-2 gap-2">
           <div>
-            <Label className="text-xs">Lượng kế hoạch{selMat ? ` (${unitCode(selMat.base_unit)})` : ''} <span className="text-red-500">*</span></Label>
+            <Label className="text-xs">{noNorm ? 'Lượng mẻ (theo phiếu)' : 'Lượng kế hoạch'}{selMat ? ` (${unitCode(selMat.base_unit)})` : ''} <span className="text-red-500">*</span></Label>
             <Input value={planned} onChange={e => setPlanned(e.target.value)} inputMode="decimal" aria-label="Lượng kế hoạch" disabled={approved} title={approved ? 'QA đã duyệt phiếu — QA bỏ duyệt rồi mới sửa kế hoạch' : undefined} className={`h-9 sm:h-8 text-xs mt-0.5 ${(planned.trim() && plannedBad) || overRoom ? 'border-red-400' : ''}`} />
             {overRoom && <p className="text-[11px] text-red-600 mt-0.5">Bồn {selTank?.label} chỉ còn chỗ {selTank?.free.toLocaleString('vi-VN', { maximumFractionDigits: 3 })}</p>}
           </div>

@@ -1,5 +1,5 @@
 // FILE SINH TỰ ĐỘNG — `node scripts/gen-db-types.mjs` (từ information_schema STAGING). KHÔNG sửa tay.
-// Sinh lúc 2026-11-26T13:05:22.528Z · 130 bảng/view · 292 hàm · 0 enum
+// Sinh lúc 2026-11-27T03:04:41.403Z · 130 bảng/view · 293 hàm · 0 enum
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[]
 
 export type Database = {
@@ -2526,6 +2526,7 @@ export type Database = {
           mes_block_reverse_closed: boolean
           noqr_date_tracking: boolean
           inbound_over_plan: string | null
+          mes_no_norm: boolean
         }
         Insert: {
           id: string
@@ -2590,6 +2591,7 @@ export type Database = {
           mes_block_reverse_closed?: boolean
           noqr_date_tracking?: boolean
           inbound_over_plan?: string | null
+          mes_no_norm?: boolean
         }
         Update: {
           id?: string
@@ -2654,6 +2656,7 @@ export type Database = {
           mes_block_reverse_closed?: boolean
           noqr_date_tracking?: boolean
           inbound_over_plan?: string | null
+          mes_no_norm?: boolean
         }
         Relationships: []
       }
@@ -3388,7 +3391,7 @@ export type Database = {
           id: string
           batch_id: string
           material_id: string
-          qty_required: number
+          qty_required: number | null
           sort_order: number
           note: string | null
           created_at: string
@@ -3406,7 +3409,7 @@ export type Database = {
           id: string
           batch_id: string
           material_id: string
-          qty_required: number
+          qty_required?: number | null
           sort_order?: number
           note?: string | null
           created_at?: string
@@ -3424,7 +3427,7 @@ export type Database = {
           id?: string
           batch_id?: string
           material_id?: string
-          qty_required?: number
+          qty_required?: number | null
           sort_order?: number
           note?: string | null
           created_at?: string
@@ -5680,6 +5683,7 @@ export type Database = {
           cancelled_at: string | null
           cancelled_by: string | null
           cancelled_by_name: string | null
+          no_norm: boolean
         }
         Insert: {
           id: string
@@ -5724,6 +5728,7 @@ export type Database = {
           cancelled_at?: string | null
           cancelled_by?: string | null
           cancelled_by_name?: string | null
+          no_norm?: boolean
         }
         Update: {
           id?: string
@@ -5768,6 +5773,7 @@ export type Database = {
           cancelled_at?: string | null
           cancelled_by?: string | null
           cancelled_by_name?: string | null
+          no_norm?: boolean
         }
         Relationships: []
       }
@@ -5845,6 +5851,7 @@ export type Database = {
           exec_kg: number
           total_kg: number
           updated_at: string
+          no_norm: boolean
         }
         Insert: {
           batch_id: string
@@ -5874,6 +5881,7 @@ export type Database = {
           exec_kg?: number
           total_kg?: number
           updated_at: string
+          no_norm?: boolean
         }
         Update: {
           batch_id?: string
@@ -5903,6 +5911,7 @@ export type Database = {
           exec_kg?: number
           total_kg?: number
           updated_at?: string
+          no_norm?: boolean
         }
         Relationships: []
       }
@@ -5952,7 +5961,7 @@ export type Database = {
         Row: {
           id: string
           material_id: string
-          base_qty: number
+          base_qty: number | null
           note: string | null
           is_active: boolean
           created_at: string
@@ -5964,7 +5973,7 @@ export type Database = {
         Insert: {
           id: string
           material_id: string
-          base_qty: number
+          base_qty?: number | null
           note?: string | null
           is_active?: boolean
           created_at?: string
@@ -5976,7 +5985,7 @@ export type Database = {
         Update: {
           id?: string
           material_id?: string
-          base_qty?: number
+          base_qty?: number | null
           note?: string | null
           is_active?: boolean
           created_at?: string
@@ -5992,7 +6001,7 @@ export type Database = {
           id: string
           recipe_id: string
           material_id: string
-          qty: number
+          qty: number | null
           sort_order: number
           note: string | null
           created_at: string
@@ -6003,7 +6012,7 @@ export type Database = {
           id: string
           recipe_id: string
           material_id: string
-          qty: number
+          qty?: number | null
           sort_order?: number
           note?: string | null
           created_at?: string
@@ -6014,7 +6023,7 @@ export type Database = {
           id?: string
           recipe_id?: string
           material_id?: string
-          qty?: number
+          qty?: number | null
           sort_order?: number
           note?: string | null
           created_at?: string
@@ -7776,7 +7785,7 @@ export type Database = {
         Returns: Json
       }
       mes_batch_stage: {
-        Args: { p_status: string | null; p_qa: string | null; p_lead: string | null; p_qa_ok: string | null; p_filled: boolean | null; p_consumed: boolean | null; p_gate: boolean | null; p_log_pending: boolean | null }
+        Args: { p_status: string | null; p_qa: string | null; p_lead: string | null; p_qa_ok: string | null; p_filled: boolean | null; p_consumed: boolean | null; p_gate: boolean | null; p_log_pending: boolean | null; p_no_norm?: boolean | null }
         Returns: string
       }
       mes_batch_steps: {
@@ -7898,6 +7907,10 @@ export type Database = {
       mes_next_batch_no: {
         Args: { p_wh: string | null; p_cycle: string | null; p_tank: string | null }
         Returns: number
+      }
+      mes_no_norm_code_check: {
+        Args: { p_batch_id: string | null; p_material_id: string | null }
+        Returns: undefined
       }
       mes_open_batch_wh: {
         Args: { p_batch_id: string | null }

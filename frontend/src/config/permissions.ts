@@ -360,7 +360,7 @@ export const MODULES = {
     page: 'Sản xuất (Mẻ chế biến · Bồn)',
     actions: {
       view:        'Xem mẻ chế biến, bồn và truy xuất sản xuất',
-      open_batch:  'Mở / sửa / đóng / mở lại / huỷ MẺ chế biến',
+      open_batch:  'Mở / sửa / đóng / mở lại / huỷ MẺ chế biến (kho có định mức)',
       consume:     'Rút nguyên liệu vào mẻ (quét tem hoặc chọn lô)',
       reverse:     'Huỷ dòng rút nguyên liệu ghi nhầm (hoàn tồn)',
       qa_release:  'QA đạt / không đạt / chờ — bấm ở BỒN (áp cho mọi mẻ đang trong bồn) · đóng phiếu theo dõi (sau QA bồn)',
@@ -372,7 +372,7 @@ export const MODULES = {
       shift_report: 'Mở / chốt BÁO CÁO SỬ DỤNG NVL theo ca (nhập tồn cuối thực tế)',
       edit_requirement: 'Sửa ĐỊNH MỨC trên phiếu của mẻ (thêm / bỏ / sửa / đổi nguyên liệu, đổi công thức — bắt buộc lý do; giữ định mức gốc) — vd trưởng ca',
       approve_lead: 'TRƯỞNG CA duyệt / bỏ duyệt phiếu của mẻ (bước 1)',
-      approve_qa:   'QA duyệt / bỏ duyệt phiếu của mẻ (bước 2 — duyệt xong phiếu khoá, mới cấp nguyên liệu)',
+      approve_qa:   'QA duyệt / bỏ duyệt phiếu của mẻ (bước 2 — duyệt xong phiếu khoá, mới cấp nguyên liệu). Kho KHÔNG định mức: QA LẬP mẻ theo phiếu chế biến, sửa / huỷ mẻ và danh sách NVL của mẻ',
       print_label:  'In TEM PALLET của mẻ (QR 1/n … n/n) để dán lên pallet nguyên liệu đã cấp',
       pour:         'ĐỔ BỒN: khai chu kỳ · số mẻ · bồn rồi quét tem pallet của mẻ',
       approve_expired: 'QA DUYỆT / TỪ CHỐI cấp NGUYÊN LIỆU HẾT HẠN vào mẻ (từng tem / lô, từng mẻ, kèm căn cứ)',

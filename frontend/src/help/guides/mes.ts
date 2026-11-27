@@ -74,6 +74,7 @@ export const MES_GUIDE: Guide = {
           text: [
             'Vào **Cài đặt MES**, chọn kho chế biến ở thanh trên. Cả trang chỉ có **một nút Lưu** ở góc phải.',
             '- **Đóng gói rút bán thành phẩm khỏi bồn**: bồn còn lô chờ QA thì *Cảnh báo* (vẫn cho rút, báo người đóng trang) hoặc *Chặn* (không rút được tới khi QA thả). Bồn có lô QA loại thì luôn chặn.',
+            '- **Luồng làm việc của mẻ → Định mức**: *Có số lượng* (mặc định) — trưởng ca mở mẻ, phiếu có số lượng, hai bước duyệt, app tính đủ / thiếu / lệch. *Chỉ danh sách mã* — kho chạy **không định mức**: QA lập mẻ theo phiếu chế biến giấy (xem B2b). Đổi chế độ chỉ áp cho mẻ lập sau đó.',
             '- **Luồng làm việc của mẻ → Chặn theo từng bước**: bật thì chưa đủ hai duyệt hoặc chưa mở phiếu theo dõi thì chưa cấp được nguyên liệu; chưa nạp bồn được khi còn thiếu nguyên liệu, chưa quét đủ tem tại đúng bồn; phiếu chỉ đóng được sau QA bồn và khi đã ghi đủ ô bắt buộc.',
             '- **Hạn lưu bồn theo mã bán thành phẩm**: số giờ BTP được nằm trong bồn; quá hạn bồn tô đỏ.',
             'Tab **Mẫu phiếu theo dõi**: sửa danh sách ô của từng phiếu (Phối trộn, Dịch thạch…), ô nào bắt buộc ghi trước khi đóng phiếu, ngưỡng tô đỏ. Bấm **Xem thử** để thấy đúng phiếu người ghi sẽ thấy.',
@@ -98,6 +99,7 @@ export const MES_GUIDE: Guide = {
             '- **Cỡ mẻ chuẩn**: số lượng BTP của một mẻ chuẩn (vd 6.000 KG). Mẻ có kế hoạch khác thì app tự nhân theo tỷ lệ.',
             '- Bảng nguyên liệu: mã, **Số lượng** cho một mẻ cỡ chuẩn (theo đơn vị gốc của mã), cột **± %** = mức lệch cho phép (cấp ngoài mức này dòng tô đỏ, vẫn cho cấp; để trống = không kiểm).',
             '- Muốn làm công thức gần giống: mở công thức cũ → **Chép thành công thức mới** → sửa vài dòng → Lưu.',
+            '- Kho chạy **không định mức**: tắt **Có số lượng** — công thức chỉ là danh sách mã nguyên liệu (không cỡ mẻ, không số lượng). Kho có định mức không mở mẻ được bằng công thức chỉ mã.',
           ],
           images: [d('16-dinh-muc', 'Danh sách định mức'), d('17-cong-thuc', 'Form công thức: cỡ mẻ chuẩn, nguyên liệu, ± %')],
         },
@@ -142,6 +144,19 @@ export const MES_GUIDE: Guide = {
           ],
           images: [d('20-ds-me', 'Nút Mở mẻ'), d('21-form-mo-me', 'Form Mở mẻ — mã lô tự ghép')],
           note: 'Kế hoạch vượt chỗ trống của bồn, hoặc bồn đang chứa mã BTP khác, app báo đỏ ngay tại ô.',
+        },
+        {
+          title: 'B2b. Lập mẻ ở kho không định mức',
+          who: ['QA'],
+          text: [
+            'Kho đặt **Định mức: Chỉ danh sách mã** (Cài đặt MES) thì trưởng ca ghi phiếu chế biến trên giấy (có số lượng), **QA lập mẻ** trong app. Không có hai bước duyệt — QA lập là đã duyệt.',
+            '- Bấm **Lập mẻ**: chọn mã BTP + công thức, điền chu kỳ · số mẻ · bồn · ca và **Lượng mẻ** theo phiếu (vd 8.000 KG).',
+            '- Ô **Danh sách nguyên liệu theo phiếu chế biến** hiện sẵn các mã của công thức: đối chiếu từng mã với phiếu giấy, bỏ / thêm cho khớp. Không có số lượng.',
+            '- Lúc cấp: quét tem **mã không có trong danh sách** thì app chặn (sai mã). Phiếu giấy có mã đó thì QA vào **⋮ → Sửa danh sách NVL** thêm mã rồi quét lại. Lượng cấp người cấp tự nhập — app không điền sẵn, không báo đủ / thiếu: **đối chiếu số đã cấp với phiếu giấy**.',
+            '- Nạp BTP vào bồn bị chặn khi còn mã trong danh sách **chưa cấp lần nào** (mẻ không dùng mã đó thì bỏ khỏi danh sách). Mã đã cấp không bỏ khỏi danh sách được.',
+            '- Báo cáo NVL: mẻ không định mức chỉ có **thực cấp**; các cột định mức / lệch hiện "—" và không vào số "mẻ đạt".',
+          ],
+          note: 'Một tháng sau chuyển sang có định mức: điền số lượng cho các công thức ở Định mức (Cài đặt MES báo còn bao nhiêu công thức chỉ mã), rồi đổi công tắc. Mẻ đang chạy đi hết theo chế độ cũ.',
         },
         {
           title: 'B3. Trang của mẻ',
@@ -345,6 +360,10 @@ export const MES_GUIDE: Guide = {
         {
           title: 'Nút "Nạp BTP vào bồn" bị khoá',
           text: ['Mở **⋮** trên trang mẻ, nút khoá ghi rõ còn thiếu gì: duyệt, nguyên liệu dưới mức lệch, chưa in tem, chưa quét đủ tem tại đúng bồn.'],
+        },
+        {
+          title: '"Mã … không có trong danh sách NVL của mẻ"',
+          text: ['Mẻ không định mức chỉ nhận mã có trong danh sách. Kiểm lại tem (sai mã?). Phiếu chế biến có mã đó thì QA vào **⋮ → Sửa danh sách NVL** thêm mã rồi quét lại.'],
         },
         {
           title: 'Nút "Quét cấp NVL" bị khoá',

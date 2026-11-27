@@ -11,19 +11,21 @@ import type { MatUnits } from '@/utils/qtyUnits'
 import type { RawEvent, RawSummary, RawReq, RawFill } from '@/utils/consumptionRaw'
 import type { FormBlock } from '@/config/processForms'
 
-export interface ProdWarehouse { id: string; code: string; name: string; parent_warehouse_id: string | null; parent_name: string | null }
+export interface ProdWarehouse { id: string; code: string; name: string; parent_warehouse_id: string | null; parent_name: string | null
+  /** 27/11: kho chạy KHÔNG định mức (Cài đặt MES) — QA lập mẻ, công thức chỉ danh sách mã */
+  mes_no_norm?: boolean }
 /** KHO CHẾ BIẾN người dùng thao tác được = kho phụ nội bộ đang hoạt động mà kho đó HOẶC kho cha của nó nằm trong phạm vi
  *  (cùng luật `inScope` của productionController). `factories` = các kho cha có ít nhất một kho chế biến — cho bộ lọc. */
 export function useProductionWarehouses() {
   const user = useAuthStore(s => s.user)
   const q = useWarehouses(true)
   const data = useMemo(() => {
-    const all = (q.data ?? []) as { id: string; code: string; name: string; parent_warehouse_id: string | null }[]
+    const all = (q.data ?? []) as { id: string; code: string; name: string; parent_warehouse_id: string | null; mes_no_norm?: boolean | null }[]
     const national = user?.warehouse_scope === 'NATIONAL'
     const ids = new Set(user?.warehouse_ids?.length ? user.warehouse_ids : user?.warehouse_id ? [user.warehouse_id] : [])
     const nameOf = new Map(all.map(w => [w.id, w.name]))
     const kids = all.filter(w => !!w.parent_warehouse_id && (national || ids.size === 0 || ids.has(w.id) || ids.has(w.parent_warehouse_id!)))
-      .map(w => ({ id: w.id, code: w.code, name: w.name, parent_warehouse_id: w.parent_warehouse_id, parent_name: nameOf.get(w.parent_warehouse_id!) ?? null }))
+      .map(w => ({ id: w.id, code: w.code, name: w.name, parent_warehouse_id: w.parent_warehouse_id, parent_name: nameOf.get(w.parent_warehouse_id!) ?? null, mes_no_norm: w.mes_no_norm === true }))
       .sort((a, b) => a.name.localeCompare(b.name, 'vi'))
     const parentIds = new Set(kids.map(k => k.parent_warehouse_id))
     // chỉ kho nhà máy người dùng được giao (BE inScope kho cha = kho cha phải nằm trong phạm vi) — không thì lọc theo nó ra 403
@@ -70,6 +72,8 @@ export interface BatchRow {
   step?: string | null
   note: string | null; opened_by_name: string | null; created_at: string
   rm_lines: number; rm_materials: number; filled: number; in_tank: number
+  /** 27/11: mẻ lập lúc kho chạy KHÔNG định mức (nhớ theo mẻ) */
+  no_norm?: boolean
 }
 /** ô tổng của danh sách mẻ: số mẻ theo từng tình trạng (trong bộ lọc ngày / kho / tìm) + total theo cả lọc tình trạng */
 export interface BatchSummary { total: number; new: number; wait_lead: number; wait_qa: number; working: number; filled: number; closing?: number; released: number; rejected: number; cancelled: number }
@@ -102,6 +106,8 @@ export interface BatchLot { id: string; tank_id: string; qty_in: number; qty_rem
 export interface BoardRow extends MatUnits {
   material_id: string; material_code: string; material_name: string | null
   required: number | null; note: string | null; sort_order: number
+  /** 27/11: mã có trong danh sách NVL của mẻ (dòng yêu cầu chưa bỏ) — mẻ không định mức: required luôn null, dùng cờ này */
+  listed?: boolean
   /** ĐỊNH MỨC GỐC = công thức × kế hoạch (17/11) — null = dòng tự thêm trên mẻ · tol_pct = mức lệch cho phép (%) */
   standard: number | null; tol_pct: number | null
   /** dòng của công thức đã bị bỏ trên mẻ (required = null) · dấu sửa gần nhất · đổi mã */
@@ -122,7 +128,10 @@ export interface ProcessLog {
 export interface BatchGate {
   flow_gate: boolean; lead_ok: boolean; qa_ok: boolean; can_consume: boolean
   label_count: number | null; label_valid: boolean; label_ver: number; scanned: number
-  short: { material_code: string; name: string | null; required: number; issued: number }[]
+  /** mẻ không định mức (27/11): required = null, "thiếu" = mã trong danh sách chưa cấp lần nào */
+  short: { material_code: string; name: string | null; required: number | null; issued: number }[]
+  /** 27/11: mẻ không định mức — không có hai bước duyệt */
+  no_norm?: boolean
   missing: { form: string; title: string; key: string; label: string }[]; need_log: boolean
   fill_blockers: string[]
   /** 26/11: phiếu CHÍNH chưa mở (chưa bấm Bắt đầu) ⇒ chưa cấp NVL được (kho chặn theo bước); tên phiếu chưa mở; còn phiếu chưa đóng */
@@ -156,7 +165,9 @@ export interface BatchDetail {
   lead_ok_at: string | null; lead_ok_by_name: string | null; qa_ok_at: string | null; qa_ok_by_name: string | null
   label_count: number | null; label_ver: number; label_at: string | null; label_by_name: string | null
   gate: BatchGate | null; pour_scans: PourScan[]; labels: BatchLabel[]
-  recipe_id: string | null; recipe: { id: string; name: string; base_qty: number; is_active: boolean } | null
+  recipe_id: string | null; recipe: { id: string; name: string; base_qty: number | null; is_active: boolean } | null
+  /** 27/11: mẻ lập lúc kho chạy KHÔNG định mức — QA lập, danh sách mã không số lượng, cấp chỉ chặn mã lạ */
+  no_norm?: boolean
   id: string; warehouse_id: string; batch_code: string; material_id: string; machine_code: string | null; shift: string | null
   prod_date: string; planned_qty: number | null; status: BatchStatus; qa_status: BatchQa; qa_by_name: string | null; qa_at: string | null; qa_note: string | null
   note: string | null; opened_by_name: string | null; created_at: string; closed_at: string | null; closed_by_name: string | null
@@ -337,6 +348,8 @@ export interface ProductionSettings {
   production_qa_gate: string
   /** luồng chặt (17/11): chưa duyệt đủ thì chưa cấp NVL · chưa đủ điều kiện thì chưa nạp bồn */
   mes_flow_gate: boolean
+  /** 27/11: kho chạy KHÔNG định mức (công thức chỉ danh sách mã; QA lập mẻ; cấp chỉ chặn mã lạ) */
+  mes_no_norm?: boolean
   /** 25/11: chặn huỷ cấp NVL của ca đã chốt */
   mes_block_reverse_closed: boolean
   /** 22/11 — mục tiêu của dashboard Báo cáo NVL (null = mặc định 0,5 % / 95 %) */
@@ -354,7 +367,7 @@ export function useProductionSettings(warehouseId: string | undefined) {
 export function useSaveProductionSettings() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: async (b: { warehouse_id: string; production_qa_gate?: string; mes_flow_gate?: boolean; mes_block_reverse_closed?: boolean; mes_dev_target_pct?: number | null; mes_pass_target_pct?: number | null; types?: { type_code: string; production_qa_gate: string | null }[]; hold_hours?: { material_id: string; tank_hold_hours: number | null }[] }) =>
+    mutationFn: async (b: { warehouse_id: string; production_qa_gate?: string; mes_flow_gate?: boolean; mes_no_norm?: boolean; mes_block_reverse_closed?: boolean; mes_dev_target_pct?: number | null; mes_pass_target_pct?: number | null; types?: { type_code: string; production_qa_gate: string | null }[]; hold_hours?: { material_id: string; tank_hold_hours: number | null }[] }) =>
       (await apiClient.put('/wms/production/settings', b)).data.data as ProductionSettings,
     onSuccess: (data, v) => { qc.setQueryData(['prod-settings', v.warehouse_id], data); void qc.invalidateQueries({ queryKey: ['prod-dash'] }) },
     onSettled: () => {
@@ -363,7 +376,9 @@ export function useSaveProductionSettings() {
   })
 }
 
-export interface BatchInput { warehouse_id: string; material_id: string; prod_date: string; cycle: string; batch_no?: number; tank_id: string; machine_code?: string; shift?: string; planned_qty?: number | null; note?: string; recipe_id?: string; extra_forms?: string[] }
+export interface BatchInput { warehouse_id: string; material_id: string; prod_date: string; cycle: string; batch_no?: number; tank_id: string; machine_code?: string; shift?: string; planned_qty?: number | null; note?: string; recipe_id?: string; extra_forms?: string[]
+  /** 27/11 kho không định mức: danh sách mã QA đối chiếu với phiếu chế biến (thay danh sách của công thức) */
+  items?: { material_id: string }[] }
 export const useCreateBatch = () => useProdMutation((b: BatchInput) => post<BatchDetail>('/wms/production/batches', b))
 export const useUpdateBatch = () => useProdMutation(({ id, ...b }: { id: string } & Partial<Omit<BatchInput, 'warehouse_id' | 'machine_code' | 'shift' | 'note' | 'recipe_id'>> & { machine_code?: string | null; shift?: string | null; note?: string | null }) => patch<BatchDetail & { relabel?: boolean }>(`/wms/production/batches/${id}`, b))
 /** đặt phiếu bổ sung của mẻ (trưởng ca · QA) — phiếu đã ghi không bỏ được */
@@ -415,7 +430,7 @@ export async function fetchPourStatus(batchId: string): Promise<PourView> {
 export const usePourScan = () => useProdMutation((b: { batch_id?: string; tank_id: string; code: string }) => post<PourView & { pallet_no: number }>('/wms/production/pour-scan', b))
 // ── Bàn làm việc của mẻ: yêu cầu nguyên liệu + định mức ──
 /** Sửa phiếu của mẻ (quyền edit_requirement, 17/11): có thay đổi thì BẮT BUỘC lý do · `replaces` = đổi mã (dòng mới thay cho mã cũ) */
-export const useSetRequirements = () => useProdMutation(({ batchId, items, reason }: { batchId: string; items: { material_id: string; qty: number; replaces?: string }[]; reason?: string }) =>
+export const useSetRequirements = () => useProdMutation(({ batchId, items, reason }: { batchId: string; items: { material_id: string; qty: number | null; replaces?: string }[]; reason?: string }) =>
   (async () => (await apiClient.put(`/wms/production/batches/${batchId}/requirements`, { items, reason })).data.data as { count: number; changed: number })())
 /** Chép công thức vào mẻ — recipe_id trống = công thức của mẻ / mặc định; replace = bỏ hết phiếu cũ trước ("đổi công thức") */
 export const useApplyRecipe = () => useProdMutation(({ batchId, replace, recipe_id }: { batchId: string; replace?: boolean; recipe_id?: string }) =>
@@ -423,10 +438,11 @@ export const useApplyRecipe = () => useProdMutation(({ batchId, replace, recipe_
 type RecipeMat = ({ id: string; material_code: string; short_name: string | null; category: string | null } & MatUnits) | null
 /** Một CÔNG THỨC của mã bán thành phẩm (17/11: một mã có nhiều công thức, đúng một công thức mặc định) */
 export interface RecipeRow {
-  id: string; material_id: string; name: string; base_qty: number; note: string | null; is_active: boolean; is_default: boolean
+  /** base_qty null = công thức CHỈ DANH SÁCH MÃ (27/11 — kho không định mức) */
+  id: string; material_id: string; name: string; base_qty: number | null; note: string | null; is_active: boolean; is_default: boolean
   updated_at: string; updated_by: string | null; material: RecipeMat; line_count?: number
 }
-export interface RecipeLine { id: string; material_id: string; qty: number; tol_pct: number | null; sort_order: number; note: string | null; material: RecipeMat }
+export interface RecipeLine { id: string; material_id: string; qty: number | null; tol_pct: number | null; sort_order: number; note: string | null; material: RecipeMat }
 export interface RecipeDetail extends RecipeRow { lines: RecipeLine[] }
 /** materialId = chỉ công thức của mã đó (form Mở mẻ, Đổi công thức) · activeOnly = bỏ công thức đã ngừng */
 export function useRecipes(materialId?: string, activeOnly = false, enabled = true) {
@@ -442,8 +458,8 @@ export function useRecipe(id: string | undefined) {
   })
 }
 export interface RecipeInput {
-  id?: string; material_id: string; name: string; base_qty: number; note: string | null; is_active: boolean; is_default: boolean
-  lines: { material_id: string; qty: number; tol_pct: number | null }[]
+  id?: string; material_id: string; name: string; base_qty: number | null; note: string | null; is_active: boolean; is_default: boolean
+  lines: { material_id: string; qty: number | null; tol_pct: number | null }[]
 }
 /** id có ⇒ sửa công thức đó; trống ⇒ tạo công thức MỚI cho mã */
 export const useSaveRecipe = () => useProdMutation(({ id, material_id, ...b }: RecipeInput) =>
@@ -529,10 +545,14 @@ export interface CycleBatch {
   /** lần cấp sai thứ tự luân chuyển · hàng hết hạn QA duyệt · dòng cấp đã huỷ */
   rm_bad: number; rm_exp: number; rm_rev: number
   filled_qty: number; filled_at: string | null; filled_by_name: string | null; tank_qa_at: string | null; tank_qa_by_name: string | null
+  /** 27/11: mẻ không định mức — cột so định mức in "—" */
+  no_norm?: boolean
 }
 /** một ô NVL × mẻ (21/11): req = phiếu đang hiệu lực (null = dòng đã bỏ / mã ngoài phiếu) · std = ĐỊNH MỨC GỐC theo công thức (null = dòng
  *  thêm tay / ngoài phiếu) · rm = dòng đã bỏ khỏi phiếu · why = lý do sửa phiếu · mức lệch % · thực cấp · số lần cấp */
-export interface CycleCell { req: number | null; std: number | null; rm: boolean; why: string | null; tol: number | null; iss: number; n: number }
+export interface CycleCell { req: number | null; std: number | null; rm: boolean; why: string | null; tol: number | null; iss: number; n: number
+  /** 27/11: ô của mẻ không định mức — chỉ có thực cấp */
+  nn?: boolean }
 export interface CycleRow extends MatUnits { material_id: string; material_code: string; material_name: string | null; cells: Record<string, CycleCell> }
 export interface CyclePerson {
   name: string; open: number; lead: number; qaok: number; label: number; rm: number; rm_rev: number; rm_bad: number; rm_exp: number; rm_batches: number
@@ -556,13 +576,15 @@ export type DashGrain = 'batch' | 'day' | 'week' | 'month' | 'year'
 interface DashKg { std_kg: number; total_kg: number }
 export interface DashTotals extends DashKg {
   batches: number; filled: number; pass: number; dev_batches: number; lines: number; pending: number; ok: number; over: number; under: number; extra: number
+  /** 27/11: mẻ đã nạp CÓ định mức (mẫu số của "mẻ đạt") · số mẻ không định mức (không tính lệch) */
+  filled_norm?: number; no_norm?: number
   edited: number; sheet_kg: number; iss_kg: number; edit_kg: number; exec_kg: number; avg_min: number | null; rm_bad: number; qa_released: number; qa_rejected: number
 }
-export interface DashPrev extends DashKg { batches: number; filled: number; pass: number; over: number; under: number; extra: number; avg_min: number | null; qa_released: number; qa_rejected: number }
-export interface DashBucket extends DashKg { k: string; batches: number; filled: number; pass: number; dev_batches: number; dev_lines: number; edit_kg: number; exec_kg: number }
+export interface DashPrev extends DashKg { batches: number; filled: number; filled_norm?: number; no_norm?: number; pass: number; over: number; under: number; extra: number; avg_min: number | null; qa_released: number; qa_rejected: number }
+export interface DashBucket extends DashKg { k: string; batches: number; filled: number; filled_norm?: number; no_norm?: number; pass: number; dev_batches: number; dev_lines: number; edit_kg: number; exec_kg: number }
 export interface DashPoint extends DashKg { id: string; code: string; no: number | null; shift: string | null; at: string; filled: boolean; pct: number | null; dev: number; pending: number }
 export interface DashHeat extends DashKg { shift: string | null; k: string; batches: number; dev_batches: number }
-export interface DashGroup extends DashKg { batches: number; filled: number; pass: number; dev_lines: number }
+export interface DashGroup extends DashKg { batches: number; filled: number; filled_norm?: number; no_norm?: number; pass: number; dev_lines: number }
 export interface DashShift extends DashGroup { shift: string | null }
 export interface DashBtp extends DashGroup { btp_id: string; code: string; name: string | null }
 export interface DashPareto { material_id: string; code: string; name: string | null; unit: string | null; n: number; batches: number; over: number; under: number; extra: number; std: number; iss: number }

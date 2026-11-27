@@ -80,9 +80,9 @@ function mesFail(res: Response, e: unknown): Response {
 }
 
 type BatchRow = { id: string; warehouse_id: string; status: string; material_id: string; batch_code: string; planned_qty: number | null
-  cycle: string | null; batch_no: number | null; tank_id: string | null; lead_ok_at: string | null; qa_ok_at: string | null }
+  cycle: string | null; batch_no: number | null; tank_id: string | null; lead_ok_at: string | null; qa_ok_at: string | null; no_norm: boolean }
 async function loadBatch(id: string): Promise<BatchRow | null> {
-  const { data, error } = await db.from('production_batch').select('id, warehouse_id, status, material_id, batch_code, planned_qty, cycle, batch_no, tank_id, lead_ok_at, qa_ok_at').eq('id', id).maybeSingle()
+  const { data, error } = await db.from('production_batch').select('id, warehouse_id, status, material_id, batch_code, planned_qty, cycle, batch_no, tank_id, lead_ok_at, qa_ok_at, no_norm').eq('id', id).maybeSingle()
   if (error) throw error   // 25/11 B9: lỗi đọc ⇒ 503 qua failAny, không thành 404 "không tìm thấy mẻ"
   return (data as BatchRow | null) ?? null
 }
@@ -103,6 +103,24 @@ function closeGateOf(j: unknown): CloseGate {
 }
 /** QA đã duyệt phiếu ⇒ phiếu khoá: muốn sửa định mức / kế hoạch / mã thì QA bỏ duyệt trước (user chốt 17/11). */
 const APPROVED_MSG = 'QA đã duyệt phiếu của mẻ — bỏ duyệt rồi mới sửa được'
+/** 27/11 KHÔNG ĐỊNH MỨC (Warehouse.mes_no_norm — user chốt): kho chạy "chỉ danh sách mã" ⇒ QA LẬP mẻ theo phiếu chế biến giấy, không
+ *  có hai bước duyệt. Quyền theo chế độ của kho / mẻ — route khai requireAnyPerm, hàm dưới chốt:
+ *    • lập mẻ: kho không định mức = `approve_qa` (lập mẻ là lần duyệt của QA, trưởng ca không lập) · kho có định mức = `open_batch` như cũ;
+ *    • sửa / huỷ mẻ không định mức: `open_batch` HOẶC `approve_qa` · danh sách NVL của mẻ: `edit_requirement` HOẶC `approve_qa`. */
+async function warehouseNoNorm(whId: string): Promise<boolean> {
+  const { data, error } = await db.from('Warehouse').select('mes_no_norm').eq('id', whId).maybeSingle()
+  if (error) throw error
+  return data?.mes_no_norm === true
+}
+const NO_NORM_OPEN_MSG = 'Kho này chạy không định mức — QA lập mẻ theo phiếu chế biến (cần quyền QA duyệt phiếu)'
+function batchEditPermError(req: Request, noNorm: boolean): string | null {
+  if (hasPerm(req, 'production', 'open_batch')) return null
+  return noNorm && hasPerm(req, 'production', 'approve_qa') ? null : 'Cần quyền Mở mẻ (mẻ không định mức: quyền QA duyệt phiếu)'
+}
+function batchListPermError(req: Request, noNorm: boolean): string | null {
+  if (hasPerm(req, 'production', 'edit_requirement')) return null
+  return noNorm && hasPerm(req, 'production', 'approve_qa') ? null : 'Cần quyền Sửa định mức của mẻ (mẻ không định mức: quyền QA duyệt phiếu)'
+}
 /** Kho bật "luồng chặt" (Warehouse.mes_flow_gate): chưa đủ hai bước duyệt thì CHƯA cấp nguyên liệu. Luật nằm ở MỘT hàm DB
  *  mes_consume_flow_gate — hai hàm cấp gọi lại trong giao dịch trừ tồn (25/11 N1: trước chỉ kiểm ở đây, đọc lỗi ⇒ cho cấp). Gọi sớm ở
  *  controller chỉ để báo lỗi này trước các bước kiểm khác (luân chuyển…); lỗi đọc ⇒ trả lỗi, không cho qua. */
@@ -261,6 +279,8 @@ export const zBatchCreate = z.object({
   planned_qty: z.number().positive().max(10_000_000).nullable().optional(), note: zText(0, 500).optional(),
   recipe_id: zText(1, 64).optional(),   // công thức chọn lúc mở (trống = công thức mặc định của mã)
   extra_forms: z.array(zText(1, 20)).max(20).optional(),   // phiếu bổ sung của mẻ (vắng = mặc định theo mã BTP)
+  // 27/11 kho không định mức: danh sách mã QA đối chiếu với phiếu chế biến giấy (thay danh sách của công thức; không số lượng)
+  items: z.array(z.object({ material_id: zText(1, 64) })).max(300).optional(),
 })
 export async function createBatch(req: Request, res: Response) {
   try {
@@ -268,6 +288,10 @@ export async function createBatch(req: Request, res: Response) {
     if (!(await inScope(req, body.warehouse_id))) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
     const whErr = await productionWhError(body.warehouse_id)
     if (whErr) return fail(res, 422, 'NOT_PRODUCTION_WAREHOUSE', whErr)
+    const noNorm = await warehouseNoNorm(body.warehouse_id)
+    if (noNorm ? !hasPerm(req, 'production', 'approve_qa') : !hasPerm(req, 'production', 'open_batch'))
+      return fail(res, 403, 'FORBIDDEN', noNorm ? NO_NORM_OPEN_MSG : 'Cần quyền Mở mẻ')
+    if (noNorm && body.planned_qty == null) return fail(res, 422, 'MES_QTY', 'Nhập lượng mẻ (theo phiếu chế biến)')
     const { data: m } = await db.from('Material').select('id, material_code, batch_prefix, base_unit, is_active, is_semi_finished').eq('id', body.material_id).maybeSingle()
     if (!m) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy mã bán thành phẩm')
     const btpErr = btpUseError(m)
@@ -289,6 +313,7 @@ export async function createBatch(req: Request, res: Response) {
         // bàn làm việc (chép ĐỊNH MỨC — công thức chọn hoặc mặc định) + phiếu bổ sung làm TRONG hàm tạo mẻ, cùng giao dịch:
         // lỗi ⇒ không có mẻ nào (25/11 B3 — trước đây nuốt lỗi, trả 201 với bàn trống / mất phiếu bổ sung)
         recipe_id: body.recipe_id ?? null, ...(body.extra_forms ? { extra_forms: body.extra_forms } : {}),
+        ...(noNorm && body.items ? { items: body.items.map(i => ({ material_id: i.material_id })) } : {}),
       } })
       if (!error) return ok(res, data as { id: string; requirement_count: number }, 201)
       if (error.code !== '23505') return mesFail(res, error)
@@ -315,6 +340,8 @@ export async function updateBatch(req: Request, res: Response) {
     const b = await loadBatch(req.params.id)
     if (!b) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy mẻ')
     if (!(await inScope(req, b.warehouse_id))) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
+    const pe = batchEditPermError(req, b.no_norm)
+    if (pe) return fail(res, 403, 'FORBIDDEN', pe)
     if (b.status === 'CANCELLED') return fail(res, 409, 'BATCH_CANCELLED', 'Mẻ đã huỷ — không sửa được')
     // kiểm tĩnh (danh mục) ở đây; mọi kiểm theo TRẠNG THÁI mẻ / bồn nằm trong mes_batch_update sau khoá
     if (body.material_id !== undefined && body.material_id !== b.material_id) {
@@ -392,7 +419,8 @@ export async function approveQa(req: Request, res: Response) { try { return awai
 // 17/11 (phiếu chế biến giấy): quyền RIÊNG `edit_requirement` (trưởng ca) · có thay đổi thì BẮT BUỘC lý do (hàm báo MESERR:REASON) ·
 // dòng của công thức bị bỏ = bỏ MỀM (giữ định mức gốc) · `replaces` = đổi mã (dòng mới "thay cho" mã cũ của phiếu).
 export const zRequirements = z.object({
-  items: z.array(z.object({ material_id: zText(1, 64), qty: z.number().positive().max(10_000_000), note: zText(0, 200).optional(),
+  // qty: mẻ không định mức (27/11) gửi trống — hàm DB bỏ số; mẻ có định mức thiếu số ⇒ MESERR:QTY
+  items: z.array(z.object({ material_id: zText(1, 64), qty: z.number().positive().max(10_000_000).nullable().optional(), note: zText(0, 200).optional(),
     replaces: zText(1, 64).optional() })).max(300),
   reason: zText(0, 200).optional(),
 })
@@ -401,9 +429,11 @@ export async function setRequirements(req: Request, res: Response) {
     const b = await loadBatch(req.params.id)
     if (!b) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy mẻ')
     if (!(await inScope(req, b.warehouse_id))) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
+    const pe = batchListPermError(req, b.no_norm)
+    if (pe) return fail(res, 403, 'FORBIDDEN', pe)
     if (b.qa_ok_at) return fail(res, 409, 'MES_APPROVED', APPROVED_MSG)
     const { items, reason } = req.body as z.infer<typeof zRequirements>
-    const { data, error } = await db.rpc('mes_batch_set_requirements', { p: { batch_id: b.id, items: items.map(i => ({ ...i, qty: round3(i.qty) })),
+    const { data, error } = await db.rpc('mes_batch_set_requirements', { p: { batch_id: b.id, items: items.map(i => ({ ...i, qty: i.qty == null ? null : round3(i.qty) })),
       reason: reason?.trim() || null, actor_name: actor(req).actor_name } })
     if (error) return mesFail(res, error)
     return ok(res, data)
@@ -417,6 +447,8 @@ export async function applyRecipe(req: Request, res: Response) {
     const b = await loadBatch(req.params.id)
     if (!b) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy mẻ')
     if (!(await inScope(req, b.warehouse_id))) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
+    const pe = batchListPermError(req, b.no_norm)
+    if (pe) return fail(res, 403, 'FORBIDDEN', pe)
     if (b.qa_ok_at) return fail(res, 409, 'MES_APPROVED', APPROVED_MSG)
     const body = req.body as z.infer<typeof zApplyRecipe>
     const { data, error } = await db.rpc('mes_batch_apply_recipe', { p: { batch_id: b.id, replace: body.replace === true, recipe_id: body.recipe_id ?? null, actor_name: actor(req).actor_name } })
@@ -654,11 +686,12 @@ export async function getRecipe(req: Request, res: Response) {
   } catch (e) { return failAny(res, e) }
 }
 const zRecipeLines = z.array(z.object({
-  material_id: zText(1, 64), qty: z.number().positive().max(10_000_000), tol_pct: z.number().min(0).max(100).nullable().optional(), note: zText(0, 200).optional(),
+  // 27/11: công thức CHỈ DANH SÁCH MÃ — qty trống ở mọi dòng + base_qty trống (hàm DB chặn nửa vời)
+  material_id: zText(1, 64), qty: z.number().positive().max(10_000_000).nullable().optional(), tol_pct: z.number().min(0).max(100).nullable().optional(), note: zText(0, 200).optional(),
 })).max(300)
 // PUT /wms/production/recipes/:id — sửa một công thức (thay trọn danh sách dòng) — quyền manage_recipe
 export const zRecipePut = z.object({
-  name: zText(1, 80), base_qty: z.number().positive().max(10_000_000), note: zText(0, 500).nullable().optional(),
+  name: zText(1, 80), base_qty: z.number().positive().max(10_000_000).nullable().optional(), note: zText(0, 500).nullable().optional(),
   is_active: z.boolean().optional(), is_default: z.boolean().optional(), lines: zRecipeLines,
 })
 // POST /wms/production/recipes — tạo công thức MỚI cho một mã BTP (mã đã có công thức khác vẫn tạo thêm được)
@@ -671,9 +704,9 @@ async function saveRecipe(req: Request, res: Response, materialId: string, id: s
   const btpErr = btpUseError(m)   // không xét is_active: công thức của mã đã ngừng vẫn sửa được (như trước)
   if (btpErr) return fail(res, 422, btpErr.code, btpErr.message)
   const { data, error } = await db.rpc('mes_recipe_save', { p: {
-    id, material_id: m.id, name: body.name.trim(), base_qty: round3(body.base_qty), note: body.note ?? null,
+    id, material_id: m.id, name: body.name.trim(), base_qty: body.base_qty == null ? null : round3(body.base_qty), note: body.note ?? null,
     is_active: body.is_active ?? true, is_default: body.is_default ?? false,
-    lines: body.lines.map(l => ({ ...l, qty: round3(l.qty), tol_pct: l.tol_pct ?? null })), actor_name: actor(req).actor_name,
+    lines: body.lines.map(l => ({ ...l, qty: l.qty == null ? null : round3(l.qty), tol_pct: l.tol_pct ?? null })), actor_name: actor(req).actor_name,
   } })
   if (error) return mesFail(res, error)
   return ok(res, data, id ? 200 : 201)
@@ -778,6 +811,8 @@ export async function cancelBatch(req: Request, res: Response) {
     const b = await loadBatch(req.params.id)
     if (!b) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy mẻ')
     if (!(await inScope(req, b.warehouse_id))) return fail(res, 403, 'FORBIDDEN', SCOPE_MSG)
+    const pe = batchEditPermError(req, b.no_norm)
+    if (pe) return fail(res, 403, 'FORBIDDEN', pe)
     const body = req.body as z.infer<typeof zBatchCancel>
     const lines = body.lines ?? []
     if (!lines.length) {
@@ -823,6 +858,10 @@ export async function scanCheck(req: Request, res: Response) {
     }
     if (rows.length > 1)
       return fail(res, 409, 'POOLED_CODE', `Mã ${code} là tồn gộp nhiều lô — dùng "Không có tem" để chọn đúng lô`)
+    if (b.no_norm) {   // 27/11: mẻ không định mức — mã không có trong danh sách ⇒ chặn (một hàm DB với hai cửa cấp)
+      const { error: ce } = await db.rpc('mes_no_norm_code_check', { p_batch_id: b.id, p_material_id: rows[0].material_id })
+      if (ce) return mesFail(res, ce)
+    }
     // như quét xuất: %Date + đúng / sai thứ tự luân chuyển (17/11) · HẠN + dòng QA duyệt của mẻ (hàng hết hạn chỉ cấp khi QA duyệt)
     const ctx = await mesPickContext(b.warehouse_id, rows[0].material_id, b.id)
     const e0 = rows[0] as unknown as PickRow
@@ -1470,6 +1509,7 @@ export const zSettingsPut = z.object({
   warehouse_id: zText(1, 64),
   production_qa_gate: zGate.optional(),
   mes_flow_gate: z.boolean().optional(),   // 17/11: chưa duyệt đủ thì chưa cấp NVL · chưa đủ điều kiện thì chưa nạp bồn (mặc định tắt = như cũ)
+  mes_no_norm: z.boolean().optional(),     // 27/11: kho chạy KHÔNG định mức (công thức chỉ danh sách mã, QA lập mẻ) — mặc định false = có định mức
   mes_block_reverse_closed: z.boolean().optional(),   // 25/11: chặn huỷ cấp NVL của ca đã chốt (NVL thường đã mất) — mặc định tắt = như cũ
   // 22/11 — mục tiêu của dashboard Báo cáo NVL (user: "mục tiêu để dạng config tự đặt"); null = về mặc định 0,5 % / 95 %
   mes_dev_target_pct: z.number().positive().max(50).nullable().optional(),
@@ -1484,7 +1524,7 @@ async function settingsOf(req: Request, whId: string) {
     .not('tank_hold_hours', 'is', null).order('material_code').limit(500)
   if (scope) mq = mq.or(`category.is.null,category.in.(${scope.map(c => `"${c.replace(/"/g, '')}"`).join(',')})`)
   const [{ data: wh }, { data: types }, { data: mats }] = await Promise.all([
-    db.from('Warehouse').select('id, code, name, production_qa_gate, mes_flow_gate, mes_block_reverse_closed, mes_dev_target_pct, mes_pass_target_pct').eq('id', whId).maybeSingle(),
+    db.from('Warehouse').select('id, code, name, production_qa_gate, mes_flow_gate, mes_no_norm, mes_block_reverse_closed, mes_dev_target_pct, mes_pass_target_pct').eq('id', whId).maybeSingle(),
     db.from('warehouse_type_configs').select('type_code, production_qa_gate, sort_order').eq('warehouse_id', whId)
       .order('sort_order', { ascending: true, nullsFirst: false }).order('type_code').limit(200),
     mq,
@@ -1493,6 +1533,7 @@ async function settingsOf(req: Request, whId: string) {
     warehouse_id: whId,
     production_qa_gate: wh?.production_qa_gate ?? 'WARN',
     mes_flow_gate: wh?.mes_flow_gate === true,
+    mes_no_norm: wh?.mes_no_norm === true,
     mes_block_reverse_closed: wh?.mes_block_reverse_closed === true,
     mes_dev_target_pct: wh?.mes_dev_target_pct == null ? null : Number(wh.mes_dev_target_pct),
     mes_pass_target_pct: wh?.mes_pass_target_pct == null ? null : Number(wh.mes_pass_target_pct),
@@ -1543,10 +1584,11 @@ export async function putSettings(req: Request, res: Response) {
       if (miss) return fail(res, 422, 'UNKNOWN_TYPE', `Kho này chưa có Loại kho "${miss.type_code.slice(0, 30)}"`)
     }
 
-    if (body.production_qa_gate !== undefined || body.mes_flow_gate !== undefined || body.mes_block_reverse_closed !== undefined || body.mes_dev_target_pct !== undefined || body.mes_pass_target_pct !== undefined) {
+    if (body.production_qa_gate !== undefined || body.mes_flow_gate !== undefined || body.mes_no_norm !== undefined || body.mes_block_reverse_closed !== undefined || body.mes_dev_target_pct !== undefined || body.mes_pass_target_pct !== undefined) {
       const { data, error } = await db.from('Warehouse').update({
         ...(body.production_qa_gate !== undefined ? { production_qa_gate: body.production_qa_gate } : {}),
         ...(body.mes_flow_gate !== undefined ? { mes_flow_gate: body.mes_flow_gate } : {}),
+        ...(body.mes_no_norm !== undefined ? { mes_no_norm: body.mes_no_norm } : {}),
         ...(body.mes_block_reverse_closed !== undefined ? { mes_block_reverse_closed: body.mes_block_reverse_closed } : {}),
         ...(body.mes_dev_target_pct !== undefined ? { mes_dev_target_pct: body.mes_dev_target_pct } : {}),
         ...(body.mes_pass_target_pct !== undefined ? { mes_pass_target_pct: body.mes_pass_target_pct } : {}), updated_at: now, updated_by: who })
@@ -1565,7 +1607,7 @@ export async function putSettings(req: Request, res: Response) {
     }
     // 25/11 (F11 rà soát MES): bảng warehouse_type_configs không phát tín hiệu realtime ⇒ đổi công tắc theo LOẠI KHO mà không đổi
     // gì trên Kho thì máy khác không biết. Chạm Warehouse.updated_at để tín hiệu của Kho kéo trang Cài đặt MES / mẻ / bồn làm mới.
-    if (types.length && body.production_qa_gate === undefined && body.mes_flow_gate === undefined && body.mes_block_reverse_closed === undefined
+    if (types.length && body.production_qa_gate === undefined && body.mes_flow_gate === undefined && body.mes_no_norm === undefined && body.mes_block_reverse_closed === undefined
         && body.mes_dev_target_pct === undefined && body.mes_pass_target_pct === undefined) {
       const { error } = await db.from('Warehouse').update({ updated_at: now }).eq('id', body.warehouse_id)
       if (error) return fail(res, error)

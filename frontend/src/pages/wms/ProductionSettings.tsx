@@ -18,7 +18,7 @@ import { useAuthStore } from '@/stores/authStore'
 import { useGlobalScopeStore } from '@/stores/globalScopeStore'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { can, type ModulePermissions } from '@/config/permissions'
-import { useProductionWarehouses, useProductionSettings, useSaveProductionSettings, defaultKitchen, useSemiFinishedSearch, SEMI_FINISHED_PLACEHOLDER, type ProductionSettings as Settings } from '@/api/productionHooks'
+import { useProductionWarehouses, useProductionSettings, useSaveProductionSettings, defaultKitchen, useSemiFinishedSearch, useRecipes, SEMI_FINISHED_PLACEHOLDER, type ProductionSettings as Settings } from '@/api/productionHooks'
 import { NoSemiFinishedHint } from '@/components/wms/production/NoSemiFinishedHint'
 import { useMobileTabs } from '@/hooks/useMobileSurface'
 import { ProcessFormSettings } from '@/components/wms/production/ProcessFormSettings'
@@ -53,6 +53,8 @@ export default function ProductionSettings() {
   // BẢN NHÁP — một nút Lưu cho cả trang
   const [gate, setGate] = useState('WARN')
   const [flow, setFlow] = useState(false)
+  // 27/11: kho chạy KHÔNG định mức (công thức chỉ danh sách mã; QA lập mẻ; cấp chỉ chặn mã lạ) — mẻ nhớ chế độ lúc lập
+  const [noNorm, setNoNorm] = useState(false)
   const [blockRev, setBlockRev] = useState(false)   // 25/11: chặn huỷ cấp NVL của ca đã chốt
   // mục tiêu dashboard Báo cáo NVL ('' = về mặc định 0,5 % / 95 %)
   const [devT, setDevT] = useState('')
@@ -73,6 +75,7 @@ export default function ProductionSettings() {
     appliedWh.current = wh; forceApply.current = false
     setGate(server.production_qa_gate)
     setFlow(server.mes_flow_gate)
+    setNoNorm(server.mes_no_norm === true)
     setBlockRev(server.mes_block_reverse_closed)
     setDevT(server.mes_dev_target_pct == null ? '' : vnNumberInput(server.mes_dev_target_pct))
     setPassT(server.mes_pass_target_pct == null ? '' : vnNumberInput(server.mes_pass_target_pct))
@@ -92,10 +95,10 @@ export default function ProductionSettings() {
       .map(({ m, v }) => ({ material_id: m.id, tank_hold_hours: v === '' ? null : Number(v) }))
     const num = (v: string) => (v.trim() === '' ? null : parseVnNumber(v))
     const dv = num(devT), pv = num(passT)
-    return { gate: gate !== server.production_qa_gate ? gate : undefined, flow: flow !== server.mes_flow_gate ? flow : undefined, blockRev: blockRev !== server.mes_block_reverse_closed ? blockRev : undefined, types, hold,
+    return { gate: gate !== server.production_qa_gate ? gate : undefined, flow: flow !== server.mes_flow_gate ? flow : undefined, noNorm: noNorm !== (server.mes_no_norm === true) ? noNorm : undefined, blockRev: blockRev !== server.mes_block_reverse_closed ? blockRev : undefined, types, hold,
       dev: dv !== server.mes_dev_target_pct ? dv : undefined, pass: pv !== server.mes_pass_target_pct ? pv : undefined }
-  }, [server, gate, flow, blockRev, typeGate, hours, rows, devT, passT])
-  const dirty = !!changes && (changes.gate !== undefined || changes.flow !== undefined || changes.blockRev !== undefined || changes.types.length > 0 || changes.hold.length > 0
+  }, [server, gate, flow, noNorm, blockRev, typeGate, hours, rows, devT, passT])
+  const dirty = !!changes && (changes.gate !== undefined || changes.flow !== undefined || changes.noNorm !== undefined || changes.blockRev !== undefined || changes.types.length > 0 || changes.hold.length > 0
     || changes.dev !== undefined || changes.pass !== undefined)
   dirtyRef.current = dirty
   const targetErr = (v: string, max: number) => {
@@ -108,9 +111,13 @@ export default function ProductionSettings() {
   function onSave() {
     if (!changes || !wh) return
     setErr('')
-    save.mutate({ warehouse_id: wh, production_qa_gate: changes.gate, mes_flow_gate: changes.flow, mes_block_reverse_closed: changes.blockRev, mes_dev_target_pct: changes.dev, mes_pass_target_pct: changes.pass, types: changes.types.length ? changes.types : undefined, hold_hours: changes.hold.length ? changes.hold : undefined },
+    save.mutate({ warehouse_id: wh, production_qa_gate: changes.gate, mes_flow_gate: changes.flow, mes_no_norm: changes.noNorm, mes_block_reverse_closed: changes.blockRev, mes_dev_target_pct: changes.dev, mes_pass_target_pct: changes.pass, types: changes.types.length ? changes.types : undefined, hold_hours: changes.hold.length ? changes.hold : undefined },
       { onSuccess: () => { forceApply.current = true }, onError: e => setErr(apiMsg(e)) })
   }
+
+  // chuyển sang CÓ định mức: báo trước số công thức đang dùng chưa có số lượng (lập mẻ bằng công thức đó sẽ bị chặn — user chốt 27/11)
+  const { data: recipes = [] } = useRecipes(undefined, true, !!server)
+  const listOnly = recipes.filter(r => r.base_qty == null)
 
   // thêm mã bán thành phẩm vào bảng hạn lưu — tìm trên server
   const [matTerm, setMatTerm] = useState('')
@@ -189,9 +196,22 @@ export default function ProductionSettings() {
 
             {server && (
               <SettingsGroup title="Luồng làm việc của mẻ"
-                tip={<>Trưởng ca duyệt → QA duyệt → cấp nguyên liệu → ghi phiếu → in tem pallet của mẻ → quét tem tại bồn → nạp bồn. Tắt = như trước: các bước vẫn dùng được nhưng không chặn nhau.</>}>
+                tip={<>Trưởng ca duyệt → QA duyệt → mở phiếu theo dõi → cấp nguyên liệu → in tem pallet của mẻ → quét tem tại bồn → nạp bồn → QA bồn → đóng phiếu. Tắt = như trước: các bước vẫn dùng được nhưng không chặn nhau.</>}>
+                <SettingRow label="Định mức"
+                  desc={<>{noNorm
+                    ? <><b>Chỉ danh sách mã</b>: công thức không có số lượng. QA <b>lập mẻ</b> theo phiếu chế biến giấy (lượng mẻ + danh sách mã), không qua hai bước duyệt. Lúc cấp, app chỉ chặn <b>mã ngoài danh sách</b>; đủ / thiếu đối chiếu tay với phiếu. Báo cáo không có số so định mức.</>
+                    : <><b>Có số lượng</b> (như hiện nay): trưởng ca mở mẻ, phiếu nguyên liệu có số lượng theo công thức, hai bước duyệt, app tính đủ / thiếu / lệch.</>}
+                    {' '}Đổi chế độ chỉ áp cho mẻ lập sau đó — mẻ đang chạy đi hết theo chế độ cũ.
+                    {!noNorm && listOnly.length > 0 && <span className="block mt-1 text-amber-700" data-testid="list-only-warn">
+                      {listOnly.length} công thức đang dùng chưa có số lượng ({listOnly.slice(0, 4).map(r => `${r.material?.material_code ?? ''} "${r.name}"`).join(', ')}{listOnly.length > 4 ? '…' : ''}) — kho có định mức không lập mẻ được bằng các công thức này: điền số lượng ở Định mức.</span>}</>}
+                  control={<div className="flex rounded-lg border border-slate-200 overflow-hidden text-xs font-medium shrink-0" role="radiogroup" aria-label="Định mức" data-testid="norm-mode">
+                    {([[false, 'Có số lượng'], [true, 'Chỉ danh sách mã']] as const).map(([v, label], i) => (
+                      <button key={label} type="button" role="radio" aria-checked={noNorm === v} disabled={!canConfigure} onClick={() => setNoNorm(v)}
+                        className={`h-9 sm:h-7 px-2.5 whitespace-nowrap ${i > 0 ? 'border-l border-slate-200 ' : ''}${noNorm === v ? 'bg-sky-600 text-white' : 'text-slate-600 hover:bg-slate-50'} disabled:opacity-60`}>{label}</button>
+                    ))}
+                  </div>} />
                 <SettingRow label="Chặn theo từng bước"
-                  desc={<>Bật: phiếu của mẻ chưa đủ hai bước duyệt thì <b>chưa cấp nguyên liệu</b>; <b>chưa nạp bồn</b> khi còn nguyên liệu cấp thiếu, ô bắt buộc của phiếu chưa ghi, hoặc chưa quét đủ tem pallet của mẻ tại đúng bồn.</>}
+                  desc={<>Bật: phiếu của mẻ chưa đủ hai bước duyệt (mẻ không định mức: QA lập là đã duyệt) hoặc chưa mở phiếu theo dõi thì <b>chưa cấp nguyên liệu</b>; <b>chưa nạp bồn</b> khi còn nguyên liệu cấp thiếu (mẻ không định mức: còn mã chưa cấp lần nào) hoặc chưa quét đủ tem pallet của mẻ tại đúng bồn; phiếu theo dõi đóng sau QA bồn khi đã ghi đủ ô bắt buộc.</>}
                   control={<Switch checked={flow} onCheckedChange={setFlow} disabled={!canConfigure} aria-label="Chặn theo từng bước" />} />
                 <SettingRow label="Chặn huỷ cấp của ca đã chốt"
                   desc={<>Bật: lần cấp NVL thuộc một ca <b>đã chốt</b> thì không huỷ cấp được nữa — lúc đó NVL thường đã dùng / mất, hoàn về tồn là tồn ảo; chênh lệch xử lý bằng kiểm kê / điều chỉnh tồn. Tắt: vẫn huỷ được, lượng hoàn hiện ở cột <b>Hoàn từ ca trước</b> của ca đang mở.</>}

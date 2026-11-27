@@ -13,7 +13,8 @@ import type { ListValidation } from '@/utils/xlsxValidation'
 export type RecipeCatalogRow = { code: string; name: string | null; unit: string | null; active: boolean }
 export type RecipeImportCatalog = { btp: RecipeCatalogRow[]; nvl: RecipeCatalogRow[] }
 
-export const IMPORT_HEAD = ['Mã BTP *', 'Tên BTP', 'Tên công thức *', 'Cỡ mẻ chuẩn *', 'Mã NVL *', 'Tên nguyên liệu', 'Số lượng *', 'ĐVT', 'Mức lệch ± %', 'Mặc định', 'Ghi chú']
+// 27/11: Cỡ mẻ chuẩn + Số lượng thôi bắt buộc — để trống HẾT ở một công thức = công thức chỉ danh sách mã (kho không định mức)
+export const IMPORT_HEAD = ['Mã BTP *', 'Tên BTP', 'Tên công thức *', 'Cỡ mẻ chuẩn', 'Mã NVL *', 'Tên nguyên liệu', 'Số lượng', 'ĐVT', 'Mức lệch ± %', 'Mặc định', 'Ghi chú']
 /** Dòng có sẵn công thức tra tên / ĐVT (dòng 2 → 1+FORMULA_ROWS); vượt thì kéo công thức xuống. */
 export const TEMPLATE_FORMULA_ROWS = 1000
 /** Vùng có danh sách mã = trần số dòng một lần nạp của server (RECIPE_IMPORT_MAX_ROWS). */
@@ -49,10 +50,10 @@ export function buildRecipeTemplate(cat: RecipeImportCatalog): { wb: XLSX.WorkBo
     ['Cột', 'Bắt buộc', 'Ghi chú'],
     ['Mã BTP', 'Có', `Chọn trong danh sách (sheet "${SHEET_BTP}": mã đã đánh dấu "Bán thành phẩm" ở Mã hàng, đơn vị gốc L hoặc KG). Gõ mã ngoài danh sách thì Excel chặn`],
     ['Tên công thức', 'Có', 'Một mã có thể có nhiều công thức. Cùng mã + cùng tên (không phân biệt hoa thường) = một công thức'],
-    ['Cỡ mẻ chuẩn', 'Có', 'Theo đơn vị gốc của mã BTP. Ghi ở dòng đầu của công thức là đủ; các dòng có ghi phải bằng nhau'],
+    ['Cỡ mẻ chuẩn', 'Có số lượng', 'Theo đơn vị gốc của mã BTP. Ghi ở dòng đầu của công thức là đủ; các dòng có ghi phải bằng nhau. Công thức chỉ danh sách mã (kho không định mức): để trống'],
     ['Mã NVL', 'Có', `Chọn hoặc gõ mã có trong sheet "${SHEET_NVL}" (danh mục Mã hàng). Gõ mã sai thì Excel chặn. Một mã chỉ xuất hiện một lần trong một công thức`],
     ['Tên BTP · Tên nguyên liệu · ĐVT', 'Tự hiện', `Tự tra theo mã (${TEMPLATE_FORMULA_ROWS.toLocaleString('vi-VN')} dòng đầu có sẵn công thức). Dán mã bằng Ctrl+V thì Excel KHÔNG chặn: cột Tên hiện "${MISSING}" là mã sai, sửa trước khi nạp`],
-    ['Số lượng', 'Có', 'Lượng cho MỘT mẻ cỡ chuẩn, theo đơn vị gốc của mã NVL (cột ĐVT) — viết 1.234,5 hoặc 1234.5 đều được'],
+    ['Số lượng', 'Có số lượng', 'Lượng cho MỘT mẻ cỡ chuẩn, theo đơn vị gốc của mã NVL (cột ĐVT) — viết 1.234,5 hoặc 1234.5 đều được. Công thức chỉ danh sách mã: để trống MỌI dòng của công thức (có số ở một dòng thì mọi dòng phải có)'],
     ['Mức lệch ± %', '', 'Từ 0 tới 100. Cấp ngoài mức này thì dòng tô đỏ trên phiếu của mẻ. Để trống = không kiểm'],
     ['Mặc định', '', 'Ghi "Có" để đặt làm công thức mặc định của mã (mỗi mã tối đa một). Để trống = giữ như cũ'],
     ['Ghi chú', '', 'Ghi chú của công thức. Để trống = giữ ghi chú cũ'],
@@ -66,6 +67,8 @@ export function buildRecipeTemplate(cat: RecipeImportCatalog): { wb: XLSX.WorkBo
     ['BTP-SUACHUA', 'Dịch sữa chua', 'Chuẩn', 6000, '210000101', 'Sữa bột gầy', 450, 'KG', 1, 'Có', ''],
     ['BTP-SUACHUA', 'Dịch sữa chua', 'Chuẩn', '', '210000102', 'Đường tinh luyện', 520, 'KG', 1, '', ''],
     ['BTP-SUACHUA', 'Dịch sữa chua', 'Mùa hè', 6000, '210000101', 'Sữa bột gầy', 430, 'KG', '', '', 'Giảm sữa bột'],
+    ['BTP-SUACHUA', 'Dịch sữa chua', 'Chỉ mã', '', '210000101', 'Sữa bột gầy', '', 'KG', '', '', 'Kho không định mức'],
+    ['BTP-SUACHUA', 'Dịch sữa chua', 'Chỉ mã', '', '210000102', 'Đường tinh luyện', '', 'KG', '', '', ''],
   ])
   guide['!cols'] = [{ wch: 30 }, { wch: 10 }, { wch: 100 }]
   XLSX.utils.book_append_sheet(wb, guide, 'Hướng dẫn')

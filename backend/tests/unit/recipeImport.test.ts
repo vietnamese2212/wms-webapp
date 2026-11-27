@@ -132,3 +132,24 @@ describe('công thức đã có / mặc định', () => {
     expect(p.btpCount).toBe(2)
   })
 })
+
+// 27/11 — kho chạy KHÔNG định mức: công thức chỉ danh sách mã (không cỡ mẻ, không số lượng). Có số thì phải đủ — không nửa vời
+// (cùng luật hàm DB mes_recipe_save; bảng tình huống docs/modules/production.md mục "Không định mức").
+describe('công thức chỉ danh sách mã (không định mức)', () => {
+  it('trống cỡ mẻ + trống mọi số lượng ⇒ công thức chỉ mã, không lỗi, có cảnh báo', () => {
+    const p = plan([row({ base_qty: '', qty: '' }), row({ base_qty: '', qty: '', nvl_code: '210000002', unit: 'kg' })])
+    expect(p.errors).toEqual([])
+    expect(p.recipes[0].base_qty).toBeNull()
+    expect(p.recipes[0].lines).toEqual([{ material_id: 'n1', qty: null, tol_pct: null }, { material_id: 'n2', qty: null, tol_pct: null }])
+    expect(p.warnings.join()).toMatch(/chỉ danh sách mã/)
+  })
+  it('có cỡ mẻ mà mọi dòng trống số ⇒ lỗi nửa vời', () => {
+    expect(plan([row({ qty: '' }), row({ qty: '', nvl_code: '210000002' })]).errors.join()).toMatch(/dòng 2, 3 thiếu Số lượng/)
+  })
+  it('một dòng có số, một dòng trống ⇒ lỗi nửa vời (nêu dòng thiếu)', () => {
+    expect(plan([row({}), row({ qty: '', nvl_code: '210000002', base_qty: '' })]).errors.join()).toMatch(/dòng 3 thiếu Số lượng/)
+  })
+  it('không cỡ mẻ mà có số ⇒ thiếu cỡ mẻ', () => {
+    expect(plan([row({ base_qty: '' })]).errors.join()).toMatch(/thiếu Cỡ mẻ chuẩn/)
+  })
+})

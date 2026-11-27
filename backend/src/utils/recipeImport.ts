@@ -9,6 +9,8 @@
 //   • TẤT CẢ HOẶC KHÔNG GÌ: còn một lỗi là không ghi gì (danh mục — file nửa vời thì phải dọn tay).
 //   • Cột Mặc định: "Có" ⇒ đặt mặc định (mỗi mã tối đa một công thức "Có"); trống ⇒ giữ như cũ (công thức mới: mã chưa
 //     có mặc định thì hàm DB tự đặt). Ghi chú trống ⇒ giữ ghi chú cũ. Trạng thái Đang dùng / Ngừng giữ như cũ.
+//   • 27/11 CÔNG THỨC CHỈ DANH SÁCH MÃ (kho chạy không định mức): Cỡ mẻ chuẩn + Số lượng để TRỐNG ở mọi dòng của công thức ⇒ công thức
+//     không số lượng. Có ghi số ở một dòng (hoặc cỡ mẻ) thì mọi dòng phải có số và phải có cỡ mẻ — không nửa vời (như hàm DB mes_recipe_save).
 import type { FieldDef } from './excelHeader'
 import { btpUseError } from './semiFinished'
 import { parseVnNumber } from './vnNumber'
@@ -18,9 +20,9 @@ import { normSapText, normSalesUnit } from './sapUnits'
 export const RECIPE_IMPORT_FIELDS: FieldDef[] = [
   { key: 'btp_code', label: 'Mã BTP', aliases: ['ma ban thanh pham', 'ma btp', 'ma dich', 'material'], required: true },
   { key: 'recipe_name', label: 'Tên công thức', aliases: ['cong thuc', 'ten cong thuc', 'alternative bom', 'alt bom'], required: true },
-  { key: 'base_qty', label: 'Cỡ mẻ chuẩn', aliases: ['co me chuan', 'co me', 'base quantity', 'base qty'], required: true },
+  { key: 'base_qty', label: 'Cỡ mẻ chuẩn', aliases: ['co me chuan', 'co me', 'base quantity', 'base qty'] },
   { key: 'nvl_code', label: 'Mã NVL', aliases: ['ma nguyen lieu', 'ma nvl', 'ma vat tu', 'component'], required: true },
-  { key: 'qty', label: 'Số lượng', aliases: ['so luong', 'dinh muc', 'component quantity', 'quantity'], required: true },
+  { key: 'qty', label: 'Số lượng', aliases: ['so luong', 'dinh muc', 'component quantity', 'quantity'] },
   { key: 'unit', label: 'ĐVT', aliases: ['dvt', 'don vi tinh', 'don vi', 'unit', 'un'] },
   { key: 'tol_pct', label: 'Mức lệch ± %', aliases: ['muc lech', 'muc lech cho phep', 'lech', 'tolerance'] },
   { key: 'is_default', label: 'Mặc định', aliases: ['mac dinh', 'default'] },
@@ -39,8 +41,9 @@ export interface ImpMaterial {
 export interface ImpExisting { id: string; material_id: string; name: string; note: string | null; is_active: boolean; is_default: boolean; line_count: number }
 // type (không phải interface): truyền thẳng vào RPC kiểu Json
 export type ImpRecipePayload = {
-  id?: string; material_id: string; name: string; base_qty: number; note: string | null; is_active: boolean; is_default: boolean
-  lines: { material_id: string; qty: number; tol_pct: number | null }[]
+  id?: string; material_id: string; name: string; base_qty: number | null; note: string | null; is_active: boolean; is_default: boolean
+  /** qty null ⇔ công thức chỉ danh sách mã (mọi dòng null, base_qty null) */
+  lines: { material_id: string; qty: number | null; tol_pct: number | null }[]
 }
 export interface RecipeImportPlan {
   recipes: ImpRecipePayload[]; errors: string[]; warnings: string[]
@@ -90,14 +93,14 @@ export function planRecipeImport(
   const warnings: string[] = []
   type G = {
     key: string; btp: ImpMaterial; name: string; firstRow: number; base: number | null; baseRow: number
-    note: string; isDefault: boolean; lines: { material_id: string; code: string; qty: number; tol_pct: number | null; row: number }[]
+    note: string; isDefault: boolean; lines: { material_id: string; code: string; qty: number | null; tol_pct: number | null; row: number }[]
   }
   const groups = new Map<string, G>()
   const warnedInactive = new Set<string>()
   rows.forEach((r, i) => {
     const at = `Dòng ${rowNums[i] ?? i + 2}`
     const btpCode = codeKey(r.btp_code), nvlCode = codeKey(r.nvl_code), name = str(r.recipe_name)
-    const missing = [!btpCode && 'Mã BTP', !name && 'Tên công thức', !nvlCode && 'Mã NVL', str(r.qty) === '' && 'Số lượng'].filter(Boolean)
+    const missing = [!btpCode && 'Mã BTP', !name && 'Tên công thức', !nvlCode && 'Mã NVL'].filter(Boolean)
     if (missing.length) { errors.push(`${at} — thiếu ${missing.join(', ')}`); return }
     const btp = ctx.matByCode.get(btpCode)
     if (!btp) { errors.push(`${at} — không có mã BTP "${btpCode}" trong danh mục Mã hàng`); return }
@@ -126,12 +129,14 @@ export function planRecipeImport(
     const m = ctx.matByCode.get(nvlCode)
     if (!m) { errors.push(`${at} — không có mã NVL "${nvlCode}" trong danh mục Mã hàng`); return }
     if (m.id === btp.id) { errors.push(`${at} — công thức không được chứa chính mã bán thành phẩm ${btpCode}`); return }
-    const q = num(r.qty)
-    if (q == null || q <= 0 || q > MAX_QTY) { errors.push(`${at} — Số lượng "${str(r.qty)}" phải là số lớn hơn 0`); return }
-    if (r3(q) <= 0) { errors.push(`${at} — Số lượng ${q} quá nhỏ (làm tròn 3 số lẻ thành 0)`); return }
-    if (!unitMatches(r.unit, m.base_unit)) { errors.push(`${at} — ĐVT "${str(r.unit)}" khác đơn vị gốc ${m.base_unit ?? '(trống)'} của mã ${nvlCode}: số lượng phải theo đơn vị gốc`); return }
+    // số lượng trống ⇒ dòng "chỉ mã" (công thức chỉ danh sách mã — kiểm đủ / nửa vời ở cuối, theo cả công thức)
+    const hasQty = str(r.qty) !== ''
+    const q = hasQty ? num(r.qty) : null
+    if (hasQty && (q == null || q <= 0 || q > MAX_QTY)) { errors.push(`${at} — Số lượng "${str(r.qty)}" phải là số lớn hơn 0`); return }
+    if (q != null && r3(q) <= 0) { errors.push(`${at} — Số lượng ${q} quá nhỏ (làm tròn 3 số lẻ thành 0)`); return }
+    if (hasQty && !unitMatches(r.unit, m.base_unit)) { errors.push(`${at} — ĐVT "${str(r.unit)}" khác đơn vị gốc ${m.base_unit ?? '(trống)'} của mã ${nvlCode}: số lượng phải theo đơn vị gốc`); return }
     let tol: number | null = null
-    if (str(r.tol_pct) !== '') {
+    if (hasQty && str(r.tol_pct) !== '') {
       tol = num(r.tol_pct)
       if (tol == null || tol < 0 || tol > 100) { errors.push(`${at} — Mức lệch "${str(r.tol_pct)}" phải từ 0 tới 100`); return }
       tol = r3(tol)
@@ -139,7 +144,7 @@ export function planRecipeImport(
     const dup = g.lines.find(l => l.material_id === m.id)
     if (dup) { errors.push(`${at} — mã NVL ${nvlCode} khai hai lần trong công thức "${g.name}" (dòng ${dup.row})`); return }
     if (m.is_active === false && !warnedInactive.has(m.id)) { warnedInactive.add(m.id); warnings.push(`Mã NVL ${nvlCode} — đang ngừng dùng ở Mã hàng (vẫn nạp vào công thức)`) }
-    g.lines.push({ material_id: m.id, code: nvlCode, qty: r3(q), tol_pct: tol, row: rowNums[i] ?? i + 2 })
+    g.lines.push({ material_id: m.id, code: nvlCode, qty: q == null ? null : r3(q), tol_pct: tol, row: rowNums[i] ?? i + 2 })
   })
 
   const exByKey = new Map(ctx.existing.map(e => [`${e.material_id}|${e.name.trim().toLowerCase()}`, e]))
@@ -151,8 +156,17 @@ export function planRecipeImport(
   let toInsert = 0, toUpdate = 0, lineCount = 0
   for (const g of groups.values()) {
     const label = `Mã ${g.btp.material_code} · "${g.name}"`
-    if (g.base == null) { errors.push(`${label} (từ dòng ${g.firstRow}) — thiếu Cỡ mẻ chuẩn`); continue }
     if (!g.lines.length) continue   // mọi dòng của công thức đều lỗi — lỗi đã báo theo dòng
+    // 27/11: chỉ danh sách mã = không cỡ mẻ + không dòng nào có số; có số thì phải đủ (không nửa vời)
+    const listOnly = g.base == null && g.lines.every(l => l.qty == null)
+    if (!listOnly) {
+      if (g.base == null) { errors.push(`${label} (từ dòng ${g.firstRow}) — thiếu Cỡ mẻ chuẩn (hoặc để trống mọi Số lượng nếu là công thức chỉ danh sách mã)`); continue }
+      const noQty = g.lines.filter(l => l.qty == null)
+      if (noQty.length) {
+        errors.push(`${label} — dòng ${noQty.map(l => l.row).join(', ')} thiếu Số lượng: công thức có số lượng thì mọi nguyên liệu phải có (hoặc để trống hết)`)
+        continue
+      }
+    } else warnings.push(`${label} — chỉ danh sách mã, không số lượng (dùng cho kho chạy không định mức)`)
     if (g.lines.length > MAX_LINES) { errors.push(`${label} — ${g.lines.length} nguyên liệu, tối đa ${MAX_LINES}`); continue }
     const ex = exByKey.get(`${g.btp.id}|${g.name.toLowerCase()}`)
     const otherDefault = defaultsByBtp.has(g.btp.id) && !g.isDefault

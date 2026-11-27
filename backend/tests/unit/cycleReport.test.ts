@@ -146,10 +146,10 @@ describe('devAgg — lệch của mẻ / ca = KG cộng dồn (dòng đã xong) 
 describe('rowSum — định mức gốc · phiếu · thực cấp (mọi ô, kể cả đang cấp dở)', () => {
   const row = { cells: { a: C(100, 100, 101), b: C(50, 50, 0, { tol: null }), c: C(null, null, 5, { tol: null }), d: C(20, null, 0, { rm: true }) } }
   it('bốn mẻ', () => {
-    expect(rowSum(row, ['a', 'b', 'c', 'd'])).toEqual({ std: 170, sheet: 150, iss: 106, diff: -64, devPct: -37.6, used: true })
+    expect(rowSum(row, ['a', 'b', 'c', 'd'])).toEqual({ std: 170, sheet: 150, iss: 106, diff: -64, devPct: -37.6, used: true, norm: true })
   })
   it('mẻ không dùng mã ⇒ used = false, lệch % null', () => {
-    expect(rowSum(row, ['zz'])).toEqual({ std: 0, sheet: 0, iss: 0, diff: 0, devPct: null, used: false })
+    expect(rowSum(row, ['zz'])).toEqual({ std: 0, sheet: 0, iss: 0, diff: 0, devPct: null, used: false, norm: false })
   })
   it('số lẻ không trôi (0,1 + 0,2)', () => {
     expect(rowSum({ cells: { a: C(0.1, 0.1, 0.1), b: C(0.2, 0.2, 0.2) } }, ['a', 'b']).diff).toBe(0)
@@ -225,5 +225,32 @@ describe('shiftKpis — mỗi ca + dòng cả chu kỳ; mẻ huỷ không tính'
     expect(k[0]).toMatchObject({ batches: 2, filled: 2, avgMin: 90, filledQty: [{ unit: 'KG', qty: 11900 }] })
     expect(k[1]).toMatchObject({ batches: 1, filled: 0, avgMin: null, planned: [{ unit: 'KG', qty: 6000 }] })
     expect(k[2]).toMatchObject({ batches: 3, filled: 2 })
+  })
+})
+
+// 27/11 — MẺ KHÔNG ĐỊNH MỨC (ô nn = true): chỉ có thực cấp; không vào số dòng / lệch / KG lệch / NVL lệch; tổng dòng NVL vẫn cộng
+// thực cấp nhưng định mức / lệch chỉ tính trên ô có định mức (norm = false ⇒ màn in "—").
+describe('mẻ không định mức (27/11)', () => {
+  const NN = (iss: number) => ({ std: null, req: null, iss, n: 1, tol: null, rm: false, why: null, nn: true })
+  const rows = [{ base_unit: 'KG', cells: { a: C(100, 100, 100), b: NN(80) } }, { base_unit: 'KG', cells: { b: NN(5) } }]
+  const batches = [B('a', 'Ca 1', '2026-11-27T01:00:00Z', { stage: 'released' }), B('b', 'Ca 1', '2026-11-27T02:00:00Z', { stage: 'released' })]
+  it("ô không định mức: trạng thái 'nonorm', chỉ thực cấp, không lệch", () => {
+    expect(cellState(NN(80), true)).toBe('nonorm')
+    expect(cellDev(NN(80))).toEqual({ std: 0, sheet: 0, iss: 80, edit: 0, exec: 0, total: 0 })
+    expect(LINE_STATE_LABEL.nonorm).toBe('Không định mức')
+  })
+  it('tổng dòng NVL: thực cấp cộng cả mẻ không định mức, lệch chỉ trên ô có định mức', () => {
+    const s = rowSum(rows[0], ['a', 'b'])
+    expect(s).toMatchObject({ std: 100, iss: 180, diff: 0, devPct: 0, norm: true, used: true })
+    expect(rowSum(rows[1], ['a', 'b'])).toMatchObject({ iss: 5, norm: false, used: true })
+  })
+  it('đếm dòng / lệch / KG bỏ qua ô không định mức', () => {
+    expect(lineStats(rows, batches)).toMatchObject({ lines: 1, ok: 1, short: 0, over: 0, extra: 0 })
+    const a = devAgg(rows, batches)
+    expect(a).toMatchObject({ lines: 1, settled: 1, ok: 1, over: 0, under: 0, extra: 0, nonorm: 2 })
+    expect(a.kg).toMatchObject({ std: 100, iss: 100, total: 0 })
+    expect(devLines(a)).toBe(0)
+    expect(materialDevs(rows, batches)).toEqual([])
+    expect(rowDeviations(rowBatchLines(rows[1], [{ shift: 'Ca 1', batches }]))).toBe(0)
   })
 })

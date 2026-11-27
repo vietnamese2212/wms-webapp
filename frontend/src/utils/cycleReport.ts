@@ -10,6 +10,8 @@
 //   • CA = khung giờ của MỘT ngày: "Ca 1 · 17/11" ≠ "Ca 1 · 18/11" (trước 21/11 gom theo tên ⇒ Ca 1 của hai ngày dồn một cột).
 //   • Chỉ tính dòng ĐÃ CẤP XONG (đủ theo phiếu, vượt, phiếu không đòi cấp, hoặc mẻ đã nạp bồn) — dòng đang cấp dở chưa có số lệch.
 // Phiếu của mẻ (trang mẻ, lệnh cho người cấp) vẫn so với PHIẾU qua reqLineState — chỉ báo cáo đổi mốc so.
+// 27/11 — MẺ KHÔNG ĐỊNH MỨC (ô có nn = true): chỉ có THỰC CẤP; trạng thái 'nonorm'; không vào số dòng / lệch / KG lệch / NVL lệch;
+//   tổng một dòng NVL vẫn cộng thực cấp của chúng, còn định mức / lệch chỉ tính trên ô có định mức (norm = false ⇒ màn in "—").
 import { reqLineState, type ReqLineState } from './reqTolerance'
 
 export const NO_SHIFT = 'Chưa ghi ca'
@@ -23,7 +25,11 @@ export interface CycleBatchLike {
 }
 /** một ô NVL × mẻ: req = phiếu đang hiệu lực (null = dòng đã bỏ / mã ngoài phiếu) · std = định mức gốc (null = dòng thêm tay / ngoài phiếu;
  *  vắng = API cũ trước 21/11 ⇒ coi như phiếu) · rm = dòng đã bỏ khỏi phiếu · why = lý do sửa · tol = mức lệch % · iss = thực cấp */
-export interface CycleCellLike { req: number | null; std?: number | null; rm?: boolean; why?: string | null; tol: number | null; iss: number; n: number }
+export interface CycleCellLike { req: number | null; std?: number | null; rm?: boolean; why?: string | null; tol: number | null; iss: number; n: number
+  /** ô của mẻ KHÔNG định mức (27/11) — chỉ có thực cấp */
+  nn?: boolean }
+/** trạng thái một ô so định mức gốc — thêm 'nonorm' (mẻ không định mức) */
+export type CellState = ReqLineState | 'nonorm'
 export interface CycleRowLike { cells: Record<string, CycleCellLike>; base_unit?: string | null }
 export interface ShiftGroup<B> {
   /** nhãn hiển thị, duy nhất trong chu kỳ — "Ca 1" (chu kỳ một ngày) / "Ca 1 · 17/11" (nhiều ngày); dùng làm khoá */
@@ -93,8 +99,9 @@ export function cellSettled(c: CycleCellLike, closed: boolean): boolean {
 
 /** trạng thái một ô NVL × mẻ SO VỚI ĐỊNH MỨC GỐC (null = mẻ không dùng mã này). Dòng chưa cấp xong ⇒ progress / none (chưa có số lệch);
  *  đã xong ⇒ ok (trong mức lệch của công thức) · over · under · extra (không có trong định mức: thêm tay / cấp ngoài phiếu). */
-export function cellState(c: CycleCellLike | undefined, closed: boolean): ReqLineState | null {
+export function cellState(c: CycleCellLike | undefined, closed: boolean): CellState | null {
   if (!c) return null
+  if (c.nn) return 'nonorm'
   if (!cellSettled(c, closed)) return Number(c.iss) > 0 ? 'progress' : 'none'
   const std = stdOf(c)
   if (std == null) return 'extra'
@@ -104,6 +111,7 @@ export function cellState(c: CycleCellLike | undefined, closed: boolean): ReqLin
 export interface Dev { std: number; sheet: number; iss: number; edit: number; exec: number; total: number }
 /** lệch của một ô: tổng = thực cấp − định mức = SỬA PHIẾU (phiếu − định mức) + CẤP LỆCH (thực cấp − phiếu) */
 export function cellDev(c: CycleCellLike): Dev {
+  if (c.nn) { const iss = r3(Number(c.iss) || 0); return { std: 0, sheet: 0, iss, edit: 0, exec: 0, total: 0 } }
   const std = Number(stdOf(c) ?? 0), sheet = sheetOf(c), iss = Number(c.iss) || 0
   return { std: r3(std), sheet: r3(sheet), iss: r3(iss), edit: r3(sheet - std), exec: r3(iss - sheet), total: r3(iss - std) }
 }
@@ -112,36 +120,39 @@ export const devPctOf = (total: number, std: number): number | null => (std > 0 
 
 /** tổng một dòng NVL trên một nhóm mẻ (một mã ⇒ cùng đơn vị) — mọi ô, kể cả dòng đang cấp dở (bảng NVL × ca tô cam phần đó).
  *  std = định mức gốc · sheet = phiếu · diff = thực cấp − định mức. */
-export function rowSum(row: CycleRowLike, batchIds: readonly string[]): { std: number; sheet: number; iss: number; diff: number; devPct: number | null; used: boolean } {
-  let std = 0, sheet = 0, iss = 0, used = false
+export function rowSum(row: CycleRowLike, batchIds: readonly string[]): { std: number; sheet: number; iss: number; diff: number; devPct: number | null; used: boolean; norm: boolean } {
+  // norm = có ít nhất một ô CÓ định mức; iss cộng mọi ô (kể cả mẻ không định mức), lệch chỉ trên ô có định mức
+  let std = 0, sheet = 0, iss = 0, normIss = 0, used = false, norm = false
   for (const id of batchIds) {
     const c = row.cells[id]
     if (!c) continue
     used = true
     const d = cellDev(c)
     std += d.std; sheet += d.sheet; iss += d.iss
+    if (!c.nn) { norm = true; normIss += d.iss }
   }
   std = r3(std); sheet = r3(sheet); iss = r3(iss)
-  const diff = r3(iss - std)
-  return { std, sheet, iss, diff, devPct: devPctOf(diff, std), used }
+  const diff = r3(normIss - std)
+  return { std, sheet, iss, diff, devPct: devPctOf(diff, std), used, norm }
 }
 
 /** NVL × CA (20/11 — user: "1 ngày có tới 36 mẻ thì số cột sẽ là nhiều lắm"): bảng chính mỗi CA một cột; ▸ ở dòng NVL mở các MẺ
  *  xếp dọc. Từng mẻ có dùng mã này, theo thứ tự ca → mẻ. Excel "NVL từng mẻ" đọc cùng hàm. */
 export function rowBatchLines<B extends CycleBatchLike>(row: CycleRowLike, groups: { shift: string; batches: B[] }[]):
-  { shift: string; batch: B; cell: CycleCellLike; state: ReqLineState | null; dev: Dev }[] {
+  { shift: string; batch: B; cell: CycleCellLike; state: CellState | null; dev: Dev }[] {
   return groups.flatMap(g => g.batches.filter(b => row.cells[b.id]).map(b => {
     const cell = row.cells[b.id]
     return { shift: g.shift, batch: b, cell, state: cellState(cell, isFilled(b)), dev: cellDev(cell) }
   }))
 }
 /** dòng LỆCH so định mức gốc: vượt / dưới mức cho phép, hoặc ngoài định mức (thêm tay vào phiếu, cấp ngoài phiếu) */
-export const isDevState = (s: ReqLineState | null | undefined) => s === 'over' || s === 'under' || s === 'extra'
+export const isDevState = (s: CellState | null | undefined) => s === 'over' || s === 'under' || s === 'extra'
 /** số mẻ của dòng NVL lệch khỏi định mức — cột "Mẻ lệch" */
-export const rowDeviations = (lines: { state: ReqLineState | null }[]) => lines.filter(l => isDevState(l.state)).length
+export const rowDeviations = (lines: { state: CellState | null }[]) => lines.filter(l => isDevState(l.state)).length
 /** chữ trạng thái một dòng NVL của một mẻ, so với định mức gốc (Excel + dòng mở rộng) */
-export const LINE_STATE_LABEL: Record<ReqLineState, string> = {
+export const LINE_STATE_LABEL: Record<CellState, string> = {
   ok: 'Trong mức', over: 'Vượt định mức', under: 'Dưới định mức', progress: 'Đang cấp', extra: 'Ngoài định mức', none: 'Chưa cấp', removed: 'Bỏ khỏi phiếu',
+  nonorm: 'Không định mức',
 }
 
 export interface LineStats { lines: number; ok: number; short: number; over: number; extra: number }
@@ -151,7 +162,7 @@ export function lineStats(rows: CycleRowLike[], batches: Pick<CycleBatchLike, 'i
   for (const b of batches) {
     for (const r of rows) {
       const st = cellState(r.cells[b.id], isFilled(b))
-      if (st == null || st === 'removed') continue
+      if (st == null || st === 'removed' || st === 'nonorm') continue
       s.lines++
       if (st === 'ok') s.ok++
       else if (st === 'over') s.over++
@@ -170,17 +181,20 @@ export interface DevAgg {
   lines: number; settled: number; pending: number
   /** dòng đã xong: trong mức · vượt định mức · dưới định mức · ngoài định mức · phiếu khác định mức (sửa / thêm / bỏ) */
   ok: number; over: number; under: number; extra: number; edited: number
+  /** 27/11: số ô của mẻ KHÔNG định mức (không vào mọi số trên) */
+  nonorm: number
 }
 /** LỆCH SO ĐỊNH MỨC của một nhóm mẻ (một mẻ · một ca · cả chu kỳ) — dashboard, dải số, Excel "Lệch theo ca · mẻ" đọc cùng hàm */
 export function devAgg(rows: CycleRowLike[], batches: Pick<CycleBatchLike, 'id' | 'stage'>[]): DevAgg {
   const a: DevAgg = { batches: batches.length, filled: 0, kg: { std: 0, sheet: 0, iss: 0, edit: 0, exec: 0, total: 0, pct: null },
-    lines: 0, settled: 0, pending: 0, ok: 0, over: 0, under: 0, extra: 0, edited: 0 }
+    lines: 0, settled: 0, pending: 0, ok: 0, over: 0, under: 0, extra: 0, edited: 0, nonorm: 0 }
   for (const b of batches) {
     const closed = isFilled(b)
     if (closed) a.filled++
     for (const r of rows) {
       const c = r.cells[b.id]
       if (!c) continue
+      if (c.nn) { a.nonorm++; continue }
       a.lines++
       const st = cellState(c, closed)
       if (st === 'progress' || st === 'none') { a.pending++; continue }
@@ -212,7 +226,7 @@ export function materialDevs(rows: CycleRowLike[], batches: Pick<CycleBatchLike,
       const c = r.cells[b.id]
       if (!c) continue
       const st = cellState(c, isFilled(b))
-      if (st === 'progress' || st === 'none' || st == null) continue
+      if (st === 'progress' || st === 'none' || st === 'nonorm' || st == null) continue
       n++
       if (isDevState(st)) devBatches++
       const d = cellDev(c)

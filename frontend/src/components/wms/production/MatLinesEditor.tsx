@@ -4,6 +4,7 @@
 // (điện thoại cuộn ngang, không ẩn cột). Thêm mã bằng ô tìm trên server dưới bảng.
 //   • withTol (công thức): cột "± %" = mức lệch cho phép của dòng (trống = không kiểm).
 //   • allowSwap (phiếu của mẻ): cột "Gốc" (định mức gốc theo công thức) + nút ⇄ "Đổi mã" — giữ số lượng, đổi sang mã khác, ghi "thay cho".
+//   • codesOnly (27/11 — kho KHÔNG định mức): chỉ danh sách mã — không cột Số lượng / ± % / Gốc.
 import { useState } from 'react'
 import { X, ArrowLeftRight } from 'lucide-react'
 import { TableBody, TableCell, TableRow } from '@/components/ui/table'
@@ -38,6 +39,8 @@ export const matLineError = (l: MatLine): string => {
 /** Phiếu của mẻ: số lượng + đổi mã */
 export const matLinesPayload = (lines: MatLine[]) =>
   lines.map(l => ({ material_id: l.material_id, qty: parseVnNumber(l.qty) as number, ...(l.replaces ? { replaces: l.replaces } : {}) }))
+/** Danh sách chỉ mã (công thức / mẻ không định mức) — không số lượng */
+export const codeLinesPayload = (lines: MatLine[]) => lines.map(l => ({ material_id: l.material_id, qty: null, tol_pct: null }))
 /** Công thức: số lượng + mức lệch */
 export const recipeLinesPayload = (lines: MatLine[]) => lines.map(l => ({ material_id: l.material_id, qty: parseVnNumber(l.qty) as number, tol_pct: tolOf(l) }))
 const nf = (n: number) => n.toLocaleString('vi-VN', { maximumFractionDigits: 3 })
@@ -45,7 +48,7 @@ const nf = (n: number) => n.toLocaleString('vi-VN', { maximumFractionDigits: 3 }
 const TD = 'px-2 py-1 text-[10px] whitespace-nowrap align-middle'
 const INP = 'h-8 sm:h-7 text-[11px] text-right tabular-nums'
 
-export function MatLinesEditor({ lines, onChange, excludeId, disabled, emptyText, withTol, allowSwap }: {
+export function MatLinesEditor({ lines, onChange, excludeId, disabled, emptyText, withTol, allowSwap, codesOnly }: {
   lines: MatLine[]; onChange: (l: MatLine[]) => void
   /** mã không được chọn (chính mã bán thành phẩm) */
   excludeId?: string
@@ -53,6 +56,8 @@ export function MatLinesEditor({ lines, onChange, excludeId, disabled, emptyText
   emptyText?: string
   withTol?: boolean
   allowSwap?: boolean
+  /** chỉ mã, không số lượng (27/11 — không định mức) */
+  codesOnly?: boolean
 }) {
   const [term, setTerm] = useState('')
   const [swapIdx, setSwapIdx] = useState<number | null>(null)
@@ -76,14 +81,14 @@ export function MatLinesEditor({ lines, onChange, excludeId, disabled, emptyText
     setSwapIdx(null)
   }
   const set = (i: number, patch: Partial<MatLine>) => onChange(lines.map((x, j) => (j === i ? { ...x, ...patch } : x)))
-  const errs = lines.map((l, i) => ({ i, e: l.qty.trim() || l.tol?.trim() ? matLineError(l) : '' })).filter(x => x.e)
+  const errs = codesOnly ? [] : lines.map((l, i) => ({ i, e: l.qty.trim() || l.tol?.trim() ? matLineError(l) : '' })).filter(x => x.e)
   // bộ cột theo chế độ (công thức: ± % · phiếu của mẻ: Gốc) — mỗi bộ một khoá lưu độ rộng
   const cols: RtColDef[] = [
     { id: 'stt', label: 'STT', w: 44, align: 'right' }, { id: 'code', label: 'Mã', w: 104 }, { id: 'name', label: 'Nguyên liệu', w: 220 },
-    ...(allowSwap ? [{ id: 'std', label: 'Gốc', w: 84, align: 'right' as const }] : []),
-    { id: 'qty', label: 'Số lượng', w: 112, align: 'right' }, { id: 'unit', label: 'ĐVT', w: 64 },
-    ...(withTol ? [{ id: 'tol', label: '± %', w: 72, align: 'right' as const }] : []),
-    ...(disabled ? [] : [{ id: 'act', label: '', w: allowSwap ? 76 : 48, stickyRight: true }]),
+    ...(allowSwap && !codesOnly ? [{ id: 'std', label: 'Gốc', w: 84, align: 'right' as const }] : []),
+    ...(codesOnly ? [] : [{ id: 'qty', label: 'Số lượng', w: 112, align: 'right' as const }]), { id: 'unit', label: 'ĐVT', w: 64 },
+    ...(withTol && !codesOnly ? [{ id: 'tol', label: '± %', w: 72, align: 'right' as const }] : []),
+    ...(disabled ? [] : [{ id: 'act', label: '', w: allowSwap && !codesOnly ? 76 : 48, stickyRight: true }]),
   ]
   const sig = cols.map(c => c.id).join('-')
 
@@ -94,7 +99,7 @@ export function MatLinesEditor({ lines, onChange, excludeId, disabled, emptyText
           <TableBody>
             {!lines.length && <TableEmptyRow colSpan={cols.length}>{emptyText ?? 'Chưa có nguyên liệu nào.'}</TableEmptyRow>}
             {lines.map((l, i) => {
-              const e = l.qty.trim() || l.tol?.trim() ? matLineError(l) : ''
+              const e = !codesOnly && (l.qty.trim() || l.tol?.trim()) ? matLineError(l) : ''
               const q = l.qty.trim() ? parseVnNumber(l.qty) : null
               const off = l.standard != null && q != null && Math.abs(q - Number(l.standard)) > 0.0005
               return (
@@ -117,18 +122,20 @@ export function MatLinesEditor({ lines, onChange, excludeId, disabled, emptyText
                       {l.replacesCode && <span className="ml-1 text-[9px] text-blue-700">thay cho {l.replacesCode}</span>}
                     </TableCell>
                   </>)}
-                  {allowSwap && (
+                  {allowSwap && !codesOnly && (
                     <TableCell className={`${TD} text-right tabular-nums ${off ? 'text-amber-700 font-semibold' : 'text-slate-500'}`}>
                       {l.standard != null ? nf(Number(l.standard)) : <span className="text-[9px] text-slate-400">ngoài CT</span>}
                     </TableCell>
                   )}
+                  {!codesOnly && (
                   <TableCell className={`${TD} text-right`}>
                     <Input value={l.qty} disabled={disabled} inputMode="decimal" placeholder="0" aria-label={`Số lượng ${l.material_code}`} title={e || undefined}
                       onChange={ev => set(i, { qty: ev.target.value })}
                       className={`${INP} w-full ${e ? 'border-red-400' : off ? 'border-amber-400' : ''}`} />
                   </TableCell>
+                  )}
                   <TableCell className={`${TD} font-mono text-slate-500`}>{unitCode(l.base_unit)}</TableCell>
-                  {withTol && (
+                  {withTol && !codesOnly && (
                     <TableCell className={`${TD} text-right`}>
                       <Input value={l.tol ?? ''} disabled={disabled} inputMode="decimal" placeholder="—" aria-label={`Mức lệch cho phép ${l.material_code} (%)`}
                         onChange={ev => set(i, { tol: ev.target.value })} className={`${INP} w-full`} />
@@ -137,7 +144,7 @@ export function MatLinesEditor({ lines, onChange, excludeId, disabled, emptyText
                   {!disabled && (
                     <TableCell className={`${TD} sticky right-0 z-10 bg-white text-right`}>
                       <div className="inline-flex items-center gap-0.5">
-                        {allowSwap && swapIdx !== i && (
+                        {allowSwap && !codesOnly && swapIdx !== i && (
                           <button type="button" className="touch-target inline-flex items-center justify-center rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-blue-600"
                             title={`Đổi ${l.material_code} sang mã khác (giữ số lượng)`} aria-label={`Đổi mã ${l.material_code}`} onClick={() => setSwapIdx(i)}><ArrowLeftRight className="h-3.5 w-3.5" /></button>
                         )}

@@ -55,9 +55,12 @@ export default function ProductionBatches() {
   const f = useWmsFilterStore(s => s.production)
   const setF = useWmsFilterStore(s => s.setProduction)
   const perms = useAuthStore(s => s.user)?.module_permissions as ModulePermissions | null ?? null
-  const canOpen = can(perms, 'production', 'open_batch')
   const canExport = can(perms, 'production', 'export')
   const { data: { kitchens, factories } } = useProductionWarehouses()
+  // 27/11: kho KHÔNG định mức do QA lập mẻ (quyền QA duyệt phiếu) — nút hiện khi lập được ở ít nhất một kho trong phạm vi
+  const canOpenNorm = can(perms, 'production', 'open_batch') && kitchens.some(k => !k.mes_no_norm)
+  const canOpenNoNorm = can(perms, 'production', 'approve_qa') && kitchens.some(k => k.mes_no_norm)
+  const canOpen = canOpenNorm || canOpenNoNorm
   const search = useDebouncedValue(f.search.trim(), 300)
   const page = f.page || 1, pageSize = f.pageSize || 100
   const q = useProductionBatches({
@@ -97,7 +100,8 @@ export default function ProductionBatches() {
   const toggleDensity = () => setDense(d => { try { localStorage.setItem('production_density', d ? 'comfortable' : 'compact') } catch { /* bộ nhớ trình duyệt bị chặn */ } return !d })
 
   const actions: ActionItem[] = []
-  if (canOpen) actions.push({ key: 'open', icon: Plus, label: 'Mở mẻ', tip: 'Mở mẻ chế biến mới ở kho chế biến', primary: true, variant: 'default', onClick: () => setFormOpen(true) })
+  if (canOpen) actions.push({ key: 'open', icon: Plus, label: canOpenNorm ? 'Mở mẻ' : 'Lập mẻ', primary: true, variant: 'default', onClick: () => setFormOpen(true),
+    tip: canOpenNorm ? 'Mở mẻ chế biến mới ở kho chế biến' : 'QA lập mẻ theo phiếu chế biến giấy (kho chạy không định mức)' })
   if (canSeePath('/wms/production/tanks')) actions.push({ key: 'tanks', icon: Container, label: 'Bồn', tip: 'Xem bồn và tồn bán thành phẩm trong bồn', onClick: () => navigate('/wms/production/tanks') })
   if (canExport) actions.push({ key: 'xlsx', icon: FileDown, label: 'Xuất Excel', tip: `Xuất ${rows.length} mẻ của trang đang xem ra Excel`, onClick: exportExcel, disabled: !rows.length, mobileHidden: true })
 

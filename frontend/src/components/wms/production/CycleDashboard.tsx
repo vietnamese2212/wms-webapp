@@ -282,7 +282,7 @@ function DashTable({ rows, groups, per, perGroup, all, open, setOpen, onOpenBatc
         {groups.length > 0 && (
           <TableRow className="bg-sky-50 hover:bg-sky-50 border-t-2 border-t-sky-300" data-dash-shift="__all">
             <TableCell colSpan={3} className={`${TD} sticky left-0 z-10 bg-sky-50 text-[11px] font-semibold text-slate-900`}>
-              Cả chu kỳ <span className="font-normal text-slate-500">· {all.batches} mẻ · đã nạp {all.filled}</span>
+              Cả chu kỳ <span className="font-normal text-slate-500">· {all.batches} mẻ · đã nạp {all.filled}{(() => { const n = groups.reduce((s, g) => s + g.batches.filter(b => b.no_norm).length, 0); return n ? ` · ${n} mẻ không định mức (không tính lệch)` : '' })()}</span>
             </TableCell>
             {aggCells(all, true)}
           </TableRow>

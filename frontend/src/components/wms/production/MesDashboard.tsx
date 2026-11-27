@@ -215,7 +215,9 @@ type OpenFn = (title: string, q: Omit<DashDetailQuery, 'warehouse_id' | 'date_fr
 function DashBody({ d, stale, prevWord, today, onOpen, onDrill, onBatch }: { d: Dash; stale: boolean; prevWord: string; today: string; onOpen: OpenFn; onDrill: (b: DashBucket) => void; onBatch: (id: string) => void }) {
   const t = d.totals, p = d.prev, tg = d.targets
   const pct = pctOf(t.total_kg, t.std_kg), prevPct = pctOf(p.total_kg, p.std_kg)
-  const pass = t.filled ? (t.pass / t.filled) * 100 : null, prevPass = p.filled ? (p.pass / p.filled) * 100 : null
+  // 27/11: mẫu số "% mẻ đạt" = mẻ đã nạp CÓ định mức (mẻ không định mức không có số để so)
+  const tf = t.filled_norm ?? t.filled, pf = p.filled_norm ?? p.filled
+  const pass = tf ? (t.pass / tf) * 100 : null, prevPass = pf ? (p.pass / pf) * 100 : null
   const qaN = t.qa_released + t.qa_rejected, qa = qaN ? (t.qa_released / qaN) * 100 : null
   const prevQaN = p.qa_released + p.qa_rejected, prevQa = prevQaN ? (p.qa_released / prevQaN) * 100 : null
   const devLines = t.over + t.under + t.extra
@@ -240,7 +242,7 @@ function DashBody({ d, stale, prevWord, today, onOpen, onDrill, onBatch }: { d: 
         </CardBtn>
         <CardBtn onClick={() => onOpen('Mẻ không đạt định mức', { kind: 'batches', only: 'fail' })} id="pass">
           <StatCard twoLines label="Mẻ đạt định mức" value={pass == null ? '—' : `${nf(pass, 1)}%`} pct={pass} tone={passTone(pass, tg.pass_pct)}
-            unit={`mục tiêu ≥ ${nf(tg.pass_pct, 1)}%`} sub={cmp(pass, prevPass, ' điểm', 'up')} />
+            unit={`mục tiêu ≥ ${nf(tg.pass_pct, 1)}%`} sub={t.no_norm ? <>{cmp(pass, prevPass, ' điểm', 'up')} · {nf(t.no_norm, 0)} mẻ không định mức không tính</> : cmp(pass, prevPass, ' điểm', 'up')} />
         </CardBtn>
         <CardBtn onClick={() => onOpen('NVL lệch định mức', { kind: 'lines' })} id="dev">
           <StatCard twoLines label="Lệch NVL (KG)" value={sgn(t.total_kg, Math.abs(t.total_kg) < 100 ? 1 : 0)} tone={devTone(pct, tg.dev_pct)}
@@ -389,7 +391,7 @@ function TrendChart({ d, onDrill, onCount }: { d: Dash; onDrill: (b: DashBucket)
           <div className="font-semibold">{bucketLabel(d.grain, h.b.k)} · {h.b.batches} mẻ</div>
           <div className="tabular-nums">Lệch <b style={{ color: toneColor(devTone(h.p, d.targets.dev_pct)) }}>{h.p == null ? '—' : devLabel(h.p)}</b> · {sgn(h.b.total_kg, 1)} KG</div>
           <div className="tabular-nums text-[var(--k-muted)]">Sửa phiếu {sgn(h.b.edit_kg, 1)} · cấp lệch {sgn(h.b.exec_kg, 1)} KG</div>
-          <div className="text-[var(--k-muted)]">{h.b.dev_batches} mẻ có NVL lệch · {h.b.filled ? `${nf((h.b.pass / h.b.filled) * 100, 1)}% mẻ đạt` : 'chưa mẻ nào nạp bồn'}</div>
+          <div className="text-[var(--k-muted)]">{h.b.dev_batches} mẻ có NVL lệch · {(h.b.filled_norm ?? h.b.filled) ? `${nf((h.b.pass / (h.b.filled_norm ?? h.b.filled)) * 100, 1)}% mẻ đạt` : h.b.filled ? 'mẻ không định mức — không tính đạt' : 'chưa mẻ nào nạp bồn'}</div>
         </div>
       )}
     </div>
@@ -556,7 +558,8 @@ function GroupTable({ kind, d, onOpen }: { kind: 'shift' | 'btp'; d: Dash; onOpe
         </tr></thead>
         <tbody>
           {rows.map(r => {
-            const p = pctOf(r.g.total_kg, r.g.std_kg), ps = r.g.filled ? (r.g.pass / r.g.filled) * 100 : null
+            const fn = r.g.filled_norm ?? r.g.filled
+            const p = pctOf(r.g.total_kg, r.g.std_kg), ps = fn ? (r.g.pass / fn) * 100 : null
             return (
               <tr key={r.key} onClick={() => onOpen(kind === 'shift' ? r.label : `${r.label} ${r.sub}`, r.q)} data-row={r.key}
                 className="cursor-pointer border-t border-[var(--k-line)] hover:bg-[var(--k-surface-2)]">

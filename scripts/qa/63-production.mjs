@@ -54,13 +54,14 @@ const XLSX = createRequire(new URL('../../backend/package.json', import.meta.url
 const PACK = '63-production'
 await login()
 const todayVN = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
-const WP = 'QA63_PARENT', WC = 'QA63_CB', WC2 = 'QA63_CB2'
+const WP = 'QA63_PARENT', WC = 'QA63_CB', WC2 = 'QA63_CB2', WC3 = 'QA63_CB3'   // WC3: kho chạy KHÔNG định mức ([16r]–[16w], 27/11)
 const M_RM = 'QA63_RM1', M_BTP = 'QA63_BTP1', M_BTP2 = 'QA63_BTP2', M_EA = 'QA63_EA1', M_RM2 = 'QA63_RM2'
 const M_G1 = 'QA63_G1', M_G2 = 'QA63_G2', M_G3 = 'QA63_G3'   // [23] Nhập nhiều mã: 3 mã RM01 có tem
 const M_NT = 'QA63_NT1', M_NT2 = 'QA63_NT2'   // [21] hàng KHÔNG TEM: RM01 (theo NSX) · PK01 (loại kho tắt riêng)
 const qaX = (await restAll('QAStatus', 'select=id&code=eq.X'))[0]?.id
 const ts = () => new Date().toISOString()
 const JT_OPEN = 'QA63_JT_OPEN', JT_VIEW = 'QA63_JT_VIEW', JT_OUT = 'QA63_JT_OUT'   // JT_OUT: [22c] chỉ xem Xuất kho, không quyền Khách hàng
+const JT_QA3 = 'QA63_JT_QA3', JT_TC3 = 'QA63_JT_TC3'   // [16w] kho không định mức: QA lập mẻ · trưởng ca không lập
 let bcrypt = null
 try { bcrypt = await import('../../backend/node_modules/bcrypt/bcrypt.js').then(m => m.default ?? m) } catch { /* chưa npm i backend */ }
 const num = (v) => Number(v ?? 0)
@@ -76,10 +77,10 @@ async function uploadXlsx(route, aoa, { preflight = false, token = null } = {}) 
 const RIMP_HEAD = ['Mã BTP *', 'Tên BTP', 'Tên công thức *', 'Cỡ mẻ chuẩn *', 'Mã NVL *', 'Số lượng *', 'ĐVT', 'Mức lệch ± %', 'Mặc định']
 
 async function cleanup() {
-  const whs = [WP, WC, WC2]
+  const whs = [WP, WC, WC2, WC3]
   const roleEmps = await restAll('Employee', 'select=id&email=like.qa63role*')
   for (const e of roleEmps) { await restWrite('UserWarehouseAccess', 'DELETE', `employee_id=eq.${e.id}`); await restWrite('Employee', 'DELETE', `id=eq.${e.id}`) }
-  await restWrite('JobTitle', 'DELETE', `id=in.(${JT_OPEN},${JT_VIEW},${JT_OUT})`)
+  await restWrite('JobTitle', 'DELETE', `id=in.(${JT_OPEN},${JT_VIEW},${JT_OUT},${JT_QA3},${JT_TC3})`)
   // [21] / [22] chuyến xuất ở kho thử: vết quét → dòng hàng → DO → chuyến (theo khoá ngoại), TRƯỚC tồn và mã hàng
   const gdos = await restAll('GroupDeliveryOrder', `select=id&warehouse_id=in.(${whs.join(',')})`)
   if (gdos.length) {
@@ -124,7 +125,7 @@ async function cleanup() {
   await restWrite('Material', 'DELETE', `id=in.(${[M_RM, M_BTP, M_BTP2, M_EA, M_RM2, M_NT, M_NT2, M_G1, M_G2, M_G3].join(',')})`)
   await restWrite('Location', 'DELETE', `warehouse_id=in.(${whs.join(',')})`)   // [23] vị trí thử của kho phụ
   await restWrite('Customer', 'DELETE', 'id=eq.QA63_CUST')   // [22c] ship-to trỏ kho cha — trước khi xoá kho
-  await restWrite('Warehouse', 'DELETE', `id=in.(${WC},${WC2})`)
+  await restWrite('Warehouse', 'DELETE', `id=in.(${WC},${WC2},${WC3})`)
   await restWrite('Warehouse', 'DELETE', `id=eq.${WP}`)
 }
 
@@ -1751,9 +1752,114 @@ try {
       pDoc.s === 200 && hB2?.doc_no === 'QA63-CT-02' && (!gN || (xN.s === 200 && !hNgone)),
       `sửa=${pDoc.s} ${pDoc.j?.error?.message ?? ''} số CT=${hB2?.doc_no} huỷ=${xN.s} đầu còn=${!!hNgone}`)
   }
+
+  // ── [16r]–[16w] KHÔNG ĐỊNH MỨC (27/11 — user chốt bảng tình huống: QA lập mẻ theo phiếu giấy · chặn mã lạ · chặn nạp khi còn mã chưa cấp ·
+  //    kho có định mức + công thức chỉ mã ⇒ chặn · mẻ nhớ chế độ lúc lập). Kho chế biến 3 RIÊNG — không đổi số đếm của kho 1 / 2.
+  //    Đặt CUỐI gói: công thức chỉ mã của M_BTP2 có thể thành mặc định của mã (các khối trước mở mẻ M_BTP2 không chọn công thức).
+  {
+    await restWrite('Warehouse', 'POST', null, [{ id: WC3, code: 'QA63CB3', name: 'QA63 — kho chế biến 3 (không định mức)', warehouse_type: 'CENTRAL', inventory_mode: 'QR', parent_warehouse_id: WP, updated_at: ts() }])
+    await restWrite('InventoryEntry', 'POST', null, [
+      E('QA63_E3A', 'QA63_P3A', 50, WC3, '2026-11-01', '2027-01-01'),
+      { ...E('QA63_E3B', 'QA63_P3B', 50, WC3, '2026-11-01', '2027-01-01'), material_id: M_RM2 },
+      { ...E('QA63_E3C', 'QA63_P3C', 9, WC3, '2026-11-01', '2027-01-01'), material_id: M_EA },   // mã NGOÀI danh sách
+    ])
+    const s1 = await api('/wms/production/settings', 'PUT', { warehouse_id: WC3, mes_flow_gate: true, mes_no_norm: true })
+    const T8 = (await api('/wms/production/tanks', 'POST', { warehouse_id: WC3, code: 'QA63-T8', capacity: 500, unit: 'L' })).j?.data
+    const rcList = await api('/wms/production/recipes', 'POST', { material_id: M_BTP2, name: 'QA63 chỉ mã', lines: [{ material_id: M_RM }, { material_id: M_RM2 }] })
+    const rcHalf = await api('/wms/production/recipes', 'POST', { material_id: M_BTP2, name: 'QA63 nửa vời', base_qty: 100, lines: [{ material_id: M_RM, qty: 1 }, { material_id: M_RM2 }] })
+    const RL = rcList.j?.data
+    const rcGet = RL ? (await api(`/wms/production/recipes/${RL.id}`)).j?.data : null
+    check('16r. Cài đặt MES lưu "Định mức: Chỉ danh sách mã" (mes_no_norm); công thức chỉ mã (không cỡ mẻ, không số) ⇒ 201, cỡ mẻ + số null; nửa có số nửa không ⇒ 422 MES_QTY',
+      s1.s === 200 && s1.j?.data?.mes_no_norm === true && rcList.s === 201 && rcGet?.base_qty == null && (rcGet?.lines ?? []).length === 2
+        && (rcGet?.lines ?? []).every(l => l.qty == null) && rcHalf.s === 422 && rcHalf.j?.error?.code === 'MES_QTY',
+      `cài=${s1.s}/${s1.j?.data?.mes_no_norm} ct=${rcList.s} ${rcList.j?.error?.message ?? ''} base=${rcGet?.base_qty} nửa=${rcHalf.s}/${rcHalf.j?.error?.code}`)
+
+    const NN = (o) => ({ warehouse_id: WC3, material_id: M_BTP2, prod_date: todayVN, shift: 'Ca 1', cycle: 'N1', tank_id: T8?.id, recipe_id: RL?.id, ...o })
+    const items = [{ material_id: M_RM }, { material_id: M_RM2 }]
+    const noQty = await api('/wms/production/batches', 'POST', NN({ items }))
+    const cr = await api('/wms/production/batches', 'POST', NN({ planned_qty: 100, items }))
+    const NB = cr.j?.data
+    const nbd = NB ? (await api(`/wms/production/batches/${NB.id}`)).j?.data : null
+    const g0 = nbd?.gate
+    const ap = NB ? await api(`/wms/production/batches/${NB.id}/approve-lead`, 'POST', { approve: true }) : { s: 0 }
+    const listed = (nbd?.board ?? []).filter(r => r.listed)
+    check('16s. Lập mẻ ở kho không định mức: thiếu lượng mẻ ⇒ 422; có lượng + danh sách 2 mã ⇒ 201, no_norm, dòng không số; tình trạng "working" (không chờ duyệt), bước "log"; duyệt ⇒ 409 MES_NO_NORM',
+      noQty.s === 422 && cr.s === 201 && NB?.no_norm === true && listed.length === 2 && (nbd?.board ?? []).every(r => r.required == null)
+        && g0?.stage === 'working' && g0?.step === 'log' && g0?.no_norm === true && ap.s === 409 && ap.j?.error?.code === 'MES_NO_NORM',
+      `thiếu lượng=${noQty.s} lập=${cr.s} ${cr.j?.error?.message ?? ''} no_norm=${NB?.no_norm} mã=${listed.length} gate=${g0?.stage}/${g0?.step} duyệt=${ap.s}/${ap.j?.error?.code}`)
+
+    // mở phiếu (bản sửa riêng không ô bắt buộc — không phụ thuộc mẫu MIX của staging) rồi cấp
+    await api(`/wms/production/batches/${NB?.id}/process-log/MIX/start`, 'POST', {})
+    await api(`/wms/production/batches/${NB?.id}/process-log/MIX`, 'PUT', { data: { qa63_note: 'ok' }, blocks: [{ type: 'fields', title: 'QA63', fields: [{ key: 'qa63_note', label: 'Ghi chú', kind: 'text' }] }] })
+    const ok1 = await api(`/wms/production/batches/${NB?.id}/consume-scan`, 'POST', { entry_id: 'QA63_E3A', qty: 3, qty_semantics: 'base' })
+    const chkBad = await api(`/wms/production/batches/${NB?.id}/scan-check?code=QA63_P3C`)
+    const csBad = await api(`/wms/production/batches/${NB?.id}/consume-scan`, 'POST', { entry_id: 'QA63_E3C', qty: 1, qty_semantics: 'base' })
+    const g1 = (await api(`/wms/production/batches/${NB?.id}`)).j?.data?.gate
+    check('16t. Cấp mã trong danh sách ⇒ 200; tra tem + cấp mã NGOÀI danh sách ⇒ 409 MES_NOT_ON_LIST; còn mã chưa cấp lần nào ⇒ chặn nạp ("1 mã trong danh sách chưa cấp")',
+      ok1.s === 200 && chkBad.s === 409 && chkBad.j?.error?.code === 'MES_NOT_ON_LIST' && csBad.s === 409 && csBad.j?.error?.code === 'MES_NOT_ON_LIST'
+        && (g1?.fill_blockers ?? []).some(x => /1 mã trong danh sách chưa cấp/.test(x)) && !(g1?.fill_blockers ?? []).some(x => /duyệt/.test(x)),
+      `cấp=${ok1.s} ${ok1.j?.error?.message ?? ''} tra=${chkBad.s}/${chkBad.j?.error?.code} cấp lạ=${csBad.s}/${csBad.j?.error?.code} chặn=${JSON.stringify(g1?.fill_blockers ?? null)}`)
+
+    const add = await api(`/wms/production/batches/${NB?.id}/requirements`, 'PUT', { reason: 'QA63 phiếu có thêm mã', items: [...items, { material_id: M_EA }] })
+    const csOk = await api(`/wms/production/batches/${NB?.id}/consume-scan`, 'POST', { entry_id: 'QA63_E3C', qty: 1, qty_semantics: 'base' })
+    const rmUsed = await api(`/wms/production/batches/${NB?.id}/requirements`, 'PUT', { reason: 'QA63 bỏ mã đã cấp', items: [{ material_id: M_RM2 }, { material_id: M_EA }] })
+    const noReason = await api(`/wms/production/batches/${NB?.id}/requirements`, 'PUT', { items: [...items, { material_id: M_EA }, { material_id: M_BTP }] })
+    check('16u. QA thêm mã vào danh sách (có lý do) ⇒ cấp được; bỏ mã ĐÃ cấp ⇒ 409 MES_CONSUMED; sửa không lý do ⇒ 422 MES_REASON',
+      add.s === 200 && csOk.s === 200 && rmUsed.s === 409 && rmUsed.j?.error?.code === 'MES_CONSUMED' && noReason.s === 422 && noReason.j?.error?.code === 'MES_REASON',
+      `thêm=${add.s} ${add.j?.error?.message ?? ''} cấp=${csOk.s} bỏ=${rmUsed.s}/${rmUsed.j?.error?.code} không lý do=${noReason.s}/${noReason.j?.error?.code}`)
+
+    const ok2 = await api(`/wms/production/batches/${NB?.id}/consume-scan`, 'POST', { entry_id: 'QA63_E3B', qty: 2, qty_semantics: 'base' })
+    const g2 = (await api(`/wms/production/batches/${NB?.id}`)).j?.data?.gate
+    const lb = await api(`/wms/production/batches/${NB?.id}/labels`, 'POST', { count: 1 })
+    const ps = await api('/wms/production/pour-scan', 'POST', { batch_id: NB?.id, tank_id: T8?.id, code: lb.j?.data?.labels?.[0]?.qr })
+    const fl = await api(`/wms/production/tanks/${T8?.id}/fill`, 'POST', { batch_id: NB?.id, qty: 100 })
+    const cyc = (await api(`/wms/production/cycles/report?warehouse_id=${WC3}&cycle=N1`)).j?.data
+    const cb = (cyc?.batches ?? []).find(b => b.id === NB?.id)
+    const cells = (cyc?.rows ?? []).map(r => r.cells?.[NB?.id]).filter(Boolean)
+    const dash = (await api(`/wms/production/dashboard?warehouse_id=${WC3}&date_from=${todayVN}&date_to=${todayVN}`)).j?.data?.totals
+    check('16v. Cấp đủ mọi mã ⇒ hết chặn mã chưa cấp, nạp bồn 200 (không cần hai duyệt); Báo cáo chu kỳ: mẻ no_norm, mọi ô nn (chỉ thực cấp); dashboard: 1 mẻ không định mức, không vào "mẻ đạt" (filled_norm 0 · pass 0 · std 0)',
+      ok2.s === 200 && !(g2?.fill_blockers ?? []).some(x => /chưa cấp/.test(x)) && lb.s === 200 && ps.s === 200 && fl.s === 200
+        && cb?.no_norm === true && cells.length === 3 && cells.every(c => c.nn === true && c.req == null && c.std == null)
+        && num(dash?.no_norm) === 1 && num(dash?.filled) === 1 && num(dash?.filled_norm) === 0 && num(dash?.pass) === 0 && num(dash?.std_kg) === 0,
+      `cấp=${ok2.s} chặn=${JSON.stringify(g2?.fill_blockers ?? null)} tem=${lb.s} quét=${ps.s} nạp=${fl.s} ${fl.j?.error?.message ?? ''} cyc=${cb?.no_norm}/${cells.length}/${cells.map(c => c.nn).join(',')} dash=${JSON.stringify({ n: dash?.no_norm, f: dash?.filled, fn: dash?.filled_norm, p: dash?.pass })}`)
+
+    // đổi công tắc về CÓ định mức: mẻ đã lập giữ chế độ; lập mẻ mới bằng công thức chỉ mã ⇒ 409 RECIPE_NO_QTY (user chốt: chặn)
+    const s2 = await api('/wms/production/settings', 'PUT', { warehouse_id: WC3, mes_no_norm: false })
+    const nbAfter = (await api(`/wms/production/batches/${NB?.id}`)).j?.data
+    const T9 = (await api('/wms/production/tanks', 'POST', { warehouse_id: WC3, code: 'QA63-T9', capacity: 500, unit: 'L' })).j?.data
+    const q3 = await api('/wms/production/batches', 'POST', NN({ planned_qty: 10, cycle: 'N2', tank_id: T9?.id }))
+    let roleNote = 'bỏ (không load được bcrypt)', roleOk = true
+    if (bcrypt) {
+      const pw = 'Qa' + randomUUID().slice(0, 10) + '!'   // dùng một lần, không in
+      await restWrite('JobTitle', 'POST', '', [
+        { id: JT_QA3, name: 'QA63 QA chế biến (không định mức)', updated_at: ts(), module_permissions: { production: ['view', 'approve_qa', 'consume'] } },
+        { id: JT_TC3, name: 'QA63 trưởng ca (không định mức)', updated_at: ts(), module_permissions: { production: ['view', 'open_batch', 'edit_requirement'] } },
+      ])
+      const mk3 = async (jid, n) => {
+        const id = randomUUID()
+        await restWrite('Employee', 'POST', '', [{ id, employee_code: `QA63R${n}`, name: `QA63 vai ${n}`, email: `qa63role${n}@test.local`,
+          password: await bcrypt.hash(pw, 10), is_active: true, job_title_id: jid, warehouse_id: WC3, warehouse_scope: 'ASSIGNED', updated_at: ts() }])
+        await restWrite('UserWarehouseAccess', 'POST', '', [{ id: randomUUID(), employee_id: id, warehouse_id: WC3 }])
+        const r = await fetch(`${BASE}/api/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: `qa63role${n}@test.local`, password: pw }) })
+        return (await r.json().catch(() => null))?.data?.token ?? null
+      }
+      const tkQA = await mk3(JT_QA3, 7), tkTC = await mk3(JT_TC3, 8)
+      const postAs3 = async (tk, p, body) => { const r = await fetch(`${BASE}/api${p}`, { method: 'POST', headers: { Authorization: `Bearer ${tk}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); return { s: r.status, j: await r.json().catch(() => null) } }
+      const T10 = (await api('/wms/production/tanks', 'POST', { warehouse_id: WC3, code: 'QA63-T10', capacity: 500, unit: 'L' })).j?.data
+      const qaNorm = tkQA ? await postAs3(tkQA, '/wms/production/batches', NN({ planned_qty: 10, cycle: 'N3', tank_id: T10?.id, items })) : { s: 0 }   // kho đang CÓ định mức
+      await api('/wms/production/settings', 'PUT', { warehouse_id: WC3, mes_no_norm: true })
+      const tcNN = tkTC ? await postAs3(tkTC, '/wms/production/batches', NN({ planned_qty: 10, cycle: 'N3', tank_id: T10?.id, items })) : { s: 0 }
+      const qaNN = tkQA ? await postAs3(tkQA, '/wms/production/batches', NN({ planned_qty: 10, cycle: 'N3', tank_id: T10?.id, items })) : { s: 0 }
+      roleOk = !!tkQA && !!tkTC && qaNorm.s === 403 && tcNN.s === 403 && qaNN.s === 201
+      roleNote = `QA ở kho có định mức=${qaNorm.s} · trưởng ca ở kho không định mức=${tcNN.s} · QA ở kho không định mức=${qaNN.s} ${qaNN.j?.error?.message ?? ''}`
+    }
+    check('16w. Đổi về có định mức: mẻ đã lập giữ no_norm; lập mẻ bằng công thức chỉ mã ⇒ 409 MES_RECIPE_NO_QTY. Vai thật: QA (approve_qa) không mở mẻ ở kho có định mức 403 · trưởng ca (open_batch) không lập ở kho không định mức 403 · QA lập được 201',
+      s2.s === 200 && nbAfter?.no_norm === true && nbAfter?.gate?.no_norm === true && q3.s === 409 && q3.j?.error?.code === 'MES_RECIPE_NO_QTY' && roleOk,
+      `cài=${s2.s} mẻ cũ=${nbAfter?.no_norm}/${nbAfter?.gate?.no_norm} công thức chỉ mã=${q3.s}/${q3.j?.error?.code} · ${roleNote}`)
+  }
 } finally {
   await cleanup()
-  const left = await restAll('Warehouse', `select=id&id=in.(${WP},${WC},${WC2})`)
+  const left = await restAll('Warehouse', `select=id&id=in.(${WP},${WC},${WC2},${WC3})`)
   check('Z. Dọn sạch fixture QA63', left.length === 0, `còn ${left.length}`)
 }
 finish(PACK)

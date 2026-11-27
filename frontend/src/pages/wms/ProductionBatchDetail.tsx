@@ -2,6 +2,8 @@
 // 17/11 — LUỒNG CỦA MẺ: dải bước dưới header; kho bật "chặn theo từng bước" thì NÚT CHÍNH là đúng bước đang tới (bước trước xong mới tới bước sau).
 // Khối NGUYÊN LIỆU ĐÃ RÚT (sổ tiêu hao: tem · NSX · lượng · cách ghi · huỷ dòng hoàn tồn) · khối RA BỒN (lô của mẻ trong từng bồn +
 // sổ nạp / rút). Số lượng NVL in CON SỐ TRẦN + cột ĐVT bằng mã danh mục (utils/unitCode — user 17/11 "hạn chế văn viết"), số bồn in theo đơn vị bồn.
+// 27/11 — MẺ KHÔNG ĐỊNH MỨC (b.no_norm): QA lập (không hai bước duyệt) · bảng NVL chỉ "Đã cấp" + tồn (không Cần / Thiếu) · "Sửa danh sách
+// NVL" (chỉ mã) · đủ / thiếu đối chiếu tay với phiếu chế biến giấy. Server chặn mã ngoài danh sách và nạp bồn khi còn mã chưa cấp.
 import { Fragment, useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import type { AxiosError } from 'axios'
@@ -63,6 +65,10 @@ const MOBILE_BOARD_TPL = 'minmax(0, 1.6fr) repeat(3, minmax(0, 1fr))'
 const MOBILE_BOARD_COLS: NumCol[] = [
   { label: 'Cần' }, { label: 'Đã cấp' }, { label: 'Thiếu', title: 'Còn thiếu · ✓ = đủ · +x% = cấp vượt mức lệch cho phép' }, { label: 'Tồn kho', title: 'Tồn ở kho chế biến' },
 ]
+// mẻ KHÔNG định mức (27/11): không có "Cần" / "Thiếu" — chỉ số đã cấp + tồn
+const NN_BOARD_COLS: RtColDef[] = BOARD_COLS.filter(c => c.id !== 'req' && c.id !== 'need')
+const NN_MOBILE_TPL = 'minmax(0, 1.6fr) repeat(2, minmax(0, 1fr))'
+const NN_MOBILE_COLS: NumCol[] = [{ label: 'Đã cấp' }, { label: 'Tồn kho', title: 'Tồn ở kho chế biến' }]
 const RM_COLS: RtColDef[] = [
   { id: 'mat', label: 'Nguyên liệu', w: 170 }, { id: 'qty', label: 'Lượng rút', w: 100, align: 'right' }, { id: 'unit', label: 'ĐVT', w: 56 }, { id: 'pallet', label: 'Tem', w: 210 },
   { id: 'nsx', label: 'NSX', w: 78 }, { id: 'lot', label: 'Mã lô', w: 110 }, { id: 'src', label: 'Cách ghi', w: 86 },
@@ -153,15 +159,23 @@ function ProductionBatchDetail() {
   for (const c of live) { const a = consByMat.get(c.material_id); if (a) a.push(c); else consByMat.set(c.material_id, [c]) }
   const board = b.board ?? []
   const reqRows = board.filter(r => !r.removed && r.required != null)
+  const nn = !!b.no_norm
+  // mẻ không định mức: DANH SÁCH MÃ (cờ listed) thay cho dòng có số; "xong" của một mã = đã cấp ít nhất một lần (đủ / thiếu so tay với phiếu giấy)
+  const listRows = nn ? board.filter(r => !r.removed && r.listed === true) : reqRows
   // trạng thái một dòng theo MỨC LỆCH cho phép (17/11) — một luật cho bảng máy tính, danh sách điện thoại và ô "NVL đã đủ"
   // mẻ đã nạp BTP vào bồn = xong phần sản xuất ⇒ phần còn thiếu là thiếu thật, tô đỏ (18/11 — thay cho "mẻ đã đóng")
   const stOf = (r: (typeof board)[number]): ReqLineResult => reqLineState(r, filled > 0)
-  const reqDone = reqRows.filter(r => ['ok', 'over'].includes(stOf(r).state)).length
-  const offTol = reqRows.filter(r => stOf(r).outOfTol).length
+  const reqDone = nn ? listRows.filter(r => Number(r.consumed) > 0).length : reqRows.filter(r => ['ok', 'over'].includes(stOf(r).state)).length
+  const offTol = nn ? 0 : reqRows.filter(r => stOf(r).outOfTol).length
   const nfq = (n: number) => Number(n).toLocaleString('vi-VN', { maximumFractionDigits: 3 })
   // ô Yêu cầu: số đang hiệu lực + dấu sửa (gốc / thêm / thay cho) — tooltip ghi lý do, người, giờ
   const changeTip = (r: (typeof board)[number]) => r.changed_at ? `${r.change_reason ?? ''} — ${r.changed_by_name ?? ''} · ${formatDateTime(r.changed_at)}` : undefined
   const statusBadge = (r: (typeof board)[number]) => {
+    if (nn) {
+      if (r.removed) return <StatusBadge tone="slate" title={changeTip(r)}>Đã bỏ</StatusBadge>
+      if (!r.listed) return <StatusBadge tone="red">Ngoài danh sách</StatusBadge>
+      return Number(r.consumed) > 0 ? <StatusBadge tone="green" title="Đủ / thiếu: đối chiếu với phiếu chế biến giấy">Đã cấp</StatusBadge> : <StatusBadge tone="slate">Chưa cấp</StatusBadge>
+    }
     const st = stOf(r)
     if (st.state === 'removed') return <StatusBadge tone="slate" title={changeTip(r)}>Đã bỏ{r.replaced_by_code ? ` → ${r.replaced_by_code}` : ''}</StatusBadge>
     if (st.state === 'extra') return <StatusBadge tone="slate">Ngoài phiếu</StatusBadge>
@@ -215,7 +229,7 @@ function ProductionBatchDetail() {
   const hasFill = filled > 0
   const labelsOk = !!g?.label_valid && !!g?.label_count
   const scannedAll = labelsOk && (g?.scanned ?? 0) >= (g?.label_count ?? 0)
-  const rmOk = reqRows.length > 0 && (g?.short.length ?? 0) === 0
+  const rmOk = listRows.length > 0 && (g?.short.length ?? 0) === 0
   const no4 = b.batch_no ? String(b.batch_no).padStart(4, '0') : '—'
   // PHIẾU CỦA MẺ: phiếu chính (mẫu đang dùng) + phiếu bổ sung đã chọn + phiếu đã ghi
   const logged = (b.process_logs ?? []).map(l => l.form)
@@ -225,10 +239,11 @@ function ProductionBatchDetail() {
   const logOpened = g && 'need_open' in g ? !g.need_open : logged.length > 0
   const L = BATCH_STEP_LABEL   // MỘT bộ tên bước cho dải bước này và cột Tình trạng của danh sách
   const stepDefs = [
-    { key: 'lead', label: L.lead, done: !!b.lead_ok_at },
-    { key: 'qa', label: L.qa, done: !!b.qa_ok_at },
+    // mẻ không định mức (27/11): QA lập mẻ thay hai bước duyệt
+    ...(nn ? [{ key: 'make', label: 'Lập mẻ (QA)', done: true, detail: b.opened_by_name ?? undefined }]
+      : [{ key: 'lead', label: L.lead, done: !!b.lead_ok_at }, { key: 'qa', label: L.qa, done: !!b.qa_ok_at }]),
     { key: 'log', label: L.log, done: logOpened },
-    { key: 'rm', label: L.rm, done: rmOk, detail: reqRows.length ? `${reqDone}/${reqRows.length}` : undefined },
+    { key: 'rm', label: L.rm, done: rmOk, detail: listRows.length ? `${reqDone}/${listRows.length}${nn ? ' mã' : ''}` : undefined },
     { key: 'label', label: L.label, done: labelsOk, detail: labelsOk ? `${g?.label_count} tem` : undefined },
     { key: 'pour', label: L.pour, done: scannedAll, detail: labelsOk ? `${g?.scanned}/${g?.label_count}` : undefined },
     { key: 'fill', label: L.fill, done: hasFill },
@@ -242,7 +257,7 @@ function ProductionBatchDetail() {
   // bước nào là VIỆC CỦA NGƯỜI ĐANG XEM (quyền của chức danh — cùng quyền gác nút của bước đó): bước đang tới không phải việc của mình
   // ⇒ dải in "chờ" (user 18/11 "các user tương tác theo quyền hạn của nó … có nên cho họ thấy không")
   const mineOf: Record<string, boolean> = {
-    lead: P('approve_lead'), qa: P('approve_qa'), log: P('process_log'), rm: P('consume'),
+    make: false, lead: P('approve_lead'), qa: P('approve_qa'), log: P('process_log'), rm: P('consume'),
     label: P('print_label'), pour: P('pour') || P('tank_ops'), fill: P('tank_ops'), tankqa: P('qa_release'), close: P('qa_release'),
   }
   const steps: FlowStep[] = stepDefs.map((s, i) => ({ key: s.key, label: s.label, detail: s.detail, mine: mineOf[s.key], state: s.bad ? 'bad' : i === cur ? 'now' : s.done ? 'done' : 'todo' }))
@@ -251,7 +266,9 @@ function ProductionBatchDetail() {
   // mẻ đã nạp BTP vào bồn ⇒ sổ nguyên liệu KHOÁ (user 18/11 "ok" khoá cấp / huỷ sau khi nạp — BE: mes_open_batch_wh, 409 MES_BATCH_FILLED)
   const canConsume = open && !hasFill && P('consume') && (g?.can_consume ?? true)
   const canFill = b.status !== 'CANCELLED' && b.qa_status !== 'REJECTED' && P('tank_ops')
-  const canEditTank = open && P('open_batch') && !b.movements.length
+  // mẻ không định mức: QA (người lập) sửa / huỷ được — cùng luật server (batchEditPermError)
+  const canEditBatch = P('open_batch') || (nn && P('approve_qa'))
+  const canEditTank = open && canEditBatch && !b.movements.length
   const canEditForms = open && (P('open_batch') || P('approve_lead') || P('approve_qa'))
   const addableForms = processForms.filter(d => d.optional && d.is_active && !(b.extra_forms ?? []).includes(d.code) && !logged.includes(d.code))
   // phiếu của nút: phiếu chính chưa mở ⇒ còn ô bắt buộc ⇒ phiếu chưa ghi ⇒ phiếu chưa đóng ⇒ phiếu đầu
@@ -264,9 +281,9 @@ function ProductionBatchDetail() {
   //    nút nền xanh = bước đang tới (luồng chặt) / Cấp NVL + Nạp bồn (không chặt). Quản trị (`admin`) luôn trong ⋮, kể cả máy tính.
   const opsOf = (k: string) => ({ ops: true, primary: prim(k), variant: prim(k) ? 'default' as const : undefined })
   const actions: ActionItem[] = []
-  if (open && !b.lead_ok_at && P('approve_lead'))
+  if (open && !nn && !b.lead_ok_at && P('approve_lead'))
     actions.push({ key: 'ok-lead', icon: ShieldCheck, label: 'Duyệt phiếu', tip: 'Trưởng ca duyệt phiếu nguyên liệu của mẻ (duyệt 1)', ...opsOf('lead'), onClick: () => void doApprove('lead', true), disabled: busy })
-  if (open && !!b.lead_ok_at && !b.qa_ok_at && P('approve_qa'))
+  if (open && !nn && !!b.lead_ok_at && !b.qa_ok_at && P('approve_qa'))
     actions.push({ key: 'ok-qa', icon: ShieldCheck, label: 'QA duyệt', tip: 'QA duyệt phiếu của mẻ (duyệt 2) — duyệt xong phiếu khoá, mới cấp nguyên liệu', ...opsOf('qa'), onClick: () => void doApprove('qa', true), disabled: busy })
   // phiếu theo dõi (26/11: MỞ phiếu trước khi cấp NVL): phiếu chưa ghi gì ⇒ "Bắt đầu phiếu" (ghi giờ bắt đầu); đã mở ⇒ "Phiếu theo dõi"
   //   — ghi suốt quá trình; tới bước Đóng phiếu thì QA có nút riêng ở cuối
@@ -279,11 +296,11 @@ function ProductionBatchDetail() {
   }
   if (canConsume)
     actions.push({ key: 'consume', icon: ScanIcon, label: 'Quét cấp NVL', tip: 'Quét tem nguyên liệu để cấp cho mẻ — app tự khớp vào đúng dòng của bàn và điền sẵn lượng còn thiếu', ...opsOf('rm'), onClick: () => { setFocusId(null); setConsumeOpen(true) } })
-  else if (strict && open && !hasFill && P('consume') && !!g?.lead_ok && !!g?.qa_ok && g?.need_open)
+  else if (strict && open && !hasFill && P('consume') && (nn || (!!g?.lead_ok && !!g?.qa_ok)) && g?.need_open)
     // đủ hai duyệt mà phiếu chưa mở ⇒ nút KHOÁ kèm lý do, nằm trong ⋮ (như Nạp BTP vào bồn khi chưa đủ điều kiện)
     actions.push({ key: 'consume', icon: ScanIcon, label: 'Quét cấp NVL', disabled: true, onClick: () => {},
       tip: `Chưa cấp được: chưa mở phiếu theo dõi (${g.open_forms ?? 'phiếu chính'}) — bấm "Bắt đầu phiếu" để ghi giờ bắt đầu trước` })
-  if (open && !!b.tank_id && P('print_label') && (!strict || !!b.qa_ok_at))
+  if (open && !!b.tank_id && P('print_label') && (!strict || nn || !!b.qa_ok_at))
     actions.push({ key: 'label', icon: Printer, label: labelsOk ? 'In lại tem' : 'In tem pallet', tip: 'In tem pallet của mẻ (QR 1/n … n/n) để dán lên pallet nguyên liệu đã cấp', ...opsOf('label'), onClick: () => setLabelOpen(true) })
   if (open && labelsOk && !hasFill && (P('pour') || P('tank_ops')))
     actions.push({ key: 'pour', icon: ArrowDownToLine, label: 'Check trước khi đổ bồn', tip: `Đứng ở bồn ${b.tank?.code ?? ''}, quét từng tem pallet của mẻ — đúng mẻ, đúng bồn mới đổ`, ...opsOf('pour'), onClick: () => setPourOpen(true) })
@@ -303,15 +320,16 @@ function ProductionBatchDetail() {
       tip: `Mở phiếu ${short}: kiểm đủ ô bắt buộc rồi bấm "Đóng phiếu" — phiếu khoá, mẻ xong`, onClick: () => setLogForm(closeForm) })
   }
   // ── QUẢN TRỊ (⋮) ──
-  if (can(perms, 'production', 'open_batch') && b.status !== 'CANCELLED')
+  if (canEditBatch && b.status !== 'CANCELLED')
     actions.push({ key: 'edit', icon: Pencil, label: 'Sửa / đổi bồn', tip: 'Sửa ngày / máy / ca / kế hoạch; đổi chu kỳ · số mẻ · bồn khi chưa nạp bồn (mã lô đổi theo)', admin: true, onClick: () => setEditOpen(true) })
-  if (open && !b.qa_ok_at && can(perms, 'production', 'edit_requirement'))
-    actions.push({ key: 'req', icon: ListChecks, label: 'Sửa định mức', tip: 'Sửa định mức của riêng mẻ này: sửa số · thêm · bỏ · đổi mã · đổi công thức (bắt buộc lý do, giữ định mức gốc)', admin: true, onClick: () => setReqOpen(true) })
-  if (open && !!b.lead_ok_at && !b.qa_ok_at && P('approve_lead'))
+  if (nn ? open && !hasFill && (P('edit_requirement') || P('approve_qa')) : open && !b.qa_ok_at && can(perms, 'production', 'edit_requirement'))
+    actions.push({ key: 'req', icon: ListChecks, label: nn ? 'Sửa danh sách NVL' : 'Sửa định mức', admin: true, onClick: () => setReqOpen(true),
+      tip: nn ? 'Thêm / bỏ mã cho khớp phiếu chế biến giấy (bắt buộc lý do). Mã đã cấp không bỏ được' : 'Sửa định mức của riêng mẻ này: sửa số · thêm · bỏ · đổi mã · đổi công thức (bắt buộc lý do, giữ định mức gốc)' })
+  if (open && !nn && !!b.lead_ok_at && !b.qa_ok_at && P('approve_lead'))
     actions.push({ key: 'no-lead', icon: RotateCcw, label: 'Bỏ duyệt', tip: 'Trưởng ca bỏ duyệt để sửa phiếu của mẻ', admin: true, onClick: () => void doApprove('lead', false), disabled: busy })
-  if (open && !!b.qa_ok_at && !hasFill && P('approve_qa'))
+  if (open && !nn && !!b.qa_ok_at && !hasFill && P('approve_qa'))
     actions.push({ key: 'no-qa', icon: RotateCcw, label: 'Bỏ duyệt QA', tip: 'QA bỏ duyệt để sửa phiếu của mẻ — chưa duyệt lại thì chưa làm tiếp được', admin: true, onClick: () => void doApprove('qa', false), disabled: busy })
-  if (can(perms, 'production', 'open_batch')) {
+  if (canEditBatch) {
     actions.push({ key: 'clone', icon: Copy, label: 'Mở mẻ giống', tip: 'Mở mẻ mới cùng kho · mã bán thành phẩm · chu kỳ · bồn · máy · ca · kế hoạch (số mẻ kế tiếp)', admin: true, onClick: () => setCloneOpen(true) })
     // mẻ đã cấp NVL: huỷ mẻ = huỷ từng dòng cấp (hoàn / chặn) ⇒ cần thêm quyền Huỷ dòng cấp (BE cũng chặn)
     const needRev = live.length > 0 && !P('reverse')
@@ -354,7 +372,7 @@ function ProductionBatchDetail() {
               : <span className="font-mono font-semibold">{b.tank?.code ?? '—'}</span>}</span>
             {(b.machine_code || b.shift) && <span><span className="text-slate-400 text-[10px]">Máy · Ca:</span> {[b.machine_code, b.shift].filter(Boolean).join(' · ')}</span>}
             {b.material?.tank_hold_hours && <span><span className="text-slate-400 text-[10px]">Hạn lưu bồn:</span> {b.material.tank_hold_hours} giờ</span>}
-            <span className="hidden sm:inline"><span className="text-slate-400 text-[10px]">Mở:</span> {b.opened_by_name ?? '—'} · {formatDateTime(b.created_at)}</span>
+            <span className="hidden sm:inline"><span className="text-slate-400 text-[10px]">{nn ? 'QA lập:' : 'Mở:'}</span> {b.opened_by_name ?? '—'} · {formatDateTime(b.created_at)}</span>
             {b.lead_ok_at && <span className="hidden sm:inline"><span className="text-slate-400 text-[10px]">Trưởng ca duyệt:</span> {b.lead_ok_by_name ?? '—'} · {formatDateTime(b.lead_ok_at)}</span>}
             {b.qa_ok_at && <span className="hidden sm:inline"><span className="text-slate-400 text-[10px]">QA duyệt:</span> {b.qa_ok_by_name ?? '—'} · {formatDateTime(b.qa_ok_at)}</span>}
             {b.qa_at && <span className="hidden sm:inline"><span className="text-slate-400 text-[10px]">QA bồn:</span> {b.qa_by_name ?? '—'} · {formatDateTime(b.qa_at)}{b.qa_note ? ` · ${b.qa_note}` : ''}</span>}
@@ -364,9 +382,10 @@ function ProductionBatchDetail() {
             )}
           </div>
           {strict && b.status !== 'CANCELLED' && <FlowStrip steps={steps} />}
-          {strict && open && !hasFill && !g?.can_consume && (!g?.lead_ok || !g?.qa_ok
+          {strict && open && !hasFill && !g?.can_consume && (!nn && (!g?.lead_ok || !g?.qa_ok)
             ? <p className="text-[11px] text-amber-700">Phiếu chưa đủ hai bước duyệt (trưởng ca → QA) — chưa cấp nguyên liệu được.</p>
             : g?.need_open && <p className="text-[11px] text-amber-700" data-testid="need-open">Chưa mở phiếu theo dõi ({g.open_forms ?? 'phiếu chính'}) — bấm "Bắt đầu phiếu" để ghi giờ bắt đầu rồi mới cấp nguyên liệu.</p>)}
+          {nn && b.status !== 'CANCELLED' && <p className="text-[11px] text-slate-600" data-testid="no-norm-note">Mẻ không định mức — app chỉ chặn mã ngoài danh sách; đủ / thiếu thì đối chiếu số đã cấp với phiếu chế biến giấy.</p>}
           {open && hasFill && (P('consume') || P('reverse')) && <p className="text-[11px] text-slate-500" data-testid="nvl-locked">Mẻ đã nạp BTP vào bồn — sổ nguyên liệu đã khoá: không cấp thêm, không huỷ dòng cấp.</p>}
           {open && b.label_ver > 0 && !b.label_at && (
             <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-1.5 text-xs text-amber-800 flex items-center gap-1.5 flex-wrap">
@@ -393,11 +412,13 @@ function ProductionBatchDetail() {
           </PinnedTabsBar>
         )}
         <SummaryBand tiles={[
-          { label: 'NVL đã đủ', value: reqRows.length ? `${reqDone}/${reqRows.length}` : '—', accent: reqRows.length > 0 && reqDone < reqRows.length,
+          nn ? { label: 'Mã đã cấp', value: listRows.length ? `${reqDone}/${listRows.length}` : '—', accent: listRows.length > 0 && reqDone < listRows.length,
+            tip: 'Số mã đã cấp ít nhất một lần / số mã trong danh sách của mẻ. Không định mức: đủ / thiếu đối chiếu với phiếu chế biến giấy' }
+          : { label: 'NVL đã đủ', value: reqRows.length ? `${reqDone}/${reqRows.length}` : '—', accent: reqRows.length > 0 && reqDone < reqRows.length,
             tip: reqRows.length ? 'Số nguyên liệu đã cấp đủ (trong mức lệch cho phép) / tổng số nguyên liệu trên phiếu của mẻ' : 'Mẻ chưa có phiếu nguyên liệu (mã bán thành phẩm chưa có công thức)' },
           ...(offTol ? [{ label: 'Lệch mức', value: offTol.toLocaleString('vi-VN'), accent: true, tip: 'Số nguyên liệu cấp ngoài mức lệch cho phép (tô đỏ — vẫn cho cấp)' }] : []),
           { label: 'Lần cấp', value: live.length.toLocaleString('vi-VN'), tip: `${rmMats} mã nguyên liệu đã cấp vào mẻ (không tính dòng đã huỷ)` },
-          { label: `Kế hoạch (${u})`, value: b.planned_qty != null ? nfQty(b.planned_qty) : '—' },
+          { label: `${nn ? 'Lượng mẻ' : 'Kế hoạch'} (${u})`, value: b.planned_qty != null ? nfQty(b.planned_qty) : '—' },
           { label: `Đã nạp (${u})`, value: nfQty(filled) },
           { label: `Còn bồn (${u})`, value: nfQty(inTank) },
           { label: `Đã đóng gói (${u})`, value: nfQty(drawn), tip: 'Phần của mẻ đã rút khỏi bồn cho các trang Sổ đóng gói (bồn nhiều mẻ ⇒ chia theo tỷ lệ)' },
@@ -419,8 +440,8 @@ function ProductionBatchDetail() {
           {/* ĐIỆN THOẠI: bảng thu nhỏ — nhãn cột in một lần, mỗi dòng mã · tên · ĐVT rồi chỉ CON SỐ (user 17/11 "hạn chế văn viết");
               nút Cấp thấy ngay, không phải cuộn ngang. Trạng thái bằng màu số: thiếu cam · đủ ✓ xanh · ngoài mức lệch đỏ. */}
           <div className="sm:hidden">
-            {!board.length && <p className="px-3 py-3 text-xs text-slate-400">{open ? <>Mẻ chưa có phiếu nguyên liệu — mã {b.material?.material_code} chưa có công thức. Bấm ⋮ → "Sửa định mức" để thêm, hoặc "Quét cấp NVL" để cấp luôn.</> : 'Mẻ không có nguyên liệu nào.'}</p>}
-            {board.length > 0 && <MobileNumHead cols={MOBILE_BOARD_COLS} template={MOBILE_BOARD_TPL} asideClass={canConsume ? 'w-16' : undefined} />}
+            {!board.length && <p className="px-3 py-3 text-xs text-slate-400">{open && nn ? 'Danh sách NVL của mẻ trống — bấm ⋮ → "Sửa danh sách NVL" để thêm mã theo phiếu chế biến.' : open ? <>Mẻ chưa có phiếu nguyên liệu — mã {b.material?.material_code} chưa có công thức. Bấm ⋮ → "Sửa định mức" để thêm, hoặc "Quét cấp NVL" để cấp luôn.</> : 'Mẻ không có nguyên liệu nào.'}</p>}
+            {board.length > 0 && <MobileNumHead cols={nn ? NN_MOBILE_COLS : MOBILE_BOARD_COLS} template={nn ? NN_MOBILE_TPL : MOBILE_BOARD_TPL} asideClass={canConsume ? 'w-16' : undefined} />}
             <div className="divide-y divide-slate-100">
               {board.map(r => {
                 const st = stOf(r)
@@ -435,13 +456,14 @@ function ProductionBatchDetail() {
                 const exp = openMats.has(r.material_id) && consRows.length > 0
                 return (
                   <div key={r.material_id} data-board-row={r.material_id}>
-                  <MobileNumRow className={`${r.removed ? 'opacity-60' : ''} ${exp ? 'bg-sky-50' : ''}`} template={MOBILE_BOARD_TPL} asideClass={canConsume ? 'w-16' : undefined}
+                  <MobileNumRow className={`${r.removed ? 'opacity-60' : ''} ${exp ? 'bg-sky-50' : ''}`} template={nn ? NN_MOBILE_TPL : MOBILE_BOARD_TPL} asideClass={canConsume ? 'w-16' : undefined}
                     head={<>
                       <span className={`font-mono font-semibold shrink-0 ${r.removed ? 'line-through' : ''}`}>{r.material_code}</span>
                       <span className={`truncate text-slate-600 ${r.removed ? 'line-through' : ''}`} title={r.change_reason ?? undefined}>{r.material_name ?? ''}</span>
                       {r.removed && <span className="shrink-0"><StatusBadge tone="slate" title={changeTip(r)}>Đã bỏ{r.replaced_by_code ? ` → ${r.replaced_by_code}` : ''}</StatusBadge></span>}
-                      {st.state === 'extra' && <span className="shrink-0"><StatusBadge tone="slate">Ngoài phiếu</StatusBadge></span>}
-                      {!outside && r.standard == null && <span className="shrink-0 text-[9px] text-blue-700" title={changeTip(r)}>{r.replaces_code ? `thay ${r.replaces_code}` : 'thêm'}</span>}
+                      {!nn && st.state === 'extra' && <span className="shrink-0"><StatusBadge tone="slate">Ngoài phiếu</StatusBadge></span>}
+                      {nn && !r.removed && !r.listed && <span className="shrink-0"><StatusBadge tone="red">Ngoài danh sách</StatusBadge></span>}
+                      {!nn && !outside && r.standard == null && <span className="shrink-0 text-[9px] text-blue-700" title={changeTip(r)}>{r.replaces_code ? `thay ${r.replaces_code}` : 'thêm'}</span>}
                       {consRows.length > 0 && (
                         <button type="button" onClick={() => toggleMat(r.material_id)} aria-expanded={exp} aria-label={`${exp ? 'Thu gọn' : 'Xem'} tem đã cấp ${r.material_code}`}
                           className="shrink-0 inline-flex items-center gap-0.5 rounded border border-slate-200 bg-white px-1 min-h-[1.5rem] text-[10px] text-slate-600">
@@ -450,7 +472,11 @@ function ProductionBatchDetail() {
                       )}
                       <span className="ml-auto shrink-0 font-mono text-[10px] text-slate-400">{matUnitCode(r)}</span>
                     </>}
-                    cells={[
+                    cells={nn ? [
+                      Number(r.consumed) > 0 ? qtyNum(Number(r.consumed), r) : dash,
+                      r.removed ? dash : <button type="button" onClick={() => setStockMat(r.material_id)} aria-label={`Xem tồn ${r.material_code} theo %Date`}
+                        className="underline decoration-dotted underline-offset-2 font-normal text-slate-500" title="Xem tồn theo %Date">{qtyNum(Math.max(Number(r.available), 0), r)}</button>,
+                    ] : [
                       r.removed ? <s className="font-normal text-slate-400">{r.standard != null ? qtyNum(Number(r.standard), r) : '—'}</s>
                         : st.state === 'extra' ? dash
                         : <>{qtyNum(Number(r.required), r)}{changed && <span className="ml-1 text-[9px] font-normal text-amber-700" title={changeTip(r)}>gốc {qtyNum(Number(r.standard), r)}</span>}</>,
@@ -475,11 +501,11 @@ function ProductionBatchDetail() {
             </div>
           </div>
           <div className="hidden sm:block">
-          <ResizableTable storageKey="production_batch_board_cols_v2" cols={BOARD_COLS}>
+          <ResizableTable key={nn ? 'nn' : 'norm'} storageKey={nn ? 'production_batch_board_nn_cols_v1' : 'production_batch_board_cols_v2'} cols={nn ? NN_BOARD_COLS : BOARD_COLS}>
             <TableBody>
               {!board.length && (
-                <TableEmptyRow colSpan={BOARD_COLS.length}>
-                  {open ? <>Mẻ chưa có phiếu nguyên liệu — mã {b.material?.material_code} chưa có công thức. Bấm "Sửa định mức" để thêm nguyên liệu, hoặc "Quét cấp NVL" để cấp luôn.</> : 'Mẻ không có nguyên liệu nào.'}
+                <TableEmptyRow colSpan={(nn ? NN_BOARD_COLS : BOARD_COLS).length}>
+                  {open && nn ? 'Danh sách NVL của mẻ trống — "Sửa danh sách NVL" để thêm mã theo phiếu chế biến.' : open ? <>Mẻ chưa có phiếu nguyên liệu — mã {b.material?.material_code} chưa có công thức. Bấm "Sửa định mức" để thêm nguyên liệu, hoặc "Quét cấp NVL" để cấp luôn.</> : 'Mẻ không có nguyên liệu nào.'}
                 </TableEmptyRow>
               )}
               {board.map(r => {
@@ -494,7 +520,7 @@ function ProductionBatchDetail() {
                 const exp = openMats.has(r.material_id) && consRows.length > 0
                 return (
                   <Fragment key={r.material_id}>
-                  <TableRow data-board-row={r.material_id} className={`${r.removed ? 'text-slate-400' : done ? rowText('full') : started ? rowText('inProgress') : ''} ${exp ? 'bg-sky-50 hover:bg-sky-50' : ''}`}>
+                  <TableRow data-board-row={r.material_id} className={`${r.removed ? 'text-slate-400' : nn ? '' : done ? rowText('full') : started ? rowText('inProgress') : ''} ${exp ? 'bg-sky-50 hover:bg-sky-50' : ''}`}>
                     <TableCell className={`${TD} sticky left-0 z-10 ${exp ? 'bg-sky-50' : 'bg-white'} truncate ${r.removed ? 'line-through' : ''}`} title={[r.material_name, r.note, r.replaces_code ? `thay cho ${r.replaces_code}` : null].filter(Boolean).join(' · ')}>
                       <div className="truncate"><span className="font-mono font-semibold">{r.material_code}</span> {r.material_name ?? ''}</div>
                       {consRows.length > 0 && (
@@ -505,9 +531,9 @@ function ProductionBatchDetail() {
                       )}
                     </TableCell>
                     <TableCell className={`${TD} font-mono text-slate-500`}>{matUnitCode(r)}</TableCell>
-                    <TableCell className={NUM} title={changeTip(r)}>{r.removed ? reqNote(r) : extra ? <span className="text-slate-300 font-normal">—</span> : <>{qtyNum(Number(r.required), r)}{reqNote(r)}</>}</TableCell>
+                    {!nn && <TableCell className={NUM} title={changeTip(r)}>{r.removed ? reqNote(r) : extra ? <span className="text-slate-300 font-normal">—</span> : <>{qtyNum(Number(r.required), r)}{reqNote(r)}</>}</TableCell>}
                     <TableCell className={`${NUM} ${st.outOfTol ? 'text-red-600' : ''}`}>{started ? qtyNum(Number(r.consumed), r) : <span className="text-slate-300 font-normal">—</span>}</TableCell>
-                    <TableCell className={`${NUM} ${need > 0 ? 'text-amber-700' : ''}`}>{need > 0 ? qtyNum(need, r) : <span className="text-slate-300 font-normal">—</span>}</TableCell>
+                    {!nn && <TableCell className={`${NUM} ${need > 0 ? 'text-amber-700' : ''}`}>{need > 0 ? qtyNum(need, r) : <span className="text-slate-300 font-normal">—</span>}</TableCell>}
                     <TableCell className={`${NUM} ${!done && need > Number(r.available) ? 'text-red-600' : ''}`} title={!done && need > Number(r.available) ? 'Tồn ở kho chế biến không đủ phần còn thiếu — chuyển thêm hàng sang kho chế biến' : undefined}>
                       <button type="button" onClick={() => setStockMat(r.material_id)} aria-label={`Xem tồn ${r.material_code} theo %Date`} title="Xem tồn theo %Date — vị trí, HSD, từng tem"
                         className="inline-flex items-center gap-1 rounded px-1 -mr-1 hover:bg-blue-50 hover:text-blue-700">
@@ -528,7 +554,7 @@ function ProductionBatchDetail() {
                   </TableRow>
                   {exp && (
                     <TableRow className="hover:bg-transparent" data-board-expand={r.material_id}>
-                      <TableCell colSpan={BOARD_COLS.length} className="p-0 border-b border-slate-100">
+                      <TableCell colSpan={(nn ? NN_BOARD_COLS : BOARD_COLS).length} className="p-0 border-b border-slate-100">
                         <div className="sticky left-0 w-fit ml-4 my-1 pl-3 pr-3 py-1 border-l-2 border-sky-300"><ConsumedTems rows={consRows} mat={r} bands={bands} /></div>
                       </TableCell>
                     </TableRow>

@@ -159,8 +159,9 @@ export function CycleReport({ tabBar }: { tabBar: ReactNode }) {
         ['', '', '', 'Định mức', 'Phiếu', 'Thực cấp', 'Lệch', 'Lệch %', ...groups.flatMap(() => ['Định mức', 'Thực cấp']), ''],
         ...rows.map(r => {
           const tot = rowSum(r, liveIds)
-          return [r.material_code, r.material_name ?? '', unitCode(r.base_unit), tot.std, tot.sheet, tot.iss, tot.diff, tot.devPct ?? '',
-            ...groups.flatMap((g): (number | string)[] => { const s = rowSum(r, g.batches.map(b => b.id)); return s.used ? [s.std, s.iss] : ['', ''] }),
+          // 27/11: dòng chỉ có mẻ không định mức ⇒ ô định mức / phiếu / lệch để trống, thực cấp vẫn ghi
+          return [r.material_code, r.material_name ?? '', unitCode(r.base_unit), tot.norm ? tot.std : '', tot.norm ? tot.sheet : '', tot.iss, tot.norm ? tot.diff : '', tot.norm ? tot.devPct ?? '' : '',
+            ...groups.flatMap((g): (number | string)[] => { const s = rowSum(r, g.batches.map(b => b.id)); return s.used ? [s.norm ? s.std : '', s.iss] : ['', ''] }),
             rowDeviations(rowBatchLines(r, groups))]
         }),
       ]
@@ -171,7 +172,10 @@ export function CycleReport({ tabBar }: { tabBar: ReactNode }) {
       const per: unknown[][] = [...head,
         ['Mã NVL', 'Tên NVL', 'ĐVT', 'Ca', 'Mẻ', 'Mã lô', 'BTP', 'Định mức', 'Mức lệch cho phép (%)', 'Phiếu', 'Lý do sửa phiếu', 'Thực cấp', 'Lệch', 'Lệch %',
           'Do sửa phiếu', 'Do cấp lệch', 'Tình trạng'],
-        ...rows.flatMap(r => rowBatchLines(r, groups).map(l => [r.material_code, r.material_name ?? '', unitCode(r.base_unit), l.shift, l.batch.batch_no ?? '',
+        ...rows.flatMap(r => rowBatchLines(r, groups).map(l => l.cell.nn
+          ? [r.material_code, r.material_name ?? '', unitCode(r.base_unit), l.shift, l.batch.batch_no ?? '', l.batch.batch_code, l.batch.material_code,
+            'không định mức', '', '', '', l.dev.iss, '', '', '', '', LINE_STATE_LABEL.nonorm]
+          : [r.material_code, r.material_name ?? '', unitCode(r.base_unit), l.shift, l.batch.batch_no ?? '',
           l.batch.batch_code, l.batch.material_code, l.cell.std ?? 'ngoài định mức', l.cell.tol ?? '', l.cell.rm ? 'bỏ khỏi phiếu' : l.cell.req ?? 'ngoài phiếu',
           l.cell.why ?? '', l.dev.iss, l.dev.total, devPctOf(l.dev.total, l.dev.std) ?? '', l.dev.edit, l.dev.exec, l.state ? LINE_STATE_LABEL[l.state] : ''])),
       ]
@@ -188,7 +192,7 @@ export function CycleReport({ tabBar }: { tabBar: ReactNode }) {
           ...g.batches.map(b => {
             const st = lineStats(rows, [b])
             return [g.shift, b.batch_no ?? '', b.batch_code, b.material_code, b.tank_code ?? '', b.planned_qty != null ? `${nf(Number(b.planned_qty))} ${unitCode(b.base_unit)}` : '',
-              b.filled_qty ? `${nf(Number(b.filled_qty))} ${unitCode(b.base_unit)}` : '', `${st.ok}/${st.lines}`, st.short, st.over, st.extra, b.rm_bad, b.rm_exp, b.rm_rev,
+              b.filled_qty ? `${nf(Number(b.filled_qty))} ${unitCode(b.base_unit)}` : '', b.no_norm ? 'không định mức' : `${st.ok}/${st.lines}`, b.no_norm ? '' : st.short, b.no_norm ? '' : st.over, b.no_norm ? '' : st.extra, b.rm_bad, b.rm_exp, b.rm_rev,
               stageLabel(b.stage, b.step), whenBy(b.created_at, b.opened_by_name), b.rm_first_at ? `${hm(b.rm_first_at)}–${hm(b.rm_last_at)}` : '', whenBy(b.filled_at, b.filled_by_name),
               durLabel(minutesBetween(b.created_at, b.filled_at)), whenBy(b.lead_ok_at, b.lead_ok_by_name), whenBy(b.qa_ok_at, b.qa_ok_by_name), whenBy(b.label_at, b.label_by_name), whenBy(b.tank_qa_at, b.tank_qa_by_name)]
           }),
@@ -244,22 +248,22 @@ export function CycleReport({ tabBar }: { tabBar: ReactNode }) {
     const d = cellDev(c)
     const pct = devPctOf(d.total, d.std)
     const cls = lineCls(st)
-    const title = c.std == null ? `Ngoài định mức · thực cấp ${qtyCode(c.iss, r)}`
+    const title = c.nn ? `Mẻ không định mức · thực cấp ${qtyCode(c.iss, r)}` : c.std == null ? `Ngoài định mức · thực cấp ${qtyCode(c.iss, r)}`
       : `Định mức ${qtyCode(d.std, r)}${c.tol != null ? ` (±${c.tol}%)` : ''} · phiếu ${qtyCode(d.sheet, r)}${c.why ? ` (${c.why})` : ''} · thực cấp ${qtyCode(c.iss, r)}${pct != null ? ` · lệch ${devLabel(pct)}` : ''}`
     return (
       <span className="block leading-tight" title={title} data-state={st ?? ''}>
         <span className={`block ${cls}`}>{qtyNum(c.iss, r)}</span>
-        <span className="block text-[9px] font-normal text-slate-400">{c.std == null ? 'ngoài định mức' : qtyNum(d.std, r)}</span>
+        <span className="block text-[9px] font-normal text-slate-400">{c.nn ? 'không định mức' : c.std == null ? 'ngoài định mức' : qtyNum(d.std, r)}</span>
       </span>
     )
   }
-  const lineCls = (st: string | null) => (st === 'over' || st === 'under' || st === 'extra' ? 'text-red-600' : st === 'ok' ? 'text-slate-900' : 'text-amber-600')
+  const lineCls = (st: string | null) => (st === 'over' || st === 'under' || st === 'extra' ? 'text-red-600' : st === 'ok' || st === 'nonorm' ? 'text-slate-900' : 'text-amber-600')
   const sumCell = (r: CycleRow, ids: string[]) => {
     const s = rowSum(r, ids)
     if (!s.used) return <span className="text-slate-200 font-normal">·</span>
     return (
-      <span className="block leading-tight" title={`Định mức ${qtyCode(s.std, r)} · phiếu ${qtyCode(s.sheet, r)} · thực cấp ${qtyCode(s.iss, r)}`}>
-        <span className="block">{qtyNum(s.iss, r)}</span><span className="block text-[9px] font-normal text-slate-400">{qtyNum(s.std, r)}</span>
+      <span className="block leading-tight" title={s.norm ? `Định mức ${qtyCode(s.std, r)} · phiếu ${qtyCode(s.sheet, r)} · thực cấp ${qtyCode(s.iss, r)}` : `Không định mức · thực cấp ${qtyCode(s.iss, r)}`}>
+        <span className="block">{qtyNum(s.iss, r)}</span><span className="block text-[9px] font-normal text-slate-400">{s.norm ? qtyNum(s.std, r) : '—'}</span>
       </span>
     )
   }
@@ -380,7 +384,8 @@ export function CycleReport({ tabBar }: { tabBar: ReactNode }) {
                             <span className="truncate text-slate-600">{r.material_name ?? ''}</span>
                             <span className="ml-auto shrink-0 font-mono text-[10px] text-slate-400">{matUnitCode(r)}</span>
                           </>}
-                          cells={[<span className="font-normal">{qtyNum(s.std, r)}</span>, qtyNum(s.iss, r), <span className={diffTone(s.diff, s.devPct)}>{s.diff > 0 ? '+' : s.diff < 0 ? '−' : ''}{qtyNum(Math.abs(s.diff), r)}</span>]} />
+                          cells={[s.norm ? <span className="font-normal">{qtyNum(s.std, r)}</span> : dash, qtyNum(s.iss, r),
+                            s.norm ? <span className={diffTone(s.diff, s.devPct)}>{s.diff > 0 ? '+' : s.diff < 0 ? '−' : ''}{qtyNum(Math.abs(s.diff), r)}</span> : dash]} />
                       </button>
                       {open && (
                         <div className="bg-slate-50 px-3 py-1.5 space-y-1">
@@ -391,7 +396,7 @@ export function CycleReport({ tabBar }: { tabBar: ReactNode }) {
                                 <StageSymbol stage={b.stage} step={b.step} className="h-3 w-3" />
                                 <span className="text-slate-500">{g.shift} · Mẻ {b.batch_no ?? '—'}</span>
                                 <span className="ml-auto tabular-nums">{cellOf(r, b)}</span>
-                                <span className="sr-only">{c.req == null ? 'ngoài phiếu' : ''}</span>
+                                <span className="sr-only">{c.req == null && !c.nn ? 'ngoài phiếu' : ''}</span>
                               </div>
                             )
                           }))}
@@ -421,11 +426,11 @@ export function CycleReport({ tabBar }: { tabBar: ReactNode }) {
                             </span>
                           </TableCell>
                           <TableCell className={`${TD} font-mono text-slate-500`}>{matUnitCode(r)}</TableCell>
-                          <TableCell className={NUM}>{qtyNum(s.std, r)}</TableCell>
-                          <TableCell className={`${NUM} ${s.sheet !== s.std ? 'text-amber-700' : 'font-normal text-slate-400'}`} title={s.sheet !== s.std ? `Phiếu khác định mức gốc ${sgn(r3(s.sheet - s.std))} ${matUnitCode(r)} — trưởng ca sửa / thêm / bỏ dòng` : 'Phiếu đúng định mức'}>{qtyNum(s.sheet, r)}</TableCell>
+                          <TableCell className={NUM}>{s.norm ? qtyNum(s.std, r) : dash}</TableCell>
+                          <TableCell className={`${NUM} ${s.sheet !== s.std ? 'text-amber-700' : 'font-normal text-slate-400'}`} title={!s.norm ? 'Không định mức' : s.sheet !== s.std ? `Phiếu khác định mức gốc ${sgn(r3(s.sheet - s.std))} ${matUnitCode(r)} — trưởng ca sửa / thêm / bỏ dòng` : 'Phiếu đúng định mức'}>{s.norm ? qtyNum(s.sheet, r) : dash}</TableCell>
                           <TableCell className={NUM}>{qtyNum(s.iss, r)}</TableCell>
-                          <TableCell className={`${NUM} ${diffTone(s.diff, s.devPct)}`}>{s.diff > 0 ? '+' : s.diff < 0 ? '−' : ''}{qtyNum(Math.abs(s.diff), r)}</TableCell>
-                          <TableCell className={`${NUM} border-r-2 !border-r-slate-300 ${diffTone(s.diff, s.devPct)}`}>{s.devPct != null ? devLabel(s.devPct) : dash}</TableCell>
+                          <TableCell className={`${NUM} ${diffTone(s.diff, s.devPct)}`}>{s.norm ? <>{s.diff > 0 ? '+' : s.diff < 0 ? '−' : ''}{qtyNum(Math.abs(s.diff), r)}</> : dash}</TableCell>
+                          <TableCell className={`${NUM} border-r-2 !border-r-slate-300 ${diffTone(s.diff, s.devPct)}`}>{s.norm && s.devPct != null ? devLabel(s.devPct) : dash}</TableCell>
                           {groups.map(g => <TableCell key={`s_${g.shift}`} className={`${NUM} bg-slate-50/60`}>{sumCell(r, g.batches.map(b => b.id))}</TableCell>)}
                           <TableCell className={`${NUM} ${dev ? 'text-red-600' : 'text-slate-300 font-normal'}`} title={dev ? `${dev} mẻ cấp lệch khỏi mức cho phép — bấm để xem` : 'Không mẻ nào lệch'}>{dev}</TableCell>
                         </TableRow>

@@ -46,3 +46,12 @@ export const ALL_PERMISSIONS: Record<string, string[]> = {
   external_do_sap:   ['view', 'create', 'edit', 'delete', 'export'],   // Dữ liệu bên ngoài → tab DO SAP (raw ERP/SAP)
   external_khvc:     ['view', 'create', 'edit', 'delete'],   // Dữ liệu bên ngoài → tab Kế hoạch xuất (raw KHVC/điều vận)
 }
+
+/** Quyền được TÌM MÃ HÀNG (`GET /masterdata/materials`) — ô chọn mã nằm trong form của nhiều module (lớp lỗi C115: route tra cứu của
+ *  module khác không nhận quyền của module mới ⇒ chỉ superadmin chọn được mã). Thêm form mới có ô chọn mã ⇒ thêm quyền gác form đó vào đây.
+ *  Sản xuất: Mở / Sửa mẻ (open_batch) · QA LẬP mẻ ở kho không định mức (approve_qa, 27/11) · sửa định mức / danh sách NVL của mẻ
+ *  (edit_requirement) · Định mức (manage_recipe) · hạn lưu bồn ở Cài đặt MES (configure). Test: tests/unit/materialLookupPerms.test.ts */
+export const MATERIAL_LOOKUP_PERMS: [string, string][] = [
+  ['materials', 'view'], ['inbound', 'view'], ['inbound', 'create'], ['external_do_sap', 'create'],
+  ['production', 'open_batch'], ['production', 'approve_qa'], ['production', 'edit_requirement'], ['production', 'manage_recipe'], ['production', 'configure'],
+]

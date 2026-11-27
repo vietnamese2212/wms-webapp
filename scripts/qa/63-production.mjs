@@ -760,10 +760,12 @@ try {
   const errTxt = (bpf.j?.data?.errors ?? []).join(' | ')
   const leaked = (await restAll('production_recipe', `select=id&material_id=eq.${M_BTP2}&name=eq.QA63 lỗi A`)).length
   const noQty = await uploadXlsx(IMP, [RIMP_HEAD.filter(h => h !== 'Số lượng *'), ['QA63BTP2', '', 'QA63 lỗi B', '100', 'QA63RM1', '', '', '']], { preflight: true })
-  check('10s. File lỗi ⇒ báo theo SỐ DÒNG Excel (dòng 3 sai ĐVT · dòng 4 mã không có), nút ghi tắt; gửi ghi vẫn KHÔNG ghi gì; thiếu cột Số lượng ⇒ 400',
+  // 27/11: cột Số lượng thôi bắt buộc (công thức chỉ danh sách mã) — có Cỡ mẻ mà không có số ⇒ lỗi nửa vời của công thức, không ghi gì
+  check('10s. File lỗi ⇒ báo theo SỐ DÒNG Excel (dòng 3 sai ĐVT · dòng 4 mã không có), nút ghi tắt; gửi ghi vẫn KHÔNG ghi gì; thiếu cột Số lượng mà có Cỡ mẻ ⇒ lỗi "thiếu Số lượng", không ghi',
     bpf.s === 200 && bpf.j?.data?.will_write === 0 && /Dòng 3 — ĐVT "KG" khác đơn vị gốc EA/.test(errTxt) && /Dòng 4 — không có mã NVL "QA63KHONGCO"/.test(errTxt)
-      && bwr.s === 200 && bwr.j?.data?.inserted === 0 && leaked === 0 && noQty.s === 400 && /Số lượng/.test(noQty.j?.error?.message ?? ''),
-    `http=${bpf.s}/${bwr.s}/${noQty.s} errs=${errTxt.slice(0, 240)} leaked=${leaked} ${noQty.j?.error?.message ?? ''}`)
+      && bwr.s === 200 && bwr.j?.data?.inserted === 0 && leaked === 0
+      && noQty.s === 200 && noQty.j?.data?.will_write === 0 && /thiếu Số lượng/.test((noQty.j?.data?.errors ?? []).join(' | ')),
+    `http=${bpf.s}/${bwr.s}/${noQty.s} errs=${errTxt.slice(0, 240)} leaked=${leaked} noQty=${(noQty.j?.data?.errors ?? []).join(' | ').slice(0, 160)}`)
   // [10s2] DANH SÁCH MÃ cho file mẫu Nạp định mức (20/11): Mã BTP qua cùng hàm kiểm của lần nạp, Mã NVL = mọi mã của Mã hàng
   const catR = await api('/wms/production/recipes/import-catalog')
   const catB = (catR.j?.data?.btp ?? []).map(m => m.code), catN = (catR.j?.data?.nvl ?? []).map(m => m.code)
@@ -1850,10 +1852,12 @@ try {
       await api('/wms/production/settings', 'PUT', { warehouse_id: WC3, mes_no_norm: true })
       const tcNN = tkTC ? await postAs3(tkTC, '/wms/production/batches', NN({ planned_qty: 10, cycle: 'N3', tank_id: T10?.id, items })) : { s: 0 }
       const qaNN = tkQA ? await postAs3(tkQA, '/wms/production/batches', NN({ planned_qty: 10, cycle: 'N3', tank_id: T10?.id, items })) : { s: 0 }
-      roleOk = !!tkQA && !!tkTC && qaNorm.s === 403 && tcNN.s === 403 && qaNN.s === 201
-      roleNote = `QA ở kho có định mức=${qaNorm.s} · trưởng ca ở kho không định mức=${tcNN.s} · QA ở kho không định mức=${qaNN.s} ${qaNN.j?.error?.message ?? ''}`
+      // C115 tái phát 27/11: QA (chỉ approve_qa) phải TÌM được mã BTP ở ô của form Lập mẻ — route tra cứu Mã hàng của module khác
+      const qaFind = tkQA ? (await fetch(`${BASE}/api/masterdata/materials?search=QA63BTP&limit=5&view=lite&semi_finished=1`, { headers: { Authorization: `Bearer ${tkQA}` } })).status : 0
+      roleOk = !!tkQA && !!tkTC && qaNorm.s === 403 && tcNN.s === 403 && qaNN.s === 201 && qaFind === 200
+      roleNote = `QA ở kho có định mức=${qaNorm.s} · trưởng ca ở kho không định mức=${tcNN.s} · QA ở kho không định mức=${qaNN.s} ${qaNN.j?.error?.message ?? ''} · QA tìm mã BTP=${qaFind}`
     }
-    check('16w. Đổi về có định mức: mẻ đã lập giữ no_norm; lập mẻ bằng công thức chỉ mã ⇒ 409 MES_RECIPE_NO_QTY. Vai thật: QA (approve_qa) không mở mẻ ở kho có định mức 403 · trưởng ca (open_batch) không lập ở kho không định mức 403 · QA lập được 201',
+    check('16w. Đổi về có định mức: mẻ đã lập giữ no_norm; lập mẻ bằng công thức chỉ mã ⇒ 409 MES_RECIPE_NO_QTY. Vai thật: QA (approve_qa) không mở mẻ ở kho có định mức 403 · trưởng ca (open_batch) không lập ở kho không định mức 403 · QA lập được 201 · QA tìm được mã BTP (C115) 200',
       s2.s === 200 && nbAfter?.no_norm === true && nbAfter?.gate?.no_norm === true && q3.s === 409 && q3.j?.error?.code === 'MES_RECIPE_NO_QTY' && roleOk,
       `cài=${s2.s} mẻ cũ=${nbAfter?.no_norm}/${nbAfter?.gate?.no_norm} công thức chỉ mã=${q3.s}/${q3.j?.error?.code} · ${roleNote}`)
   }

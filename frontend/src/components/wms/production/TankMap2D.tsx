@@ -212,8 +212,9 @@ const TankNode = memo(function TankNode({ t, n, lod, selected, dim, flash, filte
         <div className="absolute flex flex-col" style={{ left: 132, top: g.ty + 2, width: NODE_W - 140, minHeight: th - 4 }} data-testid={`specs-${t.code}`}>
           <FitText size={sz.code} className="font-mono font-bold text-slate-800" style={{ lineHeight: 1.15 }} title={t.name ?? undefined}>{t.code}</FitText>
           <FitText size={sz.small} className={`font-semibold ${t.is_active ? tone.text : 'text-slate-400'}`} style={{ lineHeight: 1.35 }}>{label}</FitText>
-          <FitText size={sz.qty} className="tabular-nums font-semibold text-slate-900" style={{ lineHeight: 1.35 }}>
-            {nf(Number(t.content))}<wbr /><span className="font-normal text-slate-400">/{nf(cap)} {t.unit}</span>
+          {/* số tồn: co tới 85% rồi mới xuống dòng, và chỉ ngắt ở dấu "/" (ký tự ngắt vô hình — <wbr> bị Chrome ngắt cả khi đang nowrap) */}
+          <FitText size={sz.qty} min={Math.round(sz.qty * 8.5) / 10} className="tabular-nums font-semibold text-slate-900" style={{ lineHeight: 1.35 }}>
+            {nf(Number(t.content))}{'​'}<span className="font-normal text-slate-400">/{nf(cap)} {t.unit}</span>
           </FitText>
           <FitText size={sz.small} className="font-mono text-slate-500" style={{ lineHeight: 1.35 }} title={mat?.short_name ?? inMat?.material_name ?? undefined}>
             {mat ? mat.material_code : inMat ? `đặt ${inMat.material_code ?? ''}` : '—'}

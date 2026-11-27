@@ -29,7 +29,7 @@ import { logOutboundEvents, actorOf, type OutboundEventInput } from '../../servi
 import { syncTmsPlanFromKhvc } from '../../services/tmsPlanSync'
 import { khvcSourceHint } from '../../services/khvcOwner'
 import { logPalletMoves } from '../../services/palletMoveLog'
-import { hasEntry, baseAllowsDecimal, qtyIntegerError, qtyLabel, qtyEntryDecimal, qtySplit, unitLabel, type MatUnits as MatUnitsQ } from '../../utils/qtyUnits'
+import { hasEntry, baseAllowsDecimal, qtyIntegerError, qtyLabel, qtyEntryDecimal, qtySplit, unitLabel, qtyTotalsByUnit, type MatUnits as MatUnitsQ } from '../../utils/qtyUnits'
 import { mergeKeepIssues, type KeepIssue } from '../../services/outboundMergeKeep'
 import { requireBaseQty } from '../../utils/qtySemantics'
 import { parseListParam } from '../../utils/httpQuery'
@@ -1193,9 +1193,14 @@ async function enrichGdos(data: any[]): Promise<any[]> {
       }))
       const uniformMat = (unitKeys.size === 1 && !unitKeys.has('null'))
         ? (gdoItems.find((i: any) => i.material)?.material ?? null) : null
+      // một MÃ duy nhất ⇒ gắn id để FE tra quy cách gợi ý (đường: dòng "150 bao" dưới ô tổng)
+      const matIds = new Set(gdoItems.map((i: any) => i.material_id ?? null))
       const qty_unit = uniformMat
-        ? { base_unit: uniformMat.base_unit ?? null, entry_unit: uniformMat.entry_unit ?? null, units_per_carton: uniformMat.units_per_carton ?? null }
+        ? { base_unit: uniformMat.base_unit ?? null, entry_unit: uniformMat.entry_unit ?? null, units_per_carton: uniformMat.units_per_carton ?? null,
+            id: matIds.size === 1 ? ([...matIds][0] as string | null) : null }
         : null
+      // 27/11: tổng theo TỪNG đơn vị chính ("10 thùng · 1.000 kg") — không cộng thùng với kg (user chốt; qtyTotalsByUnit dùng chung FE)
+      const byUnit = (list: any[]) => qtyTotalsByUnit(list.map((i: any) => ({ qty: Number(i.cartons_ordered ?? 0), mat: (i.material ?? null) as MatUnitsQ | null })))
 
       // Tải THẬT của chuyến theo master (pallet thập phân + tấn) → % tải so sức chứa dòng xe con. Cột trên list tính
       // SỐNG (không đọc freight_detail) để đổi dòng hàng là đổi ngay; cước thì đọc cột đã ghi (cần bảng cước).
@@ -1227,6 +1232,8 @@ async function enrichGdos(data: any[]): Promise<any[]> {
         total_noqr_base:    noqrItems.reduce((s: number, i: any) => s + Number(i.cartons_ordered ?? 0), 0),
         total_loose_base:   gdoItems.reduce((s: number, i: any) => s + Number(i.loose_picking ?? 0), 0),
         qty_unit,
+        qty_by_unit:      byUnit(gdoItems),
+        qty_by_unit_noqr: byUnit(noqrItems),
         item_breakdown:    [...breakdownMap.values()],
       }
     })

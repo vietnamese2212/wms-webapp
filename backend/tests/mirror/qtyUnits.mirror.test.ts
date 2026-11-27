@@ -16,8 +16,11 @@ const MATS: (BE.MatUnits | null | undefined)[] = [
   { base_unit: 'HOP', entry_unit: 'CAR', units_per_carton: null },
   { base_unit: 'set', entry_unit: 'car', units_per_carton: 7.5 },     // hệ số lẻ + mã thường
   { base_unit: 'XYZ', entry_unit: 'ABC', units_per_carton: 12 },      // ĐVT lạ → mã thô
-  { base_unit: 'KG', entry_unit: 'BAO', units_per_carton: 20 },       // 27/11: đường trắng 1 bao = 20 kg — phần kg được lẻ
-  { base_unit: 'l', entry_unit: 'CAN', units_per_carton: 200 },       // đơn vị đo viết thường
+  { base_unit: 'KG', pack_unit: 'BAO', pack_size: 20 },              // 27/11: đường trắng — quy cách GỢI Ý 1 bao = 20 kg
+  { base_unit: 'l', pack_unit: 'can', pack_size: 200 },               // đơn vị đo viết thường
+  { base_unit: 'KG', pack_unit: 'BAO', pack_size: 0 },                // hệ số 0 = không gợi ý
+  { base_unit: 'HOP', pack_unit: 'BAO', pack_size: 20 },              // gợi ý trên mã đếm ⇒ bỏ qua
+  { base_unit: 'KG', entry_unit: 'BAO', units_per_carton: 20 },       // dữ liệu cũ (DB nay chặn) — hai bản vẫn phải khớp
 ]
 
 function randQty(r: ReturnType<typeof rng>): number {
@@ -55,6 +58,14 @@ describe(`qtyUnits BE ⇄ FE (seed ${SEED})`, () => {
       expect(FE.baseAllowsDecimal(m), ctx).toBe(BE.baseAllowsDecimal(m))
       const e = r.int(-5, 500), b = r.int(-5, 200)
       expect(FE.qtyFromEntryBase(e, b, m), `${ctx} e=${e} b=${b}`).toBe(BE.qtyFromEntryBase(e, b, m))
+      const m2 = r.pick(MATS), q2 = randQty(r)
+      const lines = [{ qty: q, mat: m }, { qty: q2, mat: m2 }, { qty: e, mat: m }]
+      const tb = BE.qtyTotalsByUnit(lines), tf = FE.qtyTotalsByUnit(lines)
+      expect(tf, ctx).toEqual(tb)
+      expect(FE.qtyTotalsText(tf), ctx).toBe(BE.qtyTotalsText(tb))
+      const done = BE.qtyTotalsByUnit([{ qty: b, mat: m }])
+      expect(FE.qtyTotalsPairText(done, tf), ctx).toBe(BE.qtyTotalsPairText(done, tb))
+      expect(FE.qtyTotalsProgress(done, tf), ctx).toBe(BE.qtyTotalsProgress(done, tb))
     }
   })
 

@@ -557,7 +557,7 @@ export type MaterialsSummary = { total: number; active: number; inactive: number
  */
 // (`['materials','lite'|'by-codes'|'by-ids'|'full']` đã nằm dưới tiền tố ['materials'] nên khỏi liệt kê)
 export const MATERIAL_QUERY_KEYS: string[][] = [
-  ['materials'], ['materials-paged'], ['materials-summary'], ['materials-pallet-carriers'],
+  ['materials'], ['materials-paged'], ['materials-summary'], ['materials-pallet-carriers'], ['material-pack-hints'],
 ]
 export function invalidateMaterialQueries(qc: ReturnType<typeof useQueryClient>): void {
   for (const k of MATERIAL_QUERY_KEYS) qc.invalidateQueries({ queryKey: k })

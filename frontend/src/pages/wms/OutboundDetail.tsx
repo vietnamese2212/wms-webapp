@@ -9,7 +9,7 @@ import { isQaHeld } from '@/utils/qaHold'
 import { backTarget } from '@/lib/returnTo'
 import { isQtyLike } from '@/utils/inventoryMode'
 import { isInSiteTrip, type InSiteWh } from '@/utils/inSiteTrip'
-import { qtyLabel, qtyEntryText, qtyUnitLabel, qtyEntryDecimal, qtySplit, hasEntry, qtyMainUnits, type MatUnits } from '@/utils/qtyUnits'
+import { qtyLabel, qtyEntryText, qtyUnitLabel, qtySplit, hasEntry, qtyMainUnits, qtyTotalsByUnit, qtyTotalsText, qtyTotalsPairText, qtyTotalsProgress, type MatUnits } from '@/utils/qtyUnits'
 import { QtyPackHintLine } from '@/components/shared/QtyText'
 import { QtyInput } from '@/components/shared/QtyInput'
 import { ArrowLeft, CheckCircle2, AlertTriangle, Truck, Package, ClipboardList, Play, Pause, ChevronRight, ChevronDown, Bookmark, X, RotateCcw, Pencil, Search, PenSquare, Trash2, Printer, Boxes, Info, Scale, DoorOpen, ListChecks, CalendarClock } from 'lucide-react'
@@ -71,9 +71,10 @@ function dockOptionOf(d: DockStatus, myPlate: string) {
 
 // ─── Progress bar ──────────────────────────────────────────────
 
-function ProgressBar({ scanned, ordered, compact = false, looseUnconfirmed = 0 }: { scanned: number; ordered: number; compact?: boolean; looseUnconfirmed?: number }) {
+// pct (0..1) + label: tiến độ cả chuyến tính theo từng đơn vị (qtyTotalsProgress — 27/11), không cộng thùng với kg
+function ProgressBar({ scanned, ordered, compact = false, looseUnconfirmed = 0, pct, label }: { scanned: number; ordered: number; compact?: boolean; looseUnconfirmed?: number; pct?: number; label?: string }) {
   const confirmed    = scanned - looseUnconfirmed
-  const confirmedPct = ordered > 0 ? Math.min(100, (confirmed / ordered) * 100) : 0
+  const confirmedPct = pct != null ? Math.min(100, Math.max(0, pct * 100)) : ordered > 0 ? Math.min(100, (confirmed / ordered) * 100) : 0
   const loosePct     = ordered > 0 ? Math.min(100 - confirmedPct, (looseUnconfirmed / ordered) * 100) : 0
   const totalPct     = confirmedPct + loosePct
   const confirmedCls = totalPct >= 100 && looseUnconfirmed === 0 ? 'bg-green-500'
@@ -89,7 +90,7 @@ function ProgressBar({ scanned, ordered, compact = false, looseUnconfirmed = 0 }
         )}
       </div>
       <span className={`${compact ? 'text-xs' : 'text-lg'} tabular-nums font-medium ${totalPct >= 100 && looseUnconfirmed === 0 ? 'text-green-700 font-semibold' : 'text-slate-600'}`}>
-        {scanned.toLocaleString('vi-VN', { maximumFractionDigits: 1 })}/{ordered.toLocaleString('vi-VN', { maximumFractionDigits: 1 })}
+        {label ?? `${scanned.toLocaleString('vi-VN', { maximumFractionDigits: 1 })}/${ordered.toLocaleString('vi-VN', { maximumFractionDigits: 1 })}`}
       </span>
     </div>
   )
@@ -1166,7 +1167,7 @@ function ItemsTable({ doRecords, gdoId, canScan, hasScanPerm, expandedItemIds, t
                   {g.stop_seq != null && <span className="mr-2 rounded bg-sky-700 px-1.5 py-0.5 text-[10px] font-bold text-white">Điểm {g.stop_seq}</span>}
                   <span className="text-[11px] font-bold text-sky-900 uppercase tracking-wide">NPP: {g.npp || '—'}</span>
                   <span className="text-[9px] font-medium text-sky-700 ml-2">
-                    {g.items.length} mã hàng · {g.items.reduce((s, i) => s + qtyEntryDecimal(i.cartons_ordered, i.material), 0).toLocaleString('vi-VN', { maximumFractionDigits: 1 })} thùng
+                    {g.items.length} mã hàng · {qtyTotalsText(qtyTotalsByUnit(g.items.map(i => ({ qty: i.cartons_ordered, mat: i.material }))))}
                   </span>
                 </TableCell>
               </TableRow>
@@ -1664,8 +1665,17 @@ export default function OutboundDetail() {
   const totalScanned = countable.reduce((s, i) => s + i.cartons_scanned, 0)
   // Hiển thị Kế hoạch/Đã xuất tính CẢ hàng no_qr (khớp Tổng thùng ở list); countable chỉ dùng cho canComplete.
   // BASE UNIT: quy đổi THÙNG per-mã trước khi cộng cross-mã (tổng hiển thị = thùng quy đổi).
-  const totalOrderedAll = allItems.reduce((s, i) => s + qtyEntryDecimal(i.cartons_ordered, i.material), 0)
-  const totalScannedAll = allItems.reduce((s, i) => s + qtyEntryDecimal(i.cartons_scanned, i.material), 0)
+  // 27/11 (user chốt): ô tổng cộng theo TỪNG đơn vị chính — "4/10 thùng · 400/1.000 kg", không cộng thùng với kg; tiến độ = trung
+  // bình % của từng đơn vị (chuyến chỉ có thùng thì như cũ)
+  const orderedByUnit = qtyTotalsByUnit(allItems.map(i => ({ qty: i.cartons_ordered, mat: i.material })))
+  const scannedByUnit = qtyTotalsByUnit(allItems.map(i => ({ qty: i.cartons_scanned, mat: i.material })))
+  const scannedOnPlan = orderedByUnit.map(x => ({ unit: x.unit, qty: scannedByUnit.find(y => y.unit === x.unit)?.qty ?? 0 }))
+  const tripProgress  = qtyTotalsProgress(scannedByUnit, orderedByUnit)
+  const tripPairText  = qtyTotalsPairText(scannedByUnit, orderedByUnit)
+  // thanh tiến độ: một đơn vị ⇒ "đã/kế hoạch" như cũ; nhiều đơn vị ⇒ %
+  const tripBarText   = orderedByUnit.length > 1
+    ? `${Math.round(tripProgress * 100)}%`
+    : `${(scannedOnPlan[0]?.qty ?? 0).toLocaleString('vi-VN', { maximumFractionDigits: 1 })}/${(orderedByUnit[0]?.qty ?? 0).toLocaleString('vi-VN', { maximumFractionDigits: 1 })}`
   const manualItems  = allItems.filter(i => i.material?.no_qr_tracking === true)
   const allManualDone = manualItems.every(i => i.status === 'COMPLETED')
   const scanComplete  = countable.length === 0 || (totalOrdered > 0 && totalScanned >= totalOrdered)
@@ -1985,8 +1995,8 @@ export default function OutboundDetail() {
   const bandTiles = [
     { label: 'DO',       value: allDOs.length },
     { label: 'Mã hàng',  value: allItems.length },
-    { label: 'Đã xuất',  value: `${totalScannedAll.toLocaleString('vi-VN', { maximumFractionDigits: 1 })} thùng`, accent: totalScannedAll > 0 },
-    { label: 'Kế hoạch', value: `${totalOrderedAll.toLocaleString('vi-VN', { maximumFractionDigits: 1 })} thùng` },
+    { label: 'Đã xuất',  value: qtyTotalsText(scannedOnPlan), accent: scannedOnPlan.some(x => x.qty > 0) },
+    { label: 'Kế hoạch', value: qtyTotalsText(orderedByUnit) },
   ]
   // Chuyến bất động: nói NGAY lý do + cách gỡ, đừng để user bấm nút rồi mới biết.
   // ĐỂ NGOÀI orderInfoJSX vì khối đó chỉ hiện từ sm trở lên — công nhân dùng ĐIỆN THOẠI/PDA là
@@ -2057,7 +2067,7 @@ export default function OutboundDetail() {
         )}
         <span className="flex items-center gap-1">
           <Package className="h-3 w-3 text-slate-400 shrink-0" />
-          <span className="font-medium">{totalScannedAll.toLocaleString('vi-VN', { maximumFractionDigits: 1 })}/{totalOrderedAll.toLocaleString('vi-VN', { maximumFractionDigits: 1 })}</span> thùng
+          <span className="font-medium" data-testid="trip-qty-by-unit">{tripPairText}</span>
         </span>
       </div>
 
@@ -2248,7 +2258,7 @@ export default function OutboundDetail() {
           <p className="text-[11px] font-semibold text-red-600 leading-snug">{headerTexts[0]}</p>
         </div>
       )}
-      <ProgressBar scanned={totalScannedAll} ordered={totalOrderedAll} />
+      <ProgressBar scanned={0} ordered={0} pct={tripProgress} label={tripBarText} />
     </div>
   )
 

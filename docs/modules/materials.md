@@ -11,17 +11,17 @@
 
 Đổi `base_unit` (form sửa mã hoặc nạp Excel) bị chặn 409 `BASE_UNIT_IN_USE` / lỗi dòng khi mã còn tồn > 0, có mẻ đang mở chưa nạp, nằm trong phiếu của mẻ đang mở, hoặc bồn còn hàng — MỘT hàm DB `material_base_unit_in_use`. Mã đã hết dùng vẫn đổi được.
 
-## Mã cân / đong có đơn vị quy cách — bao đường (27/11, user chốt)
+## Mã cân / đong có quy cách GỢI Ý — bao đường (27/11, user chốt)
 
 - Đơn vị `BAO` ("Bao", vai trò Entry) là đơn vị RIÊNG của app cho bao đường / bột; `BAG` là đơn vị SAP (túi nhỏ của bao bì), tên tiếng Việt "Túi". Hai mã khác nhau, không dùng chung.
-- Đường trắng 210000262: Base KG, Entry BAO, 1 bao = 20 kg. Mã có đơn vị gốc là ĐƠN VỊ ĐO (KG, G, L, ML, M, M2, M3…) mà có quy cách thì:
-  - số chính vẫn là kg, quy cách chỉ là GỢI Ý: `qtyLabel` ⇒ "110 kg (5 bao + 10 kg)", dưới 1 bao chỉ "12,345 kg";
-  - ô nhập (`QtyInput`) là MỘT ô kg thập phân + dòng "= 5 bao + 10 kg"; bảng 2 cột Thùng | Hộp: cột quy cách chỉ hiện gợi ý;
-  - số lẻ theo kg hợp lệ ở mọi cửa (`baseAllowsDecimal` / `qtyIntegerError`; DB `qty_whole_required` cho huỷ cấp NVL và xử lý hàng chặn). Hộp / chai / cái vẫn bắt số nguyên như cũ;
-  - ô số của MỘT mã trong bảng (Tồn kho, danh sách / phiếu Nhập, dòng hàng + ô tóm tắt chuyến Xuất): số theo kg (`qtyMainUnits`), dòng dưới nhỏ là gợi ý bao — component chung `QtyText` / `QtyPackHintLine`;
-  - ô TỔNG nhiều mã ("SL (quy đổi)", tổng của chuyến) vẫn quy theo quy cách (bao) — cùng cách các hàm tổng trong DB chia theo `units_per_carton`.
-- Số / pallet (`cartons_per_pallet`, số miền Nam, số riêng của kho) tính theo đơn vị quy cách nếu có, không thì theo đơn vị gốc. THÊM / BỎ đơn vị quy cách (form sửa mã hoặc nạp Excel) mà không gõ số mới ⇒ app tự đổi (1.000 kg ⇒ 50 bao); không chia hết ⇒ lỗi, bắt khai lại. Một hàm `palletQtyOnUnitChange` (palletCalc, mirror) + `palletUnitFix` (materialController, dùng cho cả hai cửa). Form báo trước dòng "Khi lưu, app tự đổi …"; bước kiểm Excel báo ở mục cảnh báo.
-- Đổi hệ số (20 ⇒ 25 kg / bao) KHÔNG đổi số / pallet (đơn vị của ô không đổi) — người dùng tự sửa nếu số bao / pallet thật đổi.
+- **App phân biệt bằng ĐƠN VỊ GỐC** (user 27/11: "thành phẩm 1 thùng = 48 hộp: key 60 hộp thì thành 1 thùng 12 hộp; đường trắng: key 1000 kg giữ 1000 kg, chỉ gợi ý 50 bao, kg vẫn là đơn vị chính"):
+  - đơn vị đếm (HOP, BT, EA…) + Entry Unit ⇒ **entry unit thật**: "N thùng + M hộp", số theo hộp phải nguyên, số / pallet theo thùng;
+  - đơn vị đo (KG, G, MG, TON, L, ML, M, CM, MM, M2, M3 — `MEASURE_UNIT_CODES`, DB `qty_is_measure_unit`) + Entry Unit ⇒ **quy cách GỢI Ý**: lưu ở `pack_unit` / `pack_size`, `entry_unit` để trống. Mọi phép quy đổi, ô tổng "SL (quy đổi)", tổng chuyến, cột Thùng của Excel, số / pallet, MES… thấy mã y như chưa khai bao (kg). Chỉ dòng gợi ý đọc hai cột này.
+- Form và file Excel vẫn khai như cũ ("Entry Unit = BAO, 1 BAO = 20 KG"); server tách bằng MỘT hàm `splitEntryPack` (`utils/materialUnits.ts`) cho tạo mã, sửa mã, nạp Excel. DB chặn cửa quên tách: CHECK `material_measure_no_entry_chk` (mã đơn vị đo không có entry unit) + `material_pack_hint_chk` (gợi ý chỉ cho mã đơn vị đo, hệ số > 0). Form đọc lại gợi ý vào cùng ô Entry Unit (`declaredEntry`) nên lưu lại không mất bao; dòng dưới ô ghi "chỉ gợi ý; số lượng, số / pallet vẫn theo KG".
+- Đường trắng 210000262: Base KG, gợi ý BAO 20 kg, số / pallet **1.000 kg** (gợi ý "50 bao").
+- Hiển thị: `qtyLabel` ⇒ "1.000 kg (50 bao)", "110 kg (5 bao + 10 kg)", dưới 1 bao chỉ "12,345 kg"; ô hẹp dùng `qtyMainUnits` (bỏ gợi ý) + dòng gợi ý riêng `QtyText` / `QtyPackHintLine`; ô nhập `QtyInput` là MỘT ô kg + "= 5 bao + 10 kg". Object số lượng ở các màn chỉ mang id / mã hàng ⇒ FE tra gợi ý đã nạp lúc khởi động (`GET /masterdata/materials/pack-hints`, ai đăng nhập cũng đọc; Shell `setPackHints`, query `material-pack-hints` theo realtime bảng Material). Thiếu thì chỉ mất dòng gợi ý, không sai số.
+- Ô TỔNG nhiều mã có đơn vị khác nhau (chuyến xuất: dòng dưới mã chuyến, dải "Đã xuất · Kế hoạch", nhóm NPP, cột số lượng ở danh sách Xuất kho) cộng theo TỪNG đơn vị: "10 thùng · 1.000 kg", tiến độ "4/10 thùng · 400/1.000 kg", thanh tiến độ = trung bình % của từng đơn vị (`qtyTotalsByUnit` / `qtyTotalsPairText` / `qtyTotalsProgress`, mirror BE ⇄ FE; BE gửi `qty_by_unit` / `qty_by_unit_noqr` trên mỗi chuyến). Ô "SL (quy đổi)" của Tồn kho / Dashboard giữ một số (nhãn đã nói rõ là quy đổi) — đường góp số kg.
+- Số / pallet: theo entry unit THẬT nếu có, không thì theo đơn vị gốc. Thêm / bỏ thùng (form hoặc Excel) mà không gõ số mới ⇒ app tự đổi (`palletQtyOnUnitChange` + `palletUnitFix`); khai / bỏ quy cách gợi ý không đổi số / pallet.
 
 ## Giao thoa với
 <!-- giao-thoa:start -->

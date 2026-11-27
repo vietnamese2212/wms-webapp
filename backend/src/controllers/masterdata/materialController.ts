@@ -2,7 +2,7 @@ import { Request, Response } from 'express'
 import { randomUUID } from 'crypto'
 import * as XLSX from 'xlsx'
 import { supabase } from '../../lib/supabase'
-import { ok, fail } from '../../utils/response'
+import { ok, fail, type PgLikeError } from '../../utils/response'
 import { fetchAllRowsParallel, fetchAllByIdChunks } from '../../utils/pagination'
 import { getMaterialCategoryRules, LEGACY_NO_SHELF_LIFE, LEGACY_PALLET_PER_EA } from '../../utils/warehouseTypeMeta'
 import { scopeCategoriesOf, categoryAllowed, CATEGORY_FORBIDDEN_MSG } from '../../utils/categoryScope'
@@ -28,6 +28,7 @@ const baseUnitLockMsg = (reason: string) => `Mã ${reason} — không đổi đ�
 import { materialMissingFields, type MaterialRequiredInput } from '../../utils/materialRequired'
 import { palletQtyOnUnitChange } from '../../utils/palletCalc'
 import { hasEntry, unitLabel } from '../../utils/qtyUnits'
+import { splitEntryPack, declaredEntry } from '../../utils/materialUnits'
 
 /** Trạng thái đơn vị + số / pallet của một mã — dùng cho palletUnitFix. */
 type PalletFixState = {
@@ -334,6 +335,8 @@ export async function createMaterial(req: Request, res: Response) {
     const short_name = buildShortName(material_description, material_code, custom_short_name)
     const palColor = parsePalletColor(req.body.pallet_color)
     if ('error' in palColor) return fail(res, 400, 'VALIDATION_ERROR', palColor.error)
+    // 27/11: mã đơn vị đo (KG, L…) khai Entry Unit ⇒ quy cách GỢI Ý (pack_unit / pack_size), không phải entry unit
+    const unitCols = splitEntryPack(base_unit, entry_unit, units_per_carton != null ? Number(units_per_carton) : null)
 
     const { data, error } = await supabase
       .from('Material')
@@ -348,7 +351,9 @@ export async function createMaterial(req: Request, res: Response) {
         weight_kg: weight_kg != null ? weight_kg : null,
         cartons_per_pallet: cartons_per_pallet != null ? Number(cartons_per_pallet) : null,
         cartons_per_pallet_mn: cartons_per_pallet_mn != null ? Number(cartons_per_pallet_mn) : null,
-        units_per_carton: units_per_carton != null ? Number(units_per_carton) : null,
+        units_per_carton: unitCols.units_per_carton,
+        pack_unit: unitCols.pack_unit,
+        pack_size: unitCols.pack_size,
         pallet_per_ea: pallet_per_ea != null ? Number(pallet_per_ea) : null,
         shelf_life_days: shelf_life_days != null ? Number(shelf_life_days) : null,
         carton_length_mm: carton_length_mm != null ? Number(carton_length_mm) : null,
@@ -358,7 +363,7 @@ export async function createMaterial(req: Request, res: Response) {
         loose_stack_layers: loose_stack_layers != null ? Number(loose_stack_layers) : null,
         stack_on_top:     Boolean(stack_on_top),
         base_unit: base_unit ? String(base_unit).trim().toUpperCase() : null,
-        entry_unit: entry_unit ? String(entry_unit).trim().toUpperCase() : null,
+        entry_unit: unitCols.entry_unit,
         is_non_stock: Boolean(is_non_stock),
         is_pallet_carrier: Boolean(is_pallet_carrier),   // mã PALLET mang hàng (Loscam) — loại khỏi đếm Pallet chuyến
         is_semi_finished: Boolean(is_semi_finished),     // bán thành phẩm (dịch trộn, vào bồn) — Sản xuất chỉ nhận mã này (C117)
@@ -436,21 +441,27 @@ export async function updateMaterial(req: Request, res: Response) {
 
     // Entry unit đòi hệ số 1 Entry = N Base + Entry PHẢI KHÁC Base — kiểm theo GIÁ TRỊ HIỆU LỰC sau patch
     let palletPatch: Partial<PalletFixState> = {}
+    let unitPatch: Record<string, unknown> = {}
     if (entry_unit !== undefined || units_per_carton !== undefined || base_unit !== undefined) {
       const { data: cur } = await supabase.from('Material')
-        .select('material_code, entry_unit, units_per_carton, base_unit, cartons_per_pallet, cartons_per_pallet_mn, warehouse_pallet_overrides').eq('id', req.params.id).maybeSingle()
-      const effEntry = entry_unit !== undefined ? (entry_unit ? String(entry_unit).trim().toUpperCase() : null) : cur?.entry_unit ?? null
-      const effUpc   = units_per_carton !== undefined ? (units_per_carton != null ? Number(units_per_carton) : null) : cur?.units_per_carton ?? null
+        .select('material_code, entry_unit, units_per_carton, pack_unit, pack_size, base_unit, cartons_per_pallet, cartons_per_pallet_mn, warehouse_pallet_overrides').eq('id', req.params.id).maybeSingle()
+      // Entry "như người dùng thấy" = entry unit thật hoặc quy cách gợi ý (form hiện cả hai ở cùng ô)
+      const curDecl  = declaredEntry(cur)
+      const effEntry = entry_unit !== undefined ? (entry_unit ? String(entry_unit).trim().toUpperCase() : null) : curDecl.entry
+      const effUpc   = units_per_carton !== undefined ? (units_per_carton != null ? Number(units_per_carton) : null) : curDecl.factor
       const effBase  = base_unit !== undefined ? (base_unit ? String(base_unit).trim().toUpperCase() : null) : cur?.base_unit ?? null
       if (effEntry && !(Number(effUpc) > 0))
         return fail(res, 400, 'VALIDATION_ERROR', 'Có Đơn vị nhập liệu (entry) thì hệ số "1 Entry = N Base" (ô EA/thùng) phải > 0')
       if (effEntry && effBase && effEntry === effBase)
         return fail(res, 400, 'VALIDATION_ERROR', 'Entry Unit phải KHÁC Base Unit (vd Base=HOP thì Entry không được HOP)')
-      // 27/11: thêm / bỏ đơn vị quy cách ⇒ số / pallet đổi đơn vị theo (palletUnitFix — chung với nạp Excel)
+      // 27/11: mã đơn vị đo (KG, L…) ⇒ Entry Unit khai ở form là quy cách GỢI Ý (pack_unit / pack_size), không phải entry unit
+      const uc = splitEntryPack(effBase, effEntry, effUpc)
+      unitPatch = { ...uc }
+      // thêm / bỏ entry unit THẬT ⇒ số / pallet đổi đơn vị theo (palletUnitFix — chung với nạp Excel); quy cách gợi ý không đổi số / pallet
       if (cur) {
         const c = cur as PalletFixState & { material_code: string }
         const fix = palletUnitFix(c.material_code, c, {
-          entry_unit: effEntry, units_per_carton: effUpc, base_unit: effBase,
+          entry_unit: uc.entry_unit, units_per_carton: uc.units_per_carton, base_unit: effBase,
           cartons_per_pallet: cartons_per_pallet !== undefined ? (cartons_per_pallet != null ? Number(cartons_per_pallet) : null) : c.cartons_per_pallet,
           cartons_per_pallet_mn: cartons_per_pallet_mn !== undefined ? (cartons_per_pallet_mn != null ? Number(cartons_per_pallet_mn) : null) : c.cartons_per_pallet_mn,
           warehouse_pallet_overrides: warehouse_pallet_overrides !== undefined ? warehouse_pallet_overrides : c.warehouse_pallet_overrides,
@@ -515,6 +526,7 @@ export async function updateMaterial(req: Request, res: Response) {
     if (no_qr_tracking !== undefined) patch.no_qr_tracking = Boolean(no_qr_tracking)
     if (warehouse_pallet_overrides !== undefined) patch.warehouse_pallet_overrides = Array.isArray(warehouse_pallet_overrides) ? warehouse_pallet_overrides : []
     if (supplier_shelf_life_overrides !== undefined) patch.supplier_shelf_life_overrides = Array.isArray(supplier_shelf_life_overrides) ? supplier_shelf_life_overrides : []
+    Object.assign(patch, unitPatch)     // entry unit thật / quy cách gợi ý đã tách theo đơn vị gốc (splitEntryPack)
     Object.assign(patch, palletPatch)   // số / pallet đã đổi theo đơn vị quy cách mới (palletUnitFix)
     patch.updated_by = req.user?.name || null
 
@@ -630,9 +642,11 @@ export async function uploadExcel(req: Request, res: Response) {
       no_qr_tracking: boolean; is_non_stock: boolean; is_pallet_carrier: boolean; is_semi_finished: boolean
       // 27/11: cần cho palletUnitFix (file thêm / bỏ đơn vị quy cách ⇒ số / pallet đổi đơn vị) — có mặt ở MỌI bản ghi upsert
       cartons_per_pallet_mn: number | null; warehouse_pallet_overrides: unknown
+      // 27/11: quy cách gợi ý của mã đơn vị đo (splitEntryPack) — có mặt ở MỌI bản ghi upsert, thiếu là bị ghi NULL đè
+      pack_unit: string | null; pack_size: number | null
     }
     const existing = await fetchAllRowsParallel(() => supabase.from('Material').select(
-      'id, material_code, material_description, short_name, custom_short_name, category, product_type, weight_kg, cartons_per_pallet, units_per_carton, pallet_per_ea, shelf_life_days, notes, base_unit, entry_unit, batch_prefix, carton_length_mm, carton_width_mm, carton_height_mm, max_stack_layers, loose_stack_layers, stack_on_top, no_qr_tracking, is_non_stock, is_pallet_carrier, is_semi_finished, cartons_per_pallet_mn, warehouse_pallet_overrides'
+      'id, material_code, material_description, short_name, custom_short_name, category, product_type, weight_kg, cartons_per_pallet, units_per_carton, pallet_per_ea, shelf_life_days, notes, base_unit, entry_unit, batch_prefix, carton_length_mm, carton_width_mm, carton_height_mm, max_stack_layers, loose_stack_layers, stack_on_top, no_qr_tracking, is_non_stock, is_pallet_carrier, is_semi_finished, cartons_per_pallet_mn, warehouse_pallet_overrides, pack_unit, pack_size'
     )) as ExistingMat[]
     const existingByCode = new Map<string, ExistingMat>()
     for (const m of existing) existingByCode.set(String(m.material_code).trim(), m)
@@ -752,6 +766,7 @@ export async function uploadExcel(req: Request, res: Response) {
           is_non_stock: dbRow!.is_non_stock, is_pallet_carrier: dbRow!.is_pallet_carrier,
           is_semi_finished: dbRow!.is_semi_finished,
           cartons_per_pallet_mn: dbRow!.cartons_per_pallet_mn, warehouse_pallet_overrides: dbRow!.warehouse_pallet_overrides,
+          pack_unit: dbRow!.pack_unit, pack_size: dbRow!.pack_size,
         }
         upsertByCode.set(material_code, apply(base))
       } else if (insertByCode.has(material_code)) {
@@ -765,7 +780,7 @@ export async function uploadExcel(req: Request, res: Response) {
           shelf_life_days: sld, notes, batch_prefix: batchPrefix,
           carton_length_mm: cLen, carton_width_mm: cWid, carton_height_mm: cHei,
           max_stack_layers: maxLayers, loose_stack_layers: looseLayers, stack_on_top: onTop ?? false,
-          base_unit: baseUnit, entry_unit: entryUnit,
+          base_unit: baseUnit, entry_unit: entryUnit, pack_unit: null, pack_size: null,
           no_qr_tracking: noQr ?? false, is_non_stock: nonStock ?? false, is_pallet_carrier: palletCarry ?? false,
           is_semi_finished: semiFin ?? false,
           is_active: true, created_at: now, updated_at: now,
@@ -789,6 +804,12 @@ export async function uploadExcel(req: Request, res: Response) {
     }
     // 27/11: file thêm / bỏ đơn vị quy cách ⇒ số / pallet đổi đơn vị theo — CÙNG hàm palletUnitFix với form sửa mã.
     // Ô "Số / pallet" của file giữ nguyên số cũ (vd file xuất ra rồi chỉ điền thêm Entry Unit) ⇒ app tự đổi; gõ số mới ⇒ giữ số đã gõ.
+    // 27/11: Entry Unit + Đv/Thùng của file ⇒ entry unit THẬT (mã đếm) hoặc QUY CÁCH GỢI Ý (mã đơn vị đo: KG, L…) — cùng hàm với
+    // form (splitEntryPack). Ô trống giữ giá trị cũ: entry hiệu lực = entry unit hoặc quy cách gợi ý đang có (declaredEntry).
+    for (const rec of [...upsertByCode.values(), ...insertByCode.values()]) {
+      const d = declaredEntry(rec as Parameters<typeof declaredEntry>[0])
+      Object.assign(rec, splitEntryPack(rec.base_unit as string | null, d.entry, d.factor))
+    }
     const palletNotes: string[] = []
     for (const [code, rec] of upsertByCode) {
       const db0 = existingByCode.get(code)
@@ -862,4 +883,15 @@ export async function uploadExcel(req: Request, res: Response) {
 
     ok(res, { inserted, updated, skipped, errors, warnings: palletNotes })
   } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
+}
+
+// GET /api/masterdata/materials/pack-hints — QUY CÁCH GỢI Ý của mã cân / đong (27/11: đường 1 bao = 20 kg) cho dòng "50 bao" ở mọi
+// màn số lượng (Tồn kho, Nhập, Xuất…). FE nạp MỘT lần lúc khởi động (setPackHints) — vài mã, không phải cả danh mục. Ai đăng nhập
+// cũng đọc được (người xem tồn / xuất không có quyền Mã hàng); chỉ trả id + mã + quy cách, không trả gì khác của mã hàng.
+export async function listPackHints(_req: Request, res: Response) {
+  try {
+    const rows = await fetchAllRowsParallel(() => supabase.from('Material')
+      .select('id, material_code, pack_unit, pack_size').not('pack_unit', 'is', null).order('id'))
+    ok(res, rows)
+  } catch (e) { fail(res, e as PgLikeError) }
 }

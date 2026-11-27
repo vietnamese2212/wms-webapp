@@ -1,5 +1,5 @@
 // FILE SINH TỰ ĐỘNG — `node scripts/gen-db-types.mjs` (từ information_schema STAGING). KHÔNG sửa tay.
-// Sinh lúc 2026-11-27T08:37:35.290Z · 130 bảng/view · 294 hàm · 0 enum
+// Sinh lúc 2026-11-27T11:06:10.331Z · 130 bảng/view · 295 hàm · 0 enum
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[]
 
 export type Database = {
@@ -1269,6 +1269,8 @@ export type Database = {
           loose_stack_layers: number | null
           tank_hold_hours: number | null
           is_semi_finished: boolean
+          pack_unit: string | null
+          pack_size: number | null
         }
         Insert: {
           id: string
@@ -1312,6 +1314,8 @@ export type Database = {
           loose_stack_layers?: number | null
           tank_hold_hours?: number | null
           is_semi_finished?: boolean
+          pack_unit?: string | null
+          pack_size?: number | null
         }
         Update: {
           id?: string
@@ -1355,6 +1359,8 @@ export type Database = {
           loose_stack_layers?: number | null
           tank_hold_hours?: number | null
           is_semi_finished?: boolean
+          pack_unit?: string | null
+          pack_size?: number | null
         }
         Relationships: []
       }
@@ -8144,6 +8150,10 @@ export type Database = {
         Args: { p_qty: number | null; p_entry_unit: string | null; p_upc: number | null }
         Returns: number
       }
+      qty_is_measure_unit: {
+        Args: { p_unit: string | null }
+        Returns: boolean
+      }
       qty_whole_required: {
         Args: { p_material: string | null }
         Returns: boolean
@@ -8285,7 +8295,7 @@ export type Database = {
         Returns: boolean
       }
       unaccent: {
-        Args: { arg1: unknown | null; arg2: string | null } | { arg1: string | null }
+        Args: { arg1: string | null } | { arg1: unknown | null; arg2: string | null }
         Returns: string
       }
       unaccent_init: {

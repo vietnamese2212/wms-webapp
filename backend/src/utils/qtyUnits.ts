@@ -12,6 +12,12 @@ export type MatUnits = {
   base_unit?: string | null
   entry_unit?: string | null
   units_per_carton?: number | null
+  // QUY CÁCH GỢI Ý của mã cân / đong (27/11 — đường trắng 1 bao = 20 kg): CHỈ để in "50 bao", không quy đổi / cộng tổng.
+  pack_unit?: string | null
+  pack_size?: number | null
+  // Định danh mã — FE tra quy cách gợi ý đã nạp lúc khởi động (setPackHints) khi object không mang sẵn pack_unit / pack_size.
+  id?: string | null
+  material_code?: string | null
 }
 
 /** Nhãn tiếng Việt cho mã ĐVT — code lạ hiển thị NGUYÊN VĂN (ĐVT tùy biến). */
@@ -51,7 +57,7 @@ export function hasEntry(m?: MatUnits | null): boolean {
  * khác hộp / chai / cái (không có 0,5 hộp). Danh sách cố định ở đây (hai bản BE ⇄ FE phải khớp — mirror test).
  */
 export const MEASURE_UNIT_CODES: readonly string[] = ['KG', 'G', 'MG', 'TON', 'L', 'ML', 'M', 'CM', 'MM', 'M2', 'M3']
-// DB có bản thứ ba của danh sách này trong hàm qty_whole_required (migration 20261127c) — test measureUnitsSql đối chiếu
+// DB có bản thứ ba của danh sách này: hàm qty_is_measure_unit (migration 20261127d) — test measureUnitsSql đối chiếu
 const MEASURE_UNITS = new Set<string>(MEASURE_UNIT_CODES)
 export function isMeasureUnit(code?: string | null): boolean {
   return MEASURE_UNITS.has((code ?? '').trim().toUpperCase())
@@ -59,25 +65,36 @@ export function isMeasureUnit(code?: string | null): boolean {
 
 /**
  * Phần theo ĐƠN VỊ GỐC được phép lẻ không — MỘT luật cho mọi cửa nhập số (ô "Thùng + Hộp", upload Excel, điều chỉnh).
- * Mã không quy cách: luôn được (luật cũ). Mã có quy cách: chỉ khi đơn vị gốc là đơn vị đo (KG / L…).
- * Phần quy cách (thùng / bao) luôn là số nguyên.
+ * Mã không quy cách: luôn được (luật cũ). Mã có quy cách thật (thùng + hộp): phải nguyên. Mã đơn vị đo thì DB không cho mang
+ * entry unit (material_measure_no_entry_chk) — nhánh isMeasureUnit chỉ là lưới đỡ.
  */
 export function baseAllowsDecimal(m?: MatUnits | null): boolean {
   return !hasEntry(m) || isMeasureUnit(m?.base_unit)
 }
 
-/**
- * Mã CÂN / ĐONG có đơn vị quy cách (đường trắng: KG + 1 bao = 20 kg — 27/11). User: "110 kg có GỢI Ý là 5 bao + 10 kg" ⇒
- * số CHÍNH vẫn là kg, quy cách chỉ là GỢI Ý đi kèm (khác thùng + hộp, nơi "N thùng + M hộp" là số chính).
- */
-export function isPackHintMaterial(m?: MatUnits | null): boolean {
-  return hasEntry(m) && isMeasureUnit(m?.base_unit)
+function packFields(m?: MatUnits | null): { unit: string; size: number } | null {
+  const unit = (m?.pack_unit ?? '').trim().toUpperCase()
+  return unit ? { unit, size: Number(m?.pack_size) } : null
 }
 
 /**
- * Đơn vị cho SỐ CHÍNH của MỘT mã (ô số của một dòng / một pallet): mã cân / đong có quy cách ⇒ chỉ đơn vị gốc (kg) — như
- * trước khi khai bao; mã khác ⇒ giữ nguyên. Ô TỔNG nhiều mã ("SL (quy đổi)") KHÔNG dùng hàm này: tổng quy theo quy cách,
- * cùng cách các hàm tổng trong DB chia theo units_per_carton.
+ * QUY CÁCH GỢI Ý của mã cân / đong — user 27/11: "hàng NVL như đường trắng: key 1000 kg sẽ giữ là 1000 kg, chỉ gợi ý là 50 bao
+ * thôi, kg vẫn là đơn vị chính"; còn hàng thành phẩm 1 thùng = 48 hộp thì "60 hộp = 1 thùng + 12 hộp" (thùng là entry unit thật).
+ * PHÂN BIỆT bằng ĐƠN VỊ GỐC: đơn vị đo (KG, L…) ⇒ "1 bao = 20 kg" nằm ở pack_unit / pack_size, KHÔNG phải entry unit, nên mọi
+ * phép quy đổi, cộng tổng, Excel, số / pallet thấy mã y như chưa khai bao; chỉ dòng gợi ý đọc hai cột này.
+ */
+export function packOf(m?: MatUnits | null): { unit: string; size: number } | null {
+  if (hasEntry(m) || !isMeasureUnit(m?.base_unit)) return null
+  const p = packFields(m)
+  return p && p.unit && p.size > 0 ? p : null
+}
+export function isPackHintMaterial(m?: MatUnits | null): boolean {
+  return packOf(m) != null
+}
+
+/**
+ * Bản RÚT GỌN của mã cho ô hẹp: bỏ phần gợi ý (qtyLabel ra "110 kg" thay vì "110 kg (5 bao + 10 kg)") — gợi ý in ở dòng riêng
+ * (QtyText / QtyPackHintLine). Mã khác giữ nguyên.
  */
 export function qtyMainUnits(m?: MatUnits | null): MatUnits | null | undefined {
   return isPackHintMaterial(m) ? { base_unit: m!.base_unit ?? null } : m
@@ -85,10 +102,12 @@ export function qtyMainUnits(m?: MatUnits | null): MatUnits | null | undefined {
 
 /** Gợi ý quy cách cho mã cân / đong: 110 kg ⇒ "5 bao + 10 kg"; dưới 1 bao hoặc mã khác ⇒ null. */
 export function qtyPackHint(qty: number, m?: MatUnits | null): string | null {
+  const p = packOf(m)
   const q = Math.abs(Number(qty))
-  if (!isFinite(q) || !isPackHintMaterial(m) || q < Number(m!.units_per_carton)) return null
-  const { entry, base } = qtySplit(q, m)
-  const s = base > 0 ? `${fmt(entry)} ${unitLabel(m!.entry_unit)} + ${fmt(base)} ${unitLabel(m!.base_unit)}` : `${fmt(entry)} ${unitLabel(m!.entry_unit)}`
+  if (!p || !isFinite(q) || q < p.size) return null
+  const n = Math.floor(q / p.size)
+  const rest = Math.round((q - n * p.size) * 1000) / 1000
+  const s = rest > 0 ? `${fmt(n)} ${unitLabel(p.unit)} + ${fmt(rest)} ${unitLabel(m!.base_unit)}` : `${fmt(n)} ${unitLabel(p.unit)}`
   return Number(qty) < 0 ? `-${s}` : s
 }
 
@@ -164,11 +183,10 @@ function fmt(n: number): string {
 export function qtyLabel(qty: number, m?: MatUnits | null): string {
   const q = Number(qty)
   if (!isFinite(q)) return '—'
-  if (!hasEntry(m)) return `${fmt(q)} ${qtyUnitLabel(m)}`
-  // mã cân / đong có quy cách (27/11): "110 kg (5 bao + 10 kg)" — kg là số chính, bao là gợi ý
-  if (isPackHintMaterial(m)) {
+  if (!hasEntry(m)) {
+    // mã cân / đong có quy cách gợi ý (27/11): "110 kg (5 bao + 10 kg)" — kg là số chính, bao là gợi ý
     const hint = qtyPackHint(q, m)
-    return `${fmt(q)} ${unitLabel(m!.base_unit)}${hint ? ` (${hint})` : ''}`
+    return `${fmt(q)} ${qtyUnitLabel(m)}${hint ? ` (${hint})` : ''}`
   }
   const neg = q < 0
   const { entry, base } = qtySplit(Math.abs(q), m)
@@ -196,4 +214,47 @@ export function qtyEntryDecimal(qty: number, m?: MatUnits | null): number {
 /** Format qtyEntryDecimal kèm chuẩn số VN, tối đa 3 số lẻ (tiện cho cell). */
 export function qtyEntryText(qty: number, m?: MatUnits | null): string {
   return fmt(qtyEntryDecimal(qty, m))
+}
+
+/** Một ô tổng theo MỘT đơn vị chính: unit = mã ĐVT (CAR / KG / EA…), qty = số theo đơn vị đó. */
+export type QtyUnitTotal = { unit: string; qty: number }
+
+/**
+ * Cộng nhiều dòng KHÁC MÃ theo TỪNG ĐƠN VỊ CHÍNH — không cộng thùng với kg với cái (user 27/11: chuyến 10 thùng sữa + 1.000 kg
+ * đường hiện "10 thùng · 1.000 kg", không phải "60 thùng" hay "1.010 thùng"). Mã có thùng góp số thùng quy đổi (qtyEntryDecimal),
+ * mã khác góp số theo đơn vị gốc. Thứ tự đơn vị = thứ tự xuất hiện.
+ */
+export function qtyTotalsByUnit(lines: readonly { qty: number; mat?: MatUnits | null }[]): QtyUnitTotal[] {
+  const acc = new Map<string, number>()
+  for (const l of lines) {
+    const unit = ((hasEntry(l.mat) ? l.mat!.entry_unit : l.mat?.base_unit) ?? '').trim().toUpperCase()
+    const v = qtyEntryDecimal(Number(l.qty) || 0, l.mat)
+    acc.set(unit, (acc.get(unit) ?? 0) + (isFinite(v) ? v : 0))
+  }
+  return [...acc].map(([unit, qty]) => ({ unit, qty: Math.round(qty * 1000) / 1000 }))
+}
+
+function fmt1(n: number): string {
+  return new Intl.NumberFormat('vi-VN', { maximumFractionDigits: 1 }).format(n)
+}
+
+/** "10 thùng · 1.000 kg" (không dòng nào ⇒ "0"). */
+export function qtyTotalsText(t: readonly QtyUnitTotal[]): string {
+  if (!t.length) return '0'
+  return t.map(x => `${fmt1(x.qty)} ${unitLabel(x.unit)}`).join(' · ')
+}
+
+/** "4/10 thùng · 400/1.000 kg" — đã làm / kế hoạch, theo từng đơn vị của kế hoạch. */
+export function qtyTotalsPairText(done: readonly QtyUnitTotal[], plan: readonly QtyUnitTotal[]): string {
+  if (!plan.length) return '0/0'
+  const d = new Map(done.map(x => [x.unit, x.qty]))
+  return plan.map(x => `${fmt1(d.get(x.unit) ?? 0)}/${fmt1(x.qty)} ${unitLabel(x.unit)}`).join(' · ')
+}
+
+/** Tiến độ 0..1: mỗi đơn vị tính % riêng (tối đa 100%) rồi lấy trung bình — chuyến chỉ một đơn vị thì y như cũ. */
+export function qtyTotalsProgress(done: readonly QtyUnitTotal[], plan: readonly QtyUnitTotal[]): number {
+  const parts = plan.filter(x => x.qty > 0)
+  if (!parts.length) return 0
+  const d = new Map(done.map(x => [x.unit, x.qty]))
+  return parts.reduce((s, x) => s + Math.min(1, Math.max(0, (d.get(x.unit) ?? 0) / x.qty)), 0) / parts.length
 }

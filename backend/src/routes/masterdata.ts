@@ -130,6 +130,8 @@ router.get('/materials',            requireAnyPerm(...MATERIAL_LOOKUP_PERMS), ma
 router.get('/materials/categories', requireAnyPerm(['materials', 'view'], ['inbound', 'view'], ['inbound', 'create']), material.listCategories)
 // Tổng SummaryBand trang danh mục Mã hàng (khai TRƯỚC '/materials/:id' để không bị nuốt)
 router.get('/materials/summary',    requirePerm('materials', 'view'),   material.listMaterialsSummary)
+// Quy cách gợi ý của mã cân / đong (vài mã) — ai đăng nhập cũng đọc: dòng '50 bao' ở Tồn kho / Nhập / Xuất (27/11)
+router.get('/materials/pack-hints', material.listPackHints)
 router.post('/materials',           requirePerm('materials', 'create'), material.createMaterial)
 router.post('/materials/upload',    requirePerm('materials', 'import'), upload.single('file'), excelFromStorage, material.uploadExcel)
 router.get('/materials/:id',        requirePerm('materials', 'view'),   material.getMaterial)

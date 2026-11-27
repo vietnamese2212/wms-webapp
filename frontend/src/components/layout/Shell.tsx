@@ -1,5 +1,5 @@
 import { Suspense, useEffect } from 'react'
-import { useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Outlet, useLocation } from 'react-router-dom'
 import { Sidebar } from './Sidebar'
 import { Header } from './Header'
@@ -14,7 +14,7 @@ import { waitSelfPasswordChangeIdle } from '@/lib/selfPasswordChange'
 import { useAuthStore } from '@/stores/authStore'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { setRealtimeAuth } from '@/lib/supabase'
-import { setUnitLabels } from '@/utils/qtyUnits'
+import { setUnitLabels, setPackHints } from '@/utils/qtyUnits'
 import { OfflineBanner } from '@/offline/OfflineBanner'
 import { ReturnBar } from './ReturnBar'
 import { AppUpdateBanner } from '@/components/shared/AppUpdateButton'
@@ -24,6 +24,14 @@ import { initScanQueue } from '@/offline/scanQueue'
 export function Shell() {
   const qc = useQueryClient()
   const location = useLocation()
+  // Quy cách GỢI Ý của mã cân / đong (27/11 — đường 1 bao = 20 kg): vài mã, nạp một lần cho dòng "50 bao" ở mọi màn số lượng.
+  // Là query (không phải gọi một lần) để sửa Mã hàng — ở máy này hay máy khác (realtime bảng Material) — thì gợi ý theo kịp.
+  const { data: packHints } = useQuery({
+    queryKey: ['material-pack-hints'],
+    queryFn: () => apiClient.get('/masterdata/materials/pack-hints').then(r => (r.data?.data ?? []) as Parameters<typeof setPackHints>[0]),
+    staleTime: 10 * 60_000,
+  })
+  useEffect(() => { if (packHints) setPackHints(packHints) }, [packHints])
   const refreshUser = useAuthStore(s => s.refreshUser)
 
   useEffect(() => {

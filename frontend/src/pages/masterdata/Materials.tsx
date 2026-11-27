@@ -39,7 +39,7 @@ import { needsShelfLife, needsPalletPerEa, whTypeBadgeCls, type WhTypeMetaMap } 
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import type { Material, WarehousePalletOverride, SupplierShelfLifeOverride } from '@/types'
-import { unitLabel } from '@/utils/qtyUnits'
+import { unitLabel, isMeasureUnit, qtyPackHint } from '@/utils/qtyUnits'
 import { palletQtyOnUnitChange } from '@/utils/palletCalc'
 
 type WhRow = { id: string; code: string; name: string }
@@ -208,9 +208,11 @@ export default function Materials() {
   const unitOpt = (u: { value: string; meta?: { label?: string } | null }) => ({ value: u.value, label: u.meta?.label ? `${u.value} — ${u.meta.label}` : u.value })
   const baseUnitOpts  = useMemo(() => unitCatalog.filter(u => (u.meta?.role ?? 'both') !== 'entry').map(unitOpt), [unitCatalog])
   const entryUnitOpts = useMemo(() => unitCatalog.filter(u => (u.meta?.role ?? 'both') !== 'base').map(unitOpt),  [unitCatalog])
-  // 27/11 (đường trắng: 1 bao = 20 kg): số / pallet tính theo đơn vị quy cách nếu có (thùng / bao), không thì theo đơn vị gốc.
-  // Nhãn ô đổi theo đơn vị; sửa mã mà thêm / bỏ đơn vị quy cách ⇒ nhắc trước app sẽ tự đổi số (cùng hàm palletQtyOnUnitChange với server).
-  const formHasEntry = !!form.entry_unit.trim() && Number(form.units_per_carton) > 0
+  // Số / pallet tính theo entry unit THẬT nếu có (thùng), không thì theo đơn vị gốc. Sửa mã mà thêm / bỏ thùng ⇒ nhắc trước app sẽ
+  // tự đổi số (cùng hàm palletQtyOnUnitChange với server). 27/11: mã có đơn vị gốc là đơn vị đo (KG, L…) thì "Entry Unit" khai ở form
+  // là QUY CÁCH GỢI Ý (1 bao = 20 kg) — server lưu vào pack_unit / pack_size, số lượng và số / pallet vẫn theo kg.
+  const formPackHint = isMeasureUnit(form.base_unit) && !!form.entry_unit.trim()
+  const formHasEntry = !!form.entry_unit.trim() && Number(form.units_per_carton) > 0 && !formPackHint
   const detailPalletUnit = detailMat
     ? unitLabel(detailMat.entry_unit && Number(detailMat.units_per_carton) > 0 ? detailMat.entry_unit : detailMat.base_unit)
     : ''
@@ -221,7 +223,9 @@ export default function Materials() {
   })()
   const palletUnitHint = useMemo(() => {
     if (!editing || String(form.cartons_per_pallet) !== String(editing.cartons_per_pallet ?? '')) return null   // mã mới / đã gõ số mới
-    const c = palletQtyOnUnitChange(editing.cartons_per_pallet, editing, { entry_unit: form.entry_unit.trim() || null, units_per_carton: Number(form.units_per_carton) || null })
+    const c = palletQtyOnUnitChange(editing.cartons_per_pallet, editing, formHasEntry
+      ? { entry_unit: form.entry_unit.trim() || null, units_per_carton: Number(form.units_per_carton) || null }
+      : { entry_unit: null, units_per_carton: null })
     if (c.kind === 'same') return null
     const from = editing.entry_unit && Number(editing.units_per_carton) > 0 ? unitLabel(editing.entry_unit) : unitLabel(editing.base_unit)
     const to = formHasEntry ? unitLabel(form.entry_unit) : unitLabel(form.base_unit)
@@ -320,6 +324,7 @@ export default function Materials() {
         'Mã ĐÃ có ⇒ cập nhật ô có giá trị, ô để trống giữ nguyên.',
         'Thùng/Pallet: số đơn vị gốc trên một pallet đầy (mã tính KG thì ghi số kg / pallet). Pallet/EA = 1 ÷ số đó (1.000 kg/pallet ⇒ 0,001).',
         'Có Entry Unit (vd CAR) thì bắt buộc Đv/Thùng = số Base Unit trong 1 Entry; Entry phải khác Base.',
+        'Base Unit là đơn vị đo (KG, L…) mà khai Entry Unit (vd BAO, Đv/Thùng 20) ⇒ chỉ là quy cách GỢI Ý "50 bao": số lượng và Thùng/Pallet vẫn ghi theo kg.',
         'Cột (1/0): 1 = bật, 0 = tắt, trống = giữ nguyên (mã mới: tắt).',
         'File còn một dòng lỗi thì KHÔNG ghi gì.',
       ],
@@ -352,10 +357,11 @@ export default function Materials() {
       category:             mat.category ?? '',
       product_type:         mat.product_type ?? '',
       cartons_per_pallet:   mat.cartons_per_pallet != null ? String(mat.cartons_per_pallet) : '',
-      units_per_carton:     mat.units_per_carton   != null ? String(mat.units_per_carton)   : '',
+      // mã cân / đong: quy cách gợi ý (pack_unit / pack_size) hiện ở cùng ô Entry Unit + "1 BAO = ? KG" như lúc khai
+      units_per_carton:     (mat.units_per_carton ?? mat.pack_size) != null ? String(mat.units_per_carton ?? mat.pack_size) : '',
       pallet_per_ea:        formatDecimalForInput(mat.pallet_per_ea, decSep),
       base_unit:            mat.base_unit  ?? '',
-      entry_unit:           mat.entry_unit ?? '',
+      entry_unit:           mat.entry_unit ?? mat.pack_unit ?? '',
       weight_kg:            formatDecimalForInput(mat.weight_kg, decSep),
       shelf_life_days:      mat.shelf_life_days     != null ? String(mat.shelf_life_days)     : '',
       carton_length_mm:     formatDecimalForInput(mat.carton_length_mm, decSep),
@@ -737,7 +743,7 @@ export default function Materials() {
                     <TableCell className="px-2 py-1 whitespace-nowrap"><CatBadge cat={mat.category} metaMap={whTypeMeta} /></TableCell>
                     <TableCell className="px-2 py-1 whitespace-nowrap text-[10px] font-mono">
                       {mat.base_unit
-                        ? <>{mat.base_unit}{mat.entry_unit && <span className="text-slate-400">/{mat.entry_unit}</span>}</>
+                        ? <>{mat.base_unit}{(mat.entry_unit || mat.pack_unit) && <span className="text-slate-400" title={mat.pack_unit ? 'Quy cách gợi ý — số lượng vẫn theo đơn vị gốc' : undefined}>/{mat.entry_unit || mat.pack_unit}</span>}</>
                         : <span className="text-slate-300">—</span>}
                     </TableCell>
                     <TableCell className="px-2 py-1 whitespace-nowrap text-[10px] font-semibold tabular-nums text-right">
@@ -745,7 +751,7 @@ export default function Materials() {
                       {hasOverrides && <span className="text-[8px] text-blue-500 ml-0.5">*</span>}
                     </TableCell>
                     <TableCell className="px-2 py-1 whitespace-nowrap text-[10px] font-semibold tabular-nums text-right">
-                      {mat.units_per_carton ?? <span className="text-slate-300">—</span>}
+                      {mat.units_per_carton ?? mat.pack_size ?? <span className="text-slate-300">—</span>}
                     </TableCell>
                     <TableCell className="px-2 py-1 whitespace-nowrap text-[10px] font-semibold tabular-nums text-right"
                       title={mat.weight_kg != null ? String(mat.weight_kg) : undefined}>
@@ -910,14 +916,18 @@ export default function Materials() {
                 <div>
                   <p className="text-[10px] font-medium text-slate-500 mb-1.5">Quy cách</p>
                   <div className="space-y-0">
-                    {/* 27/11: số / pallet theo đơn vị quy cách nếu có (thùng / bao), không thì đơn vị gốc — trước ghi cứng "thùng" / "EA" */}
-                    <DRow label="Số/pallet (PL)"     value={detailMat.cartons_per_pallet != null ? `${detailMat.cartons_per_pallet} ${detailPalletUnit}` : null} />
-                    <DRow label="Hệ số quy cách"     value={detailMat.units_per_carton  != null ? `${detailMat.units_per_carton} ${detailMat.base_unit ?? 'EA'}${detailMat.entry_unit ? `/${detailMat.entry_unit}` : ''}` : null} />
+                    {/* 27/11: số / pallet theo entry unit nếu có (thùng), không thì đơn vị gốc (mã kg: số kg / pallet, kèm gợi ý bao) */}
+                    <DRow label="Số/pallet (PL)"     value={detailMat.cartons_per_pallet != null
+                      ? `${detailMat.cartons_per_pallet} ${detailPalletUnit}${(() => { const h = qtyPackHint(Number(detailMat.cartons_per_pallet), detailMat); return h ? ` (${h})` : '' })()}` : null} />
+                    <DRow label="Hệ số quy cách"     value={detailMat.units_per_carton  != null ? `${detailMat.units_per_carton} ${detailMat.base_unit ?? 'EA'}${detailMat.entry_unit ? `/${detailMat.entry_unit}` : ''}`
+                      : detailMat.pack_unit ? `${detailMat.pack_size} ${detailMat.base_unit}/${detailMat.pack_unit} (chỉ gợi ý)` : null} />
                     <DRow label="Pallet/EA"          value={detailMat.pallet_per_ea     != null ? `${detailMat.pallet_per_ea}`          : null} />
                     <DRow label="Base Unit"          value={detailMat.base_unit} />
                     <DRow label="Entry Unit"         value={detailMat.entry_unit
                       ? `${detailMat.entry_unit} (1 ${detailMat.entry_unit} = ${detailMat.units_per_carton ?? '?'} ${detailMat.base_unit ?? 'base'})`
-                      : <span className="text-slate-300">— (không có)</span>} />
+                      : detailMat.pack_unit
+                        ? `${detailMat.pack_unit} (1 ${detailMat.pack_unit} = ${detailMat.pack_size} ${detailMat.base_unit}) — chỉ gợi ý, số lượng theo ${detailMat.base_unit}`
+                        : <span className="text-slate-300">— (không có)</span>} />
                     <DRow label="Khối lượng"         value={detailMat.weight_kg         != null ? `${detailMat.weight_kg} kg`            : null} />
                     <DRow label="HSD"                value={detailMat.shelf_life_days   != null ? `${detailMat.shelf_life_days} ngày`     : null} />
                     <DRow label="Thùng D×R×C"        value={(detailMat.carton_length_mm != null || detailMat.carton_width_mm != null || detailMat.carton_height_mm != null)
@@ -1232,8 +1242,10 @@ export default function Materials() {
             {form.entry_unit.trim() && Number(form.units_per_carton) > 0 && form.base_unit.trim() && (
               <div className="grid grid-cols-3 items-center gap-2">
                 <div />
-                <p className="col-span-2 text-[11px] text-slate-500">
+                <p className="col-span-2 text-[11px] text-slate-500" data-testid="entry-unit-note">
                   1 <b className="font-mono">{form.entry_unit.trim()}</b> = <b className="tabular-nums">{form.units_per_carton}</b> <b className="font-mono">{form.base_unit.trim()}</b>
+                  {/* 27/11: đơn vị gốc là đơn vị đo ⇒ chỉ là gợi ý (user: "key 1000 kg giữ 1000 kg, chỉ gợi ý 50 bao") */}
+                  {formPackHint && <> — chỉ gợi ý; số lượng, số / pallet vẫn theo <b className="font-mono">{form.base_unit.trim()}</b></>}
                 </p>
               </div>
             )}

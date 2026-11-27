@@ -1,7 +1,8 @@
 // BẤT BIẾN luật BASE UNIT (CLAUDE.md "làm sai là vứt đi") — không so với hằng số gõ tay, so hai
 // chiều của cùng một phép: tách rồi gộp phải về đúng số ban đầu; phần lẻ luôn < 1 thùng.
 import { describe, it, expect } from 'vitest'
-import { qtySplit, qtyFromEntryBase, qtyIntegerError, qtyEntryDecimal, qtyLabel, baseAllowsDecimal, qtyPackHint, qtyMainUnits } from '../../src/utils/qtyUnits'
+import { qtySplit, qtyFromEntryBase, qtyIntegerError, qtyEntryDecimal, qtyLabel, baseAllowsDecimal, qtyPackHint, qtyMainUnits, hasEntry,
+  qtyTotalsByUnit, qtyTotalsText, qtyTotalsPairText, qtyTotalsProgress } from '../../src/utils/qtyUnits'
 import { rng, N, SEED } from '../helpers/rng'
 
 describe(`qtyUnits — bất biến (seed ${SEED})`, () => {
@@ -29,40 +30,60 @@ describe(`qtyUnits — bất biến (seed ${SEED})`, () => {
     expect(qtyLabel(7004.875, m)).toBe('7.004,875 kg')
   })
 
-  it('mã KG có đơn vị bao (27/11 — đường trắng 1 bao = 20 kg): phần kg được lẻ, phần bao nguyên, tách–gộp về đúng số', () => {
-    const m = { base_unit: 'KG', entry_unit: 'BAO', units_per_carton: 20 }
-    expect(qtySplit(110, m)).toEqual({ entry: 5, base: 10 })
-    // kg là số CHÍNH, bao là GỢI Ý (user 27/11: "110 kg có gợi ý là 5 bao 10 kg")
-    expect(qtyLabel(110, m)).toBe('110 kg (5 bao + 10 kg)')
-    expect(qtyLabel(110.5, m)).toBe('110,5 kg (5 bao + 10,5 kg)')
-    expect(qtyLabel(100, m)).toBe('100 kg (5 bao)')
-    expect(qtyLabel(12.345, m)).toBe('12,345 kg')
-    expect(qtyLabel(-110, m)).toBe('-110 kg (-5 bao + 10 kg)')
-    expect(qtyPackHint(110, m)).toBe('5 bao + 10 kg')
-    expect(qtyPackHint(19.9, m)).toBeNull()
-    expect(qtyPackHint(4296, { base_unit: 'HOP', entry_unit: 'CAR', units_per_carton: 48 })).toBeNull()
-    // số CHÍNH của một mã cân / đong = kg như trước khi khai bao; mã thùng + hộp giữ nguyên
-    expect(qtyLabel(110, qtyMainUnits(m))).toBe('110 kg')
-    const hop = { base_unit: 'HOP', entry_unit: 'CAR', units_per_carton: 48 }
-    expect(qtyMainUnits(hop)).toBe(hop)
-    expect(qtyIntegerError(110.5, m)).toBeNull()
-    expect(qtyIntegerError(12.345, m)).toBeNull()
-    expect(baseAllowsDecimal(m)).toBe(true)
-    expect(qtyFromEntryBase(5, 10.5, m)).toBe(110.5)
-    // hộp / chai vẫn bị chặn số lẻ như cũ
-    expect(baseAllowsDecimal({ base_unit: 'HOP', entry_unit: 'CAR', units_per_carton: 48 })).toBe(false)
-    expect(qtyIntegerError(0.5, { base_unit: 'HOP', entry_unit: 'CAR', units_per_carton: 48 })).not.toBeNull()
-    const r = rng()
-    for (let i = 0; i < N; i++) {
-      const mm = { base_unit: 'KG', entry_unit: 'BAO', units_per_carton: r.int(1, 60) }
-      const q = r.int(0, 5_000_000) / 1000
-      const s = qtySplit(q, mm)
-      expect(Number.isInteger(s.entry), ).toBe(true)
-      expect(s.base, ).toBeGreaterThanOrEqual(0)
-      expect(s.base, ).toBeLessThan(mm.units_per_carton)
-      expect(qtyFromEntryBase(s.entry, s.base, mm)).toBeCloseTo(q, 6)
-      expect(qtyIntegerError(q, mm)).toBeNull()
+  // BẢNG TÌNH HUỐNG → KẾT QUẢ (user 27/11): "Hàng thành phẩm 1 thùng = 48 hộp: key 60 hộp thì quy đổi thành 1 thùng 12 hộp, key
+  // 1 thùng 12 hộp thì giữ 1 thùng 12 hộp. Hàng NVL như đường trắng: key 1000 kg giữ là 1000 kg, chỉ gợi ý 50 bao, kg vẫn là đơn
+  // vị chính." App PHÂN BIỆT bằng đơn vị gốc: đơn vị đếm (hộp) ⇒ thùng là entry unit thật; đơn vị đo (kg) ⇒ bao chỉ là gợi ý.
+  it('thành phẩm 1 thùng = 48 hộp: 60 hộp = 1 thùng + 12 hộp, hai cách gõ cùng một số, hộp phải nguyên', () => {
+    const sua = { base_unit: 'HOP', entry_unit: 'CAR', units_per_carton: 48 }
+    expect(qtyFromEntryBase(0, 60, sua)).toBe(60)            // gõ 60 hộp
+    expect(qtyFromEntryBase(1, 12, sua)).toBe(60)            // gõ 1 thùng + 12 hộp
+    expect(qtyLabel(60, sua)).toBe('1 thùng + 12 hộp')
+    expect(qtySplit(60, sua)).toEqual({ entry: 1, base: 12 })
+    expect(qtyIntegerError(0.5, sua)).not.toBeNull()
+    expect(baseAllowsDecimal(sua)).toBe(false)
+    expect(qtyPackHint(60, sua)).toBeNull()
+    expect(qtyMainUnits(sua)).toBe(sua)
+    expect(qtyTotalsByUnit([{ qty: 480, mat: sua }])).toEqual([{ unit: 'CAR', qty: 10 }])
+  })
+
+  it('đường trắng (KG, gợi ý 1 bao = 20 kg): 1.000 kg giữ 1.000 kg, bao chỉ là gợi ý, mọi phép tính như chưa khai bao', () => {
+    const duong = { base_unit: 'KG', pack_unit: 'BAO', pack_size: 20 }
+    const truoc = { base_unit: 'KG' }   // cùng mã trước khi khai bao
+    expect(hasEntry(duong)).toBe(false)
+    for (const q of [1000, 110, 110.5, 12.345, 0, -110]) {
+      expect(qtySplit(q, duong)).toEqual(qtySplit(q, truoc))
+      expect(qtyEntryDecimal(q, duong)).toBe(qtyEntryDecimal(q, truoc))
+      expect(qtyIntegerError(q, duong)).toBeNull()
     }
+    expect(qtyFromEntryBase(0, 1000, duong)).toBe(1000)      // gõ 1.000 kg
+    expect(qtyFromEntryBase(1000, 0, duong)).toBe(1000)      // cột "Thùng" của Excel ghi 1.000 ⇒ vẫn 1.000 kg như trước khi khai bao
+    expect(qtyEntryDecimal(1000, duong)).toBe(1000)          // ô tổng "SL (quy đổi)" đếm 1.000, không phải 50
+    expect(qtyLabel(1000, duong)).toBe('1.000 kg (50 bao)')
+    expect(qtyLabel(110, duong)).toBe('110 kg (5 bao + 10 kg)')
+    expect(qtyLabel(110.5, duong)).toBe('110,5 kg (5 bao + 10,5 kg)')
+    expect(qtyLabel(12.345, duong)).toBe('12,345 kg')
+    expect(qtyLabel(-110, duong)).toBe('-110 kg (-5 bao + 10 kg)')
+    expect(qtyPackHint(1000, duong)).toBe('50 bao')
+    expect(qtyPackHint(19.9, duong)).toBeNull()
+    expect(qtyLabel(110, qtyMainUnits(duong))).toBe('110 kg')
+    expect(qtyTotalsByUnit([{ qty: 1000, mat: duong }])).toEqual([{ unit: 'KG', qty: 1000 }])
+    // quy cách gợi ý chỉ có nghĩa với đơn vị đo — khai cho mã hộp thì bỏ qua
+    expect(qtyPackHint(100, { base_unit: 'HOP', pack_unit: 'BAO', pack_size: 20 })).toBeNull()
+  })
+
+  it('ô tổng chuyến 10 thùng sữa + 1.000 kg đường: "10 thùng · 1.000 kg", tiến độ tính theo từng đơn vị', () => {
+    const sua = { base_unit: 'HOP', entry_unit: 'CAR', units_per_carton: 48 }
+    const duong = { base_unit: 'KG', pack_unit: 'BAO', pack_size: 20 }
+    const plan = qtyTotalsByUnit([{ qty: 480, mat: sua }, { qty: 1000, mat: duong }])
+    expect(qtyTotalsText(plan)).toBe('10 thùng · 1.000 kg')
+    const done = qtyTotalsByUnit([{ qty: 192, mat: sua }, { qty: 400, mat: duong }])
+    expect(qtyTotalsPairText(done, plan)).toBe('4/10 thùng · 400/1.000 kg')
+    expect(qtyTotalsProgress(done, plan)).toBeCloseTo(0.4, 9)
+    expect(qtyTotalsPairText([], qtyTotalsByUnit([{ qty: 1000, mat: duong }]))).toBe('0/1.000 kg')
+    // chuyến chỉ có thùng: tiến độ y như cách cũ (đã quét / kế hoạch)
+    const p2 = qtyTotalsByUnit([{ qty: 480, mat: sua }, { qty: 240, mat: { base_unit: 'BT', entry_unit: 'CAR', units_per_carton: 24 } }])
+    expect(qtyTotalsText(p2)).toBe('20 thùng')
+    expect(qtyTotalsProgress([{ unit: 'CAR', qty: 5 }], p2)).toBeCloseTo(0.25, 9)
   })
 
   it('ca đã gặp thật: 4296 hộp / 48 = 89 thùng + 24 hộp (không trôi float)', () => {

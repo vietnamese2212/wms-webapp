@@ -30,7 +30,7 @@ const TABLE_QUERY_MAP: Record<string, string[][]> = {
   // đổi cờ QR của mã hàng phải refetch list Xuất, không thì số liệu đứng im tới khi reload.
   // materials-paged/summary: trang danh mục phân trang SERVER — key RIÊNG, không nằm dưới tiền tố
   // ['materials'] (TanStack khớp theo từng phần tử) nên thiếu 2 key này là trang đứng im sau khi sửa.
-  Material:            [['prod-settings'], ['materials'], ['materials-paged'], ['materials-summary'], ['materials-pallet-carriers'], ['gdos'], ['gdo']],
+  Material:            [['prod-settings'], ['materials'], ['materials-paged'], ['materials-summary'], ['materials-pallet-carriers'], ['material-pack-hints'], ['gdos'], ['gdo']],
   Manufacturer:        [['manufacturers']],
   PalletLabelPrint:    [['pallet-prints'], ['pallet-prints-paged'], ['pallet-print-facets']],
   PalletOperation:     [['pallet-ops-log'], ['pallet-ops-paged']],

@@ -60,10 +60,10 @@ export function QtyInput({ value, mat, onChange, disabled, autoFocus, className,
   // ── Chế độ 1 CỘT (part) — chỉ khác cách bày, quy đổi giữ nguyên ──
   if (part) {
     if (part === 'entry') {
+      // mã cân / đong: cột quy cách chỉ hiện gợi ý (số nhập ở cột đơn vị gốc) — xét TRƯỚC noEntry vì mã này không có entry unit
+      if (packHint) return <div className={`text-center text-[11px] text-slate-500 tabular-nums ${className ?? ''}`} data-testid="qty-pack-hint">{hintText ?? '—'}</div>
       // Mã không entry → không có "Thùng" → gạch ngang (base nằm ở cột kia)
       if (noEntry) return <div className={`text-center text-slate-300 text-xs ${className ?? ''}`}>—</div>
-      // mã cân / đong: cột quy cách chỉ hiện gợi ý (số nhập ở cột đơn vị gốc)
-      if (packHint) return <div className={`text-center text-[11px] text-slate-500 tabular-nums ${className ?? ''}`} data-testid="qty-pack-hint">{hintText ?? '—'}</div>
       const { entry, base } = qtySplit(value, mat)
       return (
         <div className={className ?? ''}>
@@ -103,17 +103,18 @@ export function QtyInput({ value, mat, onChange, disabled, autoFocus, className,
   }
 
   // ── Chế độ 2 ô GỘP (mặc định) ──
-  if (noEntry) {
-    return (
-      <DecimalQty value={value} onChange={onChange} disabled={disabled} autoFocus={autoFocus} className={`text-center font-semibold ${h} ${pad} ${className ?? ''}`} />
-    )
-  }
+  // mã cân / đong có quy cách gợi ý — xét TRƯỚC noEntry (mã này không có entry unit; 27/11)
   if (packHint) {
     return (
       <div className={className ?? ''}>
         <DecimalQty value={value} onChange={onChange} disabled={disabled} autoFocus={autoFocus} className={`text-center font-semibold ${h} ${pad}`} />
         {hintText && <p className="text-[10px] text-slate-500 text-center mt-0.5 tabular-nums" data-testid="qty-pack-hint">= {hintText}</p>}
       </div>
+    )
+  }
+  if (noEntry) {
+    return (
+      <DecimalQty value={value} onChange={onChange} disabled={disabled} autoFocus={autoFocus} className={`text-center font-semibold ${h} ${pad} ${className ?? ''}`} />
     )
   }
   const { entry, base } = qtySplit(value, mat)

@@ -244,6 +244,9 @@ export interface Material {
   stack_on_top?:              boolean         // hàng nhẹ — được xếp TRÊN mã hàng khác (ưu tiên lên nóc)
   base_unit?:                 string | null   // ĐV GỐC (lưu trữ/tính toán sau semantic flip): HOP/BT/KG/EA… — tùy biến
   entry_unit?:                string | null   // ĐV NHẬP LIỆU (chỉ hiển thị): CAR…; hệ số 1 Entry = N Base = units_per_carton
+  // QUY CÁCH GỢI Ý của mã cân / đong (27/11 — đường 1 bao = 20 kg): chỉ để in '50 bao'; mã đơn vị đo không mang entry_unit
+  pack_unit?:                 string | null
+  pack_size?:                 number | null
   warehouse_pallet_overrides:     WarehousePalletOverride[] | null
   supplier_shelf_life_overrides?: SupplierShelfLifeOverride[] | null
   manufacturer_id:                string | null
@@ -756,7 +759,10 @@ export interface GDO {
   total_cartons_base?: number
   total_noqr_base?:    number
   total_loose_base?:   number
-  qty_unit?: { base_unit: string | null; entry_unit: string | null; units_per_carton: number | null } | null
+  qty_unit?: { base_unit: string | null; entry_unit: string | null; units_per_carton: number | null; id?: string | null } | null
+  // 27/11: tổng theo TỪNG đơn vị chính (thùng / kg / cái) — không cộng thùng với kg (qtyTotalsByUnit)
+  qty_by_unit?: { unit: string; qty: number }[]
+  qty_by_unit_noqr?: { unit: string; qty: number }[]
   item_breakdown?:  GDOItemBreakdown[]
   // Dòng xe CON (mã SAP) + tải + cước dự tính (đợt 1 TMS điều vận, 23/09) — enrich từ listGDOs / cột trên GDO
   vehicle_model_id?: string | null

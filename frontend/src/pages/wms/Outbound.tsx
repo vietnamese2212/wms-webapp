@@ -40,7 +40,7 @@ import { isQtyLike } from '@/utils/inventoryMode'
 import { isInSiteTrip } from '@/utils/inSiteTrip'
 import { rowText, type RowStatusKey } from '@/lib/rowStatus'
 import { useColumnResize } from '@/components/shared/useColumnResize'
-import { qtyLabel, qtySplit, qtyFromEntryBase, hasEntry, unitLabel, unitCodeOf, qtyMainUnits, qtyPackHint, QTY_CONVERTED_LABEL, QTY_CONVERTED_TIP, type MatUnits } from '@/utils/qtyUnits'
+import { qtyLabel, qtySplit, qtyFromEntryBase, hasEntry, unitLabel, unitCodeOf, qtyMainUnits, qtyPackHint, qtyTotalsText, QTY_CONVERTED_LABEL, QTY_CONVERTED_TIP, type MatUnits, type QtyUnitTotal } from '@/utils/qtyUnits'
 import { effCartonsPerPallet } from '@/utils/palletCalc'
 import { ShortageBadge } from '@/components/shared/ShortageBadge'
 import { QtyInput } from '@/components/shared/QtyInput'
@@ -161,14 +161,22 @@ function useIsDesktop() {
 
 // Hiển thị TỔNG số lượng 1 chuyến theo ĐƠN VỊ KHAI BÁO (base-unit, user 22/07):
 // - Đơn MỌI mã CÙNG đơn vị (qty_unit != null) → "N thùng + M base" chính xác (vd 146 thùng + 4 chai).
-// - Nhiều mã khác đơn vị (chai+hộp+kg) → không cộng được → thùng QUY ĐỔI, format vi-VN (dấu phẩy thập phân
-//   để KHÔNG đọc nhầm "146.083" thành 146 nghìn) + tooltip.
-function GdoQty({ base, decimal, unit, zeroDash }: {
-  base?: number; decimal?: number; unit?: GDO['qty_unit']; zeroDash?: boolean
+// - Nhiều mã khác đơn vị → tổng theo TỪNG đơn vị chính ("10 thùng · 1.000 kg", qty_by_unit — user chốt 27/11); dữ liệu thiếu
+//   qty_by_unit thì rơi về thùng QUY ĐỔI, format vi-VN (KHÔNG đọc nhầm "146.083" thành 146 nghìn).
+// Phần QR = tổng − phần không QR, trừ theo từng đơn vị.
+function minusUnits(a?: QtyUnitTotal[], b?: QtyUnitTotal[]): QtyUnitTotal[] | undefined {
+  if (!a) return undefined
+  const m = new Map((b ?? []).map(x => [x.unit, x.qty]))
+  return a.map(x => ({ unit: x.unit, qty: Math.round((x.qty - (m.get(x.unit) ?? 0)) * 1000) / 1000 }))
+}
+function GdoQty({ base, decimal, unit, byUnit, zeroDash }: {
+  base?: number; decimal?: number; unit?: GDO['qty_unit']; byUnit?: QtyUnitTotal[]; zeroDash?: boolean
 }) {
   const d = Number(decimal ?? 0)
-  if (zeroDash && !d) return <span className="text-slate-300">—</span>
+  const units = byUnit?.filter(x => x.qty !== 0)
+  if (zeroDash && !d && !units?.length) return <span className="text-slate-300">—</span>
   if (unit) { const s = qtyLabel(Number(base ?? 0), unit); return <span className="text-[10px] font-semibold tabular-nums" title={s}>{s}</span> }
+  if (units?.length) { const s = qtyTotalsText(units); return <span className="text-[10px] font-semibold tabular-nums" title={s}>{s}</span> }
   return (
     <span title="Thùng quy đổi (đơn nhiều mã khác đơn vị)">
       <span className="text-[10px] font-semibold tabular-nums">{d.toLocaleString('vi-VN', { maximumFractionDigits: 1 })}</span>
@@ -222,13 +230,18 @@ function OutboundPane({ gdo, onClose }: { gdo: GDO; onClose: () => void }) {
   // Tile Thùng: đơn CÙNG đơn vị → số lớn = ĐVT chính (thùng nếu có entry, ngược lại base) + dòng nhỏ phần lẻ;
   // nhiều mã khác đơn vị → thùng quy đổi (format vi-VN).
   const tileSplit = unit ? qtySplit(gdo.total_cartons_base ?? 0, unit) : null
+  // 27/11: nhiều mã khác đơn vị ⇒ mỗi đơn vị một dòng ("10 thùng" / "1.000 kg") thay cho một số "Thùng quy đổi"
+  const tileUnits = !tileSplit && (gdo.qty_by_unit?.length ?? 0) > 1 ? gdo.qty_by_unit! : null
   const tileBig   = tileSplit
     ? (hasEntry(unit) ? tileSplit.entry : tileSplit.base).toLocaleString('vi-VN', { maximumFractionDigits: 3 })
     : cartons.toLocaleString('vi-VN', { maximumFractionDigits: 1 })
   const tileLbl   = tileSplit
     ? (hasEntry(unit) ? unitLabel(unit!.entry_unit) + (tileSplit.base ? ` +${tileSplit.base} ${unitLabel(unit!.base_unit)}` : '') : unitLabel(unit!.base_unit))
     : 'Thùng quy đổi'
-  const noqrText  = unit ? qtyLabel(gdo.total_noqr_base ?? 0, unit) : `${noqr.toLocaleString('vi-VN', { maximumFractionDigits: 1 })} thùng`
+  const noqrUnits = gdo.qty_by_unit_noqr?.filter(x => x.qty !== 0)
+  const noqrText  = unit ? qtyLabel(gdo.total_noqr_base ?? 0, unit)
+    : noqrUnits?.length ? qtyTotalsText(noqrUnits)
+    : `${noqr.toLocaleString('vi-VN', { maximumFractionDigits: 1 })} thùng`
   const Row = ({ k, v }: { k: string; v: string }) => (
     <div className="flex justify-between gap-2 text-[11px]"><span className="text-slate-400 shrink-0">{k}</span><span className="text-slate-700 text-right truncate">{v}</span></div>
   )
@@ -251,8 +264,13 @@ function OutboundPane({ gdo, onClose }: { gdo: GDO; onClose: () => void }) {
         <div className="grid grid-cols-2 gap-2">
           {/* Số dài (thùng quy đổi 3 số lẻ) tràn tile w-56/2 → gọn 1 số lẻ + co cỡ chữ khi quá dài (user 22/07) */}
           <div className="rounded-lg bg-sky-600 text-white px-1.5 py-2.5 text-center overflow-hidden">
-            <div className={`${tileBig.length >= 6 ? 'text-base' : 'text-xl'} font-bold leading-none tabular-nums`}>{tileBig}</div>
-            <div className="text-[9px] mt-1 text-sky-100 uppercase tracking-wide truncate">{tileLbl}</div>
+            {tileUnits
+              ? <div className="space-y-0.5" data-testid="tile-qty-by-unit">{tileUnits.map(x => (
+                  <div key={x.unit} className="text-sm font-bold leading-tight tabular-nums">{qtyTotalsText([x])}</div>))}</div>
+              : <>
+                  <div className={`${tileBig.length >= 6 ? 'text-base' : 'text-xl'} font-bold leading-none tabular-nums`}>{tileBig}</div>
+                  <div className="text-[9px] mt-1 text-sky-100 uppercase tracking-wide truncate">{tileLbl}</div>
+                </>}
             {tileHint && <div className="text-[9px] mt-0.5 text-sky-100 tabular-nums" data-testid="qty-pack-hint">{tileHint}</div>}
           </div>
           <div className="rounded-lg bg-sky-700 text-white px-1.5 py-2.5 text-center overflow-hidden">
@@ -1126,14 +1144,15 @@ function GDORow({ gdo, seq = null, onClick, onDoubleClick, onAssign, dense = tru
           : <span className="text-slate-300">—</span>}
       </TableCell>
       <TableCell className="px-2 py-1 text-right whitespace-nowrap">
-        <GdoQty base={gdo.total_cartons_base} decimal={gdo.total_cartons} unit={gdo.qty_unit} />
+        <GdoQty base={gdo.total_cartons_base} decimal={gdo.total_cartons} unit={gdo.qty_unit} byUnit={gdo.qty_by_unit} />
       </TableCell>
       <TableCell className="px-2 py-1 text-right whitespace-nowrap">
         <GdoQty base={(gdo.total_cartons_base ?? 0) - (gdo.total_noqr_base ?? 0)}
-                decimal={(gdo.total_cartons ?? 0) - (gdo.total_cartons_noqr ?? 0)} unit={gdo.qty_unit} zeroDash />
+                decimal={(gdo.total_cartons ?? 0) - (gdo.total_cartons_noqr ?? 0)} unit={gdo.qty_unit}
+                byUnit={minusUnits(gdo.qty_by_unit, gdo.qty_by_unit_noqr)} zeroDash />
       </TableCell>
       <TableCell className="px-2 py-1 text-right whitespace-nowrap">
-        <GdoQty base={gdo.total_noqr_base} decimal={gdo.total_cartons_noqr} unit={gdo.qty_unit} zeroDash />
+        <GdoQty base={gdo.total_noqr_base} decimal={gdo.total_cartons_noqr} unit={gdo.qty_unit} byUnit={gdo.qty_by_unit_noqr} zeroDash />
       </TableCell>
       <TableCell className="px-2 py-1 text-right whitespace-nowrap">
         <GdoQty base={gdo.total_loose_base} decimal={gdo.total_loose} unit={gdo.qty_unit} zeroDash />

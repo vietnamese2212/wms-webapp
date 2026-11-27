@@ -18,9 +18,11 @@ export const ADMIN_AUDIT_ACTIONS = [
   'CUSTOMER_GEO',
   // Khoá Goong của máy định vị / đo km (02/10) — dán / gỡ trong app: ghi CÓ đổi khoá, KHÔNG ghi khoá
   'GEO_CONFIG',
+  // Bảo mật công thức MES (27/11 — user chốt "ghi nhật ký ai mở / xuất công thức"): mở một công thức CÓ số lượng · xuất file có số định mức
+  'RECIPE_VIEW', 'RECIPE_EXPORT',
 ] as const
 export type AdminAuditAction = typeof ADMIN_AUDIT_ACTIONS[number]
-export type AdminAuditTarget = 'Employee' | 'JobTitle' | 'Department' | 'SystemSetting' | 'ApiKey' | 'Customer' | 'CustomerChannel' | 'DateRuleMaster'
+export type AdminAuditTarget = 'Employee' | 'JobTitle' | 'Department' | 'SystemSetting' | 'ApiKey' | 'Customer' | 'CustomerChannel' | 'DateRuleMaster' | 'Recipe' | 'ProductionReport'
 
 type Json = Record<string, unknown>
 
@@ -56,4 +58,18 @@ export async function logAdmin(req: Request, e: {
     })
     if (error) console.error('[admin_audit]', error.message)
   } catch (err) { console.error('[admin_audit]', err) }
+}
+
+/** Ghi MỘT lần trong cửa sổ `windowMin` phút cho cùng người · việc · đối tượng (27/11 — mở công thức: màn tải lại khi đổi tab / realtime
+ *  ⇒ không ghi chục dòng cho một lần xem). Hỏi sổ lỗi ⇒ vẫn ghi (thà trùng còn hơn mất vết). */
+export async function logAdminOnce(req: Request, e: Parameters<typeof logAdmin>[1], windowMin = 10): Promise<void> {
+  try {
+    const since = new Date(Date.now() - windowMin * 60_000).toISOString()
+    let q = supabase.from('admin_audit_events').select('id').eq('action', e.action).gte('created_at', since).limit(1)
+    q = req.user?.sub ? q.eq('actor_id', req.user.sub) : q.is('actor_id', null)
+    q = e.target_id ? q.eq('target_id', e.target_id) : q.is('target_id', null)
+    const { data, error } = await q
+    if (!error && data?.length) return
+  } catch { /* ghi luôn */ }
+  await logAdmin(req, e)
 }

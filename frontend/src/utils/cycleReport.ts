@@ -27,7 +27,10 @@ export interface CycleBatchLike {
  *  vắng = API cũ trước 21/11 ⇒ coi như phiếu) · rm = dòng đã bỏ khỏi phiếu · why = lý do sửa · tol = mức lệch % · iss = thực cấp */
 export interface CycleCellLike { req: number | null; std?: number | null; rm?: boolean; why?: string | null; tol: number | null; iss: number; n: number
   /** ô của mẻ KHÔNG định mức (27/11) — chỉ có thực cấp */
-  nn?: boolean }
+  nn?: boolean
+  /** 27/11: người xem không có quyền Xem công thức ⇒ server bỏ số định mức (ô chỉ còn thực cấp) — tính như ô không định mức */
+  hid?: boolean }
+const noNorm = (c: CycleCellLike) => !!(c.nn || c.hid)
 /** trạng thái một ô so định mức gốc — thêm 'nonorm' (mẻ không định mức) */
 export type CellState = ReqLineState | 'nonorm'
 export interface CycleRowLike { cells: Record<string, CycleCellLike>; base_unit?: string | null }
@@ -101,7 +104,7 @@ export function cellSettled(c: CycleCellLike, closed: boolean): boolean {
  *  đã xong ⇒ ok (trong mức lệch của công thức) · over · under · extra (không có trong định mức: thêm tay / cấp ngoài phiếu). */
 export function cellState(c: CycleCellLike | undefined, closed: boolean): CellState | null {
   if (!c) return null
-  if (c.nn) return 'nonorm'
+  if (noNorm(c)) return 'nonorm'
   if (!cellSettled(c, closed)) return Number(c.iss) > 0 ? 'progress' : 'none'
   const std = stdOf(c)
   if (std == null) return 'extra'
@@ -111,7 +114,7 @@ export function cellState(c: CycleCellLike | undefined, closed: boolean): CellSt
 export interface Dev { std: number; sheet: number; iss: number; edit: number; exec: number; total: number }
 /** lệch của một ô: tổng = thực cấp − định mức = SỬA PHIẾU (phiếu − định mức) + CẤP LỆCH (thực cấp − phiếu) */
 export function cellDev(c: CycleCellLike): Dev {
-  if (c.nn) { const iss = r3(Number(c.iss) || 0); return { std: 0, sheet: 0, iss, edit: 0, exec: 0, total: 0 } }
+  if (noNorm(c)) { const iss = r3(Number(c.iss) || 0); return { std: 0, sheet: 0, iss, edit: 0, exec: 0, total: 0 } }
   const std = Number(stdOf(c) ?? 0), sheet = sheetOf(c), iss = Number(c.iss) || 0
   return { std: r3(std), sheet: r3(sheet), iss: r3(iss), edit: r3(sheet - std), exec: r3(iss - sheet), total: r3(iss - std) }
 }
@@ -129,7 +132,7 @@ export function rowSum(row: CycleRowLike, batchIds: readonly string[]): { std: n
     used = true
     const d = cellDev(c)
     std += d.std; sheet += d.sheet; iss += d.iss
-    if (!c.nn) { norm = true; normIss += d.iss }
+    if (!noNorm(c)) { norm = true; normIss += d.iss }
   }
   std = r3(std); sheet = r3(sheet); iss = r3(iss)
   const diff = r3(normIss - std)
@@ -194,7 +197,7 @@ export function devAgg(rows: CycleRowLike[], batches: Pick<CycleBatchLike, 'id' 
     for (const r of rows) {
       const c = r.cells[b.id]
       if (!c) continue
-      if (c.nn) { a.nonorm++; continue }
+      if (noNorm(c)) { a.nonorm++; continue }
       a.lines++
       const st = cellState(c, closed)
       if (st === 'progress' || st === 'none') { a.pending++; continue }

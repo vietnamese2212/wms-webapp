@@ -31,6 +31,7 @@ import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { useGlobalScopeStore } from '@/stores/globalScopeStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { useCanSeePath } from '@/hooks/useCanSeePath'
+import { apiClient } from '@/api/client'
 import { useProductionWarehouses, useCycles, useCycleReport, fetchRawAll, defaultKitchen, type CycleBatch, type CycleRow, type CyclePerson } from '@/api/productionHooks'
 import { StageSymbol, StageBadge, stageLabel } from './BatchStage'
 import { MobileNumHead, MobileNumRow, type NumCol } from './MobileNumGrid'
@@ -79,6 +80,11 @@ export function CycleReport({ tabBar }: { tabBar: ReactNode }) {
   const q = useCycleReport(wh || undefined, cycle || undefined)
   // chỉ dùng số của ĐÚNG chu kỳ + kho đang chọn (đổi chu kỳ mà bảng cũ còn hiện thì Excel xuất nhầm)
   const rep = q.data && q.data.cycle === cycle && q.data.warehouse_id === wh ? q.data : undefined
+  // 27/11 (user chốt): không có quyền Xem công thức ⇒ server đã bỏ số định mức / lệch; màn ẩn các cột đó, bỏ cách xem "Lệch ca · mẻ"
+  const hidden = !!rep?.norm_hidden
+  const views = hidden ? VIEWS.filter(v => v.key !== 'dash') : VIEWS
+  const cview = hidden && f.cview === 'dash' ? 'nvl' : f.cview
+  const NORM_COLS = new Set(['req', 'sheet', 'diff', 'pct', 'dev'])
   const batches = useMemo(() => rep?.batches ?? [], [rep])
   const rows = useMemo(() => rep?.rows ?? [], [rep])
   const people = rep?.people ?? []
@@ -127,6 +133,8 @@ export function CycleReport({ tabBar }: { tabBar: ReactNode }) {
     if (!rep) return
     setErr(''); setBusy(true)
     try {
+      // 27/11: gọi báo cáo với for=export ⇒ máy chủ kiểm quyền xuất + ghi nhật ký "xuất dữ liệu định mức" (dữ liệu dựng file vẫn là bản đang xem)
+      await apiClient.get('/wms/production/cycles/report', { params: { warehouse_id: wh, cycle, for: 'export' } })
       const lines = await fetchRawAll({ warehouse_id: wh, cycle }, 'events')
       const wb = XLSX.utils.book_new()
       const head = [
@@ -225,10 +233,10 @@ export function CycleReport({ tabBar }: { tabBar: ReactNode }) {
 
   const actions: ActionItem[] = []
   if (canSeePath('/wms/production/tanks')) actions.push({ key: 'map', icon: LayoutGrid, label: 'Sơ đồ bồn', tip: 'Về sơ đồ bồn — mẻ đang làm và bồn, cập nhật trực tiếp', onClick: () => navigate('/wms/production/tanks') })
-  if (canExport && rep) actions.push({ key: 'xlsx', icon: FileDown, label: busy ? 'Đang xuất…' : 'Xuất Excel', tip: 'Báo cáo cuối của chu kỳ: Lệch theo ca · mẻ · NVL theo ca · NVL từng mẻ · Ca · Mẻ · Nhân sự · Tiêu hao NVL (thô — mỗi dòng một phát sinh)', onClick: () => void exportExcel(), busy, disabled: busy, primary: true, variant: 'default', mobileHidden: true })
+  if (canExport && rep && !hidden) actions.push({ key: 'xlsx', icon: FileDown, label: busy ? 'Đang xuất…' : 'Xuất Excel', tip: 'Báo cáo cuối của chu kỳ: Lệch theo ca · mẻ · NVL theo ca · NVL từng mẻ · Ca · Mẻ · Nhân sự · Tiêu hao NVL (thô — mỗi dòng một phát sinh)', onClick: () => void exportExcel(), busy, disabled: busy, primary: true, variant: 'default', mobileHidden: true })
 
   // ── NVL × mẻ ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-  const nvlCols: RtColDef[] = useMemo(() => [
+  const nvlCols: RtColDef[] = useMemo(() => ([
     { id: 'mat', label: 'Nguyên liệu', w: 230 }, { id: 'unit', label: 'ĐVT', w: 52 },
     { id: 'req', label: 'Định mức', w: 92, align: 'right', head: <span title="Định mức gốc theo công thức × kế hoạch mẻ">Định mức</span> },
     { id: 'sheet', label: 'Phiếu', w: 84, align: 'right', head: <span title="Phiếu của mẻ sau khi trưởng ca sửa — khác định mức thì tô cam">Phiếu</span> },
@@ -239,7 +247,7 @@ export function CycleReport({ tabBar }: { tabBar: ReactNode }) {
       head: <span className="block leading-tight text-right font-semibold text-slate-600" title={`Thực cấp (trên) / định mức (dưới) của ${g.batches.length} mẻ trong ${g.shift}`}>{g.shift}<span className="block font-normal text-slate-400">{g.batches.length} mẻ</span></span> })),
     { id: 'dev', label: 'Mẻ lệch', w: 70, align: 'right',
       head: <span title="Số mẻ cấp nguyên liệu này lệch khỏi mức cho phép của phiếu (vượt, hoặc thiếu ở mẻ đã nạp bồn) — bấm ▸ ở dòng để xem từng mẻ">Mẻ lệch</span> },
-  ], [groups])
+  ] as RtColDef[]).filter(c => !hidden || !NORM_COLS.has(c.id)), [groups, hidden]) // eslint-disable-line react-hooks/exhaustive-deps
   // một ô mẻ × NVL (điện thoại, ▸): thực cấp trên · định mức gốc dưới; tô theo trạng thái so định mức (cellState)
   const cellOf = (r: CycleRow, b: CycleBatch) => {
     const c = r.cells[b.id]
@@ -248,12 +256,12 @@ export function CycleReport({ tabBar }: { tabBar: ReactNode }) {
     const d = cellDev(c)
     const pct = devPctOf(d.total, d.std)
     const cls = lineCls(st)
-    const title = c.nn ? `Mẻ không định mức · thực cấp ${qtyCode(c.iss, r)}` : c.std == null ? `Ngoài định mức · thực cấp ${qtyCode(c.iss, r)}`
+    const title = c.hid ? `Thực cấp ${qtyCode(c.iss, r)}` : c.nn ? `Mẻ không định mức · thực cấp ${qtyCode(c.iss, r)}` : c.std == null ? `Ngoài định mức · thực cấp ${qtyCode(c.iss, r)}`
       : `Định mức ${qtyCode(d.std, r)}${c.tol != null ? ` (±${c.tol}%)` : ''} · phiếu ${qtyCode(d.sheet, r)}${c.why ? ` (${c.why})` : ''} · thực cấp ${qtyCode(c.iss, r)}${pct != null ? ` · lệch ${devLabel(pct)}` : ''}`
     return (
       <span className="block leading-tight" title={title} data-state={st ?? ''}>
         <span className={`block ${cls}`}>{qtyNum(c.iss, r)}</span>
-        <span className="block text-[9px] font-normal text-slate-400">{c.nn ? 'không định mức' : c.std == null ? 'ngoài định mức' : qtyNum(d.std, r)}</span>
+        {!c.hid && <span className="block text-[9px] font-normal text-slate-400">{c.nn ? 'không định mức' : c.std == null ? 'ngoài định mức' : qtyNum(d.std, r)}</span>}
       </span>
     )
   }
@@ -263,7 +271,7 @@ export function CycleReport({ tabBar }: { tabBar: ReactNode }) {
     if (!s.used) return <span className="text-slate-200 font-normal">·</span>
     return (
       <span className="block leading-tight" title={s.norm ? `Định mức ${qtyCode(s.std, r)} · phiếu ${qtyCode(s.sheet, r)} · thực cấp ${qtyCode(s.iss, r)}` : `Không định mức · thực cấp ${qtyCode(s.iss, r)}`}>
-        <span className="block">{qtyNum(s.iss, r)}</span><span className="block text-[9px] font-normal text-slate-400">{s.norm ? qtyNum(s.std, r) : '—'}</span>
+        <span className="block">{qtyNum(s.iss, r)}</span>{!hidden && <span className="block text-[9px] font-normal text-slate-400">{s.norm ? qtyNum(s.std, r) : '—'}</span>}
       </span>
     )
   }
@@ -280,15 +288,18 @@ export function CycleReport({ tabBar }: { tabBar: ReactNode }) {
     { id: 'open', label: 'Mở mẻ', w: 140 }, { id: 'rm', label: 'Cấp NVL', w: 90 }, { id: 'filled', label: 'Nạp bồn lúc', w: 140 },
     { id: 'dur', label: 'Mở → nạp', w: 80, align: 'right' }, { id: 'tqa', label: 'QA bồn', w: 140 },
   ]
+  // chế độ ẩn số định mức (27/11): bỏ bốn cột NVL đủ · Thiếu · Vượt · Ngoài định mức (tính từ định mức — server đã bỏ số)
+  const NORM_BATCH_COLS = new Set(['ok', 'short', 'over', 'extra'])
+  const batchCols = hidden ? BATCH_COLS.filter(c => !NORM_BATCH_COLS.has(c.id)) : BATCH_COLS
   const kpiLine = (k: ShiftKpi) => (
     <span className="flex flex-wrap items-center gap-x-3 gap-y-0.5">
       <b>{k.shift}</b><span>{k.batches} mẻ · đã nạp {k.filled}</span>
       {k.planned.length > 0 && <span>kế hoạch {units(k.planned)}</span>}
       {k.filledQty.length > 0 && <span>nạp bồn {units(k.filledQty)}</span>}
-      <span>NVL đủ {k.stats.ok}/{k.stats.lines}</span>
-      {k.stats.short > 0 && <span className="text-amber-700">thiếu {k.stats.short}</span>}
-      {k.stats.over > 0 && <span className="text-red-600">vượt {k.stats.over}</span>}
-      {k.stats.extra > 0 && <span>ngoài định mức {k.stats.extra}</span>}
+      {!hidden && <span>NVL đủ {k.stats.ok}/{k.stats.lines}</span>}
+      {!hidden && k.stats.short > 0 && <span className="text-amber-700">thiếu {k.stats.short}</span>}
+      {!hidden && k.stats.over > 0 && <span className="text-red-600">vượt {k.stats.over}</span>}
+      {!hidden && k.stats.extra > 0 && <span>ngoài định mức {k.stats.extra}</span>}
       {k.avgMin != null && <span>TB mở → nạp {durLabel(k.avgMin)}</span>}
     </span>
   )
@@ -335,16 +346,17 @@ export function CycleReport({ tabBar }: { tabBar: ReactNode }) {
             </div>
           )}
           <div className="flex rounded-lg border border-slate-200 overflow-hidden text-xs font-medium w-fit" role="tablist" aria-label="Cách xem">
-            {VIEWS.map((v, i) => (
-              <button key={v.key} type="button" role="tab" aria-selected={f.cview === v.key} onClick={() => setF({ cview: v.key })} data-view={v.key}
-                className={`h-8 sm:h-7 px-3 whitespace-nowrap ${i > 0 ? 'border-l border-slate-200 ' : ''}${f.cview === v.key ? 'bg-slate-800 text-white' : 'text-slate-600 hover:bg-slate-50'}`}>{v.label}</button>
+            {views.map((v, i) => (
+              <button key={v.key} type="button" role="tab" aria-selected={cview === v.key} onClick={() => setF({ cview: v.key })} data-view={v.key}
+                className={`h-8 sm:h-7 px-3 whitespace-nowrap ${i > 0 ? 'border-l border-slate-200 ' : ''}${cview === v.key ? 'bg-slate-800 text-white' : 'text-slate-600 hover:bg-slate-50'}`}>{v.label}</button>
             ))}
           </div>
           {err && <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-1.5 text-xs text-red-700">{err}</div>}
+          {hidden && <p className="text-[11px] text-slate-500" data-testid="norm-hidden">Số định mức / lệch đang ẩn — cần quyền "Xem công thức". Bảng chỉ hiện thực cấp.</p>}
           {(q.isError || listQ.isError) && <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-1.5 text-xs text-red-700">{apiMsg(q.error ?? listQ.error)}</div>}
         </div>
         {/* dải số (21/11): LỆCH SO ĐỊNH MỨC GỐC của cả chu kỳ — cùng hàm devAgg với Tổng quan + Excel. Thời gian TB / BTP nạp nay ở dòng ca của "Ca · Mẻ". */}
-        <SummaryBand mobilePairs tiles={[
+        <SummaryBand mobilePairs tiles={([
           { label: 'Đã nạp bồn', value: `${filled}/${live.length}`, accent: running, tip: 'Số mẻ đã nạp BTP vào bồn / số mẻ của chu kỳ (không tính mẻ huỷ)' },
           { label: 'Định mức (KG)', value: dev.kg.std ? nf(dev.kg.std) : '—', tip: 'Định mức gốc theo công thức × kế hoạch — NVL tính KG, dòng đã cấp xong (đủ theo phiếu, vượt, hoặc mẻ đã nạp bồn)' },
           { label: 'Thực cấp (KG)', value: dev.kg.iss ? nf(dev.kg.iss) : '—', tip: 'Thực cấp của cùng các dòng đó' },
@@ -355,7 +367,7 @@ export function CycleReport({ tabBar }: { tabBar: ReactNode }) {
           { label: 'NVL lệch', value: devLines(dev).toLocaleString('vi-VN'), danger: devLines(dev) > 0, tip: `Dòng NVL (mẻ × mã, mọi đơn vị) lệch định mức ngoài mức cho phép: vượt ${dev.over} · dưới định mức ${dev.under} · ngoài định mức ${dev.extra}` },
           { label: 'Chưa xong', value: dev.pending.toLocaleString('vi-VN'), tip: 'Dòng NVL đang cấp dở / chưa cấp — chưa tính vào số lệch' },
           { label: 'Sai thứ tự', value: bad.toLocaleString('vi-VN'), danger: bad > 0, tip: `Lần cấp không theo thứ tự luân chuyển của kho (FEFO / FIFO). Cùng chu kỳ: ${exp} lần cấp NVL hết hạn có QA duyệt · ${rev} lần cấp phải huỷ` },
-        ]} />
+        ]).filter(t => !hidden || t.label === 'Đã nạp bồn' || t.label === 'Sai thứ tự')} />
         <div className="flex-1 min-h-0 overflow-auto pb-20 lg:pb-4">
           {!kitchens.length && <p className="p-3 text-xs text-amber-700">Chưa có kho chế biến trong phạm vi — khai kho phụ nội bộ ở Cài đặt WMS → Kho.</p>}
           {!!kitchens.length && !listQ.isLoading && !cycles.length && !cycle && (
@@ -364,12 +376,12 @@ export function CycleReport({ tabBar }: { tabBar: ReactNode }) {
           {cycle && !rep && q.isLoading && <p className="p-3 text-xs text-slate-400">Đang tải…</p>}
 
           {/* NVL × MẺ — máy tính: bảng; điện thoại: mỗi NVL một dòng số, bấm mở từng mẻ */}
-          {rep && f.cview === 'dash' && <CycleDashboard rows={rows} live={live} groups={groups} onOpenNvl={openNvlFromDash} />}
+          {rep && cview === 'dash' && <CycleDashboard rows={rows} live={live} groups={groups} onOpenNvl={openNvlFromDash} />}
 
-          {rep && f.cview === 'nvl' && <>
+          {rep && cview === 'nvl' && <>
             <div className="sm:hidden">
               {!rows.length && <p className="px-3 py-3 text-xs text-slate-400">Chu kỳ này chưa có NVL nào trên phiếu / chưa cấp.</p>}
-              {rows.length > 0 && <MobileNumHead cols={MOBILE_NVL} />}
+              {rows.length > 0 && <MobileNumHead cols={hidden ? MOBILE_NVL.filter(c => c.label === 'Thực cấp') : MOBILE_NVL} />}
               <div className="divide-y divide-slate-100">
                 {rows.map(r => {
                   const s = rowSum(r, liveIds)
@@ -384,7 +396,7 @@ export function CycleReport({ tabBar }: { tabBar: ReactNode }) {
                             <span className="truncate text-slate-600">{r.material_name ?? ''}</span>
                             <span className="ml-auto shrink-0 font-mono text-[10px] text-slate-400">{matUnitCode(r)}</span>
                           </>}
-                          cells={[s.norm ? <span className="font-normal">{qtyNum(s.std, r)}</span> : dash, qtyNum(s.iss, r),
+                          cells={hidden ? [qtyNum(s.iss, r)] : [s.norm ? <span className="font-normal">{qtyNum(s.std, r)}</span> : dash, qtyNum(s.iss, r),
                             s.norm ? <span className={diffTone(s.diff, s.devPct)}>{s.diff > 0 ? '+' : s.diff < 0 ? '−' : ''}{qtyNum(Math.abs(s.diff), r)}</span> : dash]} />
                       </button>
                       {open && (
@@ -408,7 +420,7 @@ export function CycleReport({ tabBar }: { tabBar: ReactNode }) {
               </div>
             </div>
             <div className="hidden sm:block">
-              <ResizableTable storageKey={`production_cycle_nvl_v4_${groups.length}`} cols={nvlCols}>
+              <ResizableTable key={hidden ? 'h' : 'n'} storageKey={`production_cycle_nvl${hidden ? '_h' : ''}_v4_${groups.length}`} cols={nvlCols}>
                 <TableBody>
                   {!rows.length && <TableEmptyRow colSpan={nvlCols.length}>Chu kỳ này chưa có NVL nào trên phiếu / chưa cấp.</TableEmptyRow>}
                   {rows.map(r => {
@@ -426,13 +438,13 @@ export function CycleReport({ tabBar }: { tabBar: ReactNode }) {
                             </span>
                           </TableCell>
                           <TableCell className={`${TD} font-mono text-slate-500`}>{matUnitCode(r)}</TableCell>
-                          <TableCell className={NUM}>{s.norm ? qtyNum(s.std, r) : dash}</TableCell>
-                          <TableCell className={`${NUM} ${s.sheet !== s.std ? 'text-amber-700' : 'font-normal text-slate-400'}`} title={!s.norm ? 'Không định mức' : s.sheet !== s.std ? `Phiếu khác định mức gốc ${sgn(r3(s.sheet - s.std))} ${matUnitCode(r)} — trưởng ca sửa / thêm / bỏ dòng` : 'Phiếu đúng định mức'}>{s.norm ? qtyNum(s.sheet, r) : dash}</TableCell>
-                          <TableCell className={NUM}>{qtyNum(s.iss, r)}</TableCell>
-                          <TableCell className={`${NUM} ${diffTone(s.diff, s.devPct)}`}>{s.norm ? <>{s.diff > 0 ? '+' : s.diff < 0 ? '−' : ''}{qtyNum(Math.abs(s.diff), r)}</> : dash}</TableCell>
-                          <TableCell className={`${NUM} border-r-2 !border-r-slate-300 ${diffTone(s.diff, s.devPct)}`}>{s.norm && s.devPct != null ? devLabel(s.devPct) : dash}</TableCell>
+                          {!hidden && <TableCell className={NUM}>{s.norm ? qtyNum(s.std, r) : dash}</TableCell>}
+                          {!hidden && <TableCell className={`${NUM} ${s.sheet !== s.std ? 'text-amber-700' : 'font-normal text-slate-400'}`} title={!s.norm ? 'Không định mức' : s.sheet !== s.std ? `Phiếu khác định mức gốc ${sgn(r3(s.sheet - s.std))} ${matUnitCode(r)} — trưởng ca sửa / thêm / bỏ dòng` : 'Phiếu đúng định mức'}>{s.norm ? qtyNum(s.sheet, r) : dash}</TableCell>}
+                          <TableCell className={`${NUM} ${hidden ? 'border-r-2 !border-r-slate-300' : ''}`}>{qtyNum(s.iss, r)}</TableCell>
+                          {!hidden && <TableCell className={`${NUM} ${diffTone(s.diff, s.devPct)}`}>{s.norm ? <>{s.diff > 0 ? '+' : s.diff < 0 ? '−' : ''}{qtyNum(Math.abs(s.diff), r)}</> : dash}</TableCell>}
+                          {!hidden && <TableCell className={`${NUM} border-r-2 !border-r-slate-300 ${diffTone(s.diff, s.devPct)}`}>{s.norm && s.devPct != null ? devLabel(s.devPct) : dash}</TableCell>}
                           {groups.map(g => <TableCell key={`s_${g.shift}`} className={`${NUM} bg-slate-50/60`}>{sumCell(r, g.batches.map(b => b.id))}</TableCell>)}
-                          <TableCell className={`${NUM} ${dev ? 'text-red-600' : 'text-slate-300 font-normal'}`} title={dev ? `${dev} mẻ cấp lệch khỏi mức cho phép — bấm để xem` : 'Không mẻ nào lệch'}>{dev}</TableCell>
+                          {!hidden && <TableCell className={`${NUM} ${dev ? 'text-red-600' : 'text-slate-300 font-normal'}`} title={dev ? `${dev} mẻ cấp lệch khỏi mức cho phép — bấm để xem` : 'Không mẻ nào lệch'}>{dev}</TableCell>}
                         </TableRow>
                         {open && lines.map(l => {
                           const pct = devPctOf(l.dev.total, l.dev.std)
@@ -447,13 +459,13 @@ export function CycleReport({ tabBar }: { tabBar: ReactNode }) {
                                   <span className="font-mono text-slate-500">{l.batch.batch_code}</span>
                                 </span>
                               </TableCell>
-                              <TableCell className={`${NUM} font-normal text-slate-600`}>{l.cell.std == null ? <span className="text-slate-400">ngoài ĐM</span> : qtyNum(l.dev.std, r)}{l.cell.tol != null && l.cell.std != null && <span className="ml-1 text-[9px] text-slate-400">±{l.cell.tol}%</span>}</TableCell>
-                              <TableCell className={`${NUM} ${l.dev.edit ? 'text-amber-700' : 'font-normal text-slate-400'}`} title={l.cell.why ? `Lý do sửa: ${l.cell.why}` : undefined}>{l.cell.rm ? 'bỏ' : qtyNum(l.dev.sheet, r)}</TableCell>
-                              <TableCell className={`${NUM} ${tone}`}>{qtyNum(l.dev.iss, r)}</TableCell>
-                              <TableCell className={`${NUM} ${tone}`}>{sgn(l.dev.total)}</TableCell>
-                              <TableCell className={`${NUM} border-r-2 !border-r-slate-300 ${tone}`}>{pct != null ? devLabel(pct) : dash}</TableCell>
-                              <TableCell colSpan={groups.length + 1} className={`${TD} ${tone}`}>
-                                {l.state ? LINE_STATE_LABEL[l.state] : ''}{l.dev.edit ? <span className="ml-2 text-amber-700">sửa phiếu {sgn(l.dev.edit)}{l.cell.why ? ` — ${l.cell.why}` : ''}</span> : null}
+                              {!hidden && <TableCell className={`${NUM} font-normal text-slate-600`}>{l.cell.nn ? <span className="text-slate-400">không ĐM</span> : l.cell.std == null ? <span className="text-slate-400">ngoài ĐM</span> : qtyNum(l.dev.std, r)}{l.cell.tol != null && l.cell.std != null && <span className="ml-1 text-[9px] text-slate-400">±{l.cell.tol}%</span>}</TableCell>}
+                              {!hidden && <TableCell className={`${NUM} ${l.dev.edit ? 'text-amber-700' : 'font-normal text-slate-400'}`} title={l.cell.why ? `Lý do sửa: ${l.cell.why}` : undefined}>{l.cell.nn ? dash : l.cell.rm ? 'bỏ' : qtyNum(l.dev.sheet, r)}</TableCell>}
+                              <TableCell className={`${NUM} ${tone} ${hidden ? 'border-r-2 !border-r-slate-300' : ''}`}>{qtyNum(l.dev.iss, r)}</TableCell>
+                              {!hidden && <TableCell className={`${NUM} ${tone}`}>{l.cell.nn ? dash : sgn(l.dev.total)}</TableCell>}
+                              {!hidden && <TableCell className={`${NUM} border-r-2 !border-r-slate-300 ${tone}`}>{pct != null ? devLabel(pct) : dash}</TableCell>}
+                              <TableCell colSpan={groups.length + (hidden ? 0 : 1)} className={`${TD} ${tone}`}>
+                                {l.state && !l.cell.hid ? LINE_STATE_LABEL[l.state] : ''}{l.dev.edit ? <span className="ml-2 text-amber-700">sửa phiếu {sgn(l.dev.edit)}{l.cell.why ? ` — ${l.cell.why}` : ''}</span> : null}
                                 <span className="ml-2 text-sky-700">Mở mẻ ›</span>
                               </TableCell>
                             </TableRow>
@@ -468,15 +480,15 @@ export function CycleReport({ tabBar }: { tabBar: ReactNode }) {
           </>}
 
           {/* CA · MẺ — mỗi ca một dải chỉ số, rồi từng mẻ; cuối bảng = cả chu kỳ */}
-          {rep && f.cview === 'batch' && (
-            <ResizableTable storageKey="production_cycle_batch_v1" cols={BATCH_COLS}>
+          {rep && cview === 'batch' && (
+            <ResizableTable key={hidden ? 'h' : 'n'} storageKey={hidden ? 'production_cycle_batch_h_v1' : 'production_cycle_batch_v1'} cols={batchCols}>
               <TableBody>
-                {!live.length && <TableEmptyRow colSpan={BATCH_COLS.length}>Chu kỳ này chưa có mẻ.</TableEmptyRow>}
+                {!live.length && <TableEmptyRow colSpan={batchCols.length}>Chu kỳ này chưa có mẻ.</TableEmptyRow>}
                 {groups.map(g => {
                   const k = kpis.find(x => x.shift === g.shift)!
                   return [
                     <TableRow key={`h_${g.shift}`} className="bg-slate-100 hover:bg-slate-100" data-shift={g.shift}>
-                      <TableCell colSpan={BATCH_COLS.length} className="px-0 py-1 text-[11px] text-slate-700 whitespace-nowrap">
+                      <TableCell colSpan={batchCols.length} className="px-0 py-1 text-[11px] text-slate-700 whitespace-nowrap">
                         <div className="sticky left-0 w-fit max-w-[100vw] px-2">{kpiLine(k)}</div>
                       </TableCell>
                     </TableRow>,
@@ -492,10 +504,12 @@ export function CycleReport({ tabBar }: { tabBar: ReactNode }) {
                           <TableCell className={TD}><StageBadge stage={b.stage} step={b.step} /></TableCell>
                           <TableCell className={NUM}>{b.planned_qty != null ? <>{nf(Number(b.planned_qty))} <span className="font-normal text-slate-400">{unitCode(b.base_unit)}</span></> : dash}</TableCell>
                           <TableCell className={NUM}>{Number(b.filled_qty) ? <>{nf(Number(b.filled_qty))} <span className="font-normal text-slate-400">{unitCode(b.base_unit)}</span></> : dash}</TableCell>
+                          {!hidden && <>
                           <TableCell className={NUM}>{st.lines ? `${st.ok}/${st.lines}` : dash}</TableCell>
                           <TableCell className={`${NUM} text-amber-700`}>{n0(st.short)}</TableCell>
                           <TableCell className={NUM}>{n0(st.over, true)}</TableCell>
                           <TableCell className={NUM}>{n0(st.extra)}</TableCell>
+                          </>}
                           <TableCell className={NUM}>{n0(Number(b.rm_bad), true)}</TableCell>
                           <TableCell className={NUM}>{n0(Number(b.rm_exp))}</TableCell>
                           <TableCell className={NUM}>{n0(Number(b.rm_rev))}</TableCell>
@@ -511,7 +525,7 @@ export function CycleReport({ tabBar }: { tabBar: ReactNode }) {
                 })}
                 {live.length > 0 && all && (
                   <TableRow className="bg-sky-50 hover:bg-sky-50" data-shift="__all">
-                    <TableCell colSpan={BATCH_COLS.length} className="px-0 py-1.5 text-[11px] text-slate-800 whitespace-nowrap border-t-2 border-t-sky-300">
+                    <TableCell colSpan={batchCols.length} className="px-0 py-1.5 text-[11px] text-slate-800 whitespace-nowrap border-t-2 border-t-sky-300">
                       <div className="sticky left-0 w-fit max-w-[100vw] px-2">{kpiLine(all)}</div>
                     </TableCell>
                   </TableRow>
@@ -521,7 +535,7 @@ export function CycleReport({ tabBar }: { tabBar: ReactNode }) {
           )}
 
           {/* NHÂN SỰ — mỗi người một dòng: đếm việc trong chu kỳ (chỉ số làm việc) */}
-          {rep && f.cview === 'people' && (
+          {rep && cview === 'people' && (
             <ResizableTable storageKey="production_cycle_people_v1" cols={PEOPLE_COLS}>
               <TableBody>
                 {!people.length && <TableEmptyRow colSpan={PEOPLE_COLS.length}>Chu kỳ này chưa có ai làm việc gì.</TableEmptyRow>}

@@ -7,6 +7,29 @@ export function recipeView<T extends { base_qty: number | null }>(row: T, canSee
   const list_only = row.base_qty == null
   return canSeeQty ? { ...row, list_only, qty_hidden: false } : { ...row, base_qty: null, list_only, qty_hidden: true }
 }
+/** SỐ ĐỊNH MỨC / LỆCH trong Báo cáo NVL (27/11 — user chốt "ẩn luôn cột định mức trong Báo cáo NVL" với người không có quyền Xem
+ *  công thức): định mức gốc · phiếu · mức lệch · lệch (KG / %) · sửa phiếu · cấp lệch · lý do sửa phiếu đều suy ngược ra công thức (lệch =
+ *  thực cấp − định mức) ⇒ bỏ hết, GIỮ thực cấp + số đếm (mẻ · dòng lệch · đạt). Đi sâu mọi tầng (dashboard · chi tiết · báo cáo chu kỳ ·
+ *  sheet định mức của dữ liệu thô); ô NVL × mẻ của báo cáo chu kỳ mang `hid` để màn hình không coi là "ngoài định mức". */
+export const NORM_FIGURE_KEYS: ReadonlySet<string> = new Set([
+  'std', 'req', 'tol', 'tol_pct', 'sheet', 'diff', 'edit', 'exec', 'pct', 'why', 'change_reason',
+  'std_kg', 'sheet_kg', 'total_kg', 'edit_kg', 'exec_kg',
+])
+export function hideNormFigures<T>(v: T): T {
+  const walk = (x: unknown): unknown => {
+    if (Array.isArray(x)) return x.map(walk)
+    if (!x || typeof x !== 'object') return x
+    const o: Record<string, unknown> = {}
+    for (const [k, val] of Object.entries(x as Record<string, unknown>)) {
+      if (k === 'cells' && val && typeof val === 'object' && !Array.isArray(val)) {
+        o[k] = Object.fromEntries(Object.entries(val as Record<string, unknown>).map(([bk, c]) => [bk, { ...(walk(c) as object), hid: true }]))
+      } else o[k] = NORM_FIGURE_KEYS.has(k) ? null : walk(val)
+    }
+    return o
+  }
+  const out = walk(v)
+  return (out && typeof out === 'object' && !Array.isArray(out) ? { ...(out as object), norm_hidden: true } : out) as T
+}
 export function recipeLinesView<L extends { qty: number | null; tol_pct: number | null }>(lines: L[], canSeeQty: boolean): L[] {
   return canSeeQty ? lines : lines.map(l => ({ ...l, qty: null, tol_pct: null }))
 }

@@ -81,6 +81,7 @@ async function cleanup() {
   const roleEmps = await restAll('Employee', 'select=id&email=like.qa63role*')
   for (const e of roleEmps) { await restWrite('UserWarehouseAccess', 'DELETE', `employee_id=eq.${e.id}`); await restWrite('Employee', 'DELETE', `id=eq.${e.id}`) }
   await restWrite('JobTitle', 'DELETE', `id=in.(${JT_OPEN},${JT_VIEW},${JT_OUT},${JT_QA3},${JT_TC3})`)
+  await restWrite('admin_audit_events', 'DELETE', 'action=in.(RECIPE_VIEW,RECIPE_EXPORT)&or=(target_id.like.QA63*,target_label.like.*QA63*)')   // [16y] nhật ký công thức
   // [21] / [22] chuyến xuất ở kho thử: vết quét → dòng hàng → DO → chuyến (theo khoá ngoại), TRƯỚC tồn và mã hàng
   const gdos = await restAll('GroupDeliveryOrder', `select=id&warehouse_id=in.(${whs.join(',')})`)
   if (gdos.length) {
@@ -1872,6 +1873,31 @@ try {
           && qaOne.s === 200 && num(qaOne.j?.data?.base_qty) === num(withQ.base_qty) && (qaOne.j?.data?.lines ?? []).some(l => l.qty != null) && qaOne.j?.data?.qty_hidden === false
           && tcB.s === 200 && (tcB.j?.data?.recipe == null || tcB.j?.data?.recipe?.base_qty == null),
         `công thức=${withQ?.name ?? 'không có'} tc=${tcList.s}/${tcRow?.base_qty}/${tcRow?.qty_hidden}/${tcRow?.list_only} một=${tcOne.s}/${JSON.stringify((tcOne.j?.data?.lines ?? []).map(l => l.qty))} qa=${qaOne.s}/${qaOne.j?.data?.base_qty} mẻ=${tcB.s}/${tcB.j?.data?.recipe?.base_qty}`)
+      // ── [16y] BÁO CÁO NVL ẨN SỐ ĐỊNH MỨC với người không có quyền Xem công thức + NHẬT KÝ ai mở / xuất công thức (27/11 — user chốt) ──
+      const tcCyc = tkTC ? await getAs(tkTC, `/wms/production/cycles/report?warehouse_id=${WC3}&cycle=N1`) : { s: 0 }
+      const tcCells = (tcCyc.j?.data?.rows ?? []).flatMap(r => Object.values(r.cells ?? {}))
+      const qaCyc = tkQA ? await getAs(tkQA, `/wms/production/cycles/report?warehouse_id=${WC3}&cycle=N1`) : { s: 0 }
+      const tcDash = tkTC ? await getAs(tkTC, `/wms/production/dashboard?warehouse_id=${WC3}&date_from=${todayVN}&date_to=${todayVN}`) : { s: 0 }
+      const tcDet = tkTC ? await getAs(tkTC, `/wms/production/dashboard/detail?warehouse_id=${WC3}&date_from=${todayVN}&date_to=${todayVN}&kind=batches`) : { s: 0 }
+      const tcExp = tkTC ? await getAs(tkTC, `/wms/production/cycles/report?warehouse_id=${WC3}&cycle=N1&for=export`) : { s: 0 }
+      check('16y. Báo cáo NVL với trưởng ca (không có Xem công thức): báo cáo chu kỳ · dashboard · bảng chi tiết KHÔNG có định mức / lệch (norm_hidden, ô NVL chỉ còn thực cấp, hid); QA (có quyền) không bị ẩn; xuất báo cáo không có quyền export ⇒ 403',
+        tcCyc.s === 200 && tcCyc.j?.data?.norm_hidden === true && tcCells.length > 0 && tcCells.every(c => c.std == null && c.req == null && c.hid === true && Number(c.iss) > 0)
+          && qaCyc.s === 200 && !qaCyc.j?.data?.norm_hidden
+          && tcDash.s === 200 && tcDash.j?.data?.norm_hidden === true && tcDash.j?.data?.totals?.std_kg == null && tcDash.j?.data?.totals?.total_kg == null && num(tcDash.j?.data?.totals?.batches) >= 1
+          && tcDet.s === 200 && (tcDet.j?.data?.rows ?? []).every(r => r.std_kg == null && r.total_kg == null && r.pct == null)
+          && tcExp.s === 403,
+        `chu kỳ=${tcCyc.s}/${tcCyc.j?.data?.norm_hidden}/${tcCells.length} qa=${qaCyc.s}/${qaCyc.j?.data?.norm_hidden ?? false} dash=${tcDash.s}/${tcDash.j?.data?.norm_hidden}/${tcDash.j?.data?.totals?.std_kg} chi tiết=${tcDet.s} xuất=${tcExp.s}`)
+      // nhật ký: QA mở công thức 2 lần liền ⇒ MỘT dòng RECIPE_VIEW; trưởng ca mở (không thấy số) ⇒ không ghi; xuất báo cáo (superadmin) ⇒ RECIPE_EXPORT
+      const qaId = tkQA ? (await restAll('Employee', 'select=id&email=eq.qa63role7@test.local'))[0]?.id : null
+      const tcId = tkTC ? (await restAll('Employee', 'select=id&email=eq.qa63role8@test.local'))[0]?.id : null
+      if (tkQA && withQ) await getAs(tkQA, `/wms/production/recipes/${withQ.id}`)   // lần 2 (lần 1 ở [16x])
+      const ex = await api(`/wms/production/cycles/report?warehouse_id=${WC3}&cycle=N1&for=export`)
+      const logQA = qaId && withQ ? await restAll('admin_audit_events', `select=id,action,target_label&actor_id=eq.${qaId}&action=eq.RECIPE_VIEW&target_id=eq.${withQ.id}`) : []
+      const logTC = tcId ? await restAll('admin_audit_events', `select=id&actor_id=eq.${tcId}&action=in.(RECIPE_VIEW,RECIPE_EXPORT)`) : [1]
+      const logEx = await restAll('admin_audit_events', `select=id,target_label&action=eq.RECIPE_EXPORT&target_id=eq.${WC3}`)
+      check('16z. Nhật ký công thức: QA mở một công thức hai lần liền ⇒ MỘT dòng "Xem công thức" (nhãn mã · tên); trưởng ca mở (số bị ẩn) ⇒ không ghi; xuất báo cáo chu kỳ (có quyền) ⇒ một dòng "Xuất dữ liệu định mức"',
+        logQA.length === 1 && /QA63BTP/.test(logQA[0]?.target_label ?? '') && logTC.length === 0 && ex.s === 200 && logEx.length >= 1 && /Báo cáo NVL chu kỳ N1/.test(logEx[0]?.target_label ?? ''),
+        `xem QA=${logQA.length} ${logQA[0]?.target_label ?? ''} · trưởng ca=${logTC.length} · xuất=${ex.s}/${logEx.length} ${logEx[0]?.target_label ?? ''}`)
     }
     check('16w. Đổi về có định mức: mẻ đã lập giữ no_norm; lập mẻ bằng công thức chỉ mã ⇒ 409 MES_RECIPE_NO_QTY. Vai thật: QA (approve_qa) không mở mẻ ở kho có định mức 403 · trưởng ca (open_batch) không lập ở kho không định mức 403 · QA lập được 201 · QA tìm được mã BTP (C115) 200',
       s2.s === 200 && nbAfter?.no_norm === true && nbAfter?.gate?.no_norm === true && q3.s === 409 && q3.j?.error?.code === 'MES_RECIPE_NO_QTY' && roleOk,

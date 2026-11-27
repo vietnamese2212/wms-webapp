@@ -557,13 +557,17 @@ export interface CycleBatch {
  *  thêm tay / ngoài phiếu) · rm = dòng đã bỏ khỏi phiếu · why = lý do sửa phiếu · mức lệch % · thực cấp · số lần cấp */
 export interface CycleCell { req: number | null; std: number | null; rm: boolean; why: string | null; tol: number | null; iss: number; n: number
   /** 27/11: ô của mẻ không định mức — chỉ có thực cấp */
-  nn?: boolean }
+  nn?: boolean
+  /** 27/11: số định mức bị ẩn (không có quyền Xem công thức) */
+  hid?: boolean }
 export interface CycleRow extends MatUnits { material_id: string; material_code: string; material_name: string | null; cells: Record<string, CycleCell> }
 export interface CyclePerson {
   name: string; open: number; lead: number; qaok: number; label: number; rm: number; rm_rev: number; rm_bad: number; rm_exp: number; rm_batches: number
   pour: number; fill: number; tankqa: number; log: number; logok: number; batches: number; shifts: string[]; first_at: string | null; last_at: string | null
 }
-export interface CycleReport { warehouse_id: string; cycle: string; batches: CycleBatch[]; rows: CycleRow[]; people: CyclePerson[] }
+export interface CycleReport { warehouse_id: string; cycle: string; batches: CycleBatch[]; rows: CycleRow[]; people: CyclePerson[]
+  /** 27/11: người xem không có quyền Xem công thức ⇒ server bỏ số định mức / lệch (ô NVL × mẻ mang hid) */
+  norm_hidden?: boolean }
 export function useCycles(warehouseId: string | undefined, search = '') {
   return useQuery({
     queryKey: ['prod-cycles', warehouseId, search], enabled: !!warehouseId, staleTime: 15_000, placeholderData: keepPreviousData,
@@ -603,6 +607,8 @@ export interface MesDashboard {
   targets: { dev_pct: number; pass_pct: number }
   totals: DashTotals; prev: DashPrev; buckets: DashBucket[]; points: DashPoint[] | null; heat: DashHeat[]; shifts: DashShift[]; btp: DashBtp[]
   pareto_total: number; pareto: DashPareto[]; spc: DashSpc[]; exc: DashExc[]
+  /** 27/11: người xem không có quyền Xem công thức ⇒ server bỏ KG định mức / lệch / % (giữ số đếm) */
+  norm_hidden?: boolean
 }
 /** prev_from / prev_to (23/11) = kỳ so liền trước cùng kiểu (tháng trước · năm trước…); vắng ⇒ cùng số ngày liền trước */
 export interface DashQuery { warehouse_id: string; date_from: string; date_to: string; grain: DashGrain; prev_from?: string; prev_to?: string }
@@ -624,7 +630,7 @@ export interface DashLineRow {
   mat_name: string | null; unit: string | null; state: 'over' | 'under' | 'extra'; std: number; sheet: number; iss: number; diff: number; edit: number; exec: number
   pct: number | null; why: string | null
 }
-export type MesDashDetail = { kind: 'batches'; total: number; rows: DashBatchRow[] } | { kind: 'lines'; total: number; rows: DashLineRow[] }
+export type MesDashDetail = ({ kind: 'batches'; total: number; rows: DashBatchRow[] } | { kind: 'lines'; total: number; rows: DashLineRow[] }) & { norm_hidden?: boolean }
 export function useMesDashboardDetail(q: DashDetailQuery | null) {
   return useQuery({
     queryKey: ['prod-dash-detail', q], enabled: !!q?.warehouse_id, staleTime: 30_000,

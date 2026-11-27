@@ -232,6 +232,8 @@ function DashBody({ d, stale, prevWord, today, onOpen, onDrill, onBatch }: { d: 
     return <span style={{ color: good ? 'var(--k-ok)' : 'var(--k-bad)' }}>{v > 0 ? '▲' : '▼'} {nf(Math.abs(v), dec)}{unit} so {prevWord}</span>
   }
   if (!t.batches) return <p className="text-sm text-[var(--k-muted)] py-6 text-center">Không có mẻ nào có ngày SX trong kỳ này.</p>
+  // 27/11 (user chốt): không có quyền Xem công thức ⇒ server đã bỏ KG định mức / lệch / %; chỉ còn thẻ số đếm + thời gian + QA
+  const hidden = !!d.norm_hidden
   return (
     <div className={`space-y-3 sm:space-y-4 transition-opacity ${stale ? 'opacity-60' : ''}`}>
       {/* THẺ SỐ — bấm để xem dữ liệu */}
@@ -244,10 +246,10 @@ function DashBody({ d, stale, prevWord, today, onOpen, onDrill, onBatch }: { d: 
           <StatCard twoLines label="Mẻ đạt định mức" value={pass == null ? '—' : `${nf(pass, 1)}%`} pct={pass} tone={passTone(pass, tg.pass_pct)}
             unit={`mục tiêu ≥ ${nf(tg.pass_pct, 1)}%`} sub={t.no_norm ? <>{cmp(pass, prevPass, ' điểm', 'up')} · {nf(t.no_norm, 0)} mẻ không định mức không tính</> : cmp(pass, prevPass, ' điểm', 'up')} />
         </CardBtn>
-        <CardBtn onClick={() => onOpen('NVL lệch định mức', { kind: 'lines' })} id="dev">
+        {!hidden && <CardBtn onClick={() => onOpen('NVL lệch định mức', { kind: 'lines' })} id="dev">
           <StatCard twoLines label="Lệch NVL (KG)" value={sgn(t.total_kg, Math.abs(t.total_kg) < 100 ? 1 : 0)} tone={devTone(pct, tg.dev_pct)}
             unit={pct == null ? 'KG' : `KG · ${devLabel(pct)}`} sub={<>mục tiêu ±{nf(tg.dev_pct, 2)}% · {cmp(pct == null ? null : Math.abs(pct), prevPct == null ? null : Math.abs(prevPct), ' điểm', 'down', 2)}</>} />
-        </CardBtn>
+        </CardBtn>}
         <CardBtn onClick={() => onOpen('NVL lệch định mức', { kind: 'lines' })} id="lines">
           <StatCard twoLines label="Dòng NVL lệch" value={nf(devLines, 0)} unit="dòng" tone={devLines ? 'bad' : 'ok'}
             sub={<>vượt {t.over} · dưới {t.under} · ngoài định mức {t.extra}{t.pending ? ` · ${t.pending} chưa xong` : ''}</>} />
@@ -262,6 +264,8 @@ function DashBody({ d, stale, prevWord, today, onOpen, onDrill, onBatch }: { d: 
         </CardBtn>
       </div>
 
+      {hidden && <p className="text-xs text-[var(--k-muted)]" data-testid="norm-hidden">Biểu đồ lệch so định mức (KG, %) đang ẩn — cần quyền "Xem công thức".</p>}
+      {!hidden && <>
       <div className="grid gap-3 sm:gap-4 lg:grid-cols-3">
         <KpiPanel className="lg:col-span-2" title={d.grain === 'batch' ? 'Lệch so định mức — từng mẻ' : 'Xu hướng lệch so định mức'}
           hint={d.grain === 'batch' ? '% theo KG · bấm một mẻ để mở' : `% theo KG · ${GRAIN_TEXT[d.grain]} · bấm một ${GRAIN_UNIT[d.grain]} để đi sâu`}
@@ -298,6 +302,7 @@ function DashBody({ d, stale, prevWord, today, onOpen, onDrill, onBatch }: { d: 
       <KpiPanel title="Mẻ cần xem" hint="lệch nhiều nhất trong kỳ · bấm một dòng để mở mẻ">
         <ExcTable d={d} onBatch={onBatch} />
       </KpiPanel>
+      </>}
     </div>
   )
 }
@@ -713,6 +718,12 @@ function DetailDialog({ wh, req, onClose, onBatch }: { wh: string; req: DetailRe
   const TH = 'sticky top-0 z-[1] bg-[var(--k-surface-2)] px-1.5 py-1.5 text-left text-[10px] font-semibold uppercase tracking-wide text-[var(--k-muted)] whitespace-nowrap'
   const TD = 'px-1.5 py-1.5 whitespace-nowrap'
   const NUM = `${TD} text-right tabular-nums`
+  // 27/11: server đã bỏ số định mức / lệch cho người không có quyền Xem công thức ⇒ bỏ luôn các cột đó (giữ Thực cấp)
+  const hid = !!r?.norm_hidden
+  const BATCH_HEAD = ['Ngày SX', 'Ca', 'Mẻ · mã lô', 'BTP', 'Tình trạng', 'Định mức KG', 'Thực cấp KG', 'Lệch KG', 'Lệch %', 'Sửa phiếu', 'Cấp lệch', 'NVL lệch', 'Chưa xong', 'Mở → nạp']
+  const LINE_HEAD = ['Ngày SX', 'Ca', 'Mẻ · mã lô', 'Nguyên liệu', 'ĐVT', 'Tình trạng', 'Định mức', 'Phiếu', 'Thực cấp', 'Lệch', 'Lệch %', 'Sửa phiếu', 'Cấp lệch', 'Lý do sửa']
+  const NORM_HEAD = new Set(['Định mức KG', 'Lệch KG', 'Lệch %', 'Sửa phiếu', 'Cấp lệch', 'Định mức', 'Phiếu', 'Lệch', 'Lý do sửa'])
+  const showH = (h: string) => !hid || !NORM_HEAD.has(h)
   return (
     <Dialog open onOpenChange={v => { if (!v) onClose() }}>
       <DialogContent onOpenAutoFocus={e => e.preventDefault()} data-testid="dash-detail"
@@ -728,7 +739,7 @@ function DetailDialog({ wh, req, onClose, onBatch }: { wh: string; req: DetailRe
           {r?.kind === 'batches' && r.rows.length > 0 && (
             <table className="w-full min-w-[980px] text-xs" data-testid="dash-detail-batches">
               <thead><tr>
-                {['Ngày SX', 'Ca', 'Mẻ · mã lô', 'BTP', 'Tình trạng', 'Định mức KG', 'Thực cấp KG', 'Lệch KG', 'Lệch %', 'Sửa phiếu', 'Cấp lệch', 'NVL lệch', 'Chưa xong', 'Mở → nạp'].map((h, i) => <th key={h} className={`${TH} ${i >= 5 ? 'text-right' : ''}`}>{h}</th>)}
+                {BATCH_HEAD.map((h, i) => showH(h) && <th key={h} className={`${TH} ${i >= 5 ? 'text-right' : ''}`}>{h}</th>)}
               </tr></thead>
               <tbody>
                 {(r.rows as DashBatchRow[]).map(x => (
@@ -737,10 +748,12 @@ function DetailDialog({ wh, req, onClose, onBatch }: { wh: string; req: DetailRe
                     <td className={TD}><b>Mẻ {x.no ?? '—'}</b> <span className="font-mono text-[var(--k-muted)]">{x.code}</span></td>
                     <td className={`${TD} font-mono`} title={x.btp_name ?? ''}>{x.btp}</td>
                     <td className={TD}>{x.qa_status === 'REJECTED' ? <span style={{ color: 'var(--k-bad)' }}>QA loại</span> : x.filled ? 'Đã nạp bồn' : 'Đang làm'}</td>
-                    <td className={NUM}>{nf(x.std_kg, 1)}</td><td className={NUM}>{nf(x.iss_kg, 1)}</td>
+                    {!hid && <td className={NUM}>{nf(x.std_kg, 1)}</td>}<td className={NUM}>{nf(x.iss_kg, 1)}</td>
+                    {!hid && <>
                     <td className={`${NUM} font-semibold`} style={{ color: x.over + x.under + x.extra ? (x.total_kg > 0 ? 'var(--k-bad)' : 'var(--k-warn)') : undefined }}>{sgn(x.total_kg, 1)}</td>
                     <td className={NUM}>{x.pct == null ? '—' : devLabel(Number(x.pct))}</td>
                     <td className={NUM}>{x.edit_kg ? sgn(x.edit_kg, 1) : '0'}</td><td className={NUM}>{x.exec_kg ? sgn(x.exec_kg, 1) : '0'}</td>
+                    </>}
                     <td className={`${NUM} font-semibold`} style={{ color: x.over + x.under + x.extra ? 'var(--k-bad)' : 'var(--k-muted)' }} title={`vượt ${x.over} · dưới ${x.under} · ngoài định mức ${x.extra}`}>{x.over + x.under + x.extra}</td>
                     <td className={NUM}>{x.pending || '—'}</td>
                     <td className={NUM}>{x.open_min == null ? '—' : durLabel(x.open_min)}</td>
@@ -752,7 +765,7 @@ function DetailDialog({ wh, req, onClose, onBatch }: { wh: string; req: DetailRe
           {r?.kind === 'lines' && r.rows.length > 0 && (
             <table className="w-full min-w-[1040px] text-xs" data-testid="dash-detail-lines">
               <thead><tr>
-                {['Ngày SX', 'Ca', 'Mẻ · mã lô', 'Nguyên liệu', 'ĐVT', 'Tình trạng', 'Định mức', 'Phiếu', 'Thực cấp', 'Lệch', 'Lệch %', 'Sửa phiếu', 'Cấp lệch', 'Lý do sửa'].map((h, i) => <th key={h} className={`${TH} ${i >= 6 && i <= 12 ? 'text-right' : ''}`}>{h}</th>)}
+                {LINE_HEAD.map((h, i) => showH(h) && <th key={h} className={`${TH} ${i >= 6 && i <= 12 ? 'text-right' : ''}`}>{h}</th>)}
               </tr></thead>
               <tbody>
                 {(r.rows as DashLineRow[]).map(x => {
@@ -764,11 +777,13 @@ function DetailDialog({ wh, req, onClose, onBatch }: { wh: string; req: DetailRe
                       <td className={`${TD} max-w-[13rem] truncate`} title={x.mat_name ?? ''}><b className="font-mono">{x.mat_code}</b> {x.mat_name ?? ''}</td>
                       <td className={`${TD} font-mono text-[var(--k-muted)]`}>{unitCode(x.unit)}</td>
                       <td className={TD} style={{ color: sc }}>{st}</td>
-                      <td className={NUM}>{x.state === 'extra' && !Number(x.std) ? '—' : nf(x.std, 3)}</td><td className={NUM}>{nf(x.sheet, 3)}</td><td className={NUM}>{nf(x.iss, 3)}</td>
+                      {!hid && <><td className={NUM}>{x.state === 'extra' && !Number(x.std) ? '—' : nf(x.std, 3)}</td><td className={NUM}>{nf(x.sheet, 3)}</td></>}<td className={NUM}>{nf(x.iss, 3)}</td>
+                      {!hid && <>
                       <td className={`${NUM} font-semibold`} style={{ color: sc }}>{sgn(Number(x.diff), 3)}</td>
                       <td className={NUM}>{x.pct == null ? '—' : devLabel(Number(x.pct))}</td>
                       <td className={NUM}>{Number(x.edit) ? sgn(Number(x.edit), 3) : '0'}</td><td className={NUM}>{Number(x.exec) ? sgn(Number(x.exec), 3) : '0'}</td>
                       <td className={`${TD} max-w-[12rem] truncate text-[var(--k-muted)]`} title={x.why ?? ''}>{x.why ?? ''}</td>
+                      </>}
                     </tr>
                   )
                 })}

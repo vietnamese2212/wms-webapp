@@ -32,7 +32,8 @@ import { vnDayOf, utcMs } from '../../utils/dates'
 import { parseSheetByHeader, expandMergedCells, readWorkbookSafe, BAD_EXCEL_MSG } from '../../utils/excelHeader'
 import { isPreflight, buildPreflight } from '../../utils/uploadPreflight'
 import { MES_BATCH_STAGES } from '../../utils/mesStage'
-import { recipeView, recipeLinesView } from '../../utils/recipeView'
+import { recipeView, recipeLinesView, hideNormFigures } from '../../utils/recipeView'
+import { logAdmin, logAdminOnce } from '../../services/adminAudit'
 import {
   RECIPE_IMPORT_FIELDS, RECIPE_IMPORT_MAX_ROWS, RECIPE_IMPORT_MAX_RECIPES, codeKey, planRecipeImport, btpImportError, type ImpMaterial, type ImpExisting,
 } from '../../utils/recipeImport'
@@ -688,6 +689,10 @@ export async function getRecipe(req: Request, res: Response) {
       .eq('recipe_id', r.id).order('sort_order').limit(500)
     if (lErr) return fail(res, lErr)
     const see = canSeeRecipeQty(req)
+    if (see) {   // 27/11: nhật ký ai mở công thức (có số lượng) — một dòng / người / công thức / 10 phút
+      const code = (r.material as unknown as { material_code?: string } | null)?.material_code ?? ''
+      await logAdminOnce(req, { action: 'RECIPE_VIEW', target_type: 'Recipe', target_id: r.id, target_label: `${code} · ${r.name}` })
+    }
     return ok(res, { ...recipeView(r, see), lines: recipeLinesView(lines ?? [], see) })
   } catch (e) { return failAny(res, e) }
 }
@@ -1781,7 +1786,8 @@ export async function listCycles(req: Request, res: Response) {
     return ok(res, data ?? [])
   } catch (e) { return failAny(res, e) }
 }
-export const zCycleQuery = z.object({ warehouse_id: zText(1, 64), cycle: zText(1, 20) })
+// for=export (27/11): màn gọi lại ngay trước khi dựng file Excel ⇒ cần quyền export, ghi nhật ký "xuất dữ liệu định mức"
+export const zCycleQuery = z.object({ warehouse_id: zText(1, 64), cycle: zText(1, 20), for: z.enum(['export']).optional() })
 /** kho trong phạm vi + chu kỳ đúng dạng (cùng luật ô Chu kỳ của form Mở mẻ) — trả null khi đã trả lỗi */
 async function cycleArgs(req: Request, res: Response): Promise<{ wh: string; cycle: string } | null> {
   const q = req.query as unknown as z.infer<typeof zCycleQuery>
@@ -1795,9 +1801,13 @@ export async function cycleReport(req: Request, res: Response) {
   try {
     const a = await cycleArgs(req, res)
     if (!a) return res
+    const forExport = (req.query as { for?: string }).for === 'export'
+    if (forExport && !hasPerm(req, 'production', 'export')) return fail(res, 403, 'FORBIDDEN', 'Xuất file cần quyền Xuất dữ liệu sản xuất')
     const { data, error } = await db.rpc('mes_cycle_report', { p_wh: a.wh, p_cycle: a.cycle })
     if (error) return fail(res, error)
-    return ok(res, data)
+    const see = canSeeRecipeQty(req)
+    if (forExport && see) await logAdmin(req, { action: 'RECIPE_EXPORT', target_type: 'ProductionReport', target_id: a.wh, target_label: `Báo cáo NVL chu kỳ ${a.cycle}` })
+    return ok(res, see ? data : hideNormFigures(data))
   } catch (e) { return failAny(res, e) }
 }
 // ── DASHBOARD BÁO CÁO NVL THEO THỜI GIAN (22/11 — user: "báo cáo chưa chuyên nghiệp, học hỏi MES hiện đại" · "1 ngày 36 mẻ, nhiều tháng, nhiều
@@ -1835,7 +1845,7 @@ export async function dashboard(req: Request, res: Response) {
     const { data, error } = await db.rpc('mes_dashboard', { p: { warehouse_id: q.warehouse_id, date_from: q.date_from, date_to: q.date_to, grain,
       ...(dq.prev_from && dq.prev_to ? { prev_from: dq.prev_from, prev_to: dq.prev_to } : {}) } })
     if (error) return mesFail(res, error)
-    return ok(res, data)
+    return ok(res, canSeeRecipeQty(req) ? data : hideNormFigures(data))
   } catch (e) { return failAny(res, e) }
 }
 // GET /wms/production/dashboard/detail?…&kind=batches|lines&shift=&btp_id=&material_id=&only= — dữ liệu đứng sau một con số của dashboard
@@ -1848,7 +1858,7 @@ export async function dashboardDetail(req: Request, res: Response) {
       shift: q.shift || null, btp_id: q.btp_id || null, material_id: q.material_id || null, only: q.only ?? null,
     } })
     if (error) return mesFail(res, error)
-    return ok(res, data)
+    return ok(res, canSeeRecipeQty(req) ? data : hideNormFigures(data))
   } catch (e) { return failAny(res, e) }
 }
 // ── DỮ LIỆU THÔ TIÊU HAO NVL (18/11 g — user: "tiêu hao NVL phải làm dạng raw data, có đầy đủ thông tin hết — để còn làm việc với ERP SAP").
@@ -1905,7 +1915,13 @@ export async function consumptionRawExport(req: Request, res: Response) {
     // file thô đi theo thứ tự thời gian (cũ → mới) như sổ chứng từ, trừ khi gọi chỉ rõ
     const { data, error } = await db.rpc('mes_consumption_raw', { p: { ...a, sort: q.sort ?? 'asc', part: q.part ?? 'events', mode: 'rows', page_size: q.page_size ?? 2000 } })
     if (error) return mesFail(res, error)
-    return ok(res, data)
+    if (q.part !== 'req') return ok(res, data)
+    // phần "định mức – thực cấp" (27/11): người không có quyền Xem công thức nhận thực cấp, không số định mức; người có quyền ⇒ ghi nhật ký
+    // xuất (một dòng / lần xuất — trang 1)
+    const see = canSeeRecipeQty(req)
+    if (see && (q.page ?? 1) === 1) await logAdmin(req, { action: 'RECIPE_EXPORT', target_type: 'ProductionReport', target_id: q.warehouse_id,
+      target_label: `Dữ liệu thô — định mức · thực cấp ${a.cycle ? `chu kỳ ${a.cycle}` : `${a.date_from} → ${a.date_to}`}` })
+    return ok(res, see ? data : hideNormFigures(data))
   } catch (e) { return failAny(res, e) }
 }
 

@@ -52,9 +52,11 @@ const AUDIT_ACTION_LABEL: Record<string, string> = {
   JOBTITLE_CREATE: 'Tạo chức danh', JOBTITLE_UPDATE: 'Sửa chức danh / QUYỀN', JOBTITLE_PARENT: 'Đổi cấp trên chức danh',
   DEPARTMENT_CREATE: 'Tạo phòng ban', DEPARTMENT_UPDATE: 'Sửa phòng ban', SETTING_UPDATE: 'Đổi cờ hệ thống', VISION_CONFIG: 'Cấu hình AI Vision',
   APIKEY_CREATE: 'Tạo API key', APIKEY_REVOKE: 'Thu hồi API key', APIKEY_DELETE: 'Xoá API key',
+  // 27/11 bảo mật công thức MES: mở công thức có số lượng · xuất file có số định mức
+  RECIPE_VIEW: 'Xem công thức (MES)', RECIPE_EXPORT: 'Xuất dữ liệu định mức (MES)',
 }
 const AUDIT_ACTION_TONE = (a: string): BadgeTone =>
-  /PASSWORD|UNLOCK|APIKEY|JOBTITLE_UPDATE|WAREHOUSE_ACCESS/.test(a) ? 'red' : /CREATE|RESTORE/.test(a) ? 'green' : /DELETE/.test(a) ? 'slate' : 'sky'
+  /PASSWORD|UNLOCK|APIKEY|JOBTITLE_UPDATE|WAREHOUSE_ACCESS/.test(a) ? 'red' : /RECIPE/.test(a) ? 'amber' : /CREATE|RESTORE/.test(a) ? 'green' : /DELETE/.test(a) ? 'slate' : 'sky'
 // Hiện jsonb gọn: {a: 1, b: [..]} → "a: 1 · b: [..]" (cắt 400 ký tự, tooltip có bản đầy đủ)
 const compactJson = (o: Record<string, unknown> | null | undefined): string =>
   o && Object.keys(o).length ? Object.entries(o).map(([k, v]) => `${k}: ${typeof v === 'string' ? v : JSON.stringify(v)}`).join(' · ') : ''

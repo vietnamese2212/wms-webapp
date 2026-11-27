@@ -44,6 +44,7 @@ const FLAG_OPTS = [{ value: 'rotation', label: 'Sai thứ tự' }, { value: 'exp
 export function ConsumptionRaw({ tabBar }: { tabBar: ReactNode }) {
   const perms = useAuthStore(s => s.user)?.module_permissions as ModulePermissions | null ?? null
   const canExport = can(perms, 'production', 'export')
+  const seeRecipe = can(perms, 'production', 'view_recipe') || can(perms, 'production', 'manage_recipe')
   const f = useWmsFilterStore(s => s.productionReport)
   const setF = useWmsFilterStore(s => s.setProductionReport)
   const { data: { kitchens } } = useProductionWarehouses()
@@ -79,8 +80,9 @@ export function ConsumptionRaw({ tabBar }: { tabBar: ReactNode }) {
     setErr(''); setBusy('Đang tải phát sinh…')
     try {
       const events = await fetchRawAll(filter, 'events', n => setBusy(`Đang tải ${n.toLocaleString('vi-VN')} phát sinh…`))
-      setBusy('Đang tải định mức…')
-      const req = await fetchRawAll(filter, 'req')
+      // 27/11: sheet Định mức – thực cấp chỉ cho người có quyền Xem công thức (server cũng bỏ số định mức với người khác)
+      if (seeRecipe) setBusy('Đang tải định mức…')
+      const req = seeRecipe ? await fetchRawAll(filter, 'req') : []
       setBusy('Đang tải nạp bồn…')
       const fills = await fetchRawAll(filter, 'fill')
       const wb = XLSX.utils.book_new()
@@ -91,7 +93,7 @@ export function ConsumptionRaw({ tabBar }: { tabBar: ReactNode }) {
         XLSX.utils.book_append_sheet(wb, ws, name)
       }
       add(rawAoa(RAW_EVENT_COLS, events), rawColWidths(RAW_EVENT_COLS), 'Tiêu hao NVL')
-      add(rawAoa(RAW_REQ_COLS, req), rawColWidths(RAW_REQ_COLS), 'Định mức – thực cấp')
+      if (seeRecipe) add(rawAoa(RAW_REQ_COLS, req), rawColWidths(RAW_REQ_COLS), 'Định mức – thực cấp')
       add(rawAoa(RAW_FILL_COLS, fills), rawColWidths(RAW_FILL_COLS), 'Nạp bồn (BTP)')
       const info: (string | number)[][] = [
         ['Mục', 'Giá trị'],
@@ -102,7 +104,7 @@ export function ConsumptionRaw({ tabBar }: { tabBar: ReactNode }) {
         ['Phát sinh', filter.event ? EVENT_OPTS.find(o => o.value === filter.event)?.label ?? '' : 'Cấp + Huỷ cấp'],
         ['Cờ', filter.flag ? FLAG_OPTS.find(o => o.value === filter.flag)?.label ?? '' : '—'],
         ['Tìm', filter.search ?? '—'],
-        ['Số dòng phát sinh', events.length], ['Số dòng định mức (mẻ × NVL)', req.length], ['Số lần nạp bồn', fills.length],
+        ['Số dòng phát sinh', events.length], ...(seeRecipe ? [['Số dòng định mức (mẻ × NVL)', req.length]] : []), ['Số lần nạp bồn', fills.length],
         ['Xuất lúc', vnStamp(new Date().toISOString())],
         [],
         ['Ghi chú', 'Cấp = +SL vào ngày cấp · Huỷ cấp = −SL vào ngày huỷ (hạch toán đảo). Σ SL có dấu = lượng tiêu hao thực.'],

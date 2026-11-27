@@ -62,7 +62,7 @@ export function TankMimic({ tank, onOpenBatch, menu, footer }: {
   return (
     <div className={`rounded-xl border bg-white p-2.5 flex flex-col gap-1.5 min-w-0 ${tank.is_active ? 'border-slate-200' : 'border-dashed border-slate-300 opacity-60'}`} data-testid={`tank-${tank.code}`}>
       <div className="flex items-center gap-1.5 min-w-0">
-        <span className="font-mono text-sm font-bold text-slate-800 truncate" title={tank.name ?? undefined}>{tank.code}</span>
+        <span className="min-w-0 font-mono text-sm font-bold text-slate-800 [overflow-wrap:anywhere]" title={tank.name ?? undefined}>{tank.code}</span>
         <span className={`text-[10px] font-semibold ${tone.text}`}>{tank.is_active ? label : 'Ngừng dùng'}</span>
         <span className="ml-auto shrink-0">{menu}</span>
       </div>
@@ -102,7 +102,7 @@ export function TankMimic({ tank, onOpenBatch, menu, footer }: {
         </svg>
         <div className="flex-1 min-w-0 text-[11px] leading-snug">
           <p className="tabular-nums"><span className="text-base font-bold text-slate-900">{nf(Number(tank.content))}</span><span className="text-slate-400"> / {nf(cap)} {tank.unit}</span></p>
-          <p className="truncate text-slate-600" title={mat?.short_name ?? inMat?.material_name ?? undefined}>
+          <p className="text-slate-600 [overflow-wrap:anywhere]" title={mat?.short_name ?? inMat?.material_name ?? undefined}>
             {mat ? <><span className="font-mono font-semibold">{mat.material_code}</span> {mat.short_name ?? ''}</>
               : inMat ? <span className="text-slate-500">đặt cho <span className="font-mono font-semibold">{inMat.material_code}</span></span>
               : <span className="text-slate-300">Chưa chứa gì</span>}
@@ -111,14 +111,14 @@ export function TankMimic({ tank, onOpenBatch, menu, footer }: {
             {tank.lots.map((l, i) => (
               <p key={l.id} className="flex items-center gap-1 min-w-0">
                 <span className="h-2 w-2 rounded-sm shrink-0" style={{ background: layerFill(l.batch?.qa_status, i, tank.expired) }} />
-                <button type="button" className="font-mono truncate hover:underline text-left" onClick={() => onOpenBatch?.(l.batch_id)}>{l.batch?.batch_code}</button>
+                <button type="button" className="min-w-0 font-mono hover:underline text-left [overflow-wrap:anywhere]" onClick={() => onOpenBatch?.(l.batch_id)}>{l.batch?.batch_code}</button>
                 <span className="ml-auto shrink-0 tabular-nums text-slate-500">{nf(Number(l.qty_remaining))}</span>
               </p>
             ))}
             {tank.incoming.map(x => (
               <p key={x.batch_id} className="flex items-center gap-1 min-w-0 text-slate-500" title="Mẻ đã đặt bồn này, chưa nạp">
                 <span className="h-2 w-2 rounded-sm shrink-0 border border-slate-400" style={{ background: 'repeating-linear-gradient(45deg,#94a3b8 0 1.5px,#f1f5f9 1.5px 3px)' }} />
-                <button type="button" className="font-mono truncate hover:underline text-left" onClick={() => onOpenBatch?.(x.batch_id)}>{x.batch_code}</button>
+                <button type="button" className="min-w-0 font-mono hover:underline text-left [overflow-wrap:anywhere]" onClick={() => onOpenBatch?.(x.batch_id)}>{x.batch_code}</button>
                 <span className="ml-auto shrink-0 tabular-nums">+{nf(x.qty)}</span>
               </p>
             ))}

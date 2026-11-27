@@ -4,7 +4,7 @@
 //   - Vi phạm GIẢM → nhắc hạ baseline (đã dọn được thì khoá thành quả, không cho phình lại).
 // Nợ cũ không chặn (không ép mass-rewrite — CLAUDE.md cấm churn), nhưng KHÔNG được tăng thêm.
 // usage: node scripts/qa/09-static-gate.mjs [--update-baseline]
-import { readFileSync, writeFileSync, readdirSync, statSync } from 'fs'
+import { readFileSync, writeFileSync, readdirSync, statSync, existsSync } from 'fs'
 import { dirname, join, sep } from 'path'
 import { fileURLToPath } from 'url'
 
@@ -1130,6 +1130,15 @@ const RULES = [
     label: 'overlay quét ẩn bằng CSS nhưng <QRScanner> thiếu `active` — camera chạy ngầm sau khi đóng',
     count: (s) => countKeepMountedScannerWithoutActive(s),
   },
+  // Thẻ bồn của Sơ đồ bồn (MES) cắt "…" — user 27/11 chụp "800/10.00…", "đặt BTP-SCCD…" và chốt
+  // "ko chấp nhận dạng ...": số tồn / sức chứa / mã BTP trên bồn là số người vận hành đọc để quyết.
+  // Cách đúng: <FitText> (components/shared/FitText.tsx — co chữ cho vừa, quá nữa thì xuống dòng)
+  // hoặc cho xuống dòng ([overflow-wrap:anywhere]). Baseline 0 (C144).
+  {
+    key: 'ellipsis_on_tank_card',
+    label: 'thẻ bồn MES (Sơ đồ bồn / khung bồn) cắt chữ "…" (truncate / text-ellipsis) — dùng <FitText> hoặc cho xuống dòng',
+    count: (s) => countEllipsisOnTankCard(s),
+  },
   // `relative` đặt THẲNG lên <TableHead> đè mất `sticky top-0 z-10` của base (tailwind-merge giữ
   // class position CUỐI) → header hết freeze khi cuộn — bẫy đã ghi memory sticky-header-relative-trap
   // mà các module mới 04–06/08 vẫn đẻ 7 chỗ (Alerts/Fill×4/StocktakeCycle/TMSBookings — user bắt
@@ -1752,6 +1761,24 @@ function countKeepMountedScannerWithoutActive(sampleOut) {
           sampleOut.push(`${f.slice(ROOT.length + 1)} — <QRScanner> trong overlay keep-mounted thiếu active=`)
       }
     }
+  }
+  return n
+}
+
+// Thẻ bồn MES không cắt "…": đếm class truncate / text-ellipsis / textOverflow trong các file vẽ bồn.
+const TANK_CARD_FILES = ['frontend/src/components/wms/production/TankMap2D.tsx', 'frontend/src/components/wms/production/TankMimic.tsx']
+function countEllipsisOnTankCard(sampleOut) {
+  let n = 0
+  for (const rel of TANK_CARD_FILES) {
+    const f = join(ROOT, rel)
+    if (!existsSync(f)) continue
+    readFileSync(f, 'utf8').split(/\r?\n/).forEach((line, i) => {
+      if (/^\s*\/\//.test(line)) return
+      const hits = line.match(/(?<![\w-])(truncate|text-ellipsis)(?![\w-])|textOverflow/g)
+      if (!hits) return
+      n += hits.length
+      if (sampleOut && sampleOut.length < 5) sampleOut.push(`${rel}:${i + 1} — ${hits.join(', ')}`)
+    })
   }
   return n
 }

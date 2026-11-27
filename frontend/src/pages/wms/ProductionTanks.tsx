@@ -116,7 +116,7 @@ export default function ProductionTanks() {
     if ((canPour || canOps) && t.is_active && t.incoming.some(x => x.stage === 'working'))
       out.push({ key: 'pour', label: 'Check trước khi đổ bồn', short: 'Check', tone: 'blue', icon: ScanIcon, onClick: () => setPourTank(t) })
     if (canQa && t.lots.length > 0 && t.qa_state !== 'RELEASED')
-      out.push({ key: 'qa', label: 'QA đạt / không đạt cho mọi mẻ trong bồn', short: 'QA bồn', tone: 'green', icon: ShieldCheck, onClick: () => setQaTank(t) })
+      out.push({ key: 'qa', label: 'QA bồn: đạt / không đạt', tip: 'QA đạt / không đạt cho mọi mẻ trong bồn', short: 'QA bồn', tone: 'green', icon: ShieldCheck, onClick: () => setQaTank(t) })
     return out
   }
   // việc chính trên thẻ bồn: bồn có mẻ sắp vào ⇒ Đổ bồn; bồn còn lô chưa kết luận ⇒ QA

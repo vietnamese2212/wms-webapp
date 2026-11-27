@@ -25,6 +25,7 @@ import {
 } from '@/utils/tankMapLayout'
 import { StageSymbol, stageShort, stageLabel, stageKey, stageOf, STAGE_CHIP, STAGE_LIQUID, lotStage } from './BatchStage'
 import { TANK_TONE, layerFill } from './TankMimic'
+import { FitText } from '@/components/shared/FitText'
 
 const MIN = 0.08, MAX = 3
 const nf = (n: number) => Number(n).toLocaleString('vi-VN', { maximumFractionDigits: 1 })
@@ -40,7 +41,7 @@ export function boardBatchesOf(t: TankRow): BoardBatch[] {
   ]
 }
 /** việc chính ngay trên bồn (vận hành để ngoài): Check trước khi đổ bồn · QA bồn */
-export interface TankQuick { key: string; label: string; short: string; tone: 'blue' | 'green'; icon: ComponentType<{ className?: string }>; onClick: () => void }
+export interface TankQuick { key: string; label: string; short: string; tip?: string; tone: 'blue' | 'green'; icon: ComponentType<{ className?: string }>; onClick: () => void }
 
 /** nút lọc theo thứ tự công việc (chỉ hiện nút có mẻ) */
 const FILTERS: { stage: string; step?: string }[] = [
@@ -155,7 +156,7 @@ const TankNode = memo(function TankNode({ t, n, lod, selected, dim, flash, filte
 
       {/* TOÀN CẢNH: mã bồn chữ to + số mẻ đang tới */}
       {lod === 1 && <>
-        <div className={`absolute inset-x-0 top-0 truncate text-center font-mono font-bold ${bad ? 'text-red-700' : 'text-slate-800'}`} style={{ fontSize: 36, lineHeight: '44px' }}>{t.code}</div>
+        <FitText size={36} min={22} className={`absolute inset-x-0 top-0 text-center font-mono font-bold ${bad ? 'text-red-700' : 'text-slate-800'}`} style={{ lineHeight: '44px' }}>{t.code}</FitText>
         {lead && (
           <div className={`absolute left-1/2 -translate-x-1/2 inline-flex items-center gap-2 whitespace-nowrap rounded-full border-2 px-4 font-bold ${STAGE_CHIP[stageOf(lead.stage)]}`}
             style={{ top: 48, height: 52, fontSize: 26 }} title={incoming.map(b => `${b.code} — ${stageLabel(b.stage, b.step)}`).join('\n')}>
@@ -173,15 +174,15 @@ const TankNode = memo(function TankNode({ t, n, lod, selected, dim, flash, filte
               onClick={e => { e.stopPropagation(); if (!arrange) onOpenBatch(b.id) }}
               title={`${b.code}${b.cycle ? ` · chu kỳ ${b.cycle}` : ''}${b.shift ? ` · ${b.shift}` : ''} — ${stageLabel(b.stage, b.step)} (bấm để mở mẻ)`}
               className={`mb-1 flex w-full min-w-0 items-center gap-1.5 rounded-md border px-2 text-left leading-tight ${STAGE_CHIP[stageOf(b.stage)]} ${filter && filter === k ? 'ring-2 ring-sky-500' : ''}`}
-              style={{ height: 36 }}>
+              style={{ minHeight: 36 }}>
               <StageSymbol stage={b.stage} step={b.step} className={lod === 2 ? 'h-[18px] w-[18px]' : 'h-4 w-4'} />
               {lod === 2 ? <>
                 <span className="font-bold whitespace-nowrap" style={{ fontSize: sz.card }}>Mẻ {b.no ?? '—'}</span>
-                <span className="ml-auto truncate font-medium" style={{ fontSize: sz.cardS }}>{stageShort(b.stage, b.step)}</span>
+                <FitText size={sz.cardS} className="ml-auto text-right font-medium">{stageShort(b.stage, b.step)}</FitText>
               </> : (
                 <span className="min-w-0 flex-1">
-                  <span className="block truncate font-bold" style={{ fontSize: sz.card }}>Mẻ {b.no ?? '—'}{b.cycle ? ` · CK ${b.cycle}` : ''}{b.shift ? ` · ${b.shift}` : ''}</span>
-                  <span className="block truncate" style={{ fontSize: sz.cardS }}>{stageLabel(b.stage, b.step)}</span>
+                  <FitText size={sz.card} min={9} className="font-bold">Mẻ {b.no ?? '—'}{b.cycle ? ` · CK ${b.cycle}` : ''}{b.shift ? ` · ${b.shift}` : ''}</FitText>
+                  <FitText size={sz.cardS} min={9}>{stageLabel(b.stage, b.step)}</FitText>
                 </span>
               )}
             </button>
@@ -189,7 +190,7 @@ const TankNode = memo(function TankNode({ t, n, lod, selected, dim, flash, filte
         })}
         {more > 0 && (
           <button type="button" tabIndex={arrange ? -1 : 0} onClick={e => { e.stopPropagation(); select() }} className="flex w-full items-center justify-center rounded-md border border-dashed border-slate-300 bg-white/90 font-semibold text-slate-600"
-            style={{ height: 36, fontSize: sz.cardS }}>+{more} mẻ nữa — bấm bồn để xem</button>
+            style={{ minHeight: 36, fontSize: sz.cardS }}>+{more} mẻ nữa — bấm bồn để xem</button>
         )}
       </div>}
 
@@ -206,44 +207,44 @@ const TankNode = memo(function TankNode({ t, n, lod, selected, dim, flash, filte
       </div>
 
       {/* THÔNG SỐ bên phải bồn */}
+      {/* chữ không cắt "…" (user 27/11): dòng dài thì co chữ cho vừa, quá nữa thì xuống dòng; nút việc chính đứng sát đáy bồn, chữ dài thì đẩy nút xuống chứ không đè */}
       {lod !== 1 && (
-        <div className="absolute min-w-0" style={{ left: 132, top: g.ty + 2, width: NODE_W - 140 }}>
-          <div className="truncate font-mono font-bold text-slate-800" style={{ fontSize: sz.code, lineHeight: 1.15 }} title={t.name ?? undefined}>{t.code}</div>
-          <div className={`truncate font-semibold ${t.is_active ? tone.text : 'text-slate-400'}`} style={{ fontSize: sz.small, lineHeight: 1.35 }}>{label}</div>
-          <div className="truncate tabular-nums font-semibold text-slate-900" style={{ fontSize: sz.qty, lineHeight: 1.35 }}>
+        <div className="absolute flex flex-col" style={{ left: 132, top: g.ty + 2, width: NODE_W - 140, minHeight: th - 4 }} data-testid={`specs-${t.code}`}>
+          <FitText size={sz.code} className="font-mono font-bold text-slate-800" style={{ lineHeight: 1.15 }} title={t.name ?? undefined}>{t.code}</FitText>
+          <FitText size={sz.small} className={`font-semibold ${t.is_active ? tone.text : 'text-slate-400'}`} style={{ lineHeight: 1.35 }}>{label}</FitText>
+          <FitText size={sz.qty} className="tabular-nums font-semibold text-slate-900" style={{ lineHeight: 1.35 }}>
             {nf(Number(t.content))}<span className="font-normal text-slate-400">/{nf(cap)} {t.unit}</span>
-          </div>
-          <div className="truncate font-mono text-slate-500" style={{ fontSize: sz.small, lineHeight: 1.35 }} title={mat?.short_name ?? inMat?.material_name ?? undefined}>
+          </FitText>
+          <FitText size={sz.small} className="font-mono text-slate-500" style={{ lineHeight: 1.35 }} title={mat?.short_name ?? inMat?.material_name ?? undefined}>
             {mat ? mat.material_code : inMat ? `đặt ${inMat.material_code ?? ''}` : '—'}
-          </div>
+          </FitText>
           {lod === 3 && <>
-            {(mat?.short_name || inMat?.material_name) && <div className="truncate text-slate-500" style={{ fontSize: 11, lineHeight: 1.35 }}>{mat?.short_name ?? inMat?.material_name}</div>}
-            {t.next_expiry && <div className={`truncate tabular-nums ${t.expired ? 'font-semibold text-red-600' : 'text-slate-500'}`} style={{ fontSize: 11, lineHeight: 1.35 }}>Hạn lưu {formatDateTime(t.next_expiry).slice(0, 16)}</div>}
+            {(mat?.short_name || inMat?.material_name) && <FitText size={11} min={9} className="text-slate-500" style={{ lineHeight: 1.35 }}>{mat?.short_name ?? inMat?.material_name}</FitText>}
+            {t.next_expiry && <FitText size={11} min={9} className={`tabular-nums ${t.expired ? 'font-semibold text-red-600' : 'text-slate-500'}`} style={{ lineHeight: 1.35 }}>Hạn lưu {formatDateTime(t.next_expiry).slice(0, 16)}</FitText>}
           </>}
-        </div>
-      )}
-      {lod !== 1 && quick.length > 0 && (
-        <div className="absolute flex flex-col" style={{ left: 132, width: NODE_W - 140, top: g.ty + th - 2 - quick.length * sz.qh - (quick.length - 1) * 6, gap: 6 }}
-          onClick={e => e.stopPropagation()}>
-          {quick.map(qk => (
-            <button key={qk.key} type="button" data-quick={qk.key} tabIndex={arrange ? -1 : 0} title={qk.label}
-              onClick={e => { e.stopPropagation(); if (!arrange) qk.onClick() }}
-              className={`inline-flex min-w-0 items-center justify-center gap-1 whitespace-nowrap rounded-md border px-1 font-semibold ${qk.tone === 'blue' ? 'border-blue-300 bg-blue-50 text-blue-700 hover:bg-blue-100' : 'border-green-300 bg-green-50 text-green-800 hover:bg-green-100'}`}
-              style={{ height: sz.qh, fontSize: sz.qf }}>
-              <qk.icon className={lod === 2 ? 'h-4 w-4 shrink-0' : 'h-3.5 w-3.5 shrink-0'} /><span className="truncate">{lod === 2 ? qk.short : qk.label}</span>
-            </button>
-          ))}
+          {quick.length > 0 && (
+            <div className="mt-auto flex flex-col" style={{ gap: 6, paddingTop: 2 }} onClick={e => e.stopPropagation()}>
+              {quick.map(qk => (
+                <button key={qk.key} type="button" data-quick={qk.key} tabIndex={arrange ? -1 : 0} title={qk.tip ?? qk.label}
+                  onClick={e => { e.stopPropagation(); if (!arrange) qk.onClick() }}
+                  className={`inline-flex min-w-0 items-center justify-center gap-1 rounded-md border px-1 py-0.5 text-center font-semibold leading-tight ${qk.tone === 'blue' ? 'border-blue-300 bg-blue-50 text-blue-700 hover:bg-blue-100' : 'border-green-300 bg-green-50 text-green-800 hover:bg-green-100'}`}
+                  style={{ minHeight: sz.qh, fontSize: sz.qf }}>
+                  <qk.icon className={lod === 2 ? 'h-4 w-4 shrink-0' : 'h-3.5 w-3.5 shrink-0'} /><span className="min-w-0 [overflow-wrap:anywhere]">{lod === 2 ? qk.short : qk.label}</span>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
       {/* ỐNG RA → MÁY ĐÓNG GÓI đang rút (Sổ đóng gói đang mở) */}
       {runs.length > 0 && (
-        <div className="absolute left-1/2 -translate-x-1/2 inline-flex max-w-[224px] items-center gap-1.5 whitespace-nowrap rounded-full border-2 border-green-300 bg-green-50 px-3 font-semibold text-green-800"
-          style={{ top: OUT_Y, height: lod === 1 ? 40 : 34, fontSize: lod === 1 ? 24 : lod === 2 ? 14 : 12 }}
+        <div className="absolute left-1/2 -translate-x-1/2 inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border-2 border-green-300 bg-green-50 px-3 font-semibold text-green-800"
+          style={{ top: OUT_Y, minHeight: lod === 1 ? 40 : 34, maxWidth: NODE_W - 16 }}
           title={runs.map(r => `Máy ${r.machine_code} · ${r.material_code} · từ ${formatDateTime(r.start_at)}`).join('\n')} data-testid={`run-${t.code}`}>
           <Play className={lod === 1 ? 'h-6 w-6 shrink-0 fill-green-600' : 'h-3.5 w-3.5 shrink-0 fill-green-600'} />
-          <span className="truncate">{lod === 1 ? runs[0].machine_code : `Máy ${runs[0].machine_code}${lod === 3 ? ` · ${runs[0].material_code} · từ ${formatTimestampTime(runs[0].start_at).slice(0, 5)}` : ''}`}</span>
-          {runs.length > 1 && <span>+{runs.length - 1}</span>}
+          <FitText size={lod === 1 ? 24 : lod === 2 ? 14 : 12} min={lod === 1 ? 16 : 10} className="leading-tight">{lod === 1 ? runs[0].machine_code : `Máy ${runs[0].machine_code}${lod === 3 ? ` · ${runs[0].material_code} · từ ${formatTimestampTime(runs[0].start_at).slice(0, 5)}` : ''}`}</FitText>
+          {runs.length > 1 && <span className="shrink-0" style={{ fontSize: lod === 1 ? 24 : lod === 2 ? 14 : 12 }}>+{runs.length - 1}</span>}
         </div>
       )}
       {/* chế độ Sắp xếp: cả ô là tay nắm kéo */}
@@ -537,8 +538,10 @@ export function TankMap2D({ tanks, selectedId, onSelect, onOpenBatch, quick, arr
         <div className="absolute left-0 top-0 origin-top-left" style={{ width: layout.width, height: layout.height, transform: `translate(${view.ox}px, ${view.oy}px) scale(${view.scale})` }}>
           {layout.areas.map(a => (
             <div key={a.id} className="absolute rounded-2xl border-2 border-slate-300 bg-white/50" style={{ left: a.x, top: a.y, width: a.w, height: a.h }} data-testid="map-area">
-              <div className="flex items-baseline gap-3 truncate px-6 font-bold text-slate-700" style={{ height: AREA_HEAD, lineHeight: `${AREA_HEAD}px`, fontSize: 40 }}>
-                {a.name || 'Kho chế biến'}<span className="font-medium text-slate-400" style={{ fontSize: 28 }}>{a.count} bồn</span>
+              <div className="flex items-center px-6" style={{ height: AREA_HEAD }}>
+                <FitText size={40} min={24} className="font-bold leading-tight text-slate-700">
+                  {a.name || 'Kho chế biến'}<span className="ml-3 font-medium text-slate-400" style={{ fontSize: '0.7em' }}>{a.count} bồn</span>
+                </FitText>
               </div>
             </div>
           ))}

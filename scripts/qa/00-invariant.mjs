@@ -407,6 +407,10 @@ if (process.env.QA_TIER === 'full') {
     'dispatch_od_hold :: trg_dispatch_od_hold_leave_pools',
     'dispatch_od_outside :: trg_dispatch_od_outside_leave_pools',   // dấu tay: vài dòng một lần
     'user_notifications :: trg_wms_notify',       // realtime theo người nhận (topic riêng) — bắt buộc từng dòng
+    // 28/11 (đợt test app — hai trigger mọc từ 19/11 và 25/11 mà không ai thấy vì qa-smoke chỉ chạy tay từ 27/10):
+    'Employee :: trg_employee_password_changed',  // BEFORE … OF password: phải từng dòng mới đặt được NEW.password_changed_at; chỉ nổ khi ĐỔI mật khẩu
+                                                  // (một tài khoản một lần, không có cửa đổi mật khẩu theo lô) + tín hiệu đá phiên đi kênh riêng của người đó
+    'tank_movement :: trg_mes_batch_first_fill',  // có WHEN (kind = FILL và có mẻ): mỗi lần nạp bồn là MỘT dòng do RPC ghi, chỉ đóng dấu first_filled_at lần đầu
   ]
   let rows = null
   try { rows = await restRpc('qa_row_triggers_with_writes') } catch { /* chưa apply migration → báo dưới */ }

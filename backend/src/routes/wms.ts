@@ -153,6 +153,10 @@ router.delete('/lookup/:id', requirePerm('wms_settings', 'manage_type'), lookup.
 router.post('/lookup-unit',        requirePerm('wms_settings', 'manage_unit'), lookup.addUnit)
 router.put('/lookup-unit/reorder', requirePerm('wms_settings', 'manage_unit'), lookup.reorderUnit)  // ĐẶT TRƯỚC /:id
 router.put('/lookup-unit/:id',     requirePerm('wms_settings', 'manage_unit'), lookup.updateUnit)
+// Chạy thử đổi cờ Đơn vị đo (28/11): bao nhiêu mã hàng sẽ chuyển thùng thật ⇄ quy cách gợi ý, mã nào chặn — không ghi gì
+router.get('/lookup-unit/:id/measure-impact', requirePerm('wms_settings', 'manage_unit'),
+  validate({ params: z.object({ id: z.string().min(1).max(64) }), query: z.object({ measure: z.enum(['true', 'false']) }) }),
+  lookup.unitMeasureImpact)
 router.delete('/lookup-unit/:id',  requirePerm('wms_settings', 'manage_unit'), lookup.deleteUnit)
 
 // In tem pallet — log truy vết (in mấy lần, ai in)

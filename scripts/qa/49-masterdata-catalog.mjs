@@ -464,6 +464,64 @@ let UNIT = null
   const sortSau = (await one('LookupValue', `select=sort_order&id=eq.${UNIT.id}`))?.sort_order
   check('[39] Kéo-thả sắp xếp đơn vị tính → thứ tự lưu đúng vị trí mới',
     r.s === 200 && Number(sortSau) === 1, `s=${r.s} · thứ tự ${sortTruoc}→${sortSau} (gửi ở vị trí 1)`)
+
+  // ── Cờ "Đơn vị đo" (28/11 — user: "Cho tự cấu hình đơn vị đo đi. Bởi ko thể phụ thuộc vào hard code đc nhé") ──
+  // Đơn vị đo (kg, lít…) ⇒ bao / thùng của mã dùng nó làm gốc chỉ là GỢI Ý (pack_unit / pack_size); đơn vị đếm ⇒ thùng thật.
+  // Đổi cờ ⇒ DB chuyển các mã ngay trong cùng giao dịch, chặn khi không chuyển trọn. Oracle: tự tính từ số đã ghi vào mã thử.
+  r = await api('/wms/lookup-unit', 'POST', { value: `${P}W`, meta: { role: 'base', label: `${P} Đo thử` } })
+  const W = r.j?.data
+  const wid = W?.id
+  await api(`/masterdata/materials/${mid}`, 'PUT', { base_unit: `${P}W`, entry_unit: 'CAR', units_per_carton: 12, cartons_per_pallet: 10 })
+  const truoc = await one('Material', `select=entry_unit,units_per_carton,pack_unit,pack_size,cartons_per_pallet&id=eq.${mid}`)
+  const nDung = await cnt('Material', `base_unit=eq.${P}W&entry_unit=not.is.null`)
+  r = await api(`/wms/lookup-unit/${wid}/measure-impact?measure=true`)
+  const vanThung = await one('Material', `select=entry_unit&id=eq.${mid}`)
+  check('[39b] Bật thử "Đơn vị đo" → báo trước ĐÚNG số mã sẽ chuyển (đếm lại từ DB) và CHƯA ghi gì',
+    r.s === 200 && W?.meta?.measure !== true && r.j?.data?.total === nDung && r.j?.data?.blocked === 0 && vanThung?.entry_unit === 'CAR',
+    `s=${r.s} · báo ${r.j?.data?.total} mã, DB đếm ${nDung} · mã thử vẫn thùng=${vanThung?.entry_unit}`)
+
+  r = await api(`/wms/lookup-unit/${wid}`, 'PUT', { value: `${P}W`, meta: { role: 'base', label: `${P} Đo thử`, measure: true } })
+  const sauBat = await one('Material', `select=entry_unit,units_per_carton,pack_unit,pack_size,cartons_per_pallet&id=eq.${mid}`)
+  const cppKyVong = Number(truoc?.cartons_per_pallet) * Number(truoc?.units_per_carton)
+  check('[39c] Lưu "Đơn vị đo" → mã đang có thùng thật thành QUY CÁCH GỢI Ý, số / pallet đổi sang đơn vị gốc (× hệ số)',
+    r.s === 200 && sauBat?.entry_unit == null && sauBat?.units_per_carton == null && sauBat?.pack_unit === 'CAR'
+      && Number(sauBat?.pack_size) === Number(truoc?.units_per_carton) && Number(sauBat?.cartons_per_pallet) === cppKyVong,
+    `s=${r.s} · entry=${sauBat?.entry_unit} · gợi ý=${sauBat?.pack_unit} ${sauBat?.pack_size} · số/pallet ${truoc?.cartons_per_pallet}→${sauBat?.cartons_per_pallet} (phải ${cppKyVong})`)
+
+  r = await api(`/wms/lookup-unit/${wid}`, 'PUT', { value: `${P}W` })
+  const giuCo = await one('LookupValue', `select=meta&id=eq.${wid}`)
+  check('[39d] Sửa đơn vị mà KHÔNG gửi cờ (màn cũ) → cờ "Đơn vị đo" giữ nguyên, không âm thầm chuyển ngược các mã',
+    r.s === 200 && giuCo?.meta?.measure === true, `s=${r.s} · meta=${JSON.stringify(giuCo?.meta)}`)
+
+  r = await api(`/masterdata/materials/${mid}`, 'PUT', { entry_unit: 'BAO', units_per_carton: 20 })
+  const formDo = await one('Material', `select=entry_unit,pack_unit,pack_size&id=eq.${mid}`)
+  check('[39e] Form Mã hàng: đơn vị gốc có cờ Đo mà khai Entry Unit → lưu thành quy cách gợi ý (đọc cờ từ danh mục, không danh sách cứng)',
+    r.s === 200 && formDo?.entry_unit == null && formDo?.pack_unit === 'BAO' && Number(formDo?.pack_size) === 20,
+    `s=${r.s} · entry=${formDo?.entry_unit} · gợi ý=${formDo?.pack_unit} ${formDo?.pack_size}`)
+  await api(`/masterdata/materials/${mid}`, 'PUT', { entry_unit: 'CAR', units_per_carton: 12 })
+
+  // số / pallet không chia hết cho hệ số ⇒ tắt cờ phải bị CHẶN, dữ liệu giữ nguyên
+  await restWrite('Material', 'PATCH', `id=eq.${mid}`, { cartons_per_pallet: cppKyVong + 5 })
+  r = await api(`/wms/lookup-unit/${wid}/measure-impact?measure=false`)
+  const chan = r.j?.data
+  r = await api(`/wms/lookup-unit/${wid}`, 'PUT', { value: `${P}W`, meta: { role: 'base', label: `${P} Đo thử`, measure: false } })
+  const coSauChan = await one('LookupValue', `select=meta&id=eq.${wid}`)
+  const matSauChan = await one('Material', `select=entry_unit,pack_unit&id=eq.${mid}`)
+  check('[39f] Tắt "Đơn vị đo" khi có mã KHÔNG chuyển trọn sang thùng (số / pallet không chia hết) → báo trước + chặn 409, cờ và mã giữ nguyên',
+    chan?.blocked === 1 && /không chia hết/.test(chan?.blockers?.[0]?.reason ?? '') && r.s === 409
+      && coSauChan?.meta?.measure === true && matSauChan?.pack_unit === 'CAR' && matSauChan?.entry_unit == null,
+    `chạy thử chặn=${chan?.blocked} "${chan?.blockers?.[0]?.reason ?? ''}" · lưu s=${r.s} "${(r.j?.error?.message ?? '').slice(0, 60)}" · cờ=${coSauChan?.meta?.measure} · mã gợi ý=${matSauChan?.pack_unit}`)
+
+  await restWrite('Material', 'PATCH', `id=eq.${mid}`, { cartons_per_pallet: cppKyVong })
+  r = await api(`/wms/lookup-unit/${wid}`, 'PUT', { value: `${P}W`, meta: { role: 'base', label: `${P} Đo thử`, measure: false } })
+  const sauTat = await one('Material', `select=entry_unit,units_per_carton,pack_unit,pack_size,cartons_per_pallet&id=eq.${mid}`)
+  check('[39g] Tắt "Đơn vị đo" → quy cách gợi ý thành THÙNG THẬT, số / pallet về lại theo thùng (÷ hệ số) — đúng số ban đầu',
+    r.s === 200 && sauTat?.entry_unit === 'CAR' && Number(sauTat?.units_per_carton) === 12 && sauTat?.pack_unit == null
+      && Number(sauTat?.cartons_per_pallet) === Number(truoc?.cartons_per_pallet),
+    `s=${r.s} · thùng=${sauTat?.entry_unit} ${sauTat?.units_per_carton} · gợi ý=${sauTat?.pack_unit} · số/pallet ${sauTat?.cartons_per_pallet} (phải ${truoc?.cartons_per_pallet})`)
+
+  // trả mã thử về như trước khối này (các phép kiểm sau dùng ĐVT ${P}U)
+  await api(`/masterdata/materials/${mid}`, 'PUT', { base_unit: `${P}U`, entry_unit: 'CAR', units_per_carton: 12 })
 }
 
 // ════════════════════════════════════════════════════════════════════════════

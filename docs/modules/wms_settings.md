@@ -15,6 +15,7 @@
 - [`dispatch`](dispatch.md) — Điều vận (hai chiều)
 - [`external_do_sap`](external_do_sap.md) — Dữ liệu bên ngoài → DO SAP (được nhắc tới từ đó)
 - [`fill`](fill.md) — Fill hàng (nhặt lẻ) (được nhắc tới từ đó)
+- [`materials`](materials.md) — Mã hàng (cờ "Đơn vị đo" của tab Đơn vị tính quyết định bao / thùng của mã là thùng thật hay chỉ gợi ý; đổi cờ ⇒ DB chuyển các mã — 28/11)
 - [`outbound`](outbound.md) — Xuất kho (hai chiều)
 - [`packing`](packing.md) — Sổ đóng gói (file này nhắc tới)
 - [`tms_plan`](tms_plan.md) — Vận chuyển: Đặt lịch & Chuyển kho (file này nhắc tới)
@@ -54,6 +55,9 @@ dòng đọc keyset (`archive_fetch`) → CSV.gz `ledger-archive/<bảng>/<YYYY-
 `GET /wms/maintenance/archives` (`manage_system`) = tệp từng sổ + vé tải 1 giờ + lượt gần nhất (khối "Đã lưu trữ ra tệp" ở tab Hệ thống).
 Đo: sổ vết 544 B/dòng trong DB → 54 B trong tệp (nhỏ hơn 10 lần). Gói 23 khối **[archive]** (gieo 05/2014 ở 4 sổ + dòng OD 60 / 5 ngày; ổ khoá
 busy; recent) · gói 61 **[4d3]**.
+
+## 28/11 — Đơn vị tính: cờ "Đơn vị đo" (Cách tính Đo / Đếm)
+User 28/11: "Cho tự cấu hình đơn vị đo đi. Bởi ko thể phụ thuộc vào hard code đc nhé". Tab Đơn vị tính: cột **Cách tính** (Đo / Đếm, đơn vị vai trò Entry ghi —) + ⓘ; form sửa có công tắc **Đơn vị đo (cân / đong / đo)** lưu ở `LookupValue.meta.measure` (quyền `manage_unit`). Đổi cờ của đơn vị đã có ⇒ form chạy thử `GET /wms/lookup-unit/:id/measure-impact` và báo mã nào sẽ chuyển (thùng thật ⇄ quy cách gợi ý) hoặc mã nào chặn; lưu thì DB chuyển ngay trong cùng giao dịch. Luật đầy đủ + chốt chặn: [`materials.md`](materials.md) mục "Mã cân / đong có quy cách GỢI Ý". Không phải cờ 2 tầng Kho + Loại kho: đơn vị tính là danh mục chung của mã hàng (mã hàng dùng chung mọi kho).
 
 ## 26/11 — Cờ "Nhập vượt kế hoạch" (2 tầng)
 `inbound_over_plan` ở `Warehouse` + `warehouse_type_configs` (text, CHECK ALLOW / BLOCK; null = như cũ ở tầng Kho, = theo kho ở tầng Loại), trong `WH_TYPE_CFG_COLS`, ghép tầng ở `resolveInboundOverPlan`, validate chung ở `applyPutawayBody`. Ô ở nhóm NHẬP "Nhập vượt kế hoạch" của `InboundStrategyFields` (mọi kho). Quyền: manage_warehouse / manage_type. Luật áp: inbound.md 26/11 (tối). Chế biến Ba Vì đặt ALLOW (user chốt).

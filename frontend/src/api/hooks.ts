@@ -1838,7 +1838,16 @@ export function useDeleteStorageCondition() {
 
 // ─── Đơn vị tính (unit_of_measure) — danh mục Base/Entry Unit (tab Cài đặt WMS) ──
 export type UnitRole = 'base' | 'entry' | 'both'
-export type UnitRow = { id: string; value: string; sort_order: number; meta?: { role?: UnitRole; label?: string } | null; created_at?: string; updated_at?: string; created_by?: string | null; updated_by?: string | null }
+// measure (28/11): ĐƠN VỊ ĐO (kg, lít…) — số được lẻ, bao / thùng của mã dùng nó làm đơn vị gốc chỉ là quy cách GỢI Ý. Cấu hình ở đây,
+// không có danh sách cố định trong code; đổi cờ ⇒ DB chuyển các mã đang dùng đơn vị đó ngay khi lưu.
+export type UnitMeta = { role?: UnitRole; label?: string; measure?: boolean }
+export type UnitRow = { id: string; value: string; sort_order: number; meta?: UnitMeta | null; created_at?: string; updated_at?: string; created_by?: string | null; updated_by?: string | null }
+/** Kết quả CHẠY THỬ đổi cờ Đơn vị đo (material_units_reclassify, p_apply = false). */
+export type UnitMeasureImpact = {
+  unit: string; measure: boolean; total: number; blocked: number
+  sample: { code: string; name: string | null; from: string }[]
+  blockers: { code: string; name: string | null; reason: string }[]
+}
 
 export function useUnits() {
   return useQuery({
@@ -1853,7 +1862,7 @@ export function useUnits() {
 export function useAddUnit() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (input: { value: string; meta?: { role: UnitRole; label?: string } }) =>
+    mutationFn: (input: { value: string; meta?: UnitMeta }) =>
       apiClient.post('/wms/lookup-unit', input).then(r => r.data.data as UnitRow),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['lookup', 'unit_of_measure'] }),
   })
@@ -1861,9 +1870,25 @@ export function useAddUnit() {
 export function useUpdateUnit() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, value, meta }: { id: string; value: string; meta?: { role: UnitRole; label?: string } }) =>
+    mutationFn: ({ id, value, meta }: { id: string; value: string; meta?: UnitMeta }) =>
       apiClient.put(`/wms/lookup-unit/${id}`, { value, meta }).then(r => r.data.data as UnitRow),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['lookup', 'unit_of_measure'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['lookup', 'unit_of_measure'] })
+      qc.invalidateQueries({ queryKey: ['unit-measure-impact'] })
+      invalidateMaterialQueries(qc)   // đổi cờ Đơn vị đo ⇒ DB vừa chuyển thùng thật ⇄ quy cách gợi ý của các mã dùng đơn vị này
+    },
+  })
+}
+/** Chạy thử đổi cờ Đơn vị đo của một đơn vị đã có — chỉ đọc, gọi khi người dùng vừa đổi ô trong form. */
+export function useUnitMeasureImpact(id: string | null | undefined, measure: boolean, enabled: boolean) {
+  return useQuery({
+    queryKey: ['unit-measure-impact', id, measure],
+    enabled: enabled && !!id,
+    staleTime: 0,
+    queryFn: async () => {
+      const { data } = await apiClient.get(`/wms/lookup-unit/${id}/measure-impact`, { params: { measure: String(measure) } })
+      return data.data as UnitMeasureImpact
+    },
   })
 }
 export function useDeleteUnit() {

@@ -19,7 +19,7 @@ const MATS: (BE.MatUnits | null | undefined)[] = [
   { base_unit: 'KG', pack_unit: 'BAO', pack_size: 20 },              // 27/11: đường trắng — quy cách GỢI Ý 1 bao = 20 kg
   { base_unit: 'l', pack_unit: 'can', pack_size: 200 },               // đơn vị đo viết thường
   { base_unit: 'KG', pack_unit: 'BAO', pack_size: 0 },                // hệ số 0 = không gợi ý
-  { base_unit: 'HOP', pack_unit: 'BAO', pack_size: 20 },              // gợi ý trên mã đếm ⇒ bỏ qua
+  { base_unit: 'HOP', pack_unit: 'BAO', pack_size: 20 },              // gợi ý trên mã đếm (DB chặn) — hai bản vẫn phải khớp
   { base_unit: 'KG', entry_unit: 'BAO', units_per_carton: 20 },       // dữ liệu cũ (DB nay chặn) — hai bản vẫn phải khớp
 ]
 
@@ -72,7 +72,15 @@ describe(`qtyUnits BE ⇄ FE (seed ${SEED})`, () => {
   it('bảng nhãn ĐVT tĩnh khớp nhau (FE chưa nạp danh mục = dùng đúng bảng BE)', () => {
     for (const code of ['CAR', 'HOP', 'KG', 'BAG', 'BAO', 'EA', 'BT', 'SET', 'ROL', 'M2', 'G', 'L', '', null, 'car', ' hop ', 'LẠ']) {
       expect(FE.unitLabel(code), String(code)).toBe(BE.unitLabel(code))
-      expect(FE.isMeasureUnit(code), String(code)).toBe(BE.isMeasureUnit(code))
     }
+  })
+
+  it('cờ Đơn vị đo đọc từ danh mục giống nhau (measureUnitCodes / isMeasureUnitMeta)', () => {
+    const rows = [
+      { value: 'KG', meta: { measure: true } }, { value: ' l ', meta: { measure: true } }, { value: 'HOP', meta: {} },
+      { value: 'M2', meta: { measure: false } }, { value: 'X', meta: { measure: 'true' } }, { value: '', meta: { measure: true } }, { value: 'G', meta: null },
+    ]
+    expect([...FE.measureUnitCodes(rows)].sort()).toEqual([...BE.measureUnitCodes(rows)].sort())
+    for (const r of rows) expect(FE.isMeasureUnitMeta(r.meta), String(r.value)).toBe(BE.isMeasureUnitMeta(r.meta))
   })
 })

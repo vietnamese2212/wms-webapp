@@ -1,5 +1,5 @@
 // FILE SINH TỰ ĐỘNG — `node scripts/gen-db-types.mjs` (từ information_schema STAGING). KHÔNG sửa tay.
-// Sinh lúc 2026-11-27T11:06:10.331Z · 130 bảng/view · 295 hàm · 0 enum
+// Sinh lúc 2026-11-28T02:36:33.728Z · 130 bảng/view · 296 hàm · 0 enum
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[]
 
 export type Database = {
@@ -7714,6 +7714,10 @@ export type Database = {
         Args: Record<PropertyKey, never>
         Returns: Record<string, unknown>[]
       }
+      material_units_reclassify: {
+        Args: { p_unit: string | null; p_measure: boolean | null; p_apply: boolean | null; p_actor?: string | null }
+        Returns: Json
+      }
       materials_page: {
         Args: { p_offset: number | null; p_limit: number | null; p_tokens?: unknown | null; p_categories?: unknown | null; p_scope_cats?: unknown | null; p_status?: unknown | null; p_qr?: unknown | null; p_dq?: unknown | null; p_cat_rules?: Json | null; p_legacy_no_sl?: unknown | null; p_legacy_pe?: unknown | null; p_dims?: unknown | null; p_flags?: unknown | null }
         Returns: Json
@@ -8295,7 +8299,7 @@ export type Database = {
         Returns: boolean
       }
       unaccent: {
-        Args: { arg1: string | null } | { arg1: unknown | null; arg2: string | null }
+        Args: { arg1: unknown | null; arg2: string | null } | { arg1: string | null }
         Returns: string
       }
       unaccent_init: {

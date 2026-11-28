@@ -29,6 +29,7 @@ import { materialMissingFields, type MaterialRequiredInput } from '../../utils/m
 import { palletQtyOnUnitChange } from '../../utils/palletCalc'
 import { hasEntry, unitLabel } from '../../utils/qtyUnits'
 import { splitEntryPack, declaredEntry } from '../../utils/materialUnits'
+import { loadMeasureUnitCodes } from '../../services/unitCatalog'
 
 /** Trạng thái đơn vị + số / pallet của một mã — dùng cho palletUnitFix. */
 type PalletFixState = {
@@ -335,8 +336,8 @@ export async function createMaterial(req: Request, res: Response) {
     const short_name = buildShortName(material_description, material_code, custom_short_name)
     const palColor = parsePalletColor(req.body.pallet_color)
     if ('error' in palColor) return fail(res, 400, 'VALIDATION_ERROR', palColor.error)
-    // 27/11: mã đơn vị đo (KG, L…) khai Entry Unit ⇒ quy cách GỢI Ý (pack_unit / pack_size), không phải entry unit
-    const unitCols = splitEntryPack(base_unit, entry_unit, units_per_carton != null ? Number(units_per_carton) : null)
+    // 27/11: mã đơn vị đo (KG, L… — cờ ở danh mục Đơn vị tính) khai Entry Unit ⇒ quy cách GỢI Ý (pack_unit / pack_size)
+    const unitCols = splitEntryPack(base_unit, entry_unit, units_per_carton != null ? Number(units_per_carton) : null, await loadMeasureUnitCodes())
 
     const { data, error } = await supabase
       .from('Material')
@@ -388,7 +389,7 @@ export async function createMaterial(req: Request, res: Response) {
     if (error) {
       if (error.code === '23505') return fail(res, 409, 'DUPLICATE', 'Mã hàng đã tồn tại')
       if (error.code === '23503') return fail(res, 404, 'NOT_FOUND', 'Nhà máy không tồn tại')
-      throw error
+      return fail(res, error)   // chốt chặn đơn vị của DB (trg_material_unit_kind) nói câu tiếng người ⇒ 409, không thành 500
     }
     ok(res, data)
   } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
@@ -455,7 +456,7 @@ export async function updateMaterial(req: Request, res: Response) {
       if (effEntry && effBase && effEntry === effBase)
         return fail(res, 400, 'VALIDATION_ERROR', 'Entry Unit phải KHÁC Base Unit (vd Base=HOP thì Entry không được HOP)')
       // 27/11: mã đơn vị đo (KG, L…) ⇒ Entry Unit khai ở form là quy cách GỢI Ý (pack_unit / pack_size), không phải entry unit
-      const uc = splitEntryPack(effBase, effEntry, effUpc)
+      const uc = splitEntryPack(effBase, effEntry, effUpc, await loadMeasureUnitCodes())
       unitPatch = { ...uc }
       // thêm / bỏ entry unit THẬT ⇒ số / pallet đổi đơn vị theo (palletUnitFix — chung với nạp Excel); quy cách gợi ý không đổi số / pallet
       if (cur) {
@@ -536,7 +537,7 @@ export async function updateMaterial(req: Request, res: Response) {
       .eq('id', req.params.id)
       .select('*, manufacturer:Manufacturer(id, code, name)')
       .maybeSingle()
-    if (error) throw error
+    if (error) return fail(res, error)   // chốt chặn đơn vị của DB (trg_material_unit_kind) ⇒ 409 kèm câu, không thành 500
     if (!data) return fail(res, 404, 'NOT_FOUND', 'Không tìm thấy hàng hóa')
     ok(res, data)
   } catch (e) { console.error(e); fail(res, 500, 'SERVER_ERROR', 'Lỗi server') }
@@ -806,9 +807,10 @@ export async function uploadExcel(req: Request, res: Response) {
     // Ô "Số / pallet" của file giữ nguyên số cũ (vd file xuất ra rồi chỉ điền thêm Entry Unit) ⇒ app tự đổi; gõ số mới ⇒ giữ số đã gõ.
     // 27/11: Entry Unit + Đv/Thùng của file ⇒ entry unit THẬT (mã đếm) hoặc QUY CÁCH GỢI Ý (mã đơn vị đo: KG, L…) — cùng hàm với
     // form (splitEntryPack). Ô trống giữ giá trị cũ: entry hiệu lực = entry unit hoặc quy cách gợi ý đang có (declaredEntry).
+    const measureUnits = await loadMeasureUnitCodes()   // cờ Đơn vị đo của danh mục — đọc một lần cho cả file
     for (const rec of [...upsertByCode.values(), ...insertByCode.values()]) {
       const d = declaredEntry(rec as Parameters<typeof declaredEntry>[0])
-      Object.assign(rec, splitEntryPack(rec.base_unit as string | null, d.entry, d.factor))
+      Object.assign(rec, splitEntryPack(rec.base_unit as string | null, d.entry, d.factor, measureUnits))
     }
     const palletNotes: string[] = []
     for (const [code, rec] of upsertByCode) {

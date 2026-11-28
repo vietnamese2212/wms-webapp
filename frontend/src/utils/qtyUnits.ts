@@ -63,24 +63,33 @@ export function hasEntry(m?: MatUnits | null): boolean {
 }
 
 /**
- * ĐƠN VỊ ĐO (cân / đong / đo dài–diện tích–thể tích): số theo đơn vị này tự nhiên có phần lẻ.
- * 27/11: mã kg có đơn vị quy cách (đường trắng: 1 bao = 20 kg) hiện "5 bao + 10,5 kg" — phần kg được lẻ,
- * khác hộp / chai / cái (không có 0,5 hộp). Danh sách cố định ở đây (hai bản BE ⇄ FE phải khớp — mirror test).
+ * ĐƠN VỊ ĐO (cân / đong / đo — kg, lít, mét…): số theo đơn vị này tự nhiên có phần lẻ, và quy cách bao / thùng của mã dùng nó làm
+ * đơn vị gốc chỉ là GỢI Ý ("1.000 kg (50 bao)"); đơn vị ĐẾM (hộp, chai, cái…) thì thùng là đơn vị thật ("60 hộp = 1 thùng + 12 hộp").
+ * 28/11 — user: "Cho tự cấu hình đơn vị đo đi. Bởi ko thể phụ thuộc vào hard code đc nhé": nguồn DUY NHẤT là cờ `meta.measure` của
+ * từng đơn vị trong danh mục Đơn vị tính (Cài đặt WMS); DB đọc cùng cờ (qty_is_measure_unit). Không có danh sách cố định trong code.
+ * Helper số lượng không cần biết cờ: dữ liệu đã tách sẵn (mã đo không mang entry unit — trigger trg_material_unit_kind), chỉ
+ * cửa ghi Mã hàng (splitEntryPack) và form Mã hàng đọc cờ qua hai hàm dưới.
  */
-export const MEASURE_UNIT_CODES: readonly string[] = ['KG', 'G', 'MG', 'TON', 'L', 'ML', 'M', 'CM', 'MM', 'M2', 'M3']
-// DB có bản thứ ba của danh sách này: hàm qty_is_measure_unit (migration 20261127d) — test measureUnitsSql đối chiếu
-const MEASURE_UNITS = new Set<string>(MEASURE_UNIT_CODES)
-export function isMeasureUnit(code?: string | null): boolean {
-  return MEASURE_UNITS.has((code ?? '').trim().toUpperCase())
+export function isMeasureUnitMeta(meta?: { measure?: unknown } | null): boolean {
+  return meta?.measure === true
+}
+/** Tập mã đơn vị đo từ danh mục Đơn vị tính (dòng LookupValue `unit_of_measure`). */
+export function measureUnitCodes(rows: readonly { value?: string | null; meta?: { measure?: unknown } | null }[] | null | undefined): Set<string> {
+  const out = new Set<string>()
+  for (const r of rows ?? []) {
+    const code = (r?.value ?? '').trim().toUpperCase()
+    if (code && isMeasureUnitMeta(r?.meta)) out.add(code)
+  }
+  return out
 }
 
 /**
  * Phần theo ĐƠN VỊ GỐC được phép lẻ không — MỘT luật cho mọi cửa nhập số (ô "Thùng + Hộp", upload Excel, điều chỉnh).
- * Mã không quy cách: luôn được (luật cũ). Mã có quy cách thật (thùng + hộp): phải nguyên. Mã đơn vị đo thì DB không cho mang
- * entry unit (material_measure_no_entry_chk) — nhánh isMeasureUnit chỉ là lưới đỡ.
+ * Mã không quy cách: luôn được (luật cũ). Mã có quy cách thật (thùng + hộp): phải nguyên. Mã đơn vị đo (kg, lít…) không bao giờ mang
+ * entry unit (trigger DB trg_material_unit_kind) nên bao của nó không làm số phải nguyên.
  */
 export function baseAllowsDecimal(m?: MatUnits | null): boolean {
-  return !hasEntry(m) || isMeasureUnit(m?.base_unit)
+  return !hasEntry(m)
 }
 
 // Quy cách gợi ý nạp MỘT lần lúc khởi động (Shell — GET /wms/material-pack-hints, chỉ vài mã): object số lượng ở các màn
@@ -109,11 +118,12 @@ function packFields(m?: MatUnits | null): { unit: string; size: number } | null 
 /**
  * QUY CÁCH GỢI Ý của mã cân / đong — user 27/11: "hàng NVL như đường trắng: key 1000 kg sẽ giữ là 1000 kg, chỉ gợi ý là 50 bao
  * thôi, kg vẫn là đơn vị chính"; còn hàng thành phẩm 1 thùng = 48 hộp thì "60 hộp = 1 thùng + 12 hộp" (thùng là entry unit thật).
- * PHÂN BIỆT bằng ĐƠN VỊ GỐC: đơn vị đo (KG, L…) ⇒ "1 bao = 20 kg" nằm ở pack_unit / pack_size, KHÔNG phải entry unit, nên mọi
- * phép quy đổi, cộng tổng, Excel, số / pallet thấy mã y như chưa khai bao; chỉ dòng gợi ý đọc hai cột này.
+ * PHÂN BIỆT bằng ĐƠN VỊ GỐC: đơn vị đo (cờ ở danh mục Đơn vị tính) ⇒ "1 bao = 20 kg" nằm ở pack_unit / pack_size, KHÔNG phải entry
+ * unit, nên mọi phép quy đổi, cộng tổng, Excel, số / pallet thấy mã y như chưa khai bao; chỉ dòng gợi ý đọc hai cột này. DB chỉ cho
+ * mã đơn vị đo mang hai cột này (trg_material_unit_kind) — helper tin dữ liệu, không tự đoán đơn vị.
  */
 export function packOf(m?: MatUnits | null): { unit: string; size: number } | null {
-  if (hasEntry(m) || !isMeasureUnit(m?.base_unit)) return null
+  if (hasEntry(m)) return null
   const p = packFields(m)
   return p && p.unit && p.size > 0 ? p : null
 }

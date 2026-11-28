@@ -67,8 +67,10 @@ describe(`qtyUnits — bất biến (seed ${SEED})`, () => {
     expect(qtyPackHint(19.9, duong)).toBeNull()
     expect(qtyLabel(110, qtyMainUnits(duong))).toBe('110 kg')
     expect(qtyTotalsByUnit([{ qty: 1000, mat: duong }])).toEqual([{ unit: 'KG', qty: 1000 }])
-    // quy cách gợi ý chỉ có nghĩa với đơn vị đo — khai cho mã hộp thì bỏ qua
-    expect(qtyPackHint(100, { base_unit: 'HOP', pack_unit: 'BAO', pack_size: 20 })).toBeNull()
+    // quy cách gợi ý chỉ có nghĩa với đơn vị đo — DB (trg_material_unit_kind) không cho mã đếm mang nó; helper tin dữ liệu
+    // (28/11: đơn vị đo là cờ cấu hình, helper không tự đoán theo tên). Mã có thùng thật thì thùng thắng, không in gợi ý.
+    expect(qtyPackHint(100, { base_unit: 'HOP', entry_unit: 'CAR', units_per_carton: 48, pack_unit: 'BAO', pack_size: 20 })).toBeNull()
+    expect(qtyPackHint(100, { base_unit: 'KG', pack_unit: 'BAO', pack_size: 0 })).toBeNull()
   })
 
   it('ô tổng chuyến 10 thùng sữa + 1.000 kg đường: "10 thùng · 1.000 kg", tiến độ tính theo từng đơn vị', () => {

@@ -39,7 +39,7 @@ import {
   useQAStatuses, useCreateQAStatus, useUpdateQAStatus,
   useSystemSettings, useUpdateSystemSetting, useDataArchives,
   useMachines, useCreateMachine, useUpdateMachine, useDeleteMachine, type WarehouseMachine,
-  useUnits, useAddUnit, useUpdateUnit, useDeleteUnit,
+  useUnits, useAddUnit, useUpdateUnit, useDeleteUnit, useUnitMeasureImpact,
   useStorageConditions, useAddStorageCondition, useUpdateStorageCondition, useDeleteStorageCondition, conditionLabel,
   useVehicleModels, useCustomers,
   useWhTypeConfigs, useSaveWhTypeConfigs, type WhTypeConfig,
@@ -1743,23 +1743,63 @@ const UNIT_ROLE_BADGE: Record<UnitRole, string> = {
   both:  'border-violet-400 text-violet-700 bg-violet-50',
 }
 const unitRoleOf = (u: UnitRow): UnitRole => (u.meta?.role ?? 'both')
+// ĐƠN VỊ ĐO (28/11 — user: "Cho tự cấu hình đơn vị đo đi. Bởi ko thể phụ thuộc vào hard code đc nhé"): cờ meta.measure là nguồn duy
+// nhất cho server, DB và form Mã hàng. Đo (kg, lít…) ⇒ số được lẻ, bao / thùng chỉ là quy cách gợi ý; Đếm (hộp, chai…) ⇒ thùng thật.
+const unitIsMeasure = (u: UnitRow) => unitRoleOf(u) !== 'entry' && u.meta?.measure === true
+const UNIT_KIND_BADGE = { measure: 'border-amber-400 text-amber-800 bg-amber-50', count: 'border-slate-300 text-slate-600 bg-slate-50' }
+
+/** Khung báo trước khi đổi cờ Đơn vị đo của đơn vị ĐÃ CÓ: mã nào sẽ chuyển, mã nào chặn (chạy thử ở server, cùng hàm với lúc lưu). */
+function UnitMeasureImpactNote({ code, measure, q }: { code: string; measure: boolean; q: ReturnType<typeof useUnitMeasureImpact> }) {
+  if (q.isLoading) return <p className="text-[11px] text-slate-500">Đang kiểm các mã hàng dùng {code} làm đơn vị gốc…</p>
+  if (q.isError) return <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1.5">{apiMsg(q.error)}</p>
+  const d = q.data
+  if (!d) return null
+  if (d.blocked > 0) return (
+    <div className="text-xs text-red-700 bg-red-50 border border-red-200 rounded px-2 py-1.5 space-y-1" data-testid="unit-measure-blocked">
+      <p><b>Chưa đổi được:</b> {d.blocked} mã dùng {code} làm đơn vị gốc không chuyển trọn sang đơn vị đếm. Sửa các mã này ở <b>Mã hàng</b> trước:</p>
+      <ul className="list-disc pl-4 space-y-0.5">
+        {d.blockers.slice(0, 8).map(b => <li key={b.code}><span className="font-mono">{b.code}</span> — {b.reason}</li>)}
+        {d.blockers.length > 8 && <li>… và {d.blockers.length - 8} mã khác</li>}
+      </ul>
+    </div>
+  )
+  if (d.total === 0) return <p className="text-[11px] text-slate-500" data-testid="unit-measure-impact">Không mã hàng nào cần chuyển.</p>
+  return (
+    <div className="text-xs text-amber-900 bg-amber-50 border border-amber-200 rounded px-2 py-1.5 space-y-1" data-testid="unit-measure-impact">
+      <p>Khi lưu, <b>{d.total} mã hàng</b> dùng {code} làm đơn vị gốc đổi theo: {measure
+        ? <>thùng thật ⇒ <b>quy cách gợi ý</b>; số lượng và số / pallet tính theo {code}.</>
+        : <>quy cách gợi ý ⇒ <b>thùng thật</b>; số / pallet tính theo thùng, số theo {code} phải nguyên.</>}</p>
+      <ul className="list-disc pl-4 space-y-0.5">
+        {d.sample.slice(0, 5).map(s => <li key={s.code}><span className="font-mono">{s.code}</span> {s.name ? `${s.name} ` : ''}({s.from})</li>)}
+        {d.total > 5 && <li>… và {d.total - 5} mã khác</li>}
+      </ul>
+    </div>
+  )
+}
 
 function UnitDialog({ unit, open, onClose }: { unit: UnitRow | null; open: boolean; onClose: () => void }) {
   const isEdit = !!unit
   const [value, setValue] = useState(unit?.value ?? '')
   const [label, setLabel] = useState(unit?.meta?.label ?? '')
   const [role,  setRole]  = useState<UnitRole>(unit?.meta?.role ?? 'both')
+  const [measure, setMeasure] = useState(unit ? unitIsMeasure(unit) : false)
   const [err, setErr] = useState('')
 
   const { mutate: add,    isPending: adding   } = useAddUnit()
   const { mutate: update, isPending: updating } = useUpdateUnit()
   const isPending = adding || updating
+  // Đơn vị chỉ làm Entry thì cờ vô nghĩa (server cũng tắt). Đổi cờ của đơn vị ĐÃ CÓ ⇒ chạy thử trước để người dùng thấy mã nào đổi.
+  const effMeasure = role !== 'entry' && measure
+  const measureChanged = isEdit && effMeasure !== unitIsMeasure(unit)
+  const impact = useUnitMeasureImpact(unit?.id, effMeasure, measureChanged)
+  const blocked = measureChanged && (impact.isLoading || impact.isError || (impact.data?.blocked ?? 0) > 0)
+  const moving = measureChanged ? impact.data?.total ?? 0 : 0
 
   function handleSubmit() {
     setErr('')
     const code = value.trim().toUpperCase()
     if (!code) { setErr('Mã ĐVT là bắt buộc (vd HOP, CAR, KG)'); return }
-    const meta = { role, label: label.trim() || undefined }
+    const meta = { role, label: label.trim() || undefined, measure: effMeasure }
     const opts = { onSuccess: onClose, onError: (e: unknown) => setErr(apiMsg(e)) }
     if (isEdit) update({ id: unit.id, value: code, meta }, opts)
     else        add({ value: code, meta }, opts)
@@ -1768,8 +1808,8 @@ function UnitDialog({ unit, open, onClose }: { unit: UnitRow | null; open: boole
   return (
     <FormSheet open={open} onClose={onClose} title={isEdit ? 'Sửa đơn vị tính' : 'Thêm đơn vị tính'} widthClass="sm:max-w-lg" footer={<>
           <Button variant="outline" size="sm" onClick={onClose}>Huỷ</Button>
-          <Button size="sm" onClick={handleSubmit} disabled={isPending || !value.trim()}>
-            {isPending ? 'Đang lưu…' : isEdit ? 'Lưu' : 'Tạo'}
+          <Button size="sm" onClick={handleSubmit} disabled={isPending || !value.trim() || blocked} data-testid="unit-save">
+            {isPending ? 'Đang lưu…' : moving > 0 ? `Lưu và chuyển ${moving} mã` : isEdit ? 'Lưu' : 'Tạo'}
           </Button>
         </>}>
         <div className="space-y-3">
@@ -1789,6 +1829,20 @@ function UnitDialog({ unit, open, onClose }: { unit: UnitRow | null; open: boole
             <SingleSelect options={UNIT_ROLE_OPTS} value={role} onChange={v => setRole(v as UnitRole)}
               searchable={false} triggerClassName="w-full h-8 text-sm" />
             <p className="text-[10px] text-slate-400">Base = hiện ở ô Base Unit; Entry = hiện ở ô Entry Unit; Cả 2 = cả hai. Một mã hàng KHÔNG được đặt Base trùng Entry.</p>
+          </div>
+          <div className="space-y-1.5 rounded border border-slate-200 px-2.5 py-2">
+            <div className="flex items-center justify-between gap-3">
+              <Label htmlFor="unit-measure" className="text-xs">Đơn vị đo (cân / đong / đo)</Label>
+              <Switch id="unit-measure" data-testid="unit-measure" checked={effMeasure} disabled={role === 'entry'} onCheckedChange={setMeasure} />
+            </div>
+            <p className="text-[10px] text-slate-500">
+              {role === 'entry'
+                ? 'Đơn vị chỉ làm Entry (thùng, bao) — không áp dụng.'
+                : effMeasure
+                  ? <>Bật: số được lẻ (10,5 kg). Bao / thùng khai ở mã hàng dùng đơn vị này làm gốc chỉ là <b>gợi ý</b>: nhập 1.000 kg vẫn là 1.000 kg, hiện thêm "50 bao".</>
+                  : <>Tắt = đơn vị đếm (hộp, chai, cái…): thùng là đơn vị thật — 60 hộp = 1 thùng + 12 hộp, mã có thùng thì số phải nguyên.</>}
+            </p>
+            {measureChanged && <UnitMeasureImpactNote code={unit!.value} measure={effMeasure} q={impact} />}
           </div>
         </div>
     </FormSheet>
@@ -1810,6 +1864,11 @@ function UnitTab({ canManage }: { canManage: boolean }) {
     <>
       <div className="border-b px-3 py-1.5 shrink-0 flex items-center gap-2 flex-wrap">
         <p className="text-xs text-slate-500 flex-1 min-w-[160px] truncate">{units.length} đơn vị tính · Base/Entry Unit của mã hàng</p>
+        <InfoTip tip={<div className="space-y-1">
+          <p><b>Đo</b> (kg, lít, mét…): số được lẻ. Mã dùng đơn vị này làm gốc mà khai bao / thùng thì đó chỉ là <b>gợi ý</b> — nhập 1.000 kg vẫn là 1.000 kg, hiện thêm "50 bao".</p>
+          <p><b>Đếm</b> (hộp, chai, cái…): thùng là đơn vị thật — nhập 60 hộp thành 1 thùng + 12 hộp, số phải nguyên.</p>
+          <p>Đổi bằng nút bút chì → ô "Đơn vị đo". Mã hàng đang dùng đơn vị đó tự chuyển theo khi lưu.</p>
+        </div>} />
         {canManage && (
           <ActionCluster className="shrink-0" items={[{
             key: 'add', icon: Plus, label: 'Thêm ĐVT', tip: 'Thêm đơn vị tính mới',
@@ -1832,16 +1891,21 @@ function UnitTab({ canManage }: { canManage: boolean }) {
                   <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Mã</TableHead>
                   <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Tên</TableHead>
                   <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Loại</TableHead>
+                  <TableHead className="px-2 py-1.5 text-[9px] whitespace-nowrap">Cách tính</TableHead>
                   {canManage && <TableHead className="px-2 py-1.5 w-16" />}
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {units.map(u => (
-                  <TableRow key={u.id}>
+                  <TableRow key={u.id} data-unit-row={u.value}>
                     <TableCell className="px-2 py-1 font-mono font-semibold text-[10px] text-slate-700 whitespace-nowrap">{u.value}</TableCell>
                     <TableCell className="px-2 py-1 text-[10px] text-slate-600 whitespace-nowrap">{u.meta?.label || <span className="text-slate-300">—</span>}</TableCell>
                     <TableCell className="px-2 py-1 whitespace-nowrap">
                       <Badge variant="outline" className={`text-[10px] ${UNIT_ROLE_BADGE[unitRoleOf(u)]}`}>{UNIT_ROLE_LABEL[unitRoleOf(u)]}</Badge>
+                    </TableCell>
+                    <TableCell className="px-2 py-1 whitespace-nowrap" data-unit-kind>
+                      {unitRoleOf(u) === 'entry' ? <span className="text-slate-300 text-[10px]">—</span>
+                        : <Badge variant="outline" className={`text-[10px] ${UNIT_KIND_BADGE[unitIsMeasure(u) ? 'measure' : 'count']}`}>{unitIsMeasure(u) ? 'Đo' : 'Đếm'}</Badge>}
                     </TableCell>
                     {canManage && (
                       <TableCell className="px-2 py-1 whitespace-nowrap">

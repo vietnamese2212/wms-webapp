@@ -1,5 +1,5 @@
 import { Request, Response } from 'express'
-import { maskServerMessage } from '../../utils/response'
+import { maskServerMessage, fail as failPg } from '../../utils/response'
 import { randomUUID } from 'crypto'
 import { supabase } from '../../lib/supabase'
 import { fetchAllRowsParallel } from '../../utils/pagination'
@@ -186,15 +186,31 @@ export async function reorderLookup(req: Request, res: Response) {
 
 // ─── Đơn vị tính (unit_of_measure) — tab RIÊNG, quyền manage_unit ────────────────
 // type bị KHÓA CỨNG = 'unit_of_measure' để quyền manage_unit KHÔNG sửa được loại kho.
-// meta = { role: base|entry|both, label?: tên tiếng Việt }. Base selector (Mã hàng) lấy role∈{base,both};
+// meta = { role: base|entry|both, label?: tên tiếng Việt, measure?: true }. Base selector (Mã hàng) lấy role∈{base,both};
 // Entry selector lấy role∈{entry,both}. Luật: 1 mã không cho Base = Entry (chặn ở materialController + FE).
+// measure (28/11 — user: "Cho tự cấu hình đơn vị đo đi. Bởi ko thể phụ thuộc vào hard code đc nhé"): ĐƠN VỊ ĐO (kg, lít…) ⇒ số được
+// lẻ, quy cách bao / thùng của mã dùng nó làm đơn vị gốc chỉ là GỢI Ý. Đổi cờ ⇒ trigger DB trg_lookup_unit_measure_sync chuyển các
+// mã đó ngay trong cùng giao dịch (material_units_reclassify), chặn khi không chuyển trọn được. Đơn vị chỉ làm Entry thì cờ vô nghĩa.
 const UNIT_ROLES = ['base', 'entry', 'both'] as const
 type UnitRole = typeof UNIT_ROLES[number]
-function sanitizeUnitMeta(raw: unknown): { role: UnitRole; label?: string } {
+type UnitMeta = { role: UnitRole; label?: string; measure?: true }
+function sanitizeUnitMeta(raw: unknown, prev?: unknown): UnitMeta {
   const o = (raw && typeof raw === 'object') ? raw as Record<string, unknown> : {}
+  const p = (prev && typeof prev === 'object') ? prev as Record<string, unknown> : {}
   const r = typeof o.role === 'string' && (UNIT_ROLES as readonly string[]).includes(o.role) ? o.role as UnitRole : 'both'
   const label = typeof o.label === 'string' ? o.label.trim() : ''
-  return label ? { role: r, label } : { role: r }
+  // Client không gửi measure (bản cũ) ⇒ GIỮ cờ đang có — bỏ sót key là tắt cờ là chuyển hàng trăm mã ÂM THẦM
+  const measure = r !== 'entry' && (typeof o.measure === 'boolean' ? o.measure : p.measure === true)
+  return { role: r, ...(label ? { label } : {}), ...(measure ? { measure: true as const } : {}) }
+}
+/** Mã hàng đang trỏ vào một đơn vị — base, entry hoặc quy cách gợi ý (cột TEXT, không có khoá ngoại kéo theo). */
+async function unitMaterialUsage(code: string): Promise<number> {
+  const [b, e, p] = await Promise.all([
+    supabase.from('Material').select('id', { count: 'exact', head: true }).eq('base_unit', code),
+    supabase.from('Material').select('id', { count: 'exact', head: true }).eq('entry_unit', code),
+    supabase.from('Material').select('id', { count: 'exact', head: true }).eq('pack_unit', code),
+  ])
+  return (b.count ?? 0) + (e.count ?? 0) + (p.count ?? 0)
 }
 
 export async function addUnit(req: Request, res: Response) {
@@ -211,7 +227,7 @@ export async function addUnit(req: Request, res: Response) {
     .select('id, value, sort_order, meta, created_at, updated_at, created_by, updated_by').single()
   if (error) {
     if (error.code === '23505') return fail(res, `"${code}" đã tồn tại`)
-    return fail(res, error.message, 500)
+    return failPg(res, error)
   }
   res.json({ success: true, data })
 }
@@ -227,11 +243,7 @@ export async function updateUnit(req: Request, res: Response) {
   // có gì kéo theo — mã hàng trỏ vào một mã đơn vị không còn tồn tại và mất nhãn tiếng Việt. Xoá
   // thì đã chặn (dưới), đổi tên thì chưa: cùng hậu quả mà chỉ một cửa có rào (gói QA 49 phép [38]).
   if (code !== cur.value) {
-    const [b, e] = await Promise.all([
-      supabase.from('Material').select('id', { count: 'exact', head: true }).eq('base_unit', cur.value),
-      supabase.from('Material').select('id', { count: 'exact', head: true }).eq('entry_unit', cur.value),
-    ])
-    const total = (b.count ?? 0) + (e.count ?? 0)
+    const total = await unitMaterialUsage(cur.value)
     if (total > 0) {
       return fail(res, `ĐVT "${cur.value}" đang được ${total} mã hàng dùng — không đổi được MÃ. `
         + 'Muốn đổi cách gọi thì sửa ô Tên hiển thị; đổi mã thì phải cập nhật các mã hàng đó trước.', 409)
@@ -239,14 +251,29 @@ export async function updateUnit(req: Request, res: Response) {
   }
   // Không gửi `meta` thì GIỮ NGUYÊN vai trò + tên hiển thị đang có. Bản cũ ghi đè vô điều kiện nên
   // mỗi lần sửa mã mà quên kèm meta là đơn vị mất vai trò (entry → both) và mất tên tiếng Việt.
-  const nextMeta = meta === undefined ? (cur as { meta?: unknown }).meta ?? null : sanitizeUnitMeta(meta)
+  const curMeta = (cur as { meta?: unknown }).meta ?? null
+  const nextMeta = meta === undefined ? curMeta : sanitizeUnitMeta(meta, curMeta)
   const { data, error } = await supabase.from('LookupValue')
     .update({ value: code, meta: nextMeta, updated_at: new Date().toISOString(), updated_by: req.user?.name || null })
     .eq('id', id).select('id, value, sort_order, meta, created_at, updated_at, created_by, updated_by').single()
   if (error) {
     if (error.code === '23505') return fail(res, `"${code}" đã tồn tại`)
-    return fail(res, error.message, 500)
+    // UNIT_RECLASSIFY_BLOCKED (đổi cờ Đơn vị đo mà có mã không chuyển trọn được) ⇒ 409 kèm câu của DB
+    return failPg(res, error)
   }
+  res.json({ success: true, data })
+}
+
+// GET /wms/lookup-unit/:id/measure-impact?measure=true|false — CHẠY THỬ đổi cờ Đơn vị đo: bao nhiêu mã hàng dùng đơn vị này làm đơn vị
+// gốc sẽ được chuyển (thùng thật ⇄ quy cách gợi ý), mã nào chặn và vì sao. Không ghi gì — cùng hàm DB với lúc lưu thật (p_apply=false),
+// nên con số báo trước không lệch với lúc lưu.
+export async function unitMeasureImpact(req: Request, res: Response) {
+  const { id } = req.params
+  const measure = String(req.query.measure) === 'true'
+  const { data: cur } = await supabase.from('LookupValue').select('type, value').eq('id', id).maybeSingle()
+  if (!cur || cur.type !== 'unit_of_measure') return fail(res, 'Không tìm thấy đơn vị tính', 404)
+  const { data, error } = await supabase.rpc('material_units_reclassify', { p_unit: cur.value, p_measure: measure, p_apply: false })
+  if (error) return failPg(res, error)
   res.json({ success: true, data })
 }
 
@@ -254,12 +281,8 @@ export async function deleteUnit(req: Request, res: Response) {
   const { id } = req.params
   const { data: cur } = await supabase.from('LookupValue').select('type, value').eq('id', id).maybeSingle()
   if (!cur || cur.type !== 'unit_of_measure') return fail(res, 'Không tìm thấy đơn vị tính', 404)
-  // Chặn xóa ĐVT đang được dùng làm base_unit / entry_unit của mã hàng → tránh mã mất đơn vị
-  const [b, e] = await Promise.all([
-    supabase.from('Material').select('id', { count: 'exact', head: true }).eq('base_unit', cur.value),
-    supabase.from('Material').select('id', { count: 'exact', head: true }).eq('entry_unit', cur.value),
-  ])
-  const total = (b.count ?? 0) + (e.count ?? 0)
+  // Chặn xóa ĐVT đang được dùng làm base_unit / entry_unit / quy cách gợi ý (BAO của đường trắng) của mã hàng → tránh mã mất đơn vị
+  const total = await unitMaterialUsage(cur.value)
   if (total > 0) return fail(res, `ĐVT "${cur.value}" đang được ${total} mã hàng dùng — không thể xóa`, 409)
   const { error } = await supabase.from('LookupValue').delete().eq('id', id)
   if (error) return fail(res, error.message, 500)

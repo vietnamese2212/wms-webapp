@@ -39,7 +39,7 @@ import { needsShelfLife, needsPalletPerEa, whTypeBadgeCls, type WhTypeMetaMap } 
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import type { Material, WarehousePalletOverride, SupplierShelfLifeOverride } from '@/types'
-import { unitLabel, isMeasureUnit, qtyPackHint } from '@/utils/qtyUnits'
+import { unitLabel, measureUnitCodes, qtyPackHint } from '@/utils/qtyUnits'
 import { palletQtyOnUnitChange } from '@/utils/palletCalc'
 
 type WhRow = { id: string; code: string; name: string }
@@ -211,7 +211,9 @@ export default function Materials() {
   // Số / pallet tính theo entry unit THẬT nếu có (thùng), không thì theo đơn vị gốc. Sửa mã mà thêm / bỏ thùng ⇒ nhắc trước app sẽ
   // tự đổi số (cùng hàm palletQtyOnUnitChange với server). 27/11: mã có đơn vị gốc là đơn vị đo (KG, L…) thì "Entry Unit" khai ở form
   // là QUY CÁCH GỢI Ý (1 bao = 20 kg) — server lưu vào pack_unit / pack_size, số lượng và số / pallet vẫn theo kg.
-  const formPackHint = isMeasureUnit(form.base_unit) && !!form.entry_unit.trim()
+  // 28/11: đơn vị nào là đơn vị đo do cờ "Đơn vị đo" ở Cài đặt WMS → Đơn vị tính quyết định (cùng cờ server + DB đọc).
+  const measureUnits = useMemo(() => measureUnitCodes(unitCatalog), [unitCatalog])
+  const formPackHint = measureUnits.has(form.base_unit.trim().toUpperCase()) && !!form.entry_unit.trim()
   const formHasEntry = !!form.entry_unit.trim() && Number(form.units_per_carton) > 0 && !formPackHint
   const detailPalletUnit = detailMat
     ? unitLabel(detailMat.entry_unit && Number(detailMat.units_per_carton) > 0 ? detailMat.entry_unit : detailMat.base_unit)
@@ -324,7 +326,7 @@ export default function Materials() {
         'Mã ĐÃ có ⇒ cập nhật ô có giá trị, ô để trống giữ nguyên.',
         'Thùng/Pallet: số đơn vị gốc trên một pallet đầy (mã tính KG thì ghi số kg / pallet). Pallet/EA = 1 ÷ số đó (1.000 kg/pallet ⇒ 0,001).',
         'Có Entry Unit (vd CAR) thì bắt buộc Đv/Thùng = số Base Unit trong 1 Entry; Entry phải khác Base.',
-        'Base Unit là đơn vị đo (KG, L…) mà khai Entry Unit (vd BAO, Đv/Thùng 20) ⇒ chỉ là quy cách GỢI Ý "50 bao": số lượng và Thùng/Pallet vẫn ghi theo kg.',
+        'Base Unit là đơn vị đo (KG, L… — tích "Đơn vị đo" ở Cài đặt WMS → Đơn vị tính) mà khai Entry Unit (vd BAO, Đv/Thùng 20) ⇒ chỉ là quy cách GỢI Ý "50 bao": số lượng và Thùng/Pallet vẫn ghi theo kg.',
         'Cột (1/0): 1 = bật, 0 = tắt, trống = giữ nguyên (mã mới: tắt).',
         'File còn một dòng lỗi thì KHÔNG ghi gì.',
       ],

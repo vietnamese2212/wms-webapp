@@ -4,8 +4,9 @@
 //  - đơn vị đếm (HOP, BT, EA…): entry unit THẬT — "60 hộp = 1 thùng + 12 hộp", số theo hộp phải nguyên;
 //  - đơn vị đo (KG, L…): QUY CÁCH GỢI Ý — user 27/11 "đường trắng key 1000 kg giữ là 1000 kg, chỉ gợi ý 50 bao, kg vẫn là đơn
 //    vị chính" ⇒ lưu ở pack_unit / pack_size, entry_unit để trống. Mọi phép quy đổi / tổng / Excel / số pallet thấy mã như chưa
-//    khai bao. DB chặn cửa quên tách: material_measure_no_entry_chk · material_pack_hint_chk (migration 20261127d).
-import { isMeasureUnit } from './qtyUnits'
+//    khai bao. DB chặn cửa quên tách: trigger trg_material_unit_kind (migration 20261128).
+// Đơn vị nào là đơn vị đo do CỜ của danh mục Đơn vị tính quyết định (28/11 — Cài đặt WMS → Đơn vị tính, không còn danh sách cố
+// định): cửa ghi nạp tập mã đơn vị đo bằng loadMeasureUnitCodes() (services/unitCatalog.ts) rồi truyền vào đây.
 
 export type UnitCols = {
   entry_unit: string | null
@@ -14,11 +15,13 @@ export type UnitCols = {
   pack_size: number | null
 }
 
-export function splitEntryPack(base: string | null | undefined, entry: string | null | undefined, factor: number | string | null | undefined): UnitCols {
+export function splitEntryPack(base: string | null | undefined, entry: string | null | undefined, factor: number | string | null | undefined,
+                               measureUnits: ReadonlySet<string>): UnitCols {
   const e = String(entry ?? '').trim().toUpperCase() || null
   const n = factor == null || factor === '' ? null : Number(factor)
   const f = n != null && isFinite(n) ? n : null
-  if (e && isMeasureUnit(base)) return { entry_unit: null, units_per_carton: null, pack_unit: e, pack_size: f }
+  const b = String(base ?? '').trim().toUpperCase()
+  if (e && b && measureUnits.has(b)) return { entry_unit: null, units_per_carton: null, pack_unit: e, pack_size: f }
   return { entry_unit: e, units_per_carton: f, pack_unit: null, pack_size: null }
 }
 

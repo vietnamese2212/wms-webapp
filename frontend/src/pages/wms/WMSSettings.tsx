@@ -1748,6 +1748,40 @@ const unitRoleOf = (u: UnitRow): UnitRole => (u.meta?.role ?? 'both')
 const unitIsMeasure = (u: UnitRow) => unitRoleOf(u) !== 'entry' && u.meta?.measure === true
 const UNIT_KIND_BADGE = { measure: 'border-amber-400 text-amber-800 bg-amber-50', count: 'border-slate-300 text-slate-600 bg-slate-50' }
 
+/** Hướng dẫn cờ Đơn vị đo kèm ví dụ (user 28/11: "có tool tip hướng dẫn nó cho tôi nhé, lấy ví dụ") — một nguồn cho ⓘ ở thanh
+ *  trên tab Đơn vị tính và ⓘ cạnh công tắc trong form. Danh sách mã Đo / Đếm đọc từ danh mục, không ghi cứng. */
+function UnitMeasureGuide() {
+  const { data: units = [] } = useUnits()
+  const listOf = (rows: UnitRow[]) => rows.length === 0 ? '—'
+    : rows.slice(0, 6).map(u => u.value).join(', ') + (rows.length > 6 ? '…' : '')
+  const usable = units.filter(u => unitRoleOf(u) !== 'entry')
+  return (
+    <div className="space-y-1.5" data-testid="unit-measure-guide">
+      <p><b>Đơn vị đo</b> = đơn vị cân / đong / đo. Cờ này quyết định bao / thùng khai ở mã hàng là <b>thật</b> hay chỉ <b>gợi ý</b>.</p>
+      <div className="rounded border border-amber-200 bg-amber-50 px-2 py-1 text-amber-900">
+        <p><b>Bật = Đo</b> · đang bật: {listOf(usable.filter(unitIsMeasure))}</p>
+        <p className="mt-0.5">Vd Đường trắng: gốc KG, khai BAO = 20 KG</p>
+        <ul className="list-disc pl-4">
+          <li>Nhập 1.000 KG → giữ 1.000 KG, hiện thêm "50 BAO" để gợi ý</li>
+          <li>Được nhập số lẻ: 10,5 KG</li>
+          <li>Tồn, phiếu, số / pallet đều tính bằng KG</li>
+        </ul>
+      </div>
+      <div className="rounded border border-slate-200 bg-slate-50 px-2 py-1 text-slate-700">
+        <p><b>Tắt = Đếm</b> · đang tắt: {listOf(usable.filter(u => !unitIsMeasure(u)))}</p>
+        <p className="mt-0.5">Vd Sữa KUN 100ml: gốc HOP, CAR = 48 HOP</p>
+        <ul className="list-disc pl-4">
+          <li>Nhập 60 HOP → 1 CAR + 12 HOP</li>
+          <li>Nhập 1 CAR + 12 HOP → giữ nguyên 1 CAR + 12 HOP</li>
+          <li>Số phải nguyên: 10,5 HOP bị chặn</li>
+        </ul>
+      </div>
+      <p><b>Đổi cờ của đơn vị đang dùng:</b> mã hàng lấy nó làm gốc tự chuyển khi lưu, form báo trước mã nào đổi.
+        Vd tắt Đo của KG ⇒ BAO 20 thành thùng thật, số / pallet 1.000 KG ⇒ 50 BAO. Không chia hết thì app chặn và chỉ ra mã.</p>
+    </div>
+  )
+}
+
 /** Khung báo trước khi đổi cờ Đơn vị đo của đơn vị ĐÃ CÓ: mã nào sẽ chuyển, mã nào chặn (chạy thử ở server, cùng hàm với lúc lưu). */
 function UnitMeasureImpactNote({ code, measure, q }: { code: string; measure: boolean; q: ReturnType<typeof useUnitMeasureImpact> }) {
   if (q.isLoading) return <p className="text-[11px] text-slate-500">Đang kiểm các mã hàng dùng {code} làm đơn vị gốc…</p>
@@ -1832,7 +1866,10 @@ function UnitDialog({ unit, open, onClose }: { unit: UnitRow | null; open: boole
           </div>
           <div className="space-y-1.5 rounded border border-slate-200 px-2.5 py-2">
             <div className="flex items-center justify-between gap-3">
-              <Label htmlFor="unit-measure" className="text-xs">Đơn vị đo (cân / đong / đo)</Label>
+              <div className="flex items-center gap-1.5">
+                <Label htmlFor="unit-measure" className="text-xs">Đơn vị đo (cân / đong / đo)</Label>
+                <InfoTip tip={<UnitMeasureGuide />} />
+              </div>
               <Switch id="unit-measure" data-testid="unit-measure" checked={effMeasure} disabled={role === 'entry'} onCheckedChange={setMeasure} />
             </div>
             <p className="text-[10px] text-slate-500">
@@ -1864,10 +1901,9 @@ function UnitTab({ canManage }: { canManage: boolean }) {
     <>
       <div className="border-b px-3 py-1.5 shrink-0 flex items-center gap-2 flex-wrap">
         <p className="text-xs text-slate-500 flex-1 min-w-[160px] truncate">{units.length} đơn vị tính · Base/Entry Unit của mã hàng</p>
-        <InfoTip tip={<div className="space-y-1">
-          <p><b>Đo</b> (kg, lít, mét…): số được lẻ. Mã dùng đơn vị này làm gốc mà khai bao / thùng thì đó chỉ là <b>gợi ý</b> — nhập 1.000 kg vẫn là 1.000 kg, hiện thêm "50 bao".</p>
-          <p><b>Đếm</b> (hộp, chai, cái…): thùng là đơn vị thật — nhập 60 hộp thành 1 thùng + 12 hộp, số phải nguyên.</p>
-          <p>Đổi bằng nút bút chì → ô "Đơn vị đo". Mã hàng đang dùng đơn vị đó tự chuyển theo khi lưu.</p>
+        <InfoTip tip={<div className="space-y-1.5">
+          <UnitMeasureGuide />
+          <p className="text-slate-500">Đổi: bút chì ở dòng đơn vị → công tắc "Đơn vị đo".</p>
         </div>} />
         {canManage && (
           <ActionCluster className="shrink-0" items={[{

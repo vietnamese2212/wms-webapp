@@ -371,8 +371,20 @@ function onChange(msg: ChangeMsg): void {
   })
 }
 
-function onStatus(label: string) {
+// Kênh nào ĐANG SỐNG (đã SUBSCRIBED, chưa đứt) — để hỏi định kỳ chỉ làm lưới an toàn khi realtime đứt (28/11, đo hạn mức:
+// chuông hỏi lại cảnh báo mỗi 2 phút ở MỌI tab đang mở, ~25 KB/lần ≈ 750 KB/giờ/tab + 30 lượt gọi Vercel/giờ, trong khi
+// realtime đã báo ngay khi bảng đổi). Nhãn kênh: 'kênh chung' (bảng nghiệp vụ) · 'kênh cá nhân' (user_notifications).
+export type RealtimeChannelLabel = 'kênh chung' | 'kênh cá nhân'
+const liveChannels = new Set<RealtimeChannelLabel>()
+export const isRealtimeLive = (label: RealtimeChannelLabel) => liveChannels.has(label)
+/** `refetchInterval` cho query đã có trong TABLE_QUERY_MAP: kênh sống ⇒ hỏi thưa (lưới cuối), kênh đứt ⇒ hỏi dày như cũ. */
+export const pollUnlessRealtime = (label: RealtimeChannelLabel, whenDownMs: number, whenLiveMs = 15 * 60_000) =>
+  () => (liveChannels.has(label) ? whenLiveMs : whenDownMs)
+
+function onStatus(label: RealtimeChannelLabel) {
   return (status: string, err?: Error) => {
+    if (status === 'SUBSCRIBED') liveChannels.add(label)
+    else liveChannels.delete(label)
     if (status === 'SUBSCRIBED') {
       // Nối LẠI sau khi đứt (không phải lần subscribe đầu): mọi event trong lúc đứt
       // đã mất vĩnh viễn → invalidate toàn bộ để list refetch, xóa dữ liệu stale.
@@ -422,6 +434,7 @@ export function connectRealtimeEvents(employeeId?: string | null): void {
 export function disconnectRealtimeEvents(): void {
   if (!supabaseClient) return
   closing = true
+  liveChannels.clear()
   if (channel) { supabaseClient.removeChannel(channel); channel = null }
   if (userChannel) { supabaseClient.removeChannel(userChannel); userChannel = null; userTopic = '' }
 }

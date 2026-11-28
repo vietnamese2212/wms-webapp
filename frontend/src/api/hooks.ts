@@ -11,7 +11,7 @@ import {
 import { apiClient } from './client'
 import { supabaseClient } from '@/lib/supabase'
 import { toast } from '@/components/ui/use-toast'
-import { suppressTmsOrdersRealtime } from './realtimeEvents'
+import { suppressTmsOrdersRealtime, pollUnlessRealtime, isRealtimeLive } from './realtimeEvents'
 import { applyDispatchDelta, applyDispatchTrip, type DispatchPlanDelta } from '@/utils/dispatchDelta'
 import { useActiveInboundStore } from '@/stores/activeInboundStore'
 import { useActiveVehiclesStore } from '@/stores/activeVehiclesStore'
@@ -25,15 +25,17 @@ const delay = (ms = 600) => new Promise((r) => setTimeout(r, ms))
 
 // ─── MASTERDATA (gọi API thật) ────────────────────────────────
 
+// MỘT lần tải cho cả hai biến thể (28/11, đo hạn mức): `useWarehouses(true)` và `useWarehouses()` từng là hai khoá riêng ⇒ cùng
+// ~150 kho (~75 KB, kèm đếm vị trí + nhân sự mỗi kho trên DB) tải hai lần mỗi phiên. Nay tải trọn một lần rồi lọc tại máy bằng đúng
+// luật server từng áp cho `active=true`: is_active = true. Khoá vẫn bắt đầu bằng 'warehouses' nên mọi invalidate / realtime cũ vẫn ăn.
 export function useWarehouses(onlyActive = false) {
   return useQuery({
-    queryKey: ['warehouses', onlyActive],
+    queryKey: ['warehouses', 'all'],
     queryFn: async () => {
-      const { data } = await apiClient.get('/masterdata/warehouses', {
-        params: onlyActive ? { active: 'true' } : {},
-      })
+      const { data } = await apiClient.get('/masterdata/warehouses')
       return data.data as any[]
     },
+    select: rows => (onlyActive ? rows.filter((w: { is_active?: boolean } | null) => w?.is_active === true) : rows),
   })
 }
 
@@ -2095,9 +2097,10 @@ export async function fetchInventoryExport(params?: Parameters<typeof useInvento
   return (data.data?.entries ?? []) as InventoryEntry[]
 }
 
-export function useInventoryFacets(params?: { warehouse_ids?: string[]; categories?: string[] }) {
+export function useInventoryFacets(params?: { warehouse_ids?: string[]; categories?: string[] }, enabled = true) {
   return useQuery({
     queryKey: ['inventory-facets', params],
+    enabled,
     staleTime: 5 * 60_000,
     queryFn: async () => {
       const { warehouse_ids, categories } = params ?? {}
@@ -6939,16 +6942,20 @@ export function useDiscardDispatchPlan() {
   return useMutation({ mutationFn: (id: string) => apiClient.delete(`/tms/dispatch/plans/${id}`, { timeout: 120_000 }).then(r => r.data.data as { id: string; status: DispatchPlan['status']; discarded_trips: number; removed_from_khvc?: number; replan_error?: string | null }), onSuccess: () => { invalidateDispatch(qc); for (const k of [['khvc'], ['do-sap'], ['gdos'], ['gdos-paged'], ['trip-flow']]) qc.invalidateQueries({ queryKey: k }) } })
 }
 
+// MỘT lần tải cho mọi biến thể (28/11, đo hạn mức): trước đây mỗi cặp (chỉ đang dùng, loại) là một khoá riêng ⇒ cùng danh mục
+// ~110 công ty (~34 KB) tải lại 3–4 lần mỗi phiên khi đi qua Tồn kho · Đặt lịch · Cài đặt TMS · Đăng ký cổng. Nay tải trọn một lần
+// (server vẫn cắt theo ĐVVT của người dùng) rồi lọc tại máy bằng đúng luật server từng áp: is_active = true · type khớp chính xác.
 export function useTransportCompanies(onlyActive = false, type?: 'NCC' | 'ĐVVT') {
   return useQuery({
-    queryKey: ['tms-transport-companies', onlyActive, type ?? ''],
+    queryKey: ['tms-transport-companies', 'all'],
     staleTime: 30 * 60_000,
     queryFn: async () => {
-      const { data } = await apiClient.get('/tms/transport-companies', {
-        params: { ...(onlyActive ? { is_active: 'true' } : {}), ...(type ? { type } : {}) },
-      })
+      const { data } = await apiClient.get('/tms/transport-companies')
       return data.data as TransportCompany[]
     },
+    select: (rows: TransportCompany[]) => (onlyActive || type)
+      ? rows.filter(c => (!onlyActive || c.is_active === true) && (!type || c.type === type))
+      : rows,
   })
 }
 
@@ -8329,7 +8336,9 @@ export function useAlerts(params: { status: string; rule?: string; severity?: st
   return useQuery({
     queryKey: ['alerts-list', params],
     enabled,   // chuông Header tắt query khi user không có alerts.view (khỏi 403 ồn)
-    refetchInterval: 120_000,   // quét lười phía BE throttle 10' — refetch chỉ đọc bảng
+    // quét lười phía BE throttle 10' — refetch chỉ đọc bảng. alert_events có trong TABLE_QUERY_MAP: kênh chung sống ⇒ chỉ hỏi
+    // 15'/lần làm lưới cuối; kênh đứt ⇒ 2' như cũ (28/11 — chuông mount ở MỌI trang nên hỏi 2' là ~750 KB + 30 lượt Vercel / giờ / tab)
+    refetchInterval: pollUnlessRealtime('kênh chung', 120_000),
     queryFn: async () => {
       const { data } = await apiClient.get('/wms/alerts', { params })
       return data.data as { rows: AlertRow[]; total: number }
@@ -8349,7 +8358,10 @@ export function useScanAlerts() {
       // như chạy bình thường, chỉ có LƯỢT QUÉT là không bao giờ chạy. Bắt được nhờ soi console thật
       // trên Preview (gọi bằng fetch tay thì 200 — fetch không body khác axios body null).
       apiClient.post('/wms/alerts/scan', {}, { params: fresh ? { fresh: 1 } : undefined }).then(r => r.data.data),
-    onSettled: () => qc.invalidateQueries({ queryKey: ['alerts-list'] }),
+    // Lượt quét nền (chuông, lúc mở app + mỗi 10') mà kênh chung SỐNG ⇒ không tự tải lại: cảnh báo mới / đóng đều ghi alert_events
+    // và realtime đã báo; tải lại vô điều kiện = thêm một lần ~25 KB mỗi lần mở app dù không gì đổi (28/11, đo hạn mức). Người bấm
+    // quét tay (fresh) hoặc realtime đứt ⇒ vẫn tải lại như cũ.
+    onSettled: (_d, _e, fresh) => { if (fresh || !isRealtimeLive('kênh chung')) qc.invalidateQueries({ queryKey: ['alerts-list'] }) },
   })
 }
 export function useAckAlert() {
@@ -8394,7 +8406,8 @@ export function useNotifyFeed(enabled = true) {
   return useQuery({
     queryKey: ['notify-feed'],
     enabled,
-    refetchInterval: 120_000,
+    // user_notifications đi kênh cá nhân (TABLE_QUERY_MAP) ⇒ kênh sống chỉ hỏi 15'/lần làm lưới cuối, đứt thì 2' như cũ (28/11)
+    refetchInterval: pollUnlessRealtime('kênh cá nhân', 120_000),
     queryFn: async () => {
       const { data } = await apiClient.get('/notify/feed')
       return data.data as { rows: NotifyFeedRow[]; unread: number }

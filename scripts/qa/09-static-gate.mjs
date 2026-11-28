@@ -387,23 +387,32 @@ function countLocPickerWithoutScan(sampleOut) {
 }
 
 function countCatalogueFullLoad(sampleOut) {
-  const HOOKS = ['useLocationsReal', 'useMaterials']
+  // [mẫu gọi, chữ nào trong đối số chứng tỏ đã thu hẹp]. 28/11 (đo hạn mức): thêm danh mục XE (~950 xe ≈ 330 KB) và lời gọi
+  // THẲNG `apiClient.get('<danh mục>')` — trang Đăng ký cổng tự gọi `apiClient.get('/tms/vehicles')` không tham số, đi vòng qua
+  // hook nên luật cũ (chỉ soi useLocationsReal / useMaterials) không thấy, và mỗi lần mở trang tải cả đội xe chỉ để dựng ô chọn.
+  const PATTERNS = [
+    ['useLocationsReal\\s*\\(', /\b(limit|ids)\b/],
+    ['useMaterials\\s*\\(', /\b(limit|ids)\b/],
+    ['useTmsVehicles\\s*\\(', /\b(limit|ncc_id)\b/],          // xe của MỘT ĐVVT là tập nhỏ; không lọc ĐVVT = cả đội xe
+    ["apiClient\\.get\\(\\s*['\"`]/(tms/vehicles|masterdata/materials|masterdata/locations)['\"`]", /\b(limit|ids|search|page|ncc_id|ncc_ids)\b/],
+  ]
   let n = 0
   for (const f of filesOf('frontend/src', ['.ts', '.tsx'])) {
     if (f.endsWith(`api${sep}hooks.ts`)) continue
     const src = readFileSync(f, 'utf8')
-    for (const hook of HOOKS) {
-      const re = new RegExp(`\\b${hook}\\s*\\(`, 'g')
+    for (const [pat, narrowed] of PATTERNS) {
+      const re = new RegExp(`\\b${pat}`, 'g')
       let m
       while ((m = re.exec(src))) {
-        let i = m.index + m[0].length, depth = 1
+        // đối số = từ dấu "(" mở của lời gọi tới dấu ")" khớp
+        let i = src.indexOf('(', m.index) + 1, depth = 1
         while (i < src.length && depth > 0) {
           if (src[i] === '(') depth++
           else if (src[i] === ')') depth--
           i++
         }
         const args = src.slice(m.index, i)
-        if (/\blimit\b/.test(args) || /\bids\b/.test(args)) continue
+        if (narrowed.test(args)) continue
         n++
         if (sampleOut && sampleOut.length < 5)
           sampleOut.push(`${f.slice(ROOT.length + 1)}:${src.slice(0, m.index).split('\n').length}`)
@@ -1472,7 +1481,7 @@ const RULES = [
   },
   {
     key: 'catalogue_full_load',
-    label: 'ô chọn nạp CẢ DANH MỤC về trình duyệt (useLocationsReal/useMaterials thiếu `limit`) — ' +
+    label: 'ô chọn nạp CẢ DANH MỤC về trình duyệt (useLocationsReal/useMaterials thiếu `limit` · useTmsVehicles không lọc ĐVVT · gọi thẳng apiClient.get danh mục không tham số) — ' +
            'đo 15/08: 1 kho 1.517 vị trí = 616KB + hàng chục round-trip MỖI LẦN mở màn; phải `search` + `limit: 50` ' +
            '(+ hook by-ids giữ nhãn giá trị đang chọn). Chỉ trang CẤU HÌNH/danh mục gốc mới được lấy cả danh sách',
     count: (s) => countCatalogueFullLoad(s),

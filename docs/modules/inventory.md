@@ -41,4 +41,12 @@ Tồn kho. **SỔ PALLET (17/09, user hỏi "có giống sổ cái MB51 của SA
 
 ## Actions
 
-view, adjust, move_location, recode, qa_update, **update_ncc**=Sửa NCC hàng loạt (gán NCC cho pallet → áp HSD ngoại lệ theo NCC), update_prod_date, export 
+view, adjust, move_location, recode, qa_update, **update_ncc**=Sửa NCC hàng loạt (gán NCC cho pallet → áp HSD ngoại lệ theo NCC), update_prod_date, export
+
+## 28/11 — danh sách chờ áp bộ lọc mặc định rồi mới gọi (đo hạn mức)
+
+Danh sách + facets từng bắn ngay lượt vẽ đầu, lúc Loại kho còn rỗng (= tồn MỌI loại, câu nặng nhất), rồi effect gán Kho / Loại kho
+mặc định đổi khoá ⇒ gọi lần hai — mỗi lần mở Tồn kho tốn gấp đôi (~86 KB + một câu đọc tồn trọn kho). Nay `filtersReady` =
+effect gán Kho đã chạy + (effect gán Loại kho đã chạy, hoặc danh mục Loại kho đã xong mà rỗng / lỗi). Đọc danh mục bằng
+**`isPending`, không `isLoading`** — hai lượt vẽ đầu query chưa kịp bắt đầu nên `isLoading = false` dù chưa có gì. Lưới:
+`scripts/qa/ui-mobile-sweep.mjs` báo `tải-trùng-lúc-mở` khi cùng một GET ≥ 20 KB đi với ≥ 2 bộ tham số khác nhau trong một lần mở.

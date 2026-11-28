@@ -725,14 +725,23 @@ export default function Inventory() {
 
   const { data: warehouses   = [] } = useWarehouses(true)
   const { data: qaStatuses   = [] } = useQAStatuses()
-  const { data: whTypes      = [] } = useScopedWhTypes()
+  const { data: whTypes      = [], isPending: whTypesPending } = useScopedWhTypes()
   const { data: allCompaniesF = [] } = useTransportCompanies(true, 'NCC')   // filter NCC — không lấy ĐVVT
   const nccFilterOpts = (allCompaniesF as { id: string; name: string; type?: string }[]).filter(c => c.type === 'NCC').map(c => ({ value: c.id, label: c.name }))
   const categories = whTypes.map(t => t.value)
+  // CHỜ ÁP MẶC ĐỊNH RỒI MỚI GỌI (28/11, đo hạn mức): danh sách + facets từng bắn NGAY lượt vẽ đầu — lúc bộ lọc Loại kho còn rỗng
+  // (= tồn MỌI loại, câu nặng nhất) — rồi effect gán Kho / Loại kho mặc định làm đổi khoá ⇒ gọi LẦN HAI. Mỗi lần mở Tồn kho
+  // tốn gấp đôi (~86 KB + một câu đọc tồn trọn kho trên DB). Hai cờ dưới bật trong CHÍNH effect gán mặc định, nên lần vẽ kế
+  // tiếp đã có đủ bộ lọc và chỉ gọi MỘT lần. Danh mục Loại kho lỗi / rỗng thì không chờ (không kẹt trang).
+  const [whDefaultDone, setWhDefaultDone] = useState(false)
+  const [catDefaultDone, setCatDefaultDone] = useState(false)
+  // `isPending` (chưa có dữ liệu cũng chưa lỗi), KHÔNG `isLoading`: hai lượt vẽ đầu query chưa kịp bắt đầu nên isLoading = false
+  // dù chưa có gì — đo 28/11 bằng tài khoản quản trị: cờ sẵn sàng bật ở lượt vẽ thứ hai và danh sách vẫn bắn trước mặc định.
+  const filtersReady = whDefaultDone && (catDefaultDone || (!whTypesPending && categories.length === 0))
   const { data: facets } = useInventoryFacets({
     warehouse_ids: f.warehouseIds.length > 0 ? f.warehouseIds : undefined,
     categories:    f.materialCategories.length > 0 ? f.materialCategories : undefined,
-  })
+  }, filtersReady)
 
   // Filter Tên hàng + Vị trí: TÌM TRÊN SERVER (50 dòng) — trước đây facet nhồi cả 2.740 mã
   // và 1.753 vị trí vào payload (~420KB) mỗi lần mở trang Tồn kho.
@@ -759,6 +768,7 @@ export default function Inventory() {
         : []
       if (defaultIds.length > 0) setInventory({ warehouseIds: defaultIds })
     }
+    setWhDefaultDone(true)
   }, [user?.warehouse_id]) // eslint-disable-line
 
   // Auto-set default category filter once when DB categories load and nothing is selected
@@ -766,6 +776,7 @@ export default function Inventory() {
   useEffect(() => {
     if (categories.length > 0 && !categoryDefaultApplied.current) {
       categoryDefaultApplied.current = true
+      setCatDefaultDone(true)
       if (f.materialCategories.length === 0) {
         const dbCats = categories as string[]
         // Restrict default to categories the user is allowed to see (if scope is set).
@@ -817,17 +828,17 @@ export default function Inventory() {
     import_date_from:   f.importDateFrom || undefined,
     import_date_to:     f.importDateTo   || undefined,
   }
-  const { data, isLoading, error: listErr } = useInventoryEntries({ ...queryParams, page: f.page, limit }, !aggregate)
+  const { data, isLoading, error: listErr } = useInventoryEntries({ ...queryParams, page: f.page, limit }, !aggregate && filtersReady)
   // Tổng hợp phân trang SERVER: trước đây nhận HẾT nhóm rồi tự `slice` — 41.107 nhóm = 18MB,
   // vượt trần 4,5MB của Vercel (pager trông đúng nhưng payload vẫn chết).
-  const { data: summaryData, isLoading: summaryLoading, error: summaryErr } = useInventorySummary({ ...queryParams, page: f.page, limit }, aggregate)
+  const { data: summaryData, isLoading: summaryLoading, error: summaryErr } = useInventorySummary({ ...queryParams, page: f.page, limit }, aggregate && filtersReady)
   // Tải danh sách lỗi (vd từ khoá quá chung SEARCH_TOO_BROAD, quá tải) phải NÓI ra — bản cũ chỉ hiện "Không tìm thấy pallet nào" (C126)
   const loadErr = aggregate ? summaryErr : listErr
   const loadErrMsg = loadErr ? ((loadErr as AxiosError<{ error?: { message?: string } }>).response?.data?.error?.message ?? 'Không tải được danh sách tồn kho — thử lại') : ''
 
   const displayEntries    = data?.entries               ?? []
   const pagedGroups       = summaryData?.groups          ?? []
-  const loading           = aggregate ? summaryLoading : isLoading
+  const loading           = (aggregate ? summaryLoading : isLoading) || !filtersReady
   const total             = aggregate ? (summaryData?.total ?? 0) : (data?.total ?? 0)
   const totalCartons      = aggregate ? (summaryData?.total_cartons_remaining ?? 0) : (data?.total_cartons_remaining ?? 0)
   // TÁCH ĐƠN VỊ (21/08): ô tổng cộng gộp thùng + EA + KG + SET/M2/BAG nên con số to bất thường

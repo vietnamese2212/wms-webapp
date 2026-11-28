@@ -18,6 +18,14 @@
 
 - **Upload/ghi hàng loạt (Excel, bulk) KHÔNG ghi tuần tự từng dòng trong `for...await`** — file lớn (vài trăm–nghìn dòng) → hàng nghìn roundtrip nối tiếp → **quá `maxDuration=60s` của Vercel** → user thấy trang "An error occurred with your deployment" (crash hạ tầng, không phải JSON lỗi app). Cách đúng = **ghi theo LÔ MẢNG chunk ~500** (nhanh như upload Tồn kho `inventoryController.uploadExcel`): mã mới → `insert(chunk)`; mã đã có → **`upsert(chunk, { onConflict: 'id' })`** (KHÔNG update lẻ từng dòng, kể cả song song vẫn chậm). Muốn giữ ngữ nghĩa "ô trống giữ giá trị cũ" thì **merge trong JS** (nạp record cũ đủ cột → đắp ô có giá trị → upsert full record; cột không đưa vào payload sẽ giữ nguyên, vd `created_at`/`is_active`). Lỗi lô → fallback từng dòng để chỉ đúng mã hỏng. Mẫu: `materialController.uploadExcel`.
 
+- **Hỏi định kỳ chỉ là lưới khi realtime đứt (28/11):** query đã có bảng trong `TABLE_QUERY_MAP` thì `refetchInterval` dùng
+  `pollUnlessRealtime(<kênh>, <chu kỳ cũ>)` — kênh sống hỏi thưa (15 phút), kênh đứt hỏi như cũ. Thành phần mount ở mọi trang (chuông, Header)
+  hỏi dày là nhân theo số tab đang mở cả ngày: 2 phút × 25 KB ≈ 750 KB + 30 lượt Vercel mỗi giờ mỗi tab.
+- **Danh mục dùng chung tải MỘT khoá (28/11):** `useWarehouses` / `useTransportCompanies` tải trọn một lần rồi lọc tại máy bằng `select`
+  (đúng luật server từng áp), không mỗi biến thể tham số một khoá — trước đó cùng danh mục tải lại 2–7 lần mỗi phiên.
+- **List có bộ lọc mặc định gán trong effect phải chờ effect chạy xong rồi mới bật query** (mẫu `filtersReady` ở `Inventory.tsx`); đọc trạng thái
+  danh mục bằng `isPending`, không `isLoading`. Lưới: `ui-mobile-sweep` `tải-trùng-lúc-mở`.
+
 ## Chuyển từ CLAUDE.md cũ (16/11/2026)
 
 > Luật còn hiệu lực mà bản CLAUDE.md rút gọn ngày 16/11 không nhắc lại. Chép nguyên văn từ `docs/rules/claude-md-full-2026-11-16.md`.

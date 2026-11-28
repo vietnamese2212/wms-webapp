@@ -257,21 +257,29 @@ try {
     const errs = [], bad = []
     page.on('console', m => { if (m.type() === 'error' && !/favicon|vercel-live|ERR_ABORTED|ERR_FAILED/i.test(m.text())) errs.push(m.text().slice(0, 160)) })
     page.on('pageerror', e => errs.push('pageerror ' + String(e).slice(0, 160)))
-    page.on('requestfinished', async rq => { if (rq.url().includes('/api/')) { try { apiBytes += (await rq.sizes()).responseBodySize } catch { /* đã đóng */ } } })
+    // TẢI TRÙNG LÚC MỞ TRANG (28/11, đo hạn mức — trang Tồn kho): danh sách bắn NGAY lượt vẽ đầu khi bộ lọc mặc định chưa áp
+    // (Loại kho rỗng = tồn MỌI loại, câu nặng nhất) rồi effect gán mặc định làm đổi khoá ⇒ gọi LẦN HAI: mỗi lần mở trang tốn gấp
+    // đôi mà màn hình vẫn đúng nên không ai thấy. Đo: cùng một GET (bỏ query) với ≥ 2 BỘ THAM SỐ KHÁC NHAU trong một lần mở, mỗi lần
+    // nặng ≥ 20 KB. Gọi lại Y HỆT (làm mới sau một lệnh, realtime) là chuyện khác — không tính, kẻo báo oan.
+    const loadCalls = []
+    page.on('requestfinished', async rq => { if (rq.url().includes('/api/')) { try { const sz = (await rq.sizes()).responseBodySize; apiBytes += sz; if (rq.method() === 'GET') { const u = rq.url().replace(BASE, ''); loadCalls.push({ p: u.split('?')[0], u, sz }) } } catch { /* đã đóng */ } } })
     page.on('response', rs => { if (rs.status() >= 400 && rs.url().includes('/api/')) bad.push(`${rs.status()} ${rs.request().method()} ${rs.url().replace(BASE, '').slice(0, 100)}`) })
     for (const path of PAGES) {
       const name = path === '/' ? 'dashboard' : path.slice(1).replace(/\//g, '_')
       try {
-        errs.length = 0; bad.length = 0
+        errs.length = 0; bad.length = 0; loadCalls.length = 0
         await page.setViewportSize({ width: dev.w, height: dev.h })
         await page.goto(`${BASE}${path}`, { waitUntil: 'networkidle', timeout: 60000 }).catch(() => { /* trang có kết nối sống không bao giờ idle */ })
         await sleep(1800)
+        const heavyByPath = {}
+        for (const c of loadCalls) if (c.sz >= 20 * 1024) (heavyByPath[c.p] ??= new Set()).add(c.u)
+        const dupHeavy = Object.entries(heavyByPath).filter(([, us]) => us.size >= 2).map(([p, us]) => `${us.size} bộ lọc × ${p}`)
         for (const [w, h] of [[dev.w, dev.h], ...dev.more]) {
           if (w !== dev.w) { await page.setViewportSize({ width: w, height: h }); await sleep(600) }
           const issues = await page.evaluate(measure, false)
           report[`${path} @${w}`] = { issues, console: [...errs], api: [...bad] }
           await page.screenshot({ path: join(OUT, `${name}_${w}.png`) })
-          note(`${String(w).padEnd(4)} ${path}`, issues, `${errs.length ? ` console:${errs.length} (${errs[0]})` : ''}${bad.length ? ` api≥400:${bad.join(' · ')}` : ''}`)
+          note(`${String(w).padEnd(4)} ${path}`, issues, `${errs.length ? ` console:${errs.length} (${errs[0]})` : ''}${bad.length ? ` api≥400:${bad.join(' · ')}` : ''}${w === dev.w && dupHeavy.length ? ` tải-trùng-lúc-mở:${dupHeavy.join(' · ')}` : ''}`)
         }
         await formPhase(page, path, dev.more.length ? dev.more[dev.more.length - 1][0] : dev.w, name, report)
         await panePhase(page, path, dev.more.length ? dev.more[dev.more.length - 1][0] : dev.w, name, report)

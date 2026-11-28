@@ -32,4 +32,11 @@ mã / NCC ⇒ trung bình 1,6 s, cache nguội quá hạn 29 lần 04–07/10 (`
 trên pallet còn hàng. Vòng quét lọc `expiry_calc <= hôm nay + 120` (2.053/19.586 pallet) rồi `computePctDate` vẫn tính %Date như cũ.
 Cột CHỈ nuôi cửa lọc; %Date hiển thị ở mọi màn vẫn đi `computePctDate`. Bất biến gói 00 mục 14e `inventory_expiry_mismatch()` = 0.
 Thêm nguồn shelf-life mới (vd theo kho) ⇒ sửa `inventory_expiry_calc` (SQL) CÙNG `resolveShelfLife` (TS + FE mirror), và chạy lại
-`eq_expiry.mjs` (so TS ↔ SQL trên mọi pallet; chú ý so ngày bằng CÙNG đồng hồ với lúc parse — máy VN lệch 7 giờ). 
+`eq_expiry.mjs` (so TS ↔ SQL trên mọi pallet; chú ý so ngày bằng CÙNG đồng hồ với lúc parse — máy VN lệch 7 giờ).
+
+## 28/11 — chuông chỉ hỏi định kỳ khi realtime đứt (đo hạn mức)
+
+`alert_events` và `user_notifications` đã có trong `TABLE_QUERY_MAP`, vậy mà chuông (mount ở MỌI trang) vẫn hỏi lại danh sách cảnh báo
+và bảng tin mỗi 2 phút (~25 KB + ~3 KB, 60 lượt gọi Vercel / giờ / tab) và tải lại danh sách sau mỗi lượt kích hoạt quét nền. Nay
+`refetchInterval: pollUnlessRealtime(<kênh>, 120_000)` (`api/realtimeEvents.ts`): kênh sống ⇒ 15 phút / lần làm lưới cuối, kênh đứt ⇒
+2 phút như cũ. Lượt quét nền chỉ tải lại khi kênh chung đứt; bấm "Quét lại" (fresh) vẫn tải lại.

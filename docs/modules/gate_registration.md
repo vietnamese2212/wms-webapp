@@ -38,3 +38,13 @@ không thấy "Đang xuất / Đã xuất"). Nhân viên bảo vệ KHÔNG có q
   409 `TRIP_NOT_COMPLETED` nêu Số xe + trạng thái; FE hỏi "Cho xe ra khi chuyến chưa xuất xong?", đồng ý ⇒ gửi lại `confirm: true` ⇒ ra +
   vết `GATE_EXIT_TRIP_OPEN` (ai · lúc nào) vào sổ chuyến (hiện ở "Lịch sử thao tác" của popup tình trạng xe). Lượt xe chiều NHẬP không hỏi.
   Gói 11 [7a]–[7d].
+
+## 28/11 — ô Biển số tìm trên server (đo hạn mức)
+
+Trước đây mở trang là tải cả đội xe (~950 xe ≈ 330 KB, kể cả khi không mở form) chỉ để dựng ô chọn Biển số. Nay ô Biển số chỉ tải
+khi form đã hiện bước 2 (đủ 6 tiêu chí hoặc đang sửa): 50 xe khớp chữ đang gõ qua `GET /tms/vehicles?page=…&ncc_ids=…&search=…`
+(RPC `tms_vehicles_page`, trả sẵn loại xe); đã chọn ĐVVT thì chỉ xe của ĐVVT đó, gom mọi chi nhánh CÙNG TÊN như cũ. Biển gõ có
+gạch / dấu cách vẫn khớp (chuẩn hoá bằng `normalizeLicensePlate` trước khi tìm). `ComboField` có `onSearchChange` = chế độ tìm
+trên server (không lọc lại tại máy). Danh mục ĐVVT dùng `useTransportCompanies()` chung (có realtime; khoá riêng `tms-companies`
+cũ không có trong `TABLE_QUERY_MAP`). Lưới: ratchet `catalogue_full_load` nay soi cả `useTmsVehicles` không lọc ĐVVT và
+`apiClient.get('<danh mục>')` gọi thẳng không tham số (đỏ đúng dòng trên bản cũ).

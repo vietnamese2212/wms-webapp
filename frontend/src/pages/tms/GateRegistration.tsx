@@ -2,13 +2,14 @@ import { useState, useRef, useEffect, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import { useQuery, useInfiniteQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import { apiClient } from '@/api/client'
-import { useWarehouses, useWarehouseTypes, useVehicleTypesByWarehouse } from '@/api/hooks'
+import { useWarehouses, useWarehouseTypes, useVehicleTypesByWarehouse, useTransportCompanies, useTmsVehiclesPaged } from '@/api/hooks'
+import { useDebouncedValue } from '@/hooks/useDebouncedValue'
 import { useScopedWhTypes } from '@/hooks/useUserScope'
 import { useAuthStore } from '@/stores/authStore'
 import { useWmsFilterStore } from '@/stores/wmsFilterStore'
 import { can, type ModulePermissions } from '@/config/permissions'
 import { formatDateTime, normalizeLicensePlate, normalizePhone } from '@/utils/formatters'
-import type { GateRegistration, GateStatus, BookingSuggestion, TransportCompany, TmsVehicle, TmsVehicleType } from '@/types'
+import type { GateRegistration, GateStatus, BookingSuggestion, TmsVehicleType } from '@/types'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
@@ -174,7 +175,7 @@ interface ComboOption { value: string; label: string; sub?: string }
 function ComboField({
   value, displayValue, options, placeholder, loading,
   onSelect, onClear,
-  freetextMode, freeTextValue, onFreeText,
+  freetextMode, freeTextValue, onFreeText, onSearchChange,
 }: {
   value: string
   displayValue: string
@@ -186,6 +187,9 @@ function ComboField({
   freetextMode?: boolean
   freeTextValue?: string
   onFreeText?: (text: string) => void
+  /** Có ⇒ TÌM TRÊN SERVER: báo chữ đang gõ lên cha, `options` là kết quả server — không lọc lại tại máy (chữ gõ "51C-123"
+   *  không nằm trong nhãn đã chuẩn hoá "51C123" nên lọc tại máy sẽ giấu mất kết quả đúng). */
+  onSearchChange?: (text: string) => void
 }) {
   const [open, setOpen] = useState(false)
   const [search, setSearch] = useState('')
@@ -194,10 +198,11 @@ function ComboField({
   const didOpenRef = useRef(false)
   const anchor = usePopoverAnchor(triggerRef, open, 200)
 
-  const filtered = options.filter(o =>
+  const filtered = onSearchChange ? options : options.filter(o =>
     o.label.toLowerCase().includes(search.toLowerCase()) ||
     (o.sub ?? '').toLowerCase().includes(search.toLowerCase())
   )
+  useEffect(() => { if (onSearchChange) onSearchChange(open ? search : '') }, [open, search]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Text hiển thị khi dropdown đóng (freetext mode)
   const closedText = value ? displayValue : (freeTextValue ?? '')
@@ -274,7 +279,7 @@ function ComboField({
         >
           {filtered.length === 0 ? (
             <div className="px-3 py-2 text-xs text-slate-400">
-              {freetextMode ? 'Không có kết quả — nhập tự do sẽ được lưu' : 'Không có kết quả'}
+              {loading ? 'Đang tìm…' : freetextMode ? 'Không có kết quả — nhập tự do sẽ được lưu' : 'Không có kết quả'}
             </div>
           ) : (
             filtered.map(o => (
@@ -456,15 +461,7 @@ export default function GateRegistration() {
     | { kind: 'group'; level: 1 | 2 | 3; key: string; label: string; total: number; done: number; inside: number; waiting: number; collapsed: boolean }
     | { kind: 'leaf'; reg: GateRegistration }
 
-  const { data: companies = [] } = useQuery<TransportCompany[]>({
-    queryKey: ['tms-companies'],
-    queryFn: () => apiClient.get('/tms/transport-companies').then(r => r.data.data),
-  })
-
-  const { data: vehicles = [] } = useQuery<TmsVehicle[]>({
-    queryKey: ['tms-vehicles'],
-    queryFn: () => apiClient.get('/tms/vehicles').then(r => r.data.data),
-  })
+  const { data: companies = [] } = useTransportCompanies()
 
   const { data: vehicleTypes = [] } = useQuery<TmsVehicleType[]>({
     queryKey: ['tms-vehicle-types'],
@@ -1050,8 +1047,16 @@ export default function GateRegistration() {
   const companyGroupIds = selCompanyName
     ? new Set(companies.filter(c => (c.name ?? '').trim().toLowerCase() === selCompanyName.trim().toLowerCase()).map(c => c.id))
     : null
+  // Ô Biển số TÌM TRÊN SERVER (28/11, đo hạn mức): trước đây mở trang là tải cả đội ~950 xe (≈ 330 KB, cả lúc không mở form)
+  // chỉ để dựng ô chọn — trái luật "danh mục lớn không nạp cả vào trình duyệt". Nay chỉ khi form mở: 50 xe khớp chữ đang gõ,
+  // đã chọn ĐVVT thì chỉ xe của ĐVVT đó (gom mọi chi nhánh cùng tên như cũ). Nhãn xe đang chọn vẫn là biển số lưu trong form.
+  const [vehTerm, setVehTerm] = useState('')
+  const vehTermQ = useDebouncedValue(normalizeLicensePlate(vehTerm), 250)
+  const vehNccIds = form.company_id ? (companyGroupIds ? [...companyGroupIds] : [form.company_id]) : undefined
+  const { data: vehPage, isFetching: vehLoading } = useTmsVehiclesPaged(
+    { ncc_ids: vehNccIds, search: vehTermQ || undefined, page: 1, page_size: 50 }, modalOpen && (phase1Complete || !!editReg))   // chỉ khi ô Biển số hiện (bước 2)
+  const vehicles = vehPage?.items ?? []
   const vehicleOptions: ComboOption[] = vehicles
-    .filter(v => !form.company_id || (companyGroupIds ? companyGroupIds.has(v.ncc_id) : v.ncc_id === form.company_id))
     .map(v => ({
       value: v.id,
       label: v.license_plate,
@@ -1621,6 +1626,8 @@ export default function GateRegistration() {
                       displayValue={vehicles.find(v => v.id === form.vehicle_id)?.license_plate ?? form.license_plate}
                       freeTextValue={form.license_plate}
                       options={vehicleOptions}
+                      loading={vehLoading}
+                      onSearchChange={setVehTerm}
                       placeholder="Tìm hoặc nhập biển số"
                       freetextMode
                       onSelect={opt => setForm(prev => ({ ...prev, vehicle_id: opt.value, license_plate: normalizeLicensePlate(opt.label) }))}
